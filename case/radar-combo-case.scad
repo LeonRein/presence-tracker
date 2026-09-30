@@ -18,10 +18,12 @@ front_t  = 0.8;    // Radom (Front) - duenn halten (<= lambda/8 in PLA ~ 0.95 mm
 R        = 4;      // Eckenradius (Frontansicht)
 ch       = 1;      // 45-Grad-Fase an Vorder- und Hinterkante
 cl       = 0.25;   // Spiel fuer Platinen
-ri       = 0.5;    // Innenradius der Gehaeuseecken (<= 0,85, sonst stoesst die LD2450-Ecke an)
+ri       = R - wall; // Innenradius der Gehaeuseecken -> ueberall gleich dicke Wand
 
 l50 = 44;  w50 = 15; t50 = 1.2;   // LD2450
 jst = 7;                          // Platz fuer den JST-Stecker des LD2450 (0 = Kabel direkt angeloetet)
+g50 = 1.5;                        // Abstand LD2450 zur linken Wand, damit die Platinenecke
+                                  // an der Eckenrundung (ri) vorbeikommt (mind. ~1,35 bei ri = 2,4)
 // Radar fuer stille Personen (untere Tasche): "LD2410C" (22 x 16 mm) oder "LD2412" (28 x 11 mm)
 static_radar = "LD2410C";
 l12 = static_radar == "LD2412" ? 28  : 22;
@@ -33,7 +35,7 @@ so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 esp_w = 18; esp_l = 22.6; esp_t = 1.0;   // ESP32-S3 / C3 SuperMini
 usb_h = 3.2;                             // Hoehe USB-C-Buchse ueber der Platine
 
-iw = l50 + 2*cl + jst;     // Innenbreite
+iw = g50 + l50 + cl + jst;   // Innenbreite
 z12 = 1.5;                 // Unterkante untere Radar-Platine
 ih = z12 + w12 + 2*1.0 + 3*cl + 0.5 + w50;   // Innenhoehe (LD2412: 31, LD2410C: 35.75)
 split_y = 11.8;            // Trennebene Gehaeuse / Deckel
@@ -47,7 +49,7 @@ zo0 = -wall;  zo1 = ih + wall;
 H  = zo1 - zo0;
 
 // Radar-Positionen
-bx0 = -iw/2 + cl;               // LD2450 linke Kante (Stecker-Seite rechts)
+bx0 = -iw/2 + g50;              // LD2450 linke Kante (Stecker-Seite rechts)
 bz0 = ih - cl - w50;            // LD2450 Unterkante
 
 boss_x = 21.5; boss_z = 6;      // M2-Schrauben Deckel
@@ -108,6 +110,8 @@ module shell() {
             // Abstandsleisten an den Enden
             // (bis an Wand, Rippe und Rippenstuecke verlaengert, damit keine 0,25-mm-Spalte bleiben)
             box(-iw/2, bx0+1.5, front_t, front_t+so, bz0-cl, ih);
+            // Fuellrippe zwischen linker Wand und Platine: fuehrt die LD2450 seitlich (Spiel cl)
+            box(-iw/2, bx0-cl, front_t, top50, bz0-cl-1.0, ih);
             box(bx0+l50-1.5, bx0+l50+cl, front_t, front_t+so, bz0-cl, ih);
             // untere Rippe
             box(-iw/2, bx0+l50+cl+rib, front_t, top50, bz0-cl-rib, bz0-cl);
@@ -163,7 +167,7 @@ module lid() {
             // Lippe (steckt im Gehaeuse)
             difference() {
                 rrect_y(iw-2*lcl, lcl, ih-lcl, max(0.2, ri-lcl), split_y-lip_h, split_y+0.01);
-                rrect_y(iw-2*lcl-2*lip_w, lcl+lip_w, ih-lcl-lip_w, 0.2, split_y-lip_h-1, split_y+1);
+                rrect_y(iw-2*lcl-2*lip_w, lcl+lip_w, ih-lcl-lip_w, max(0.5, ri-lcl-lip_w), split_y-lip_h-1, split_y+1);
                 box(-10.5, 10.5, split_y-lip_h-1, split_y+1, -1, 3);        // Platz fuer ESP-Pins unten
                 for (sx=[-1,1]) translate([sx*boss_x, split_y-5, boss_z]) ycyl(6, 3.0, 3.0);
             }
@@ -346,3 +350,4 @@ else if (part == "clash_boards") intersection() {
         ld2450_header(); esp_antenna();
     }
 }
+else if (part == "section_corner50") intersection() { union() { shell(); boards(); } box(-100, 100, -50, 100, 30, 100); }
