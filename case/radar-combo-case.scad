@@ -1,0 +1,285 @@
+// Kombi-Gehaeuse: HLK-LD2450 + HLK-LD2412 + ESP32-C3/S3 SuperMini
+// Teile: Gehaeuse (shell), Deckel (lid), Eckhalter (corner), Schrankfuss (stand)
+//
+// Koordinaten (Sensor): x = rechts, y = Tiefe (0 = Front, +y Richtung Wand), z = oben
+//                       z = 0 ist der Innenboden.
+//
+// Export:  openscad -D 'part="shell"'  -o shell.stl  radar-combo-case.scad
+//          part = "shell" | "lid" | "corner" | "stand" | "assembly" | "assembly_stand"
+
+part = "assembly";
+secz = 20;
+
+$fn = 48;
+
+// ---------- Parameter ----------
+wall     = 1.6;    // Seitenwaende
+front_t  = 0.8;    // Radom (Front) - duenn halten (<= lambda/8 in PLA ~ 0.95 mm)
+R        = 4;      // Eckenradius (Frontansicht)
+ch       = 1;      // 45-Grad-Fase an Vorder- und Hinterkante
+cl       = 0.25;   // Spiel fuer Platinen
+
+l50 = 44;  w50 = 15; t50 = 1.2;   // LD2450
+jst = 7;                          // Platz fuer den JST-Stecker des LD2450 (0 = Kabel direkt angeloetet)
+l12 = 28;  w12 = 11; t12 = 1.0;   // LD2412
+so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
+
+esp_w = 18; esp_l = 22.6; esp_t = 1.0;   // ESP32-C3 / S3 SuperMini
+
+iw = l50 + 2*cl + jst;     // Innenbreite
+ih = 31;                   // Innenhoehe
+split_y = 11.8;            // Trennebene Gehaeuse / Deckel
+lid_t   = 4.2;             // Deckel (enthaelt Schwalbenschwanz-Nut)
+D  = split_y + lid_t;      // Gesamttiefe
+W  = iw + 2*wall;
+zo0 = -wall;  zo1 = ih + wall;
+H  = zo1 - zo0;
+
+// Radar-Positionen
+bx0 = -iw/2 + cl;               // LD2450 linke Kante (Stecker-Seite rechts)
+bz0 = ih - cl - w50;            // LD2450 Unterkante
+z12 = 1.5;                      // LD2412 Unterkante
+
+boss_x = 21.5; boss_z = 6;      // M2-Schrauben Deckel
+
+// Schwalbenschwanz (Halter-Schiene / Deckel-Nut)
+dt_base = 5;  dt_tip = 7;  dt_h = 3;  dt_cl = 0.25;
+dt_top  = 24;                   // Nut oben geschlossen -> Sensor liegt auf
+
+// Schrankfuss
+tilt = 10;       // Neigung nach unten (Grad)
+elev = 16;       // Abstand Sensor-Unterkante -> Schrank (Platz fuer USB-Stecker, gewinkelt empfohlen)
+
+// ---------- Grundformen ----------
+module ycyl(h, r1, r2) { rotate([-90,0,0]) cylinder(h=h, r1=r1, r2=r2); }
+
+module corner_piece(len) {
+    ycyl(ch, R-ch, R);
+    translate([0,ch,0]) ycyl(len-2*ch, R, R);
+    translate([0,len-ch,0]) ycyl(ch, R, R-ch);
+}
+
+module body() {
+    hull() for (sx=[-1,1], z=[zo0+R, zo1-R])
+        translate([sx*(W/2-R), 0, z]) corner_piece(D);
+}
+
+module rrect_y(w, z0, z1, r, y0, y1) {   // abgerundetes Rechteck in xz, extrudiert in y
+    hull() for (sx=[-1,1], z=[z0+r, z1-r])
+        translate([sx*(w/2-r), y0, z]) ycyl(y1-y0, r, r);
+}
+
+module cavity() { rrect_y(iw, 0, ih, R-wall, front_t, D+1); }
+
+module box(x0,x1,y0,y1,z0,z1) { translate([x0,y0,z0]) cube([x1-x0, y1-y0, z1-z0]); }
+
+// Rastnase entlang x (haelt Platine gegen Herausfallen)
+module ridge_x(x0, x1, y, z, dir) {   // dir: +1 = ragt nach +z, -1 = nach -z
+    hull() {
+        box(x0, x1, y-0.5, y+0.5, z - (dir<0 ? 0.01 : 0), z + (dir<0 ? 0 : 0.01));
+        box(x0, x1, y-0.05, y+0.05, dir>0 ? z : z-0.55, dir>0 ? z+0.55 : z);
+    }
+}
+
+// ---------- Gehaeuse ----------
+module shell() {
+    rib = 1.0;
+    top50 = front_t + so + t50 + 0.8;
+    top12 = front_t + so + t12 + 0.8;
+    difference() {
+        union() {
+            difference() {
+                intersection() { body(); box(-W, W, -1, split_y, zo0-1, zo1+1); }
+                cavity();
+            }
+            // --- LD2450 Tasche ---
+            // Abstandsleisten an den Enden
+            for (x=[bx0, bx0+l50-1.5]) box(x, x+1.5, front_t, front_t+so, bz0, bz0+w50);
+            // untere Rippe
+            box(-iw/2, bx0+l50+cl+rib, front_t, top50, bz0-cl-rib, bz0-cl);
+            // Stecker-Seite: nur kurze Stuecke oben/unten
+            box(bx0+l50+cl, bx0+l50+cl+rib, front_t, top50, bz0-cl-rib, bz0+3);
+            box(bx0+l50+cl, bx0+l50+cl+rib, front_t, top50, ih-3, ih);
+            // Rastnasen
+            ridge_x(bx0+6, bx0+14, front_t+so+t50+0.35, bz0-cl, 1);
+            ridge_x(bx0+30, bx0+38, front_t+so+t50+0.35, bz0-cl, 1);
+            ridge_x(bx0+6, bx0+14, front_t+so+t50+0.35, ih, -1);
+            ridge_x(bx0+30, bx0+38, front_t+so+t50+0.35, ih, -1);
+
+            // --- LD2412 Tasche ---
+            difference() {
+                box(-l12/2-cl-rib, l12/2+cl+rib, front_t, top12, max(0, z12-cl-rib), z12+w12+cl+rib);
+                box(-l12/2-cl, l12/2+cl, front_t-1, top12+1, z12-cl, z12+w12+cl);
+            }
+            for (sx=[-1,1], z=[z12, z12+w12-1.2])
+                box(sx*8-1.5, sx*8+1.5, front_t, front_t+so, z, z+1.2);
+            for (sx=[-1,1]) {
+                ridge_x(sx*6-3, sx*6+3, front_t+so+t12+0.35, z12-cl, 1);
+                ridge_x(sx*6-3, sx*6+3, front_t+so+t12+0.35, z12+w12+cl, -1);
+            }
+
+            // --- Schraubdome ---
+            for (sx=[-1,1]) translate([sx*boss_x, front_t, boss_z]) ycyl(split_y-front_t, 2.75, 2.75);
+        }
+        // Schraubloecher M2
+        for (sx=[-1,1]) translate([sx*boss_x, split_y-9, boss_z]) ycyl(9.1, 0.85, 0.85);
+        // USB-C Ausschnitt (unten, zur Rueckseite offen)
+        box(-5.25, 5.25, 5.5, split_y+1, zo0-1, 0.01);
+        // Lueftung oben und unten
+        for (x=[-22:4:14]) box(x-0.7, x+0.7, 6, 10.5, ih-0.01, zo1+1);
+        for (x=[-22,-18,-14,10,14,18]) box(x-0.7, x+0.7, 6, 10.5, zo0-1, 0.01);
+    }
+}
+
+// ---------- Deckel ----------
+module dovetail_profile(extra=0) {   // in xy, Basis bei y=0, Spitze bei y=-dt_h
+    polygon([[-(dt_base+extra), 0.01], [dt_base+extra, 0.01],
+             [dt_tip+extra, -dt_h-extra], [-(dt_tip+extra), -dt_h-extra]]);
+}
+
+module lid() {
+    lip_h = 1.5; lip_w = 1.2; lcl = 0.15;
+    difference() {
+        union() {
+            intersection() { body(); box(-W, W, split_y, D+1, zo0-1, zo1+1); }
+            // Lippe (steckt im Gehaeuse)
+            difference() {
+                rrect_y(iw-2*lcl, lcl, ih-lcl, R-wall-lcl, split_y-lip_h, split_y+0.01);
+                rrect_y(iw-2*lcl-2*lip_w, lcl+lip_w, ih-lcl-lip_w, max(0.5, R-wall-lcl-lip_w), split_y-lip_h-1, split_y+1);
+                box(-10.5, 10.5, split_y-lip_h-1, split_y+1, -1, 3);        // Platz fuer ESP-Pins unten
+                for (sx=[-1,1]) translate([sx*boss_x, split_y-5, boss_z]) ycyl(6, 3.0, 3.0);
+            }
+            // ESP-Auflage-Schienen
+            for (sx=[-1,1]) box(sx*3.5-1, sx*3.5+1, split_y-1.5, split_y+0.01, 2, 20);
+            // seitliche Fuehrungen und oberer Anschlag
+            for (sx=[-1,1]) box(sx*(esp_w/2+0.3), sx*(esp_w/2+1.8), split_y-1.5-esp_t-2.5, split_y+0.01, 12, esp_l+1.5);
+            box(-6, 6, split_y-1.5-esp_t-1.5, split_y+0.01, esp_l+0.3, esp_l+1.8);
+        }
+        // M2 Senkkopf
+        for (sx=[-1,1]) translate([sx*boss_x, split_y-1, boss_z]) {
+            ycyl(lid_t+2, 1.1, 1.1);
+            translate([0, lid_t+1-1.2, 0]) ycyl(1.21, 1.1, 2.2);
+            translate([0, lid_t+1, 0]) ycyl(1, 2.2, 2.2);
+        }
+        // Schwalbenschwanz-Nut (unten offen, oben geschlossen)
+        translate([0, D, zo0-1]) linear_extrude(height = dt_top - zo0 + 1) dovetail_profile(dt_cl);
+    }
+}
+
+// ---------- Schiene fuer Halter ----------
+module rail() {
+    translate([0, D, zo0]) linear_extrude(height = dt_top - 0.3 - zo0)
+        polygon([[-dt_base, 0.01], [dt_base, 0.01], [dt_tip, -(dt_h-0.3)], [-dt_tip, -(dt_h-0.3)]]);
+}
+
+// ---------- Eckhalter ----------
+cW = W/2 + D - ch + 0.6;   // Wandebene: |x| + y = cW  (Fase des Sensors liegt parallel zur Wand)
+
+module corner() {
+    hz = (zo0 + zo1) / 2;
+    difference() {
+        union() {
+            translate([0,0,zo0]) linear_extrude(height=H)
+                polygon([[-(cW-D), D], [cW-D, D], [0, cW]]);
+            rail();
+        }
+        // je eine Schraube pro Wand (3-3,5 mm), Kopf versenkt, Zugang von vorne
+        for (sx=[-1,1]) {
+            xe = sx*13;
+            translate([xe, D, hz]) rotate([0,0,-sx*45]) rotate([-90,0,0]) {
+                translate([0,0,-1]) cylinder(h=30, r=1.9);
+                translate([0,0,-1]) cylinder(h=(cW-D-13)/2*sqrt(2) - 3 + 1, r=3.4);
+            }
+        }
+    }
+}
+
+// ---------- Schrankfuss ----------
+ep = elev - zo0*cos(tilt);
+module T() { translate([0,0,ep]) rotate([tilt,0,0]) children(); }
+
+module stand() {
+    y0 = (D + ep*sin(tilt))/cos(tilt) + 0.5;
+    difference() {
+        hull() {
+            T() box(-15, 15, D, D+8, zo0, dt_top+2);
+            box(-20, 20, y0, y0+32, 0, 5);
+        }
+        box(-3.5, 3.5, -50, 200, -1, 4);   // Kabelkanal unten
+    }
+    T() rail();
+}
+
+// ---------- Vorschau ----------
+module boards() {
+    color("seagreen")  box(bx0, bx0+l50, front_t+so, front_t+so+t50, bz0, bz0+w50);
+    color("seagreen")  box(-l12/2, l12/2, front_t+so, front_t+so+t12, z12, z12+w12);
+    color("white")     box(bx0+l50-6, bx0+l50+4, front_t+so+t50, front_t+so+t50+4.5, bz0+4, bz0+11);  // JST
+    color("royalblue") box(-esp_w/2, esp_w/2, split_y-1.5-esp_t, split_y-1.5, 0, esp_l);
+    color("silver")    box(-4.5, 4.5, split_y-1.5-esp_t-3.2, split_y-1.5-esp_t, -0.7, 7);
+}
+
+module sensor(explode=0) {
+    color("whitesmoke") shell();
+    translate([0, explode, 0]) color("gainsboro") lid();
+}
+
+if (part == "shell") rotate([90,0,0]) shell();                 // Front nach unten drucken
+else if (part == "lid") translate([0,0,D]) rotate([-90,0,0]) lid();   // Rueckseite nach unten
+else if (part == "corner") translate([0,0,-zo0]) corner();
+else if (part == "stand") stand();
+else if (part == "assembly") {
+    sensor(); boards();
+    translate([0, 0, 0]) color("tan", 0.9) corner();
+}
+else if (part == "exploded") {
+    sensor(18); boards();
+    translate([0, 40, 0]) color("tan") corner();
+}
+else if (part == "assembly_stand") {
+    T() { sensor(); boards(); }
+    color("tan") stand();
+}
+else if (part == "section_x") {   // Schnitt bei x = 0 (Seitenansicht)
+    intersection() { union() { sensor(); boards(); color("tan") corner(); } box(-100, 0, -50, 100, -50, 100); }
+}
+else if (part == "section_z") {   // Schnitt auf Hoehe z (Draufsicht)
+    intersection() { union() { sensor(); boards(); color("tan") corner(); } box(-100, 100, -50, 100, -50, secz); }
+}
+else if (part == "open") {        // Gehaeuse ohne Deckel + Platinen
+    color("whitesmoke") shell(); boards();
+}
+else if (part == "lid_inside") { color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, split_y-1.5-esp_t, split_y-1.5, 0, esp_l); }
+else if (part == "section_stand") {
+    intersection() { union() { T() { sensor(); boards(); } color("tan") stand(); } box(-100, 0, -50, 100, -50, 100); }
+}
+else if (part == "pretty_corner") {   // nur Optik: Sensor in der Raumecke
+    color("white") body();
+    color("white") corner();
+    color("lightgray") for (sx=[-1,1]) mirror([sx<0?1:0,0,0])
+        translate([0,cW,0]) rotate([0,0,-45]) translate([0,0,-40]) cube([90, 2, 120]);
+}
+else if (part == "pretty_stand") {
+    T() color("white") body();
+    color("white") stand();
+    color("burlywood") translate([-60,-40,-3]) cube([120, 120, 3]);
+}
+else if (part == "pretty_exploded") {
+    color("white") shell(); boards();
+    translate([0, 22, 0]) color("gainsboro") lid();
+    translate([0, 50, 0]) color("white") corner();
+}
+else if (part == "m_corner")   mirror([0,1,0]) {
+    color("white") body(); color("white") corner();
+    color("lightgray") for (sx=[-1,1]) mirror([sx<0?1:0,0,0])
+        translate([0,cW,0]) rotate([0,0,-45]) translate([0,0,-40]) cube([90, 2, 120]);
+}
+else if (part == "m_stand")    mirror([0,1,0]) {
+    T() color("white") body(); color("white") stand();
+    color("burlywood") translate([-60,-40,-3]) cube([120, 120, 3]);
+}
+else if (part == "m_exploded") mirror([0,1,0]) {
+    color("white") shell(); boards();
+    translate([0, 22, 0]) color("gainsboro") lid();
+    translate([0, 48, 0]) color("white") corner();
+}
