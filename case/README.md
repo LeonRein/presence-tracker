@@ -1,6 +1,6 @@
 # Kombi-Präsenzsensor LD2450 + LD2412 – Gehäuse
 
-Flaches Gehäuse (54,7 × 34,2 × 16 mm) für beide Radare und einen ESP32-C3/S3 SuperMini.
+Flaches Gehäuse (54,7 × 34,2 × 16 mm) für beide Radare und einen ESP32-S3/C3 SuperMini.
 Der Sensor wird auf einen Halter geschoben (Schwalbenschwanz):
 
 - **Eckhalter** (`stl/corner.stl`): Keil für die Raumecke, der Sensor schaut diagonal in den Raum.
@@ -23,23 +23,24 @@ Druck zuerst `shell.stl` und prüf die Passung.
 
 ## Teile
 
-- HLK-LD2450 (mit Kabel), HLK-LD2412, ESP32-C3 SuperMini (S3 SuperMini passt auch)
-- 2× M2×10 Kunststoff-/Blechschraube (Deckel)
+- HLK-LD2450 (mit Kabel), HLK-LD2412, ESP32-S3 SuperMini (C3 SuperMini passt auch)
+- 2× M2×10 Senkkopf, selbstschneidend (Deckel)
 - Eckhalter: 2 Schrauben 3–3,5 mm + Dübel, oder doppelseitiges Klebeband
 - Schrankfuß: am besten ein **gewinkeltes USB-C-Kabel**
 
-## Verkabelung (ESP32-C3 SuperMini)
+## Verkabelung (ESP32-S3 SuperMini)
 
-| Radar | Radar-Pin | ESP32-C3 |
+| Radar | Radar-Pin | ESP32-S3 |
 |---|---|---|
 | LD2450 | 5V / GND | 5V / GND |
-| LD2450 | TX → | GPIO20 (RX) |
-| LD2450 | RX ← | GPIO21 (TX) |
+| LD2450 | TX → | GPIO1 (RX) |
+| LD2450 | RX ← | GPIO2 (TX) |
 | LD2412 | +5V / GND | 5V / GND |
 | LD2412 | TX → | GPIO4 (RX) |
-| LD2412 | RX ← | GPIO3 (TX) |
+| LD2412 | RX ← | GPIO5 (TX) |
 
-GPIO2/8/9 meiden (Strapping-Pins). Logs laufen über USB, damit bleiben beide UARTs frei.
+Beim S3 lassen sich die UARTs auf beliebige GPIOs legen. GPIO0, 3, 45 und 46 meiden, das sind Strapping-Pins.
+Die Logs laufen über USB, ein dritter UART bleibt frei.
 Baudrate: LD2450 256000, LD2412 laut Datenblatt 115200.
 
 ## Zusammenbau
