@@ -37,6 +37,8 @@ z12 = 1.5;                 // Unterkante untere Radar-Platine
 ih = z12 + w12 + 2*1.0 + 3*cl + 0.5 + w50;   // Innenhoehe (LD2412: 31, LD2410C: 35.75)
 split_y = 11.8;            // Trennebene Gehaeuse / Deckel
 esp_y = split_y - 1.5 - esp_t;           // Vorderseite (Bauteilseite) der ESP-Platine
+// Rastlippe am oberen ESP-Ende: nur die Haelfte ohne Keramikantenne (S3 SuperMini, von vorne gesehen links)
+lip_x0 = -5.5; lip_x1 = 0.5;
 lid_t   = 4.2;             // Deckel (enthaelt Schwalbenschwanz-Nut)
 D  = split_y + lid_t;      // Gesamttiefe
 W  = iw + 2*wall;
@@ -166,8 +168,8 @@ module lid() {
             // oberer Anschlag mit Rastlippe: haelt das obere ESP-Ende in Richtung Radar
             box(-6, 6, esp_y-1.5, split_y+0.01, esp_l+0.3, esp_l+1.8);
             hull() {
-                box(-4, 4, esp_y-1.5, esp_y-0.05, esp_l+0.3, esp_l+0.31);
-                box(-4, 4, esp_y-0.8, esp_y-0.05, esp_l-1.0, esp_l+0.31);
+                box(lip_x0, lip_x1, esp_y-1.5, esp_y-0.05, esp_l+0.3, esp_l+0.31);
+                box(lip_x0, lip_x1, esp_y-0.8, esp_y-0.05, esp_l-1.0, esp_l+0.31);
             }
         }
         // M2 Senkkopf
@@ -231,7 +233,18 @@ module boards() {
     color("seagreen")  box(-l12/2, l12/2, front_t+so12, front_t+so12+t12, z12, z12+w12);
     color("white")     box(bx0+l50-6, bx0+l50+4, front_t+so+t50, front_t+so+t50+4.5, bz0+4, bz0+11);  // JST
     color("royalblue") box(-esp_w/2, esp_w/2, split_y-1.5-esp_t, split_y-1.5, 0, esp_l);
+    color("red")       esp_antenna();
+    color("black")     ld2450_header();
     color("silver")    box(-4.5, 4.5, split_y-1.5-esp_t-3.2, split_y-1.5-esp_t, -0.7, 7);
+}
+
+// Stiftleiste 2x4 (2,0 mm) auf der LD2450-Rueckseite, am Ende gegenueber der JST-Buchse
+module ld2450_header(pin_len = 6) {
+    box(bx0+2, bx0+6, front_t+so+t50, front_t+so+t50+pin_len, bz0+3.8, bz0+11.9);
+}
+// Keramikantenne am oberen Ende des ESP32-S3 SuperMini (aus Produktfotos geschaetzt)
+module esp_antenna() {
+    box(2.4, 8.0, esp_y-1.2, esp_y, esp_l-2.3, esp_l-0.3);
 }
 
 module sensor(explode=0) {
@@ -302,3 +315,5 @@ else if (part == "lid_only") color("gainsboro") lid();
 else if (part == "section_esp") {  // Schnitt bei x = 0, nur Deckel + ESP + Gehaeuse unten
     intersection() { union() { color("whitesmoke") shell(); color("gainsboro") lid(); boards(); } box(-100, 0, -50, 100, -50, 100); }
 }
+else if (part == "clash_header")  intersection() { union() { shell(); lid(); } ld2450_header(); }
+else if (part == "clash_antenna") intersection() { union() { shell(); lid(); } esp_antenna(); }
