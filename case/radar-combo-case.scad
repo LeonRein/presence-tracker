@@ -18,6 +18,7 @@ front_t  = 0.8;    // Radom (Front) - duenn halten (<= lambda/8 in PLA ~ 0.95 mm
 R        = 4;      // Eckenradius (Frontansicht)
 ch       = 1;      // 45-Grad-Fase an Vorder- und Hinterkante
 cl       = 0.25;   // Spiel fuer Platinen
+ri       = 0.5;    // Innenradius der Gehaeuseecken (<= 0,85, sonst stoesst die LD2450-Ecke an)
 
 l50 = 44;  w50 = 15; t50 = 1.2;   // LD2450
 jst = 7;                          // Platz fuer den JST-Stecker des LD2450 (0 = Kabel direkt angeloetet)
@@ -78,7 +79,7 @@ module rrect_y(w, z0, z1, r, y0, y1) {   // abgerundetes Rechteck in xz, extrudi
         translate([sx*(w/2-r), y0, z]) ycyl(y1-y0, r, r);
 }
 
-module cavity() { rrect_y(iw, 0, ih, R-wall, front_t, D+1); }
+module cavity() { rrect_y(iw, 0, ih, ri, front_t, D+1); }
 
 module box(x0,x1,y0,y1,z0,z1) {   // Ecken in beliebiger Reihenfolge
     translate([min(x0,x1), min(y0,y1), min(z0,z1)]) cube([abs(x1-x0), abs(y1-y0), abs(z1-z0)]);
@@ -105,7 +106,9 @@ module shell() {
             }
             // --- LD2450 Tasche ---
             // Abstandsleisten an den Enden
-            for (x=[bx0, bx0+l50-1.5]) box(x, x+1.5, front_t, front_t+so, bz0, bz0+w50);
+            // (bis an Wand, Rippe und Rippenstuecke verlaengert, damit keine 0,25-mm-Spalte bleiben)
+            box(-iw/2, bx0+1.5, front_t, front_t+so, bz0-cl, ih);
+            box(bx0+l50-1.5, bx0+l50+cl, front_t, front_t+so, bz0-cl, ih);
             // untere Rippe
             box(-iw/2, bx0+l50+cl+rib, front_t, top50, bz0-cl-rib, bz0-cl);
             // Stecker-Seite: nur kurze Stuecke oben/unten
@@ -119,11 +122,14 @@ module shell() {
 
             // --- Tasche LD2410C / LD2412 ---
             difference() {
-                box(-l12/2-cl-rib, l12/2+cl+rib, front_t, top12, max(0, z12-cl-rib), z12+w12+cl+rib);
+                // steht auf dem Boden und reicht bis an die untere LD2450-Rippe (keine Spalte)
+                box(-l12/2-cl-rib, l12/2+cl+rib, front_t, top12, 0, bz0-cl-rib);
                 box(-l12/2-cl, l12/2+cl, front_t-1, top12+1, z12-cl, z12+w12+cl);
             }
-            for (sx=[-1,1], z=[z12, z12+w12-1.2])
-                box(sx*8-1.5, sx*8+1.5, front_t, front_t+so12, z, z+1.2);
+            for (sx=[-1,1]) {   // Abstandshalter bis an die Rahmenrippen
+                box(sx*8-1.5, sx*8+1.5, front_t, front_t+so12, z12-cl, z12+1.2);
+                box(sx*8-1.5, sx*8+1.5, front_t, front_t+so12, z12+w12-1.2, z12+w12+cl);
+            }
             for (sx=[-1,1]) {
                 ridge_x(sx*6-3, sx*6+3, front_t+so12+t12+0.35, z12-cl, 1);
                 ridge_x(sx*6-3, sx*6+3, front_t+so12+t12+0.35, z12+w12+cl, -1);
@@ -156,8 +162,8 @@ module lid() {
             intersection() { body(); box(-W, W, split_y, D+1, zo0-1, zo1+1); }
             // Lippe (steckt im Gehaeuse)
             difference() {
-                rrect_y(iw-2*lcl, lcl, ih-lcl, R-wall-lcl, split_y-lip_h, split_y+0.01);
-                rrect_y(iw-2*lcl-2*lip_w, lcl+lip_w, ih-lcl-lip_w, max(0.5, R-wall-lcl-lip_w), split_y-lip_h-1, split_y+1);
+                rrect_y(iw-2*lcl, lcl, ih-lcl, max(0.2, ri-lcl), split_y-lip_h, split_y+0.01);
+                rrect_y(iw-2*lcl-2*lip_w, lcl+lip_w, ih-lcl-lip_w, 0.2, split_y-lip_h-1, split_y+1);
                 box(-10.5, 10.5, split_y-lip_h-1, split_y+1, -1, 3);        // Platz fuer ESP-Pins unten
                 for (sx=[-1,1]) translate([sx*boss_x, split_y-5, boss_z]) ycyl(6, 3.0, 3.0);
             }
@@ -331,3 +337,12 @@ else if (part == "section_esp") {  // Schnitt bei x = 0, nur Deckel + ESP + Geha
 else if (part == "clash_header")  intersection() { union() { shell(); lid(); } ld2450_header(); }
 else if (part == "clash_antenna") intersection() { union() { shell(); lid(); } esp_antenna(); }
 else if (part == "corner_section") intersection() { corner(); box(-60, 60, 0, 80, zo0-1, (zo0+zo1)/2); }
+else if (part == "clash_boards") intersection() {
+    union() { shell(); lid(); }
+    union() {   // Platinen mit 0,05 mm Abstand verkleinert, damit reine Auflageflaechen nicht zaehlen
+        box(bx0+0.05, bx0+l50-0.05, front_t+so+0.05, front_t+so+t50-0.05, bz0+0.05, bz0+w50-0.05);
+        box(-l12/2+0.05, l12/2-0.05, front_t+so12+0.05, front_t+so12+t12-0.05, z12+0.05, z12+w12-0.05);
+        box(-esp_w/2+0.05, esp_w/2-0.05, esp_y+0.05, esp_y+esp_t-0.05, 0.05, esp_l-0.05);
+        ld2450_header(); esp_antenna();
+    }
+}
