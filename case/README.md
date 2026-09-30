@@ -28,7 +28,7 @@ Druck zuerst `shell.stl` und prüf die Passung.
 - HLK-LD2450, HLK-LD2410C, ESP32-S3 SuperMini (C3 SuperMini passt auch)
 - dünne Litze (28–30 AWG) für den LD2410C
 - 2× M2×10 Senkkopf, selbstschneidend (Deckel)
-- Eckhalter: 2 Schrauben 3–3,5 mm + Dübel, oder doppelseitiges Klebeband
+- Eckhalter: 2 Schrauben 3–3,5 mm (Kopf bis Ø 7,5 mm, mind. 30 mm lang) + Dübel, oder doppelseitiges Klebeband
 - Schrankfuß: am besten ein **gewinkeltes USB-C-Kabel**
 
 ## Verkabelung (ESP32-S3 SuperMini)
@@ -52,7 +52,7 @@ Baudrate: LD2450 und LD2410C 256000 (ein LD2412 hätte laut Datenblatt 115200).
 2. LD2410C: Die eingelötete 5-polige Stiftleiste **muss ab** (auslöten, oder den Kunststoff aufschneiden und die Pins einzeln ziehen). Hinter dem LD2410C sitzt der ESP mit nur etwa 3 mm Abstand. Dann 4 dünne Litzen (VCC, GND, TX, RX) von hinten in die Lötlöcher an der Oberkante löten und flach zur Seite wegführen. Dann den Radar mit den Antennen nach vorne in die untere Tasche drücken, die Lötlöcher oben.
 3. Alle Kabel an den ESP löten. Den ESP mit der Bauteilseite zum Radar in den Deckel setzen, USB-C nach unten: erst das obere Ende (gegenüber USB-C) schräg unter die Rastlippe am oberen Anschlag schieben, dann das USB-Ende auf die Schienen drücken. Die seitlichen Führungen halten ihn seitlich, die Lippe oben und der USB-Ausschnitt im Gehäuse unten halten ihn in Richtung Radar. Ein Streifen doppelseitiges Klebeband auf den Schienen ist optional, ein Stück Kapton-Band hinten auf dem LD2410C schützt zusätzlich vor Kurzschluss.
 4. Deckel einsetzen (die USB-Buchse gleitet in den Ausschnitt unten) und mit 2× M2 verschrauben.
-5. Halter montieren und den Sensor von oben aufschieben.
+5. Halter montieren und den Sensor von oben aufschieben. Beim Eckhalter sitzt pro Wand eine Schraube, die senkrecht in die Wand geht. Den Schraubendreher schräg von vorne durch die Senkbohrung neben der Schiene ansetzen.
 
 Bei Bedarf ein Tropfen Heißkleber am Platinenrand, falls ein Radar wackelt.
 

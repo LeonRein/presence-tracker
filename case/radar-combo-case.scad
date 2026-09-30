@@ -192,6 +192,14 @@ module rail() {
 // ---------- Eckhalter ----------
 cW = W/2 + D - ch + 0.6;   // Wandebene: |x| + y = cW  (Fase des Sensors liegt parallel zur Wand)
 
+// Bohrung entlang lokaler z-Achse mit Tropfenspitze Richtung Welt-+z (nach rotate([-90,0,0]))
+module teardrop_bore(h, r) {
+    linear_extrude(height = h) hull() {
+        circle(r = r);
+        translate([0, -r*sqrt(2)]) square(0.01, center = true);
+    }
+}
+
 module corner() {
     hz = (zo0 + zo1) / 2;
     difference() {
@@ -200,12 +208,17 @@ module corner() {
                 polygon([[-(cW-D), D], [cW-D, D], [0, cW]]);
             rail();
         }
-        // je eine Schraube pro Wand (3-3,5 mm), Kopf versenkt, Zugang von vorne
+        // je eine Schraube pro Wand (3-3,5 mm, Kopf bis 7,5 mm), Kopf versenkt, Zugang von vorne.
+        // Eintritt bei x = +-15, damit der Schraubendreher an der Schiene vorbeikommt.
+        // Tropfenform, damit die liegenden Bohrungen ohne Stuetzen druckbar sind.
         for (sx=[-1,1]) {
-            xe = sx*13;
+            xe = sx*15;
+            to_wall = (cW - D - 15)/2*sqrt(2);      // Laenge der Achse bis zur Wand
             translate([xe, D, hz]) rotate([0,0,-sx*45]) rotate([-90,0,0]) {
-                translate([0,0,-1]) cylinder(h=30, r=1.9);
-                translate([0,0,-1]) cylinder(h=(cW-D-13)/2*sqrt(2) - 3 + 1, r=3.4);
+                translate([0,0,-1]) teardrop_bore(to_wall + 2, 1.9);
+                // beginnt 5 mm vor dem Eintrittspunkt: die Bohrung trifft die Front unter 45 Grad,
+                // sonst bleibt innen ein Steg stehen, an dem der Schraubenkopf haengt
+                translate([0,0,-5]) teardrop_bore(to_wall - 3 + 5, 4.0);   // 3 mm Material unter dem Kopf
             }
         }
     }
@@ -317,3 +330,4 @@ else if (part == "section_esp") {  // Schnitt bei x = 0, nur Deckel + ESP + Geha
 }
 else if (part == "clash_header")  intersection() { union() { shell(); lid(); } ld2450_header(); }
 else if (part == "clash_antenna") intersection() { union() { shell(); lid(); } esp_antenna(); }
+else if (part == "corner_section") intersection() { corner(); box(-60, 60, 0, 80, zo0-1, (zo0+zo1)/2); }
