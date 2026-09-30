@@ -1,6 +1,8 @@
-# Kombi-Präsenzsensor LD2450 + LD2412 – Gehäuse
+# Kombi-Präsenzsensor LD2450 + LD2410C – Gehäuse
 
-Flaches Gehäuse (54,7 × 34,2 × 16 mm) für beide Radare und einen ESP32-S3/C3 SuperMini.
+Flaches Gehäuse (54,7 × 39 × 16 mm) für beide Radare und einen ESP32-S3/C3 SuperMini.
+Die untere Tasche ist für den **LD2410C** ausgelegt. Mit `static_radar = "LD2412"` in der `.scad`-Datei
+wird sie für den LD2412 umgebaut (dann ist das Gehäuse 34,2 mm hoch).
 Der Sensor wird auf einen Halter geschoben (Schwalbenschwanz):
 
 - **Eckhalter** (`stl/corner.stl`): Keil für die Raumecke, der Sensor schaut diagonal in den Raum.
@@ -23,7 +25,8 @@ Druck zuerst `shell.stl` und prüf die Passung.
 
 ## Teile
 
-- HLK-LD2450 (mit Kabel), HLK-LD2412, ESP32-S3 SuperMini (C3 SuperMini passt auch)
+- HLK-LD2450 (mit Kabel), HLK-LD2410C **ohne** Stiftleiste, ESP32-S3 SuperMini (C3 SuperMini passt auch)
+- dünne Litze (28–30 AWG) für den LD2410C
 - 2× M2×10 Senkkopf, selbstschneidend (Deckel)
 - Eckhalter: 2 Schrauben 3–3,5 mm + Dübel, oder doppelseitiges Klebeband
 - Schrankfuß: am besten ein **gewinkeltes USB-C-Kabel**
@@ -35,18 +38,18 @@ Druck zuerst `shell.stl` und prüf die Passung.
 | LD2450 | 5V / GND | 5V / GND |
 | LD2450 | TX → | GPIO1 (RX) |
 | LD2450 | RX ← | GPIO2 (TX) |
-| LD2412 | +5V / GND | 5V / GND |
-| LD2412 | TX → | GPIO4 (RX) |
-| LD2412 | RX ← | GPIO5 (TX) |
+| LD2410C | VCC / GND | 5V / GND |
+| LD2410C | TX → | GPIO4 (RX) |
+| LD2410C | RX ← | GPIO5 (TX) |
 
 Beim S3 lassen sich die UARTs auf beliebige GPIOs legen. GPIO0, 3, 45 und 46 meiden, das sind Strapping-Pins.
 Die Logs laufen über USB, ein dritter UART bleibt frei.
-Baudrate: LD2450 256000, LD2412 laut Datenblatt 115200.
+Baudrate: LD2450 und LD2410C 256000 (ein LD2412 hätte laut Datenblatt 115200).
 
 ## Zusammenbau
 
 1. LD2450: JST-Kabel einstecken, Dupont-Enden abschneiden. Den Radar mit den goldenen Antennen nach vorne in die obere Tasche drücken, bis er einrastet. Der Stecker sitzt rechts (von vorne gesehen).
-2. LD2412: 4 Litzen (5V, GND, TX, RX) von hinten anlöten und den Radar mit den Antennen nach vorne in die untere Tasche drücken.
+2. LD2410C: 4 dünne Litzen (VCC, GND, TX, RX) von hinten in die Lötlöcher an der Oberkante löten und flach nach hinten wegführen. Hinter dem LD2410C sitzt der ESP mit nur etwa 3 mm Abstand, deshalb keine Stiftleiste verwenden (falls eine eingelötet ist, Pins kurz abschneiden). Dann den Radar mit den Antennen nach vorne in die untere Tasche drücken, die Lötlöcher oben.
 3. Alle Kabel an den ESP löten. Den ESP mit der Bauteilseite zum Radar auf die Schienen im Deckel legen, USB-C nach unten, und mit einem Streifen doppelseitigem Klebeband fixieren.
 4. Deckel einsetzen (die USB-Buchse gleitet in den Ausschnitt unten) und mit 2× M2 verschrauben.
 5. Halter montieren und den Sensor von oben aufschieben.

@@ -1,4 +1,4 @@
-// Kombi-Gehaeuse: HLK-LD2450 + HLK-LD2412 + ESP32-C3/S3 SuperMini
+// Kombi-Gehaeuse: HLK-LD2450 + HLK-LD2410C (oder LD2412) + ESP32-S3/C3 SuperMini
 // Teile: Gehaeuse (shell), Deckel (lid), Eckhalter (corner), Schrankfuss (stand)
 //
 // Koordinaten (Sensor): x = rechts, y = Tiefe (0 = Front, +y Richtung Wand), z = oben
@@ -21,13 +21,19 @@ cl       = 0.25;   // Spiel fuer Platinen
 
 l50 = 44;  w50 = 15; t50 = 1.2;   // LD2450
 jst = 7;                          // Platz fuer den JST-Stecker des LD2450 (0 = Kabel direkt angeloetet)
-l12 = 28;  w12 = 11; t12 = 1.0;   // LD2412
+// Radar fuer stille Personen (untere Tasche): "LD2410C" (22 x 16 mm) oder "LD2412" (28 x 11 mm)
+static_radar = "LD2410C";
+l12 = static_radar == "LD2412" ? 28  : 22;
+w12 = static_radar == "LD2412" ? 11  : 16;
+t12 = static_radar == "LD2412" ? 1.0 : 1.2;
+so12 = static_radar == "LD2412" ? 1.0 : 1.2;   // Abstand, LD2410C hat Bauteile auf der Front
 so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 
 esp_w = 18; esp_l = 22.6; esp_t = 1.0;   // ESP32-C3 / S3 SuperMini
 
 iw = l50 + 2*cl + jst;     // Innenbreite
-ih = 31;                   // Innenhoehe
+z12 = 1.5;                 // Unterkante untere Radar-Platine
+ih = z12 + w12 + 2*1.0 + 3*cl + 0.5 + w50;   // Innenhoehe (LD2412: 31, LD2410C: 35.75)
 split_y = 11.8;            // Trennebene Gehaeuse / Deckel
 lid_t   = 4.2;             // Deckel (enthaelt Schwalbenschwanz-Nut)
 D  = split_y + lid_t;      // Gesamttiefe
@@ -38,13 +44,12 @@ H  = zo1 - zo0;
 // Radar-Positionen
 bx0 = -iw/2 + cl;               // LD2450 linke Kante (Stecker-Seite rechts)
 bz0 = ih - cl - w50;            // LD2450 Unterkante
-z12 = 1.5;                      // LD2412 Unterkante
 
 boss_x = 21.5; boss_z = 6;      // M2-Schrauben Deckel
 
 // Schwalbenschwanz (Halter-Schiene / Deckel-Nut)
 dt_base = 5;  dt_tip = 7;  dt_h = 3;  dt_cl = 0.25;
-dt_top  = 24;                   // Nut oben geschlossen -> Sensor liegt auf
+dt_top  = ih - 7;               // Nut oben geschlossen -> Sensor liegt auf
 
 // Schrankfuss
 tilt = 10;       // Neigung nach unten (Grad)
@@ -85,7 +90,7 @@ module ridge_x(x0, x1, y, z, dir) {   // dir: +1 = ragt nach +z, -1 = nach -z
 module shell() {
     rib = 1.0;
     top50 = front_t + so + t50 + 0.8;
-    top12 = front_t + so + t12 + 0.8;
+    top12 = front_t + so12 + t12 + 0.8;
     difference() {
         union() {
             difference() {
@@ -106,16 +111,16 @@ module shell() {
             ridge_x(bx0+6, bx0+14, front_t+so+t50+0.35, ih, -1);
             ridge_x(bx0+30, bx0+38, front_t+so+t50+0.35, ih, -1);
 
-            // --- LD2412 Tasche ---
+            // --- Tasche LD2410C / LD2412 ---
             difference() {
                 box(-l12/2-cl-rib, l12/2+cl+rib, front_t, top12, max(0, z12-cl-rib), z12+w12+cl+rib);
                 box(-l12/2-cl, l12/2+cl, front_t-1, top12+1, z12-cl, z12+w12+cl);
             }
             for (sx=[-1,1], z=[z12, z12+w12-1.2])
-                box(sx*8-1.5, sx*8+1.5, front_t, front_t+so, z, z+1.2);
+                box(sx*8-1.5, sx*8+1.5, front_t, front_t+so12, z, z+1.2);
             for (sx=[-1,1]) {
-                ridge_x(sx*6-3, sx*6+3, front_t+so+t12+0.35, z12-cl, 1);
-                ridge_x(sx*6-3, sx*6+3, front_t+so+t12+0.35, z12+w12+cl, -1);
+                ridge_x(sx*6-3, sx*6+3, front_t+so12+t12+0.35, z12-cl, 1);
+                ridge_x(sx*6-3, sx*6+3, front_t+so12+t12+0.35, z12+w12+cl, -1);
             }
 
             // --- Schraubdome ---
@@ -213,7 +218,7 @@ module stand() {
 // ---------- Vorschau ----------
 module boards() {
     color("seagreen")  box(bx0, bx0+l50, front_t+so, front_t+so+t50, bz0, bz0+w50);
-    color("seagreen")  box(-l12/2, l12/2, front_t+so, front_t+so+t12, z12, z12+w12);
+    color("seagreen")  box(-l12/2, l12/2, front_t+so12, front_t+so12+t12, z12, z12+w12);
     color("white")     box(bx0+l50-6, bx0+l50+4, front_t+so+t50, front_t+so+t50+4.5, bz0+4, bz0+11);  // JST
     color("royalblue") box(-esp_w/2, esp_w/2, split_y-1.5-esp_t, split_y-1.5, 0, esp_l);
     color("silver")    box(-4.5, 4.5, split_y-1.5-esp_t-3.2, split_y-1.5-esp_t, -0.7, 7);
