@@ -29,12 +29,14 @@ t12 = static_radar == "LD2412" ? 1.0 : 1.2;
 so12 = static_radar == "LD2412" ? 1.0 : 1.2;   // Abstand, LD2410C hat Bauteile auf der Front
 so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 
-esp_w = 18; esp_l = 22.6; esp_t = 1.0;   // ESP32-C3 / S3 SuperMini
+esp_w = 18; esp_l = 22.6; esp_t = 1.0;   // ESP32-S3 / C3 SuperMini
+usb_h = 3.2;                             // Hoehe USB-C-Buchse ueber der Platine
 
 iw = l50 + 2*cl + jst;     // Innenbreite
 z12 = 1.5;                 // Unterkante untere Radar-Platine
 ih = z12 + w12 + 2*1.0 + 3*cl + 0.5 + w50;   // Innenhoehe (LD2412: 31, LD2410C: 35.75)
 split_y = 11.8;            // Trennebene Gehaeuse / Deckel
+esp_y = split_y - 1.5 - esp_t;           // Vorderseite (Bauteilseite) der ESP-Platine
 lid_t   = 4.2;             // Deckel (enthaelt Schwalbenschwanz-Nut)
 D  = split_y + lid_t;      // Gesamttiefe
 W  = iw + 2*wall;
@@ -76,7 +78,9 @@ module rrect_y(w, z0, z1, r, y0, y1) {   // abgerundetes Rechteck in xz, extrudi
 
 module cavity() { rrect_y(iw, 0, ih, R-wall, front_t, D+1); }
 
-module box(x0,x1,y0,y1,z0,z1) { translate([x0,y0,z0]) cube([x1-x0, y1-y0, z1-z0]); }
+module box(x0,x1,y0,y1,z0,z1) {   // Ecken in beliebiger Reihenfolge
+    translate([min(x0,x1), min(y0,y1), min(z0,z1)]) cube([abs(x1-x0), abs(y1-y0), abs(z1-z0)]);
+}
 
 // Rastnase entlang x (haelt Platine gegen Herausfallen)
 module ridge_x(x0, x1, y, z, dir) {   // dir: +1 = ragt nach +z, -1 = nach -z
@@ -129,7 +133,8 @@ module shell() {
         // Schraubloecher M2
         for (sx=[-1,1]) translate([sx*boss_x, split_y-9, boss_z]) ycyl(9.1, 0.85, 0.85);
         // USB-C Ausschnitt (unten, zur Rueckseite offen)
-        box(-5.25, 5.25, 5.5, split_y+1, zo0-1, 0.01);
+        // Vorderkante 0,3 mm vor der Buchse: haelt das untere ESP-Ende in Richtung Radar
+        box(-5.25, 5.25, esp_y-usb_h-0.3, split_y+1, zo0-1, 0.01);
         // Lueftung oben und unten
         for (x=[-22:4:14]) box(x-0.7, x+0.7, 6, 10.5, ih-0.01, zo1+1);
         for (x=[-22,-18,-14,10,14,18]) box(x-0.7, x+0.7, 6, 10.5, zo0-1, 0.01);
@@ -158,7 +163,12 @@ module lid() {
             for (sx=[-1,1]) box(sx*3.5-1, sx*3.5+1, split_y-1.5, split_y+0.01, 2, 20);
             // seitliche Fuehrungen und oberer Anschlag
             for (sx=[-1,1]) box(sx*(esp_w/2+0.3), sx*(esp_w/2+1.8), split_y-1.5-esp_t-2.5, split_y+0.01, 12, esp_l+1.5);
-            box(-6, 6, split_y-1.5-esp_t-1.5, split_y+0.01, esp_l+0.3, esp_l+1.8);
+            // oberer Anschlag mit Rastlippe: haelt das obere ESP-Ende in Richtung Radar
+            box(-6, 6, esp_y-1.5, split_y+0.01, esp_l+0.3, esp_l+1.8);
+            hull() {
+                box(-4, 4, esp_y-1.5, esp_y-0.05, esp_l+0.3, esp_l+0.31);
+                box(-4, 4, esp_y-0.8, esp_y-0.05, esp_l-1.0, esp_l+0.31);
+            }
         }
         // M2 Senkkopf
         for (sx=[-1,1]) translate([sx*boss_x, split_y-1, boss_z]) {
@@ -287,4 +297,8 @@ else if (part == "m_exploded") mirror([0,1,0]) {
     color("white") shell(); boards();
     translate([0, 22, 0]) color("gainsboro") lid();
     translate([0, 48, 0]) color("white") corner();
+}
+else if (part == "lid_only") color("gainsboro") lid();
+else if (part == "section_esp") {  // Schnitt bei x = 0, nur Deckel + ESP + Gehaeuse unten
+    intersection() { union() { color("whitesmoke") shell(); color("gainsboro") lid(); boards(); } box(-100, 0, -50, 100, -50, 100); }
 }
