@@ -33,14 +33,21 @@ Druck zuerst `shell.stl` und prüf die Passung.
 
 ## Verkabelung (ESP32-S3 SuperMini)
 
-| Radar | Radar-Pin | ESP32-S3 |
-|---|---|---|
-| LD2450 | 5V / GND | 5V / GND |
-| LD2450 | TX → | GPIO1 (RX) |
-| LD2450 | RX ← | GPIO2 (TX) |
-| LD2410C | VCC / GND | 5V / GND |
-| LD2410C | TX → | GPIO4 (RX) |
-| LD2410C | RX ← | GPIO5 (TX) |
+![Verdrahtung](verdrahtung.svg)
+
+| Radar | Radar-Pin | ESP32-S3 | ESPHome |
+|---|---|---|---|
+| LD2450 | 5V / GND | 5V / GND | – |
+| LD2450 | RX ← | GPIO1 | `tx_pin: GPIO1` |
+| LD2450 | TX → | GPIO2 | `rx_pin: GPIO2` |
+| LD2410C | VCC / GND | 5V / GND | – |
+| LD2410C | RX ← | GPIO4 | `tx_pin: GPIO4` |
+| LD2410C | TX → | GPIO5 | `rx_pin: GPIO5` |
+
+Die Pins sind so gewählt, dass sich keine Signalleitungen kreuzen.
+Am ESP-Pin 5V und GND kommen je zwei Drähte an, einer zu jedem Radar.
+LD2450-Belegung laut Datenblatt (Stiftleiste: 5V · 3.3V · PA9 · GND | RX · TX · DP · DM): vor dem Löten mit dem Aufdruck vergleichen.
+Der LD2410C ist vorne mit TX · RX · OUT · GND · VCC bedruckt, von hinten gesehen ist die Reihenfolge gespiegelt. OUT bleibt frei.
 
 Beim S3 lassen sich die UARTs auf beliebige GPIOs legen. GPIO0, 3, 45 und 46 meiden, das sind Strapping-Pins.
 Die Logs laufen über USB, ein dritter UART bleibt frei.
