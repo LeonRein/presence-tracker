@@ -42,10 +42,10 @@ so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 ridge_up  = 0.6;   // Rastnasen-Mitte ueber der Platinenrueckseite (Nase beginnt 0,1 mm darueber)
 inner_top = front_t + max(so + t50, so12 + t12) + ridge_up + 0.5;   // knapp ueber den Nasen
 
-esp_w = 18; esp_l = 23.0; esp_t = 1.6;   // ESP32-S3 SuperMini; Laenge gemessen (Datenblatt 22,52),
+esp_w = 18; esp_l = 23.0; esp_t = 1.65;  // ESP32-S3 SuperMini; Laenge und Dicke gemessen (Datenblatt 22,52),
                                          // Dicke angenommen (Standard 1,6) - federnder Arm gleicht 1,2..1,9 aus
 usb_over = 1.9;                          // USB-C-Buchse steht so weit ueber die Platinenkante (gemessen)
-esp_z0 = 0.2;                            // Unterkante ESP-Platine (Innenboden = 0); Buchse ragt durch den Ausschnitt
+esp_z0 = 0;                              // ESP-Unterkante liegt auf dem Boden bzw. der Deckelnase; Buchse ragt durch den Ausschnitt
 usb_h = 3.2;                             // Hoehe USB-C-Buchse ueber der Platine
 
 iw = g50 + l50 + cl + jst;   // Innenbreite
@@ -56,14 +56,14 @@ esp_y = split_y - 1.5 - esp_t;           // Vorderseite (Bauteilseite) der ESP-P
 // Rastlippe am oberen ESP-Ende: nur die Haelfte ohne Keramikantenne (S3 SuperMini, von vorne gesehen links)
 // Gemessen am echten Board: Antenne bei x = -0,9 ... 5,7, Pad von Pin 8 ab x = -7,6
 // Federarm mit Rastnase (antennenfreier Streifen): x-Bereich
-arm_x0 = -4.5; arm_x1 = -1.6;
+rid_x0 = -6.0; rid_x1 = -2.0;    // obere Rastnase im antennenfreien Streifen
 esp_top = esp_z0 + esp_l;                // Oberkante ESP-Platine
-// Rasthaken fuer das obere ESP-Ende: steht auf einem Federsteg, der durch zwei Schlitze in der
-// Deckelplatte freigestellt ist (biegt in der Schichtebene). arm_x0..arm_x1 = Hakenbreite.
-hook_y   = 9.5;    // Unterkante der 45-Grad-Schraege am Zahn (ESP-Unterkante liegt dann auf dem Boden)
-hook_top = 7.9;    // Oberseite des Hakens
-spr_x0 = -13; spr_x1 = 6.9;   // Federsteg in der Deckelplatte (Mitte unter dem Haken)
-spr_t  = 0.7;      // Dicke des Federstegs (z)
+// ESP wie die Radare: oben Rastnase auf einem schwebenden Federsteg, unten feste Keilnasen
+eb_x0 = -13; eb_x1 = 6.9;   // Federsteg zwischen zwei Pfosten (x)
+eb_t   = 0.9;               // Dicke des Federstegs (z)
+eb_gap = 1.0;               // Luft zwischen Steg und Deckelinnenseite (Bruecke)
+eb_ytop = 7.6;              // Steg reicht bis hier nach vorne (y)
+notch_hw = 6.65;            // halbe Breite des USB-Ausschnitts (Platz fuer die Fluegel mit den Keilnasen)
 lid_t   = 4.2;             // Deckel (enthaelt Schwalbenschwanz-Nut)
 D  = split_y + lid_t;      // Gesamttiefe
 W  = iw + 2*wall;
@@ -78,7 +78,7 @@ boss_x = 21.5; boss_z = 6;      // M2-Schrauben Deckel
 
 // Schwalbenschwanz (Halter-Schiene / Deckel-Nut)
 dt_base = 5;  dt_tip = 7;  dt_h = 3;  dt_cl = 0.25;
-dt_top  = esp_top - 1.5;        // Nut oben geschlossen -> Sensor liegt auf; endet vor den Federschlitzen
+dt_top  = ih - 7;               // Nut oben geschlossen -> Sensor liegt auf
 
 // Schrankfuss
 tilt = 10;       // Neigung nach unten (Grad)
@@ -190,7 +190,8 @@ module shell() {
         for (sx=[-1,1]) translate([sx*boss_x, split_y-9, boss_z]) ycyl(9.1, 1.0, 1.0);   // M2 selbstschneidend: Kern 2,0
         // USB-C Ausschnitt (unten, zur Rueckseite offen)
         // Vorderkante 0,3 mm vor der Buchse: haelt das untere ESP-Ende in Richtung Radar
-        box(-5.25, 5.25, esp_y-usb_h-0.3, split_y+1, zo0-1, 0.01);
+        // breiter als die Buchse: links/rechts sitzen die Fluegel der Deckelnase mit den Keilnasen
+        box(-notch_hw, notch_hw, esp_y-usb_h-0.3, split_y+1, zo0-1, 0.01);
         // Lueftung oben und unten
         for (x=[-22:4:14]) box(x-0.7, x+0.7, 6, 10.5, ih-0.01, zo1+1);
         for (x=[-22,-18,-14,10,14,18]) box(x-0.7, x+0.7, 6, 10.5, zo0-1, 0.01);
@@ -210,9 +211,16 @@ module lid() {
             intersection() { body(); box(-W, W, split_y, D+1, zo0-1, zo1+1); }
             // Nase: fuellt den USB-Ausschnitt in der Bodenwand hinter der Buchse (unter der Platine),
             // es bleibt nur die Oeffnung fuer den Stecker
-            intersection() {
-                body();
-                box(-5.25+0.15, 5.25-0.15, split_y-1.5-1.0+0.15, split_y+0.01, zo0-1, 0);
+            // ... und ist zugleich die Auflage fuer die ESP-Unterkante (z = 0)
+            intersection() { body(); box(-4.65, 4.65, esp_y+0.15, split_y+0.01, zo0-1, 0); }
+            // Fluegel links/rechts der Buchse bis an die Vorderkante des Ausschnitts, darauf je eine
+            // feste Keilnase vor der Platinenvorderseite (45 Grad, druckbar; wie die festen Radar-Nasen)
+            for (sx=[-1,1]) {
+                intersection() { body(); box(sx*4.65, sx*(notch_hw-0.15), esp_y-usb_h-0.3+0.15, split_y+0.01, zo0-1, 0); }
+                hull() {
+                    box(sx*4.65, sx*(notch_hw-0.15), esp_y-0.75, esp_y-0.05, -0.01, 0);
+                    box(sx*4.65, sx*(notch_hw-0.15), esp_y-0.75, esp_y-0.74, -0.01, 0.7);
+                }
             }
             // Lippe (steckt im Gehaeuse)
             difference() {
@@ -238,13 +246,22 @@ module lid() {
                 box(sx*(esp_w/2+0.3), sx*(esp_w/2+1.8), esp_y-0.5, split_y+0.01, 12, esp_top-1.0);
                 box(sx*(esp_w/2+0.3), sx*(esp_w/2+1.8+(split_y-esp_y+0.5)), split_y-0.01, split_y+0.01, 12, esp_top-1.0);
             }
-            // Zahn mit Rasthaken auf dem Federsteg (Steg = Teil der Deckelplatte, siehe Schlitze).
-            // Unterseite des Hakens 45 Grad: druckbar ohne Stuetzen und drueckt die Platinenkante
-            // gleichzeitig auf die Schienen und Richtung Boden.
-            box(arm_x0, arm_x1, hook_top, split_y+0.01, esp_top+0.3, esp_top+1.8);
+            // Federsteg ueber dem oberen ESP-Ende (wie zwischen den Radar-Taschen): schwebt eb_gap ueber
+            // der Deckelinnenseite, haengt nur an zwei Pfosten, biegt in der Schichtebene
+            box(eb_x0, eb_x1, eb_ytop, split_y-eb_gap, esp_top+cl, esp_top+cl+eb_t);
+            for (e = [[eb_x0, -1], [eb_x1, 1]]) hull() {      // Pfosten mit 45-Grad-Stuetze nach aussen
+                box(e[0], e[0]+e[1]*1.5, eb_ytop, split_y+0.01, esp_top+cl, esp_top+cl+eb_t+0.5);
+                box(e[0], e[0]+e[1]*(1.5+split_y-eb_ytop), split_y-0.01, split_y+0.01, esp_top+cl, esp_top+cl+eb_t+0.5);
+            }
+            // Rastnase am Steg vor der Platinenvorderseite, 45 Grad beidseitig
             hull() {
-                box(arm_x0, arm_x1, hook_top, hook_top+0.6, esp_top+0.3-(hook_y-hook_top-0.6), esp_top+0.31);
-                box(arm_x0, arm_x1, hook_top, hook_y, esp_top+0.3, esp_top+0.31);
+                box(rid_x0, rid_x1, esp_y+0.2-1.1, esp_y+0.2, esp_top+cl-0.01, esp_top+cl);
+                box(rid_x0, rid_x1, esp_y+0.2-0.6, esp_y+0.2-0.5, esp_top+cl-0.55, esp_top+cl);
+            }
+            // fester Anschlag hinter dem Steg: begrenzt den Federweg auf 0,6 mm (z. B. beim Einstecken)
+            hull() {
+                box(rid_x0, rid_x1, eb_ytop, split_y+0.01, esp_top+cl+eb_t+0.6, esp_top+cl+eb_t+1.8);
+                box(rid_x0, rid_x1, split_y-0.01, split_y+0.01, esp_top+cl+eb_t+0.6, esp_top+cl+eb_t+1.8+(split_y-eb_ytop));
             }
         }
         // M2 Senkkopf
@@ -253,13 +270,6 @@ module lid() {
             translate([0, lid_t+1-1.2, 0]) ycyl(1.21, 1.3, 2.2);
             translate([0, lid_t+1, 0]) ycyl(1, 2.2, 2.2);
         }
-        // Schlitze durch die Deckelplatte: stellen den Federsteg frei. Unter dem Zahn bleibt ein
-        // 1,5 mm breites Polster stehen. Der hintere Schlitz begrenzt den Federweg auf 0,6 mm.
-        for (zr = [[esp_top-0.4, esp_top+0.3+0.4], [esp_top+0.3+0.4+spr_t, esp_top+2.4]])
-            difference() {
-                box(spr_x0, spr_x1, split_y-1, D+1, zr[0], zr[1]);
-                box(arm_x0, arm_x1, split_y-2, D+2, esp_top+0.3, esp_top+1.8);
-            }
         // Schwalbenschwanz-Nut (unten offen, oben geschlossen)
         translate([0, D, zo0-1]) linear_extrude(height = dt_top - zo0 + 1) dovetail_profile(dt_cl);
     }
@@ -425,8 +435,7 @@ else if (part == "clash_boards") intersection() {
     union() {   // Platinen mit 0,05 mm Abstand verkleinert, damit reine Auflageflaechen nicht zaehlen
         box(bx0+0.05, bx0+l50-0.05, front_t+so+0.05, front_t+so+t50-0.05, bz0+0.05, bz0+w50-0.05);
         box(-l12/2+0.05, l12/2-0.05, front_t+so12+0.05, front_t+so12+t12-0.05, z12+0.05, z12+w12-0.05);
-        // oberstes 1 mm ausgenommen: dort drueckt der Haken gewollt mit Vorspannung auf die Kante
-        box(-esp_w/2+0.05, esp_w/2-0.05, esp_y+0.05, esp_y+esp_t-0.05, 0.05, esp_top-1.0);
+        box(-esp_w/2+0.05, esp_w/2-0.05, esp_y+0.05, esp_y+esp_t-0.05, esp_z0+0.05, esp_top-0.05);
         ld2450_header(); esp_antenna(); esp_usb();
         if (static_radar == "LD2410C") ld2410c_front_parts();
     }
@@ -439,8 +448,6 @@ else if (part == "test_beams")  // Teststueck: Front mit Taschen, Federstegen un
     rotate([90,0,0]) intersection() { shell(); box(-100, 100, -1, inner_top + 0.4, zo0-1, zo1+1); }
 else if (part == "clash_lid_shell") intersection() { shell(); lid(); }
 else if (part == "bottom_view") { color("whitesmoke") shell(); color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); color("silver") esp_usb(); }
-else if (part == "section_arm") intersection() { union() { color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); } box(-100, (arm_x0+arm_x1)/2, -50, 100, -50, 100); }
-else if (part == "chk_slots_free") intersection() { lid(); union() {   // muss leer sein: Schlitze wirklich offen
-    difference() { box(spr_x0+0.05, spr_x1-0.05, split_y+0.05, D-0.05, esp_top-0.35, esp_top+0.65); box(arm_x0-0.05, arm_x1+0.05, 0, 30, esp_top+0.25, esp_top+1.85); }
-    difference() { box(spr_x0+0.05, spr_x1-0.05, split_y+0.05, D-0.05, esp_top+0.7+spr_t+0.05, esp_top+2.35); box(arm_x0-0.05, arm_x1+0.05, 0, 30, esp_top+0.25, esp_top+1.85); } } }
-else if (part == "chk_beam_present") intersection() { lid(); box(spr_x0, spr_x1, split_y, D, esp_top+0.75, esp_top+0.65+spr_t); }
+else if (part == "section_arm") intersection() { union() { color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); } box(-100, (rid_x0+rid_x1)/2, -50, 100, -50, 100); }
+else if (part == "chk_eb_gap") intersection() { lid(); box(eb_x0+0.05, eb_x1-0.05, split_y-eb_gap+0.05, split_y-0.05, esp_top+cl+0.05, esp_top+cl+eb_t-0.05); }  // muss leer sein
+else if (part == "chk_eb_free") intersection() { lid(); box(eb_x0+0.05, eb_x1-0.05, eb_ytop+0.05, split_y-0.05, esp_top+cl+eb_t+0.05, esp_top+cl+eb_t+0.55); }  // muss leer sein: Federweg hinter dem Steg
