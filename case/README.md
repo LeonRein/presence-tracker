@@ -1,6 +1,6 @@
 # Kombi-Präsenzsensor LD2450 + LD2410C – Gehäuse
 
-Flaches Gehäuse (56 × 39 × 16 mm) für beide Radare und einen ESP32-S3/C3 SuperMini.
+Flaches Gehäuse (56 × 39,6 × 16 mm) für beide Radare und einen ESP32-S3/C3 SuperMini.
 Die untere Tasche ist für den **LD2410C** ausgelegt. Mit `static_radar = "LD2412"` in der `.scad`-Datei
 wird sie für den LD2412 umgebaut (dann ist das Gehäuse 34,2 mm hoch).
 Der Sensor wird auf einen Halter geschoben (Schwalbenschwanz):
