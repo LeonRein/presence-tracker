@@ -37,6 +37,8 @@ fgap = 1.0;    // Luft zwischen Steg und Front (Steg wird als Bruecke gedruckt, 
 sgap = 0.7;    // Schlitz zwischen den beiden Stegen
 rib  = 1.2;    // Dicke der festen Innenrippen
 npil = 4;      // Ausbrech-Saeulen unter dem LD2450-Steg (nur fuer den Druck, danach herausbrechen)
+npil12 = 2;    // dito unter dem LD2410C-Steg
+npil_esp = 3;  // dito unter dem ESP-Steg im Deckel
 so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 // Gemeinsame Hoehe aller Innenwaende (y): knapp ueber den Rastnasen beider Radare
 ridge_up  = 0.6;   // Rastnasen-Mitte ueber der Platinenrueckseite (Nase beginnt 0,1 mm darueber)
@@ -143,11 +145,14 @@ module shell() {
             // werden danach herausgebrochen
             let (x0 = bx0+1.5, x1 = bx0+l50-1.5)
                 for (i = [1:npil]) let (xp = x0 + i*(x1-x0)/(npil+1))
-                    // schmaler als der Steg (0,8 x 0,8 mm), damit sie leicht abbrechen
-                    box(xp-0.4, xp+0.4, front_t-0.01, front_t+fgap+0.01, bz0-cl-fb/2-0.4, bz0-cl-fb/2+0.4);
+                    // ueber die volle Stegbreite, in Laengsrichtung nur 0,8 mm (bricht leicht ab)
+                    box(xp-0.4, xp+0.4, front_t-0.01, front_t+fgap+0.01, bz0-cl-fb, bz0-cl);
             // Stecker-Seite: nur kurze Stuecke oben/unten
-            box(bx0+l50+cl, bx0+l50+cl+rib, front_t, top50, bz0-cl-fb, bz0+3);
-            box(bx0+l50+cl, bx0+l50+cl+rib, front_t, top50, ih-3, ih);
+            // (mit 45-Grad-Stuetze nach aussen Richtung Stecker-Raum, wie im Deckel)
+            for (zr = [[bz0-cl-fb, bz0+3], [ih-3, ih]]) hull() {
+                box(bx0+l50+cl, bx0+l50+cl+rib, front_t, top50, zr[0], zr[1]);
+                box(bx0+l50+cl, bx0+l50+cl+rib+(top50-front_t), front_t-0.01, front_t, zr[0], zr[1]);
+            }
             // Rastnasen
             ridge_x(bx0+6, bx0+14, front_t+so+t50+0.35, bz0-cl, 1);
             ridge_x(bx0+30, bx0+38, front_t+so+t50+0.35, bz0-cl, 1);
@@ -162,6 +167,16 @@ module shell() {
                 // Luft unter dem Steg: nur die Seitenrippen halten ihn
                 box(-l12/2-cl, l12/2+cl, front_t-1, front_t+fgap, z12+w12+cl-0.01, z12+w12+cl+fb+0.01);
             }
+            // 45-Grad-Stuetzen aussen an den Seitenrippen der LD2410C-Tasche (wie im Deckel)
+            for (sx=[-1,1]) hull() {
+                box(sx*(l12/2+cl), sx*(l12/2+cl+rib), front_t, top12, 0, z12+w12+cl+fb);
+                box(sx*(l12/2+cl), sx*(l12/2+cl+rib+(top12-front_t)), front_t-0.01, front_t, 0, z12+w12+cl+fb);
+            }
+            // Ausbrech-Saeulen unter dem LD2410C-Federsteg (wie beim LD2450): stuetzen die Bruecke
+            // beim Druck, werden danach herausgebrochen
+            let (x0 = -l12/2-cl, x1 = l12/2+cl)
+                for (i = [1:npil12]) let (xp = x0 + i*(x1-x0)/(npil12+1))
+                    box(xp-0.4, xp+0.4, front_t-0.01, front_t+fgap+0.01, z12+w12+cl, z12+w12+cl+fb);
             if (static_radar == "LD2410C")
                 // Auflage nur an den kurzen Seiten: auf der Front sitzen Bauteile entlang der
                 // Unterkante, Chip und Antennen in der Mitte (am echten Board geprueft).
@@ -202,6 +217,11 @@ module shell() {
 module dovetail_profile(extra=0) {   // in xy, Basis bei y=0, Spitze bei y=-dt_h
     polygon([[-(dt_base+extra), 0.01], [dt_base+extra, 0.01],
              [dt_tip+extra, -dt_h-extra], [-(dt_tip+extra), -dt_h-extra]]);
+}
+
+module esp_pillars() {
+    for (i = [1:npil_esp]) let (xp = eb_x0 + i*(eb_x1-eb_x0)/(npil_esp+1))
+        box(xp-0.4, xp+0.4, split_y-eb_gap-0.01, split_y+0.01, esp_top+cl, esp_top+cl+eb_t);
 }
 
 module lid() {
@@ -255,6 +275,8 @@ module lid() {
                 box(e[0]-e[1]*0.01, e[0]+e[1]*(3+split_y-eb_ytop), split_y-0.01, split_y+0.01,
                     esp_top+cl, esp_top+cl+eb_t+1.0+(split_y-eb_ytop));
             }
+            // Ausbrech-Saeulen unter dem ESP-Federsteg (volle Stegbreite), danach herausbrechen
+            esp_pillars();
             // Rastnase am Steg vor der Platinenvorderseite, 45 Grad beidseitig
             hull() {
                 box(rid_x0, rid_x1, esp_y+0.2-1.1, esp_y+0.2, esp_top+cl-0.01, esp_top+cl);
@@ -451,6 +473,12 @@ else if (part == "test_beams")  // Teststueck: Front mit Taschen, Federstegen un
 else if (part == "clash_lid_shell") intersection() { shell(); lid(); }
 else if (part == "bottom_view") { color("whitesmoke") shell(); color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); color("silver") esp_usb(); }
 else if (part == "section_arm") intersection() { union() { color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); } box(-100, (rid_x0+rid_x1)/2, -50, 100, -50, 100); }
-else if (part == "chk_eb_gap") intersection() { lid(); box(eb_x0+0.05, eb_x1-0.05, split_y-eb_gap+0.05, split_y-0.05, esp_top+cl+0.05, esp_top+cl+eb_t-0.05); }  // muss leer sein
+else if (part == "chk_eb_gap") intersection() { lid(); difference() {   // muss leer sein (ausser Saeulen)
+    box(eb_x0+0.05, eb_x1-0.05, split_y-eb_gap+0.05, split_y-0.05, esp_top+cl+0.05, esp_top+cl+eb_t-0.05);
+    for (i = [1:npil_esp]) let (xp = eb_x0 + i*(eb_x1-eb_x0)/(npil_esp+1)) box(xp-0.45, xp+0.45, 0, 20, 0, 40); } }
 else if (part == "chk_eb_free") intersection() { lid(); box(eb_x0+0.05, eb_x1-0.05, eb_ytop+0.05, split_y-0.05, esp_top+cl+eb_t+0.05, esp_top+cl+eb_t+0.55); }  // muss leer sein: Federweg hinter dem Steg
 else if (part == "clash_lid_jst") intersection() { lid(); box(bx0+l50-6, bx0+l50+4, front_t+so+t50, front_t+so+t50+4.5, bz0+4, bz0+11); }   // muss leer sein: JST-Stecker
+else if (part == "chk_pil_esp") intersection() { lid(); box(eb_x0+0.5, eb_x1-0.5, split_y-eb_gap+0.1, split_y-0.1, esp_top+cl+0.05, esp_top+cl+eb_t-0.05); }   // 3 Saeulen erwartet
+else if (part == "chk_pil_12") intersection() { shell(); box(-l12/2, l12/2, front_t+0.1, front_t+fgap-0.1, z12+w12+cl+0.05, z12+w12+cl+fb-0.05); }    // 2 Saeulen erwartet
+else if (part == "clash_shell_jst") intersection() { shell(); box(bx0+l50+0.05, bx0+l50+4, front_t+so+t50, front_t+so+t50+4.5, bz0+4, bz0+11); }   // muss leer sein: JST-Stecker
+else if (part == "chk_beam50_free") intersection() { shell(); box(bx0+1.6, bx0+l50-1.6, front_t+0.05, front_t+fgap-0.05, bz0-cl-fb+0.05, bz0-cl-0.05); }   // nur die 4 Saeulen erwartet
