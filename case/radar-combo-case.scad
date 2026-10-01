@@ -53,6 +53,8 @@ esp_y = split_y - 1.5 - esp_t;           // Vorderseite (Bauteilseite) der ESP-P
 // Gemessen am echten Board: Antenne bei x = -0,9 ... 5,7, Pad von Pin 8 ab x = -7,6
 lip_x0 = -6.0; lip_x1 = -2.4;
 esp_top = esp_z0 + esp_l;                // Oberkante ESP-Platine
+esp_t_max = 1.2;                         // dickste erwartete ESP-Platine (S3 SuperMini oft > 1,0)
+lip_face = split_y - 1.5 - esp_t_max - 0.2;  // Unterseite der Rastlippe: Platine bis esp_t_max + 0,2 Spiel
 lid_t   = 4.2;             // Deckel (enthaelt Schwalbenschwanz-Nut)
 D  = split_y + lid_t;      // Gesamttiefe
 W  = iw + 2*wall;
@@ -213,8 +215,8 @@ module lid() {
             // oberer Anschlag mit Rastlippe: haelt das obere ESP-Ende in Richtung Radar
             box(-6, 6, esp_y-1.5, split_y+0.01, esp_top+0.3, esp_top+1.8);
             hull() {
-                box(lip_x0, lip_x1, esp_y-1.5, esp_y-0.05, esp_top+0.3, esp_top+0.31);
-                box(lip_x0, lip_x1, esp_y-0.8, esp_y-0.05, esp_top-1.0, esp_top+0.31);
+                box(lip_x0, lip_x1, lip_face-1.5, lip_face, esp_top+0.3, esp_top+0.31);
+                box(lip_x0, lip_x1, lip_face-0.8, lip_face, esp_top-0.8, esp_top+0.31);
             }
         }
         // M2 Senkkopf
