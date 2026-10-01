@@ -21,7 +21,7 @@ ch       = 1;      // 45-Grad-Fase an Vorder- und Hinterkante
 cl       = 0.25;   // Spiel fuer Platinen
 ri       = R - wall; // Innenradius der Gehaeuseecken -> ueberall gleich dicke Wand
 
-l50 = 44;  w50 = 15; t50 = 1.2;   // LD2450
+l50 = 44;  w50 = 15; t50 = 1.2;   // LD2450 (gemessen 1,25; mit 1,2 sitzt er nachweislich perfekt)
 jst = 7;                          // Platz fuer den JST-Stecker des LD2450 (0 = Kabel direkt angeloetet)
 g50 = 1.5;                        // Abstand LD2450 zur linken Wand, damit die Platinenecke
                                   // an der Eckenrundung (ri) vorbeikommt (mind. ~1,35 bei ri = 2,4)
@@ -29,7 +29,7 @@ g50 = 1.5;                        // Abstand LD2450 zur linken Wand, damit die P
 static_radar = "LD2410C";
 l12 = static_radar == "LD2412" ? 28  : 22;
 w12 = static_radar == "LD2412" ? 11  : 16;
-t12 = static_radar == "LD2412" ? 1.0 : 1.25;   // LD2410C gemessen: 1,25 mm
+t12 = static_radar == "LD2412" ? 1.0 : 1.65;   // LD2410C gemessen: 1,65 mm
 so12 = static_radar == "LD2412" ? 1.0 : 1.2;   // Abstand, LD2410C hat Bauteile auf der Front
 // Federstege zwischen den Taschen: tragen die inneren Rastnasen, nur an den Enden gehalten
 fb   = 1.2;    // Dicke eines Federstegs (= Dicke der uebrigen Innenwaende)
