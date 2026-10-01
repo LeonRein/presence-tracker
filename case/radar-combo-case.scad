@@ -59,8 +59,8 @@ esp_y = split_y - 1.5 - esp_t;           // Vorderseite (Bauteilseite) der ESP-P
 rid_x0 = -6.0; rid_x1 = -2.0;    // obere Rastnase im antennenfreien Streifen
 esp_top = esp_z0 + esp_l;                // Oberkante ESP-Platine
 // ESP wie die Radare: oben Rastnase auf einem schwebenden Federsteg, unten feste Keilnasen
-eb_x0 = -13; eb_x1 = 6.9;   // Federsteg zwischen zwei Pfosten (x)
-eb_t   = 0.9;               // Dicke des Federstegs (z)
+eb_x0 = -14.5; eb_x1 = 12;  // Federsteg zwischen zwei Pfosten (x); links LD2450-Stiftleiste, rechts JST-Stecker
+eb_t   = 1.2;               // Dicke des Federstegs (z), wie die Radar-Stege
 eb_gap = 1.0;               // Luft zwischen Steg und Deckelinnenseite (Bruecke)
 eb_ytop = 7.6;              // Steg reicht bis hier nach vorne (y)
 notch_hw = 6.65;            // halbe Breite des USB-Ausschnitts (Platz fuer die Fluegel mit den Keilnasen)
@@ -249,9 +249,11 @@ module lid() {
             // Federsteg ueber dem oberen ESP-Ende (wie zwischen den Radar-Taschen): schwebt eb_gap ueber
             // der Deckelinnenseite, haengt nur an zwei Pfosten, biegt in der Schichtebene
             box(eb_x0, eb_x1, eb_ytop, split_y-eb_gap, esp_top+cl, esp_top+cl+eb_t);
-            for (e = [[eb_x0, -1], [eb_x1, 1]]) hull() {      // Pfosten mit 45-Grad-Stuetze nach aussen
-                box(e[0], e[0]+e[1]*1.5, eb_ytop, split_y+0.01, esp_top+cl, esp_top+cl+eb_t+0.5);
-                box(e[0], e[0]+e[1]*(1.5+split_y-eb_ytop), split_y-0.01, split_y+0.01, esp_top+cl, esp_top+cl+eb_t+0.5);
+            // Pfosten: 3 mm breit, 45-Grad-Stuetzen nach aussen und nach hinten (weg vom ESP)
+            for (e = [[eb_x0, -1], [eb_x1, 1]]) hull() {
+                box(e[0]-e[1]*0.01, e[0]+e[1]*3, eb_ytop, split_y+0.01, esp_top+cl, esp_top+cl+eb_t+1.0);
+                box(e[0]-e[1]*0.01, e[0]+e[1]*(3+split_y-eb_ytop), split_y-0.01, split_y+0.01,
+                    esp_top+cl, esp_top+cl+eb_t+1.0+(split_y-eb_ytop));
             }
             // Rastnase am Steg vor der Platinenvorderseite, 45 Grad beidseitig
             hull() {
@@ -451,3 +453,4 @@ else if (part == "bottom_view") { color("whitesmoke") shell(); color("gainsboro"
 else if (part == "section_arm") intersection() { union() { color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); } box(-100, (rid_x0+rid_x1)/2, -50, 100, -50, 100); }
 else if (part == "chk_eb_gap") intersection() { lid(); box(eb_x0+0.05, eb_x1-0.05, split_y-eb_gap+0.05, split_y-0.05, esp_top+cl+0.05, esp_top+cl+eb_t-0.05); }  // muss leer sein
 else if (part == "chk_eb_free") intersection() { lid(); box(eb_x0+0.05, eb_x1-0.05, eb_ytop+0.05, split_y-0.05, esp_top+cl+eb_t+0.05, esp_top+cl+eb_t+0.55); }  // muss leer sein: Federweg hinter dem Steg
+else if (part == "clash_lid_jst") intersection() { lid(); box(bx0+l50-6, bx0+l50+4, front_t+so+t50, front_t+so+t50+4.5, bz0+4, bz0+11); }   // muss leer sein: JST-Stecker
