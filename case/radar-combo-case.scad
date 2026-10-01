@@ -189,6 +189,12 @@ module lid() {
     difference() {
         union() {
             intersection() { body(); box(-W, W, split_y, D+1, zo0-1, zo1+1); }
+            // Nase: fuellt den USB-Ausschnitt in der Bodenwand hinter der Buchse (unter der Platine),
+            // es bleibt nur die Oeffnung fuer den Stecker
+            intersection() {
+                body();
+                box(-5.25+0.15, 5.25-0.15, esp_y+0.15, split_y+0.01, zo0-1, 0);
+            }
             // Lippe (steckt im Gehaeuse)
             difference() {
                 rrect_y(iw-2*lcl, lcl, ih-lcl, max(0.2, ri-lcl), split_y-lip_h, split_y+0.01);
@@ -389,3 +395,5 @@ else if (part == "section_beams") intersection() { shell(); box(-100, secx, -50,
 else if (part == "shell_only") color("whitesmoke") shell();
 else if (part == "test_beams")  // Teststueck: Front mit Taschen, Federstegen und Rastnasen, Waende gekuerzt
     rotate([90,0,0]) intersection() { shell(); box(-100, 100, -1, front_t + so + t50 + 1.2, zo0-1, zo1+1); }
+else if (part == "clash_lid_shell") intersection() { shell(); lid(); }
+else if (part == "bottom_view") { color("whitesmoke") shell(); color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); color("silver") esp_usb(); }
