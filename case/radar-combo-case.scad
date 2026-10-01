@@ -29,7 +29,7 @@ g50 = 1.5;                        // Abstand LD2450 zur linken Wand, damit die P
 static_radar = "LD2410C";
 l12 = static_radar == "LD2412" ? 28  : 22;
 w12 = static_radar == "LD2412" ? 11  : 16;
-t12 = static_radar == "LD2412" ? 1.0 : 1.2;
+t12 = static_radar == "LD2412" ? 1.0 : 1.25;   // LD2410C gemessen: 1,25 mm
 so12 = static_radar == "LD2412" ? 1.0 : 1.2;   // Abstand, LD2410C hat Bauteile auf der Front
 // Federstege zwischen den Taschen: tragen die inneren Rastnasen, nur an den Enden gehalten
 fb   = 1.2;    // Dicke eines Federstegs (= Dicke der uebrigen Innenwaende)
@@ -39,9 +39,11 @@ rib  = 1.2;    // Dicke der festen Innenrippen
 npil = 4;      // Ausbrech-Saeulen unter dem LD2450-Steg (nur fuer den Druck, danach herausbrechen)
 so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 // Gemeinsame Hoehe aller Innenwaende (y): knapp ueber den Rastnasen beider Radare
-inner_top = front_t + max(so + t50, so12 + t12) + 0.9;
+ridge_up  = 0.6;   // Rastnasen-Mitte ueber der Platinenrueckseite (Nase beginnt 0,1 mm darueber)
+inner_top = front_t + max(so + t50, so12 + t12) + ridge_up + 0.5;   // knapp ueber den Nasen
 
-esp_w = 18; esp_l = 23.0; esp_t = 1.0;   // ESP32-S3 SuperMini, Laenge am echten Board gemessen (Datenblatt: 22,52)
+esp_w = 18; esp_l = 23.0; esp_t = 1.6;   // ESP32-S3 SuperMini; Laenge gemessen (Datenblatt 22,52),
+                                         // Dicke angenommen (Standard 1,6) - federnder Arm gleicht 1,2..1,9 aus
 usb_over = 1.9;                          // USB-C-Buchse steht so weit ueber die Platinenkante (gemessen)
 esp_z0 = 0.2;                            // Unterkante ESP-Platine (Innenboden = 0); Buchse ragt durch den Ausschnitt
 usb_h = 3.2;                             // Hoehe USB-C-Buchse ueber der Platine
@@ -53,10 +55,12 @@ split_y = 11.8;            // Trennebene Gehaeuse / Deckel
 esp_y = split_y - 1.5 - esp_t;           // Vorderseite (Bauteilseite) der ESP-Platine
 // Rastlippe am oberen ESP-Ende: nur die Haelfte ohne Keramikantenne (S3 SuperMini, von vorne gesehen links)
 // Gemessen am echten Board: Antenne bei x = -0,9 ... 5,7, Pad von Pin 8 ab x = -7,6
-lip_x0 = -6.0; lip_x1 = -2.4;
+// Federarm mit Rastnase (antennenfreier Streifen): x-Bereich
+arm_x0 = -4.5; arm_x1 = -1.6;
 esp_top = esp_z0 + esp_l;                // Oberkante ESP-Platine
-esp_t_max = 1.2;                         // dickste erwartete ESP-Platine (S3 SuperMini oft > 1,0)
-lip_face = split_y - 1.5 - esp_t_max - 0.2;  // Unterseite der Rastlippe: Platine bis esp_t_max + 0,2 Spiel
+arm_rest = split_y - 1.5 - 1.2;          // Unterseite des Federarms in Ruhe: Kontakt ab 1,2 mm Platinendicke
+arm_t    = 0.6;                          // Dicke des Federarms
+arm_len  = 6.0;                          // Arm reicht von esp_top+arm_len bis 0,8 mm ueber die Platine
 lid_t   = 4.2;             // Deckel (enthaelt Schwalbenschwanz-Nut)
 D  = split_y + lid_t;      // Gesamttiefe
 W  = iw + 2*wall;
@@ -167,15 +171,15 @@ module shell() {
                     box(sx*8-1.5, sx*8+1.5, front_t, front_t+so12, z12+w12-1.2, z12+w12+cl-fgap);
                 }
             for (sx=[-1,1]) {
-                ridge_x(sx*6-3, sx*6+3, front_t+so12+t12+0.35, z12-cl, 1);
-                ridge_x(sx*6-3, sx*6+3, front_t+so12+t12+0.35, z12+w12+cl, -1);
+                ridge_x(sx*6-3, sx*6+3, front_t+so12+t12+ridge_up, z12-cl, 1);
+                ridge_x(sx*6-3, sx*6+3, front_t+so12+t12+ridge_up, z12+w12+cl, -1);
             }
 
             // --- Schraubdome ---
             for (sx=[-1,1]) translate([sx*boss_x, front_t, boss_z]) ycyl(split_y-front_t, 2.75, 2.75);
         }
         // Schraubloecher M2
-        for (sx=[-1,1]) translate([sx*boss_x, split_y-9, boss_z]) ycyl(9.1, 0.85, 0.85);
+        for (sx=[-1,1]) translate([sx*boss_x, split_y-9, boss_z]) ycyl(9.1, 1.0, 1.0);   // M2 selbstschneidend: Kern 2,0
         // USB-C Ausschnitt (unten, zur Rueckseite offen)
         // Vorderkante 0,3 mm vor der Buchse: haelt das untere ESP-Ende in Richtung Radar
         box(-5.25, 5.25, esp_y-usb_h-0.3, split_y+1, zo0-1, 0.01);
@@ -200,7 +204,7 @@ module lid() {
             // es bleibt nur die Oeffnung fuer den Stecker
             intersection() {
                 body();
-                box(-5.25+0.15, 5.25-0.15, esp_y+0.15, split_y+0.01, zo0-1, 0);
+                box(-5.25+0.15, 5.25-0.15, split_y-1.5-1.0+0.15, split_y+0.01, zo0-1, 0);
             }
             // Lippe (steckt im Gehaeuse)
             difference() {
@@ -229,18 +233,29 @@ module lid() {
             // oberer Anschlag mit Rastlippe: haelt das obere ESP-Ende in Richtung Radar
             // (aussen mit 45-Grad-Stuetze ueber die volle Hoehe)
             hull() {
-                box(-6, 6, esp_y-1.5, split_y+0.01, esp_top+0.3, esp_top+1.8);
-                box(-6, 6, split_y-0.01, split_y+0.01, esp_top+0.3, esp_top+1.8+(split_y-esp_y+1.5));
+                box(arm_x1+0.8, 6, esp_y-1.5, split_y+0.01, esp_top+0.3, esp_top+1.8);
+                box(arm_x1+0.8, 6, split_y-0.01, split_y+0.01, esp_top+0.3, esp_top+1.8+(split_y-esp_y+1.5));
             }
+            // Federarm: liegt vor der Platine, Wurzel hinter dem oberen ESP-Ende, Spitze 0,8 mm ueber
+            // der Platine mit 45-Grad-Einfuehrschraege. Biegt sich weg vom Deckel und drueckt die
+            // Platine auf die Schienen -> gleicht unterschiedliche Platinendicken aus.
             hull() {
-                box(lip_x0, lip_x1, lip_face-1.5, lip_face, esp_top+0.3, esp_top+0.31);
-                box(lip_x0, lip_x1, lip_face-0.8, lip_face, esp_top-0.8, esp_top+0.31);
+                box(arm_x0, arm_x1, arm_rest-arm_t, arm_rest, esp_top-0.3, esp_top+arm_len+1.2);
+                box(arm_x0, arm_x1, arm_rest-arm_t, arm_rest-arm_t+0.1, esp_top-0.8, esp_top-0.3);
             }
+            // Wurzel mit 45-Grad-Stuetze nach aussen
+            hull() {
+                box(arm_x0, arm_x1, arm_rest-arm_t, split_y+0.01, esp_top+arm_len, esp_top+arm_len+1.2);
+                box(arm_x0, arm_x1, split_y-0.01, split_y+0.01, esp_top+arm_len, esp_top+arm_len+1.2+(split_y-arm_rest+arm_t));
+            }
+            // Ausbrech-Saeulen: stuetzen den Arm beim Druck, danach herausbrechen
+            for (zp = [esp_top+2.0, esp_top+4.2])
+                box((arm_x0+arm_x1)/2-0.4, (arm_x0+arm_x1)/2+0.4, arm_rest-0.01, split_y+0.01, zp-0.4, zp+0.4);
         }
         // M2 Senkkopf
         for (sx=[-1,1]) translate([sx*boss_x, split_y-1, boss_z]) {
-            ycyl(lid_t+2, 1.1, 1.1);
-            translate([0, lid_t+1-1.2, 0]) ycyl(1.21, 1.1, 2.2);
+            ycyl(lid_t+2, 1.3, 1.3);                                   // Durchgang 2,6: Gewinde greift hier nicht
+            translate([0, lid_t+1-1.2, 0]) ycyl(1.21, 1.3, 2.2);
             translate([0, lid_t+1, 0]) ycyl(1, 2.2, 2.2);
         }
         // Schwalbenschwanz-Nut (unten offen, oben geschlossen)
@@ -408,7 +423,7 @@ else if (part == "clash_boards") intersection() {
     union() {   // Platinen mit 0,05 mm Abstand verkleinert, damit reine Auflageflaechen nicht zaehlen
         box(bx0+0.05, bx0+l50-0.05, front_t+so+0.05, front_t+so+t50-0.05, bz0+0.05, bz0+w50-0.05);
         box(-l12/2+0.05, l12/2-0.05, front_t+so12+0.05, front_t+so12+t12-0.05, z12+0.05, z12+w12-0.05);
-        box(-esp_w/2+0.05, esp_w/2-0.05, esp_y+0.05, esp_y+esp_t-0.05, esp_z0+0.05, esp_top-0.05);
+        box(-esp_w/2+0.05, esp_w/2-0.05, max(esp_y, arm_rest)+0.05, esp_y+esp_t-0.05, esp_z0+0.05, esp_top-0.05);
         ld2450_header(); esp_antenna(); esp_usb();
         if (static_radar == "LD2410C") ld2410c_front_parts();
     }
@@ -421,3 +436,12 @@ else if (part == "test_beams")  // Teststueck: Front mit Taschen, Federstegen un
     rotate([90,0,0]) intersection() { shell(); box(-100, 100, -1, inner_top + 0.4, zo0-1, zo1+1); }
 else if (part == "clash_lid_shell") intersection() { shell(); lid(); }
 else if (part == "bottom_view") { color("whitesmoke") shell(); color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); color("silver") esp_usb(); }
+else if (part == "section_arm") intersection() { union() { color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); } box(-100, (arm_x0+arm_x1)/2, -50, 100, -50, 100); }
+else if (part == "chk_arm_gap") intersection() { lid(); union() {   // muss leer sein: Raum unter dem Arm ohne Saeulen/Wurzel
+    box(arm_x0+0.05, arm_x1-0.05, arm_rest+0.05, split_y-0.05, esp_top-0.8, esp_top+1.55);
+    box(arm_x0+0.05, arm_x1-0.05, arm_rest+0.05, split_y-0.05, esp_top+2.45, esp_top+3.75);
+    box(arm_x0+0.05, arm_x1-0.05, arm_rest+0.05, split_y-0.05, esp_top+4.65, esp_top+arm_len-0.05); } }
+else if (part == "chk_arm_free") intersection() { lid(); union() {   // muss leer sein: Luft neben dem Arm (Arm haengt nicht an Anschlag/Fuehrung)
+    box(arm_x1+0.05, arm_x1+0.75, arm_rest-arm_t-1, split_y-0.05, esp_top-0.8, esp_top+arm_len-0.05);
+    box(arm_x0-0.75, arm_x0-0.05, arm_rest-arm_t-1, split_y-0.05, esp_top-0.8, esp_top+arm_len-0.05); } }
+else if (part == "chk_arm_present") intersection() { lid(); box(arm_x0, arm_x1, arm_rest-arm_t, arm_rest, esp_top-0.3, esp_top+arm_len); }
