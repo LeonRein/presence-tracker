@@ -19,6 +19,13 @@ substitutions:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
+  on_boot:
+    priority: -100
+    then:
+      # ESPHome queries the LD2410C right at setup, but after power-on the
+      # radar is still booting and does not answer. Ask again later.
+      - delay: 3s
+      - button.press: ld2410_query_params
 
 esp32:
   variant: esp32s3
@@ -212,6 +219,17 @@ sensor:
     moving_energy: {id: ld2410_moving_energy, internal: true, filters: []}
     still_distance: {id: ld2410_still_distance, internal: true, filters: []}
     still_energy: {id: ld2410_still_energy, internal: true, filters: []}
+    # Energy per gate (0.75 m each) for setting the thresholds. Only sent
+    # while `LD2410 Engineering Mode` is on.
+    g0: {move_energy: {name: LD2410 G0 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G0 Still Energy, entity_category: diagnostic}}
+    g1: {move_energy: {name: LD2410 G1 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G1 Still Energy, entity_category: diagnostic}}
+    g2: {move_energy: {name: LD2410 G2 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G2 Still Energy, entity_category: diagnostic}}
+    g3: {move_energy: {name: LD2410 G3 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G3 Still Energy, entity_category: diagnostic}}
+    g4: {move_energy: {name: LD2410 G4 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G4 Still Energy, entity_category: diagnostic}}
+    g5: {move_energy: {name: LD2410 G5 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G5 Still Energy, entity_category: diagnostic}}
+    g6: {move_energy: {name: LD2410 G6 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G6 Still Energy, entity_category: diagnostic}}
+    g7: {move_energy: {name: LD2410 G7 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G7 Still Energy, entity_category: diagnostic}}
+    g8: {move_energy: {name: LD2410 G8 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G8 Still Energy, entity_category: diagnostic}}
 
   # Target positions for Home Assistant (e.g. a plotly card for drawing zones).
   # Off by default to keep the recorder small; enable them in HA when needed.
@@ -295,6 +313,7 @@ button:
     factory_reset:
       name: LD2410 Factory Reset
     query_params:
+      id: ld2410_query_params
       name: LD2410 Query Parameters
 
 number:
