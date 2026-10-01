@@ -33,7 +33,7 @@ t12 = static_radar == "LD2412" ? 1.0 : 1.2;
 so12 = static_radar == "LD2412" ? 1.0 : 1.2;   // Abstand, LD2410C hat Bauteile auf der Front
 // Federstege zwischen den Taschen: tragen die inneren Rastnasen, nur an den Enden gehalten
 fb   = 0.9;    // Dicke eines Federstegs
-fgap = 0.6;    // Luft zwischen Steg und Front (Steg wird als Bruecke gedruckt)
+fgap = 1.0;    // Luft zwischen Steg und Front (Steg wird als Bruecke gedruckt, darf etwas durchhaengen)
 sgap = 0.7;    // Schlitz zwischen den beiden Stegen
 so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 
@@ -125,6 +125,7 @@ module shell() {
             // untere Rippe = Federsteg: schwebt fgap ueber der Front, gehalten nur an den
             // Enden (Abstandsleisten) und in der Mitte -> die inneren Rastnasen federn
             box(-iw/2, bx0+l50+cl+rib, front_t+fgap, top50, bz0-cl-fb, bz0-cl);
+            box(-iw/2, bx0+1.5, front_t, top50, bz0-cl-fb, bz0-cl);             // linkes Ende
             box(-1, 1, front_t, top50, bz0-cl-fb, bz0-cl);                      // Mittelstuetze
             box(bx0+l50-1.5, bx0+l50+cl+rib, front_t, top50, bz0-cl-fb, bz0-cl); // rechtes Ende
             // Stecker-Seite: nur kurze Stuecke oben/unten
@@ -144,11 +145,17 @@ module shell() {
                 // Luft unter dem Steg: nur die Seitenrippen halten ihn
                 box(-l12/2-cl, l12/2+cl, front_t-1, front_t+fgap, z12+w12+cl-0.01, z12+w12+cl+fb+0.01);
             }
-            for (sx=[-1,1]) {   // Abstandshalter bis an die Rahmenrippen
-                box(sx*8-1.5, sx*8+1.5, front_t, front_t+so12, z12-cl, z12+1.2);
-                // obere Abstandshalter enden fgap vor dem Federsteg
-                box(sx*8-1.5, sx*8+1.5, front_t, front_t+so12, z12+w12-1.2, z12+w12+cl-fgap);
-            }
+            if (static_radar == "LD2410C")
+                // Auflage nur an den kurzen Seiten: auf der Front sitzen Bauteile entlang der
+                // Unterkante, Chip und Antennen in der Mitte (am echten Board geprueft).
+                // Die Leisten gehen in die Rahmenrippen ueber.
+                for (sx=[-1,1]) box(sx*(l12/2+cl), sx*(l12/2-1.3), front_t, front_t+so12, z12+4.0, z12+w12-1.5);
+            else
+                // LD2412: Loetpads an den kurzen Seiten -> Auflage an den langen Kanten
+                for (sx=[-1,1]) {
+                    box(sx*8-1.5, sx*8+1.5, front_t, front_t+so12, z12-cl, z12+1.2);
+                    box(sx*8-1.5, sx*8+1.5, front_t, front_t+so12, z12+w12-1.2, z12+w12+cl-fgap);
+                }
             for (sx=[-1,1]) {
                 ridge_x(sx*6-3, sx*6+3, front_t+so12+t12+0.35, z12-cl, 1);
                 ridge_x(sx*6-3, sx*6+3, front_t+so12+t12+0.35, z12+w12+cl, -1);
@@ -280,6 +287,11 @@ module boards() {
 module ld2450_header(pin_len = 6) {
     box(bx0+2, bx0+6, front_t+so+t50, front_t+so+t50+pin_len, bz0+3.8, bz0+11.9);
 }
+// Bauteile auf der LD2410C-Vorderseite (vom Foto des echten Boards; Loetloecher oben)
+module ld2410c_front_parts() {
+    box(-10.3, 9.8, front_t+0.01, front_t+so12, z12+0.3, z12+3.9);   // Bauteilreihe an der Unterkante
+    box(-2.1, 2.3, front_t+0.01, front_t+so12, z12+2.7, z12+7.0);    // Chip
+}
 // USB-C-Buchse (ragt usb_over ueber die Platinenkante)
 module esp_usb() { box(-4.5, 4.5, esp_y-usb_h, esp_y, esp_z0-usb_over, esp_z0+7); }
 // Keramikantenne am oberen Ende des ESP32-S3 SuperMini (am echten Board gemessen)
@@ -365,9 +377,12 @@ else if (part == "clash_boards") intersection() {
         box(-l12/2+0.05, l12/2-0.05, front_t+so12+0.05, front_t+so12+t12-0.05, z12+0.05, z12+w12-0.05);
         box(-esp_w/2+0.05, esp_w/2-0.05, esp_y+0.05, esp_y+esp_t-0.05, esp_z0+0.05, esp_top-0.05);
         ld2450_header(); esp_antenna(); esp_usb();
+        if (static_radar == "LD2410C") ld2410c_front_parts();
     }
 }
 else if (part == "section_corner50") intersection() { union() { shell(); boards(); } box(-100, 100, -50, 100, 30, 100); }
 else if (part == "lid_esp") { color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); color("red") esp_antenna(); color("silver") esp_usb(); }
 else if (part == "section_beams") intersection() { shell(); box(-100, secx, -50, 100, -50, 100); }
 else if (part == "shell_only") color("whitesmoke") shell();
+else if (part == "test_beams")  // Teststueck: Front mit Taschen, Federstegen und Rastnasen, Waende gekuerzt
+    rotate([90,0,0]) intersection() { shell(); box(-100, 100, -1, front_t + so + t50 + 1.2, zo0-1, zo1+1); }

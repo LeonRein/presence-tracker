@@ -17,9 +17,12 @@ Quelle: `radar-combo-case.scad` (OpenSCAD). Alle Maße sind oben als Parameter �
 | `shell.stl` | Front nach unten | Front nur 0,8 mm (Radom), keine Stützen |
 | `lid.stl` | Rückseite nach unten | Nut und Senkungen druckbar ohne Stützen |
 | `corner.stl` | stehend | – |
+| `test_beams.stl` | Front nach unten | Teststück für Federstege und Radar-Taschen |
 | `stand.stl` | auf der Bodenplatte | – |
 
-PLA in Wandfarbe, 0,2 mm Schicht. Die beiden Federstege zwischen den Radar-Taschen werden als Brücke 0,6 mm über der Front gedruckt; sie dürfen nicht mit der Front verkleben, sonst federn sie nicht. **Kein Silk-, Metallic- oder Carbon-Filament**, das dämpft das Radar.
+PLA in Wandfarbe, 0,2 mm Schicht. **Stützstrukturen aus** (oder „nur auf der Druckplatte“), sonst füllt der Slicer den Spalt unter den Federstegen. Die beiden Federstege zwischen den Radar-Taschen werden als Brücke 1 mm über der Front gedruckt; sie dürfen nicht mit der Front verkleben, sonst federn sie nicht. Lüfter 100 %, Brücken-Umfänge erkennen an.
+
+**Teststück zuerst:** `stl/test_beams.stl` ist nur die Front mit beiden Taschen, Federstegen und Rastnasen (Wände gekürzt, etwa 15 Minuten Druck). Damit prüfen, ob die Stege frei sind und beide Radare einrasten, bevor das ganze Gehäuse gedruckt wird. **Kein Silk-, Metallic- oder Carbon-Filament**, das dämpft das Radar.
 Maße stammen aus den Hi-Link-Datenblättern. Beim JST-Stecker und beim ESP-Board sind es Schätzwerte.
 Druck zuerst `shell.stl` und prüf die Passung.
 
