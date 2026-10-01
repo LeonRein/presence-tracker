@@ -14,7 +14,7 @@ Quelle: `radar-combo-case.scad` (OpenSCAD). Alle Maße sind oben als Parameter �
 
 | Teil | Lage | Hinweis |
 |---|---|---|
-| `shell.stl` | Front nach unten | Front nur 0,8 mm (Radom), keine Stützen |
+| `shell.stl` | Front nach unten | Front nur 0,6 mm (Radom, 3 Schichten à 0,2 mm), keine Stützen |
 | `lid.stl` | Rückseite nach unten | Nut und Senkungen druckbar ohne Stützen |
 | `corner.stl` | stehend | – |
 | `test_beams.stl` | Front nach unten | Teststück für Federstege und Radar-Taschen |

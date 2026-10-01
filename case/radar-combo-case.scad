@@ -15,7 +15,7 @@ $fn = 48;
 
 // ---------- Parameter ----------
 wall     = 1.6;    // Seitenwaende
-front_t  = 0.8;    // Radom (Front) - duenn halten (<= lambda/8 in PLA ~ 0.95 mm)
+front_t  = 0.6;    // Radom (Front) - duenn halten (<= lambda/8 in PLA ~ 0.95 mm); 3 Schichten a 0,2 mm
 R        = 4;      // Eckenradius (Frontansicht)
 ch       = 1;      // 45-Grad-Fase an Vorder- und Hinterkante
 cl       = 0.25;   // Spiel fuer Platinen
