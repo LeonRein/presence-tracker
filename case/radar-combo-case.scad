@@ -126,7 +126,10 @@ module shell() {
             // Enden (Abstandsleisten) und in der Mitte -> die inneren Rastnasen federn
             box(-iw/2, bx0+l50+cl+rib, front_t+fgap, top50, bz0-cl-fb, bz0-cl);
             box(-iw/2, bx0+1.5, front_t, top50, bz0-cl-fb, bz0-cl);             // linkes Ende
-            box(-1, 1, front_t, top50, bz0-cl-fb, bz0-cl);                      // Mittelstuetze
+            // Mittelstuetze: so breit, dass beide Federstrecken gleich lang sind (so lang wie
+            // die kuerzere rechte Strecke), statt eines schmalen 2-mm-Stegs
+            let (m1 = 1, span = (bx0+l50-1.5) - m1, m0 = (bx0+1.5) + span)
+                box(m0, m1, front_t, top50, bz0-cl-fb, bz0-cl);
             box(bx0+l50-1.5, bx0+l50+cl+rib, front_t, top50, bz0-cl-fb, bz0-cl); // rechtes Ende
             // Stecker-Seite: nur kurze Stuecke oben/unten
             box(bx0+l50+cl, bx0+l50+cl+rib, front_t, top50, bz0-cl-fb, bz0+3);
