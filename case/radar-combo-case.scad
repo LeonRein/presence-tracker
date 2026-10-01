@@ -205,16 +205,33 @@ module lid() {
             // Lippe (steckt im Gehaeuse)
             difference() {
                 rrect_y(iw-2*lcl, lcl, ih-lcl, max(0.2, ri-lcl), split_y-lip_h, split_y+0.01);
-                rrect_y(iw-2*lcl-2*lip_w, lcl+lip_w, ih-lcl-lip_w, max(0.5, ri-lcl-lip_w), split_y-lip_h-1, split_y+1);
+                // innen mit 0,8-mm-Fase am Fuss (Verstaerkung)
+                hull() {
+                    rrect_y(iw-2*lcl-2*lip_w, lcl+lip_w, ih-lcl-lip_w, max(0.5, ri-lcl-lip_w), split_y-lip_h-1, split_y-0.8);
+                    rrect_y(iw-2*lcl-2*lip_w-1.6, lcl+lip_w+0.8, ih-lcl-lip_w-0.8, 0.5, split_y-0.01, split_y+1);
+                }
                 box(-10.5, 10.5, split_y-lip_h-1, split_y+1, -1, 3);        // Platz fuer ESP-Pins unten
                 for (sx=[-1,1]) translate([sx*boss_x, split_y-5, boss_z]) ycyl(6, 3.0, 3.0);
             }
             // ESP-Auflage-Schienen
-            for (sx=[-1,1]) box(sx*3.5-1, sx*3.5+1, split_y-1.5, split_y+0.01, 2, 20);
+            // (Fuss beidseitig 1 mm breiter, 45 Grad)
+            for (sx=[-1,1]) hull() {
+                box(sx*3.5-1, sx*3.5+1, split_y-1.5, split_y+0.01, 2, 20);
+                box(sx*3.5-2, sx*3.5+2, split_y-0.01, split_y+0.01, 2, 20);
+            }
             // seitliche Fuehrungen und oberer Anschlag
-            for (sx=[-1,1]) box(sx*(esp_w/2+0.3), sx*(esp_w/2+1.8), split_y-1.5-esp_t-2.5, split_y+0.01, 12, esp_top+1.5);
+            // Fuehrungen nur so hoch wie noetig (0,5 mm ueber die Platinenvorderseite),
+            // aussen durchgehende 45-Grad-Schraege -> breiter Fuss, bricht nicht ab
+            for (sx=[-1,1]) hull() {
+                box(sx*(esp_w/2+0.3), sx*(esp_w/2+1.8), esp_y-0.5, split_y+0.01, 12, esp_top+1.5);
+                box(sx*(esp_w/2+0.3), sx*(esp_w/2+1.8+(split_y-esp_y+0.5)), split_y-0.01, split_y+0.01, 12, esp_top+1.5);
+            }
             // oberer Anschlag mit Rastlippe: haelt das obere ESP-Ende in Richtung Radar
-            box(-6, 6, esp_y-1.5, split_y+0.01, esp_top+0.3, esp_top+1.8);
+            // (aussen mit 45-Grad-Stuetze ueber die volle Hoehe)
+            hull() {
+                box(-6, 6, esp_y-1.5, split_y+0.01, esp_top+0.3, esp_top+1.8);
+                box(-6, 6, split_y-0.01, split_y+0.01, esp_top+0.3, esp_top+1.8+(split_y-esp_y+1.5));
+            }
             hull() {
                 box(lip_x0, lip_x1, lip_face-1.5, lip_face, esp_top+0.3, esp_top+0.31);
                 box(lip_x0, lip_x1, lip_face-0.8, lip_face, esp_top-0.8, esp_top+0.31);
