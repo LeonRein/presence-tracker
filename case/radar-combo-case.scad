@@ -9,6 +9,7 @@
 
 part = "assembly";
 secz = 20;
+secx = -8;
 
 $fn = 48;
 
@@ -30,6 +31,10 @@ l12 = static_radar == "LD2412" ? 28  : 22;
 w12 = static_radar == "LD2412" ? 11  : 16;
 t12 = static_radar == "LD2412" ? 1.0 : 1.2;
 so12 = static_radar == "LD2412" ? 1.0 : 1.2;   // Abstand, LD2410C hat Bauteile auf der Front
+// Federstege zwischen den Taschen: tragen die inneren Rastnasen, nur an den Enden gehalten
+fb   = 0.9;    // Dicke eines Federstegs
+fgap = 0.6;    // Luft zwischen Steg und Front (Steg wird als Bruecke gedruckt)
+sgap = 0.7;    // Schlitz zwischen den beiden Stegen
 so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 
 esp_w = 18; esp_l = 23.0; esp_t = 1.0;   // ESP32-S3 SuperMini, Laenge am echten Board gemessen (Datenblatt: 22,52)
@@ -39,7 +44,7 @@ usb_h = 3.2;                             // Hoehe USB-C-Buchse ueber der Platine
 
 iw = g50 + l50 + cl + jst;   // Innenbreite
 z12 = 1.5;                 // Unterkante untere Radar-Platine
-ih = z12 + w12 + 2*1.0 + 3*cl + 0.5 + w50;   // Innenhoehe (LD2412: 31, LD2410C: 35.75)
+ih = z12 + w12 + 3*cl + 2*fb + sgap + w50;   // Innenhoehe (LD2412: 31, LD2410C: 35.75)
 split_y = 11.8;            // Trennebene Gehaeuse / Deckel
 esp_y = split_y - 1.5 - esp_t;           // Vorderseite (Bauteilseite) der ESP-Platine
 // Rastlippe am oberen ESP-Ende: nur die Haelfte ohne Keramikantenne (S3 SuperMini, von vorne gesehen links)
@@ -115,12 +120,15 @@ module shell() {
             // (bis an Wand, Rippe und Rippenstuecke verlaengert, damit keine 0,25-mm-Spalte bleiben)
             box(-iw/2, bx0+1.5, front_t, front_t+so, bz0-cl, ih);
             // Fuellrippe zwischen linker Wand und Platine: fuehrt die LD2450 seitlich (Spiel cl)
-            box(-iw/2, bx0-cl, front_t, top50, bz0-cl-1.0, ih);
+            box(-iw/2, bx0-cl, front_t, top50, bz0-cl-fb, ih);
             box(bx0+l50-1.5, bx0+l50+cl, front_t, front_t+so, bz0-cl, ih);
-            // untere Rippe
-            box(-iw/2, bx0+l50+cl+rib, front_t, top50, bz0-cl-rib, bz0-cl);
+            // untere Rippe = Federsteg: schwebt fgap ueber der Front, gehalten nur an den
+            // Enden (Abstandsleisten) und in der Mitte -> die inneren Rastnasen federn
+            box(-iw/2, bx0+l50+cl+rib, front_t+fgap, top50, bz0-cl-fb, bz0-cl);
+            box(-1, 1, front_t, top50, bz0-cl-fb, bz0-cl);                      // Mittelstuetze
+            box(bx0+l50-1.5, bx0+l50+cl+rib, front_t, top50, bz0-cl-fb, bz0-cl); // rechtes Ende
             // Stecker-Seite: nur kurze Stuecke oben/unten
-            box(bx0+l50+cl, bx0+l50+cl+rib, front_t, top50, bz0-cl-rib, bz0+3);
+            box(bx0+l50+cl, bx0+l50+cl+rib, front_t, top50, bz0-cl-fb, bz0+3);
             box(bx0+l50+cl, bx0+l50+cl+rib, front_t, top50, ih-3, ih);
             // Rastnasen
             ridge_x(bx0+6, bx0+14, front_t+so+t50+0.35, bz0-cl, 1);
@@ -130,13 +138,16 @@ module shell() {
 
             // --- Tasche LD2410C / LD2412 ---
             difference() {
-                // steht auf dem Boden und reicht bis an die untere LD2450-Rippe (keine Spalte)
-                box(-l12/2-cl-rib, l12/2+cl+rib, front_t, top12, 0, bz0-cl-rib);
+                // steht auf dem Boden; obere Rippe = Federsteg (Dicke fb), darueber Schlitz sgap
+                box(-l12/2-cl-rib, l12/2+cl+rib, front_t, top12, 0, z12+w12+cl+fb);
                 box(-l12/2-cl, l12/2+cl, front_t-1, top12+1, z12-cl, z12+w12+cl);
+                // Luft unter dem Steg: nur die Seitenrippen halten ihn
+                box(-l12/2-cl, l12/2+cl, front_t-1, front_t+fgap, z12+w12+cl-0.01, z12+w12+cl+fb+0.01);
             }
             for (sx=[-1,1]) {   // Abstandshalter bis an die Rahmenrippen
                 box(sx*8-1.5, sx*8+1.5, front_t, front_t+so12, z12-cl, z12+1.2);
-                box(sx*8-1.5, sx*8+1.5, front_t, front_t+so12, z12+w12-1.2, z12+w12+cl);
+                // obere Abstandshalter enden fgap vor dem Federsteg
+                box(sx*8-1.5, sx*8+1.5, front_t, front_t+so12, z12+w12-1.2, z12+w12+cl-fgap);
             }
             for (sx=[-1,1]) {
                 ridge_x(sx*6-3, sx*6+3, front_t+so12+t12+0.35, z12-cl, 1);
@@ -358,3 +369,5 @@ else if (part == "clash_boards") intersection() {
 }
 else if (part == "section_corner50") intersection() { union() { shell(); boards(); } box(-100, 100, -50, 100, 30, 100); }
 else if (part == "lid_esp") { color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); color("red") esp_antenna(); color("silver") esp_usb(); }
+else if (part == "section_beams") intersection() { shell(); box(-100, secx, -50, 100, -50, 100); }
+else if (part == "shell_only") color("whitesmoke") shell();

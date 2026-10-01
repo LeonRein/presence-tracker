@@ -19,7 +19,7 @@ Quelle: `radar-combo-case.scad` (OpenSCAD). Alle Maße sind oben als Parameter �
 | `corner.stl` | stehend | – |
 | `stand.stl` | auf der Bodenplatte | – |
 
-PLA in Wandfarbe, 0,2 mm Schicht. **Kein Silk-, Metallic- oder Carbon-Filament**, das dämpft das Radar.
+PLA in Wandfarbe, 0,2 mm Schicht. Die beiden Federstege zwischen den Radar-Taschen werden als Brücke 0,6 mm über der Front gedruckt; sie dürfen nicht mit der Front verkleben, sonst federn sie nicht. **Kein Silk-, Metallic- oder Carbon-Filament**, das dämpft das Radar.
 Maße stammen aus den Hi-Link-Datenblättern. Beim JST-Stecker und beim ESP-Board sind es Schätzwerte.
 Druck zuerst `shell.stl` und prüf die Passung.
 
@@ -61,8 +61,8 @@ Baudrate: LD2450 und LD2410C 256000 (ein LD2412 hätte laut Datenblatt 115200).
 
 ## Zusammenbau
 
-1. LD2450: JST-ZH-Kabel in die Buchse stecken, die Stiftleiste bleibt ungenutzt. Den Radar mit den goldenen Antennen nach vorne in die obere Tasche drücken, bis er einrastet. Die Buchse sitzt von vorne gesehen rechts, dort ist im Gehäuse Platz für den Stecker.
-2. LD2410C: Die eingelötete 5-polige Stiftleiste **muss ab** (auslöten, oder den Kunststoff aufschneiden und die Pins einzeln ziehen). Hinter dem LD2410C sitzt der ESP mit nur etwa 3 mm Abstand. Dann 4 dünne Litzen (VCC, GND, TX, RX) von hinten in die Lötlöcher an der Oberkante löten und flach zur Seite wegführen. Dann den Radar mit den Antennen nach vorne in die untere Tasche drücken, die Lötlöcher oben.
+1. LD2450: JST-ZH-Kabel in die Buchse stecken, die Stiftleiste bleibt ungenutzt. Den Radar mit den goldenen Antennen nach vorne einsetzen: zuerst die Oberkante unter die festen Nasen an der Gehäusewand schieben, dann die Unterkante über die Nasen auf dem federnden Steg zwischen den Taschen drücken. Die Buchse sitzt von vorne gesehen rechts, dort ist im Gehäuse Platz für den Stecker.
+2. LD2410C: Die eingelötete 5-polige Stiftleiste **muss ab** (auslöten, oder den Kunststoff aufschneiden und die Pins einzeln ziehen). Hinter dem LD2410C sitzt der ESP mit nur etwa 3 mm Abstand. Dann 4 dünne Litzen (VCC, GND, TX, RX) von hinten in die Lötlöcher an der Oberkante löten und flach zur Seite wegführen. Dann den Radar mit den Antennen nach vorne einsetzen, die Lötlöcher oben: zuerst die Unterkante unter die festen Nasen am Boden schieben, dann die Oberkante über die Nasen auf dem federnden Steg drücken.
 3. Alle Kabel an den ESP löten. Den ESP mit der Bauteilseite zum Radar in den Deckel setzen, USB-C nach unten: erst das obere Ende (gegenüber USB-C) schräg unter die Rastlippe am oberen Anschlag schieben, dann das USB-Ende auf die Schienen drücken. Die seitlichen Führungen halten ihn seitlich, die Lippe oben und der USB-Ausschnitt im Gehäuse unten halten ihn in Richtung Radar. Ein Streifen doppelseitiges Klebeband auf den Schienen ist optional, ein Stück Kapton-Band hinten auf dem LD2410C schützt zusätzlich vor Kurzschluss.
 4. Deckel einsetzen (die USB-Buchse gleitet in den Ausschnitt unten) und mit 2× M2 verschrauben.
 5. Halter montieren und den Sensor von oben aufschieben. Beim Eckhalter sitzt pro Wand eine Schraube, die senkrecht in die Wand geht. Den Schraubendreher schräg von vorne durch die Senkbohrung neben der Schiene ansetzen.
