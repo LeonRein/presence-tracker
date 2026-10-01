@@ -1,0 +1,337 @@
+# LD2450 + LD2410C combo presence sensor on an ESP32-S3 SuperMini.
+#
+# Included by one small device file per room (see ../presence-example.yaml).
+# Wiring as in ../../case/README.md.
+#
+# Two outputs:
+#   - Native API -> Home Assistant: presence, counts, zones and all radar settings.
+#   - MQTT -> ${mqtt_prefix}/${name}/frame: one JSON frame per radar frame with the
+#     raw target coordinates, for the multi-sensor tracker. Format: ../README.md
+
+substitutions:
+  mqtt_prefix: presence
+  # Minimum time between two frames. The LD2450 sends one about every 90 ms;
+  # 50 ms passes every frame on, raise it to thin out the stream.
+  frame_interval_ms: "50"
+  # While nothing is detected, only send a heartbeat frame this often
+  idle_interval_ms: "5000"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  variant: esp32s3
+  board: esp32-s3-devkitc-1
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+
+# Logs over the built-in USB, both hardware UARTs go to the radars
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  platform: esphome
+  encryption:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Mains powered; WiFi modem sleep would add up to ~100 ms latency per frame
+  power_save_mode: none
+  ap:
+    password: !secret wifi_ap_password
+
+captive_portal:
+
+time:
+  - platform: homeassistant
+
+mqtt:
+  id: mqtt_client
+  broker: !secret mqtt_broker
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+  topic_prefix: ${mqtt_prefix}/${name}
+  # Home Assistant gets its entities over the native API, not twice via MQTT
+  discovery: false
+  log_topic: null
+  # Keep running for Home Assistant if the broker is down
+  reboot_timeout: 0s
+
+uart:
+  - id: uart_ld2450
+    tx_pin: GPIO6
+    rx_pin: GPIO7
+    baud_rate: 256000
+    parity: NONE
+    stop_bits: 1
+  - id: uart_ld2410
+    tx_pin: GPIO9
+    rx_pin: GPIO8
+    baud_rate: 256000
+    parity: NONE
+    stop_bits: 1
+
+ld2410:
+  id: ld2410_radar
+  uart_id: uart_ld2410
+
+ld2450:
+  id: ld2450_radar
+  uart_id: uart_ld2450
+  # Called after every LD2450 frame. Builds the tracking frame from the raw
+  # (unfiltered, internal) sensors below and publishes it via MQTT.
+  on_data:
+    - lambda: |-
+        static uint32_t last_publish = 0;
+        static uint32_t seq = 0;
+        static bool last_empty = true;
+
+        const uint32_t now = millis();
+        if (now - last_publish < ${frame_interval_ms}) return;
+
+        sensor::Sensor *xs[3] = {id(t1_x), id(t2_x), id(t3_x)};
+        sensor::Sensor *ys[3] = {id(t1_y), id(t2_y), id(t3_y)};
+        sensor::Sensor *speeds[3] = {id(t1_speed), id(t2_speed), id(t3_speed)};
+        sensor::Sensor *resolutions[3] = {id(t1_resolution), id(t2_resolution), id(t3_resolution)};
+
+        bool any_target = false;
+        for (auto *s : xs) any_target |= !std::isnan(s->state);
+        const bool moving = id(ld2410_moving).state;
+        const bool still = id(ld2410_still).state;
+        const bool empty = !any_target && !moving && !still;
+
+        // Nothing there and nothing changed: only a heartbeat now and then
+        if (empty && last_empty && now - last_publish < ${idle_interval_ms}) return;
+        if (!id(mqtt_client).is_connected()) return;
+
+        auto mm = [](sensor::Sensor *s, float factor) -> int {
+          return std::isnan(s->state) ? 0 : (int) lroundf(s->state * factor);
+        };
+
+        id(mqtt_client).publish_json("${mqtt_prefix}/${name}/frame", [&](JsonObject root) {
+          root["seq"] = seq;
+          root["uptime_ms"] = now;
+
+          JsonArray targets = root["targets"].to<JsonArray>();
+          for (int i = 0; i < 3; i++) {
+            if (std::isnan(xs[i]->state)) continue;
+            JsonObject t = targets.add<JsonObject>();
+            t["slot"] = i + 1;
+            t["x"] = mm(xs[i], 1);
+            t["y"] = mm(ys[i], 1);
+            t["speed"] = mm(speeds[i], 1);
+            t["resolution"] = mm(resolutions[i], 1);
+          }
+
+          // LD2410C reports distances in cm, convert to mm like the LD2450
+          JsonObject ld2410 = root["ld2410"].to<JsonObject>();
+          ld2410["moving"] = moving;
+          ld2410["still"] = still;
+          ld2410["moving_distance"] = moving ? mm(id(ld2410_moving_distance), 10) : 0;
+          ld2410["moving_energy"] = moving ? mm(id(ld2410_moving_energy), 1) : 0;
+          ld2410["still_distance"] = still ? mm(id(ld2410_still_distance), 10) : 0;
+          ld2410["still_energy"] = still ? mm(id(ld2410_still_energy), 1) : 0;
+        });
+
+        seq++;
+        last_publish = now;
+        last_empty = empty;
+
+binary_sensor:
+  - platform: status
+    name: Status
+
+  - platform: ld2450
+    ld2450_id: ld2450_radar
+    has_target:
+      name: Presence
+    has_moving_target:
+      name: Moving Target
+    has_still_target:
+      name: Still Target
+
+  - platform: ld2410
+    ld2410_id: ld2410_radar
+    has_target:
+      name: LD2410 Presence
+    has_moving_target:
+      id: ld2410_moving
+      name: LD2410 Moving Target
+    has_still_target:
+      id: ld2410_still
+      name: LD2410 Still Target
+
+sensor:
+  - platform: ld2450
+    ld2450_id: ld2450_radar
+    target_count:
+      name: Target Count
+    still_target_count:
+      name: Still Target Count
+    moving_target_count:
+      name: Moving Target Count
+    # Raw target values for the MQTT frame. `filters: []` removes the default
+    # 1 s throttle; internal keeps the 10 Hz updates away from Home Assistant.
+    target_1:
+      x: {id: t1_x, internal: true, filters: []}
+      y: {id: t1_y, internal: true, filters: []}
+      speed: {id: t1_speed, internal: true, filters: []}
+      resolution: {id: t1_resolution, internal: true, filters: []}
+    target_2:
+      x: {id: t2_x, internal: true, filters: []}
+      y: {id: t2_y, internal: true, filters: []}
+      speed: {id: t2_speed, internal: true, filters: []}
+      resolution: {id: t2_resolution, internal: true, filters: []}
+    target_3:
+      x: {id: t3_x, internal: true, filters: []}
+      y: {id: t3_y, internal: true, filters: []}
+      speed: {id: t3_speed, internal: true, filters: []}
+      resolution: {id: t3_resolution, internal: true, filters: []}
+    zone_1:
+      target_count:
+        name: Zone 1 Target Count
+    zone_2:
+      target_count:
+        name: Zone 2 Target Count
+    zone_3:
+      target_count:
+        name: Zone 3 Target Count
+
+  - platform: ld2410
+    ld2410_id: ld2410_radar
+    detection_distance:
+      name: LD2410 Detection Distance
+    moving_distance: {id: ld2410_moving_distance, internal: true, filters: []}
+    moving_energy: {id: ld2410_moving_energy, internal: true, filters: []}
+    still_distance: {id: ld2410_still_distance, internal: true, filters: []}
+    still_energy: {id: ld2410_still_energy, internal: true, filters: []}
+
+  # Target positions for Home Assistant (e.g. a plotly card for drawing zones).
+  # Off by default to keep the recorder small; enable them in HA when needed.
+  - {platform: copy, source_id: t1_x, name: Target 1 X, disabled_by_default: true, filters: [throttle: 1s]}
+  - {platform: copy, source_id: t1_y, name: Target 1 Y, disabled_by_default: true, filters: [throttle: 1s]}
+  - {platform: copy, source_id: t2_x, name: Target 2 X, disabled_by_default: true, filters: [throttle: 1s]}
+  - {platform: copy, source_id: t2_y, name: Target 2 Y, disabled_by_default: true, filters: [throttle: 1s]}
+  - {platform: copy, source_id: t3_x, name: Target 3 X, disabled_by_default: true, filters: [throttle: 1s]}
+  - {platform: copy, source_id: t3_y, name: Target 3 Y, disabled_by_default: true, filters: [throttle: 1s]}
+  # LD2410C values for tuning the gate thresholds
+  - {platform: copy, source_id: ld2410_moving_energy, name: LD2410 Moving Energy, disabled_by_default: true, filters: [throttle: 1s]}
+  - {platform: copy, source_id: ld2410_still_energy, name: LD2410 Still Energy, disabled_by_default: true, filters: [throttle: 1s]}
+
+  - platform: wifi_signal
+    name: WiFi Signal
+    update_interval: 60s
+
+  - platform: uptime
+    name: Uptime
+    type: timestamp
+
+text_sensor:
+  - platform: ld2450
+    ld2450_id: ld2450_radar
+    version:
+      name: LD2450 Firmware
+
+  - platform: ld2410
+    ld2410_id: ld2410_radar
+    version:
+      name: LD2410 Firmware
+
+switch:
+  - platform: ld2450
+    ld2450_id: ld2450_radar
+    multi_target:
+      name: LD2450 Multi Target
+    # Bluetooth always off on both radars. Each radar reports its setting after
+    # every restart; if it is on, switch it off (stored in the radar, one restart).
+    bluetooth:
+      id: ld2450_bluetooth
+      internal: true
+      on_turn_on:
+        - delay: 1s
+        - switch.turn_off: ld2450_bluetooth
+
+  - platform: ld2410
+    ld2410_id: ld2410_radar
+    engineering_mode:
+      name: LD2410 Engineering Mode
+    bluetooth:
+      id: ld2410_bluetooth
+      internal: true
+      on_turn_on:
+        - delay: 1s
+        - switch.turn_off: ld2410_bluetooth
+
+select:
+  - platform: ld2450
+    ld2450_id: ld2450_radar
+    zone_type:
+      name: LD2450 Zone Type
+
+  - platform: ld2410
+    ld2410_id: ld2410_radar
+    distance_resolution:
+      name: LD2410 Distance Resolution
+
+button:
+  - platform: ld2450
+    ld2450_id: ld2450_radar
+    restart:
+      name: LD2450 Restart
+    factory_reset:
+      name: LD2450 Factory Reset
+
+  - platform: ld2410
+    ld2410_id: ld2410_radar
+    restart:
+      name: LD2410 Restart
+    factory_reset:
+      name: LD2410 Factory Reset
+    query_params:
+      name: LD2410 Query Parameters
+
+number:
+  - platform: ld2450
+    ld2450_id: ld2450_radar
+    presence_timeout:
+      name: LD2450 Presence Timeout
+    zone_1:
+      x1: {name: Zone 1 X1}
+      y1: {name: Zone 1 Y1}
+      x2: {name: Zone 1 X2}
+      y2: {name: Zone 1 Y2}
+    zone_2:
+      x1: {name: Zone 2 X1}
+      y1: {name: Zone 2 Y1}
+      x2: {name: Zone 2 X2}
+      y2: {name: Zone 2 Y2}
+    zone_3:
+      x1: {name: Zone 3 X1}
+      y1: {name: Zone 3 Y1}
+      x2: {name: Zone 3 X2}
+      y2: {name: Zone 3 Y2}
+
+  - platform: ld2410
+    ld2410_id: ld2410_radar
+    timeout:
+      name: LD2410 Timeout
+    max_move_distance_gate:
+      name: LD2410 Max Move Gate
+    max_still_distance_gate:
+      name: LD2410 Max Still Gate
+    g0: {move_threshold: {name: LD2410 G0 Move Threshold}, still_threshold: {name: LD2410 G0 Still Threshold}}
+    g1: {move_threshold: {name: LD2410 G1 Move Threshold}, still_threshold: {name: LD2410 G1 Still Threshold}}
+    g2: {move_threshold: {name: LD2410 G2 Move Threshold}, still_threshold: {name: LD2410 G2 Still Threshold}}
+    g3: {move_threshold: {name: LD2410 G3 Move Threshold}, still_threshold: {name: LD2410 G3 Still Threshold}}
+    g4: {move_threshold: {name: LD2410 G4 Move Threshold}, still_threshold: {name: LD2410 G4 Still Threshold}}
+    g5: {move_threshold: {name: LD2410 G5 Move Threshold}, still_threshold: {name: LD2410 G5 Still Threshold}}
+    g6: {move_threshold: {name: LD2410 G6 Move Threshold}, still_threshold: {name: LD2410 G6 Still Threshold}}
+    g7: {move_threshold: {name: LD2410 G7 Move Threshold}, still_threshold: {name: LD2410 G7 Still Threshold}}
+    g8: {move_threshold: {name: LD2410 G8 Move Threshold}, still_threshold: {name: LD2410 G8 Still Threshold}}

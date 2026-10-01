@@ -1,0 +1,9 @@
+# One file per sensor: copy it, rename it and change the substitutions.
+# `name` must be unique, it is also the MQTT topic (presence/<name>/frame).
+
+substitutions:
+  name: presence-wohnzimmer
+  friendly_name: Präsenz Wohnzimmer
+
+packages:
+  radar: !include packages/radar-combo.yaml

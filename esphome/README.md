@@ -1,0 +1,137 @@
+# ESPHome-Konfiguration
+
+Firmware für den Kombi-Sensor aus [`../case`](../case/README.md): LD2450 + LD2410C an einem ESP32-S3 SuperMini.
+Getestet mit ESPHome 2026.9 (`esphome config` und `esphome compile`).
+
+| Datei | Inhalt |
+|---|---|
+| `packages/radar-combo.yaml` | Alles Gemeinsame: Board, UARTs, Radare, Entitäten, MQTT-Stream |
+| `presence-example.yaml` | Vorlage für einen Sensor, eine Datei pro Raum |
+| `secrets.yaml.example` | Benötigte Secrets |
+
+## Zwei Wege aus dem Sensor
+
+**Native API → Home Assistant**, wie bei jedem ESPHome-Gerät: Anwesenheit, Zielanzahl, Zonen,
+alle Radar-Einstellungen (Zonen, Gates, Timeouts, Multi-Target) und OTA.
+Die Werte sind auf 1/s gedrosselt (ESPHome-Standard), damit der Recorder klein bleibt.
+
+**MQTT → Tracker**: Für das Verfolgen über mehrere Sensoren braucht das Python-Skript die Rohdaten
+jedes Radar-Frames (ca. 11/s). Dafür schickt der Sensor pro Frame eine JSON-Nachricht an den Mosquitto-Broker.
+
+Warum nicht beides über die API? Die API kennt nur Entitäten. Rohdaten mit 10 Hz als Entitäten
+landen auch in Home Assistant (State-Machine, Recorder, Logbuch), und das Skript bräuchte eine eigene
+API-Verbindung zu jedem Sensor. Über MQTT abonniert das Skript mit einer Verbindung `presence/+/frame`
+und bekommt alle Sensoren. Home Assistant merkt davon nichts. Den Stream kann man mit `mosquitto_sub`
+mitschneiden und später zum Entwickeln wieder abspielen. Das Skript kann sein Ergebnis (wer ist in welchem
+Raum) per MQTT-Discovery zurück an Home Assistant geben. Mosquitto läuft hier ohnehin schon.
+
+`discovery: false` ist gesetzt, sonst würden die Entitäten in Home Assistant doppelt auftauchen.
+Ohne Broker läuft der Sensor normal weiter (`reboot_timeout: 0s`), nur der Stream fehlt dann.
+
+## Frame-Format
+
+Topic `presence/<name>/frame`, QoS 0, nicht retained:
+
+```json
+{
+  "seq": 4711,
+  "uptime_ms": 123456789,
+  "targets": [
+    {"slot": 1, "x": -420, "y": 1830, "speed": 0, "resolution": 360},
+    {"slot": 3, "x": 650, "y": 2900, "speed": -180, "resolution": 360}
+  ],
+  "ld2410": {
+    "moving": false, "still": true,
+    "moving_distance": 0, "moving_energy": 0,
+    "still_distance": 1900, "still_energy": 47
+  }
+}
+```
+
+| Feld | Bedeutung |
+|---|---|
+| `seq` | Zähler, Lücken = verlorene Frames. Beginnt nach jedem Neustart bei 0 |
+| `uptime_ms` | Zeit auf dem ESP. Für Zeitabstände zwischen Frames desselben Sensors, ohne WLAN-Jitter |
+| `targets` | Nur erkannte Ziele, 0–3 Einträge. Koordinaten des LD2450 in mm, Sensor im Ursprung |
+| `x` | quer zur Blickrichtung, mm |
+| `y` | Abstand nach vorn, mm (immer positiv) |
+| `speed` | radial in mm/s, negativ = kommt näher, 0 = steht |
+| `resolution` | Abstandsauflösung des Radars, mm |
+| `slot` | Platz 1–3 im LD2450. Bleibt meist gleich, ist aber **keine** feste Personen-ID |
+| `ld2410` | Statusdaten des LD2410C, Abstände in mm, Energie 0–100 |
+
+Wann gesendet wird: bei jedem LD2450-Frame (etwa alle 90 ms), höchstens alle `frame_interval_ms` (50 ms, also jeder Frame).
+Ist nichts erkannt (kein Ziel, LD2410C ohne Präsenz), kommt einmal ein leerer Frame und danach
+nur alle `idle_interval_ms` (5 s) ein Lebenszeichen. Beides lässt sich in der Gerätedatei per `substitutions` ändern.
+
+Ob der Sensor online ist, steht retained in `presence/<name>/status` (`online` / `offline`, per Last Will).
+Zusätzlich veröffentlicht ESPHome alle nicht-internen Entitäten unter `presence/<name>/…`.
+
+### Hinweise für den Tracker
+
+- **Koordinaten**: Die Position und Blickrichtung jedes Sensors im Hausplan gehört in die Konfiguration
+  des Skripts, nicht in die Firmware. Dann muss man zum Einmessen nicht neu flashen.
+  Umrechnung bei Sensor an `(px, py)` mit Blickrichtung `h` (Winkel zur X-Achse des Plans),
+  wenn `x` vom Sensor aus gesehen nach rechts positiv ist:
+  `X = px + y·cos(h) + x·sin(h)`, `Y = py + y·sin(h) − x·cos(h)`.
+  **Das Vorzeichen von `x` beim Einbau prüfen** (nach rechts gehen und schauen, ob `x` steigt oder fällt).
+  Es hängt davon ab, wie herum der Sensor hängt.
+- Der LD2450 verliert stillsitzende Personen nach einiger Zeit. Der LD2410C erkennt sie weiter
+  (`still`, nur Abstand, keine Richtung). Daran lässt sich sehen, dass ein verlorenes Ziel wahrscheinlich noch da ist.
+- Zeitstempel beim Empfang im Skript setzen. Im LAN sind das wenige Millisekunden.
+- **Multi-Target** muss eingeschaltet sein (Schalter `LD2450 Multi Target`), sonst meldet der LD2450 nur ein Ziel.
+
+Minimaler Empfänger (`pip install aiomqtt`):
+
+```python
+import asyncio, json, time
+import aiomqtt
+
+async def main():
+    async with aiomqtt.Client("192.168.178.3", username="presence", password="...") as client:
+        await client.subscribe("presence/+/frame")
+        async for msg in client.messages:
+            sensor = msg.topic.value.split("/")[1]
+            frame = json.loads(msg.payload)
+            for t in frame["targets"]:
+                print(f"{time.time():.3f} {sensor} #{t['slot']} x={t['x']} y={t['y']} v={t['speed']}")
+
+asyncio.run(main())
+```
+
+Mitschneiden zum späteren Abspielen:
+
+```bash
+mosquitto_sub -h 192.168.178.3 -u presence -P '...' -t 'presence/+/frame' -F '%U %t %p' > aufnahme.log
+```
+
+## Einrichten im ESPHome Device Builder
+
+1. **MQTT-Benutzer** anlegen: im Mosquitto-Add-on unter *Konfiguration → logins* (oder einen eigenen HA-Benutzer).
+2. **Secrets**: die Schlüssel aus `secrets.yaml.example` in `/config/esphome/secrets.yaml` ergänzen.
+   `wifi_*` und `api_key` gibt es dort schon, neu sind `mqtt_broker`, `mqtt_username`, `mqtt_password`.
+3. **Package**: den Ordner `packages/` nach `/config/esphome/packages/` kopieren (z. B. mit dem Studio Code Server).
+   Dateien in Unterordnern zeigt der Device Builder nicht als eigenes Gerät an.
+4. **Gerät**: `presence-example.yaml` als z. B. `presence-wohnzimmer.yaml` anlegen und `name`/`friendly_name` anpassen.
+   `name` muss eindeutig sein, er ist auch das MQTT-Topic.
+5. Das erste Mal per USB flashen, danach per OTA.
+
+Statt Schritt 3 kann die Gerätedatei das Package auch direkt aus Git holen:
+
+```yaml
+packages:
+  radar: github://LeonRein/presence-tracker/esphome/packages/radar-combo.yaml@main
+```
+
+Das geht nur, wenn das Repo öffentlich ist. Änderungen am Package landen dann bei allen Sensoren mit dem nächsten Build.
+
+## Nach dem ersten Start
+
+- `LD2450 Multi Target` einschalten.
+- Bluetooth an beiden Radaren schaltet die Firmware selbst ab (einmalig, der Radar startet dabei kurz neu).
+  Die Schalter sind intern, in Home Assistant gibt es sie nicht. Für die HLKRadarTool-App
+  in `radar-combo.yaml` bei `bluetooth:` die Zeilen `internal` und `on_turn_on` entfernen.
+- LD2410C-Gates einstellen: `LD2410 Engineering Mode` an, die Entitäten `LD2410 Moving/Still Energy` aktivieren
+  (sind standardmäßig deaktiviert) und die Schwellen `LD2410 Gx … Threshold` im leeren Raum knapp über das Rauschen legen.
+- Zonen (`Zone 1–3 X1/Y1/X2/Y2`, in mm) sind nur für Automationen direkt in Home Assistant da, der Tracker braucht sie nicht.
+  Zum Einzeichnen helfen die Entitäten `Target 1–3 X/Y` (standardmäßig deaktiviert, 1/s).
