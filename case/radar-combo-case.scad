@@ -58,9 +58,12 @@ esp_y = split_y - 1.5 - esp_t;           // Vorderseite (Bauteilseite) der ESP-P
 // Federarm mit Rastnase (antennenfreier Streifen): x-Bereich
 arm_x0 = -4.5; arm_x1 = -1.6;
 esp_top = esp_z0 + esp_l;                // Oberkante ESP-Platine
-arm_rest = split_y - 1.5 - 1.2;          // Unterseite des Federarms in Ruhe: Kontakt ab 1,2 mm Platinendicke
-arm_t    = 0.6;                          // Dicke des Federarms
-arm_len  = 6.0;                          // Arm reicht von esp_top+arm_len bis 0,8 mm ueber die Platine
+// Rasthaken fuer das obere ESP-Ende: steht auf einem Federsteg, der durch zwei Schlitze in der
+// Deckelplatte freigestellt ist (biegt in der Schichtebene). arm_x0..arm_x1 = Hakenbreite.
+hook_y   = 9.5;    // Unterkante der 45-Grad-Schraege am Zahn (ESP-Unterkante liegt dann auf dem Boden)
+hook_top = 7.9;    // Oberseite des Hakens
+spr_x0 = -13; spr_x1 = 6.9;   // Federsteg in der Deckelplatte (Mitte unter dem Haken)
+spr_t  = 0.7;      // Dicke des Federstegs (z)
 lid_t   = 4.2;             // Deckel (enthaelt Schwalbenschwanz-Nut)
 D  = split_y + lid_t;      // Gesamttiefe
 W  = iw + 2*wall;
@@ -75,7 +78,7 @@ boss_x = 21.5; boss_z = 6;      // M2-Schrauben Deckel
 
 // Schwalbenschwanz (Halter-Schiene / Deckel-Nut)
 dt_base = 5;  dt_tip = 7;  dt_h = 3;  dt_cl = 0.25;
-dt_top  = ih - 7;               // Nut oben geschlossen -> Sensor liegt auf
+dt_top  = esp_top - 1.5;        // Nut oben geschlossen -> Sensor liegt auf; endet vor den Federschlitzen
 
 // Schrankfuss
 tilt = 10;       // Neigung nach unten (Grad)
@@ -176,7 +179,12 @@ module shell() {
             }
 
             // --- Schraubdome ---
-            for (sx=[-1,1]) translate([sx*boss_x, front_t, boss_z]) ycyl(split_y-front_t, 2.75, 2.75);
+            for (sx=[-1,1]) {
+                translate([sx*boss_x, front_t, boss_z]) ycyl(split_y-front_t, 2.75, 2.75);
+                translate([sx*boss_x, front_t-0.01, boss_z]) ycyl(1.51, 4.25, 2.75);      // 45-Grad-Fase am Fuss
+                // Rippe zur Seitenwand, endet 0,3 mm unter der Deckellippe
+                box(sx*boss_x, sx*(iw/2+0.01), front_t, split_y-1.5-0.3, boss_z-0.75, boss_z+0.75);
+            }
         }
         // Schraubloecher M2
         for (sx=[-1,1]) translate([sx*boss_x, split_y-9, boss_z]) ycyl(9.1, 1.0, 1.0);   // M2 selbstschneidend: Kern 2,0
@@ -227,30 +235,17 @@ module lid() {
             // Fuehrungen nur so hoch wie noetig (0,5 mm ueber die Platinenvorderseite),
             // aussen durchgehende 45-Grad-Schraege -> breiter Fuss, bricht nicht ab
             for (sx=[-1,1]) hull() {
-                box(sx*(esp_w/2+0.3), sx*(esp_w/2+1.8), esp_y-0.5, split_y+0.01, 12, esp_top+1.5);
-                box(sx*(esp_w/2+0.3), sx*(esp_w/2+1.8+(split_y-esp_y+0.5)), split_y-0.01, split_y+0.01, 12, esp_top+1.5);
+                box(sx*(esp_w/2+0.3), sx*(esp_w/2+1.8), esp_y-0.5, split_y+0.01, 12, esp_top-1.0);
+                box(sx*(esp_w/2+0.3), sx*(esp_w/2+1.8+(split_y-esp_y+0.5)), split_y-0.01, split_y+0.01, 12, esp_top-1.0);
             }
-            // oberer Anschlag mit Rastlippe: haelt das obere ESP-Ende in Richtung Radar
-            // (aussen mit 45-Grad-Stuetze ueber die volle Hoehe)
+            // Zahn mit Rasthaken auf dem Federsteg (Steg = Teil der Deckelplatte, siehe Schlitze).
+            // Unterseite des Hakens 45 Grad: druckbar ohne Stuetzen und drueckt die Platinenkante
+            // gleichzeitig auf die Schienen und Richtung Boden.
+            box(arm_x0, arm_x1, hook_top, split_y+0.01, esp_top+0.3, esp_top+1.8);
             hull() {
-                box(arm_x1+0.8, 6, esp_y-1.5, split_y+0.01, esp_top+0.3, esp_top+1.8);
-                box(arm_x1+0.8, 6, split_y-0.01, split_y+0.01, esp_top+0.3, esp_top+1.8+(split_y-esp_y+1.5));
+                box(arm_x0, arm_x1, hook_top, hook_top+0.6, esp_top+0.3-(hook_y-hook_top-0.6), esp_top+0.31);
+                box(arm_x0, arm_x1, hook_top, hook_y, esp_top+0.3, esp_top+0.31);
             }
-            // Federarm: liegt vor der Platine, Wurzel hinter dem oberen ESP-Ende, Spitze 0,8 mm ueber
-            // der Platine mit 45-Grad-Einfuehrschraege. Biegt sich weg vom Deckel und drueckt die
-            // Platine auf die Schienen -> gleicht unterschiedliche Platinendicken aus.
-            hull() {
-                box(arm_x0, arm_x1, arm_rest-arm_t, arm_rest, esp_top-0.3, esp_top+arm_len+1.2);
-                box(arm_x0, arm_x1, arm_rest-arm_t, arm_rest-arm_t+0.1, esp_top-0.8, esp_top-0.3);
-            }
-            // Wurzel mit 45-Grad-Stuetze nach aussen
-            hull() {
-                box(arm_x0, arm_x1, arm_rest-arm_t, split_y+0.01, esp_top+arm_len, esp_top+arm_len+1.2);
-                box(arm_x0, arm_x1, split_y-0.01, split_y+0.01, esp_top+arm_len, esp_top+arm_len+1.2+(split_y-arm_rest+arm_t));
-            }
-            // Ausbrech-Saeulen: stuetzen den Arm beim Druck, danach herausbrechen
-            for (zp = [esp_top+2.0, esp_top+4.2])
-                box((arm_x0+arm_x1)/2-0.4, (arm_x0+arm_x1)/2+0.4, arm_rest-0.01, split_y+0.01, zp-0.4, zp+0.4);
         }
         // M2 Senkkopf
         for (sx=[-1,1]) translate([sx*boss_x, split_y-1, boss_z]) {
@@ -258,6 +253,13 @@ module lid() {
             translate([0, lid_t+1-1.2, 0]) ycyl(1.21, 1.3, 2.2);
             translate([0, lid_t+1, 0]) ycyl(1, 2.2, 2.2);
         }
+        // Schlitze durch die Deckelplatte: stellen den Federsteg frei. Unter dem Zahn bleibt ein
+        // 1,5 mm breites Polster stehen. Der hintere Schlitz begrenzt den Federweg auf 0,6 mm.
+        for (zr = [[esp_top-0.4, esp_top+0.3+0.4], [esp_top+0.3+0.4+spr_t, esp_top+2.4]])
+            difference() {
+                box(spr_x0, spr_x1, split_y-1, D+1, zr[0], zr[1]);
+                box(arm_x0, arm_x1, split_y-2, D+2, esp_top+0.3, esp_top+1.8);
+            }
         // Schwalbenschwanz-Nut (unten offen, oben geschlossen)
         translate([0, D, zo0-1]) linear_extrude(height = dt_top - zo0 + 1) dovetail_profile(dt_cl);
     }
@@ -423,7 +425,8 @@ else if (part == "clash_boards") intersection() {
     union() {   // Platinen mit 0,05 mm Abstand verkleinert, damit reine Auflageflaechen nicht zaehlen
         box(bx0+0.05, bx0+l50-0.05, front_t+so+0.05, front_t+so+t50-0.05, bz0+0.05, bz0+w50-0.05);
         box(-l12/2+0.05, l12/2-0.05, front_t+so12+0.05, front_t+so12+t12-0.05, z12+0.05, z12+w12-0.05);
-        box(-esp_w/2+0.05, esp_w/2-0.05, max(esp_y, arm_rest)+0.05, esp_y+esp_t-0.05, esp_z0+0.05, esp_top-0.05);
+        // oberstes 1 mm ausgenommen: dort drueckt der Haken gewollt mit Vorspannung auf die Kante
+        box(-esp_w/2+0.05, esp_w/2-0.05, esp_y+0.05, esp_y+esp_t-0.05, 0.05, esp_top-1.0);
         ld2450_header(); esp_antenna(); esp_usb();
         if (static_radar == "LD2410C") ld2410c_front_parts();
     }
@@ -437,11 +440,7 @@ else if (part == "test_beams")  // Teststueck: Front mit Taschen, Federstegen un
 else if (part == "clash_lid_shell") intersection() { shell(); lid(); }
 else if (part == "bottom_view") { color("whitesmoke") shell(); color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); color("silver") esp_usb(); }
 else if (part == "section_arm") intersection() { union() { color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); } box(-100, (arm_x0+arm_x1)/2, -50, 100, -50, 100); }
-else if (part == "chk_arm_gap") intersection() { lid(); union() {   // muss leer sein: Raum unter dem Arm ohne Saeulen/Wurzel
-    box(arm_x0+0.05, arm_x1-0.05, arm_rest+0.05, split_y-0.05, esp_top-0.8, esp_top+1.55);
-    box(arm_x0+0.05, arm_x1-0.05, arm_rest+0.05, split_y-0.05, esp_top+2.45, esp_top+3.75);
-    box(arm_x0+0.05, arm_x1-0.05, arm_rest+0.05, split_y-0.05, esp_top+4.65, esp_top+arm_len-0.05); } }
-else if (part == "chk_arm_free") intersection() { lid(); union() {   // muss leer sein: Luft neben dem Arm (Arm haengt nicht an Anschlag/Fuehrung)
-    box(arm_x1+0.05, arm_x1+0.75, arm_rest-arm_t-1, split_y-0.05, esp_top-0.8, esp_top+arm_len-0.05);
-    box(arm_x0-0.75, arm_x0-0.05, arm_rest-arm_t-1, split_y-0.05, esp_top-0.8, esp_top+arm_len-0.05); } }
-else if (part == "chk_arm_present") intersection() { lid(); box(arm_x0, arm_x1, arm_rest-arm_t, arm_rest, esp_top-0.3, esp_top+arm_len); }
+else if (part == "chk_slots_free") intersection() { lid(); union() {   // muss leer sein: Schlitze wirklich offen
+    difference() { box(spr_x0+0.05, spr_x1-0.05, split_y+0.05, D-0.05, esp_top-0.35, esp_top+0.65); box(arm_x0-0.05, arm_x1+0.05, 0, 30, esp_top+0.25, esp_top+1.85); }
+    difference() { box(spr_x0+0.05, spr_x1-0.05, split_y+0.05, D-0.05, esp_top+0.7+spr_t+0.05, esp_top+2.35); box(arm_x0-0.05, arm_x1+0.05, 0, 30, esp_top+0.25, esp_top+1.85); } } }
+else if (part == "chk_beam_present") intersection() { lid(); box(spr_x0, spr_x1, split_y, D, esp_top+0.75, esp_top+0.65+spr_t); }
