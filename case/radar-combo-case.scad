@@ -32,7 +32,9 @@ t12 = static_radar == "LD2412" ? 1.0 : 1.2;
 so12 = static_radar == "LD2412" ? 1.0 : 1.2;   // Abstand, LD2410C hat Bauteile auf der Front
 so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 
-esp_w = 18; esp_l = 22.6; esp_t = 1.0;   // ESP32-S3 / C3 SuperMini
+esp_w = 18; esp_l = 23.0; esp_t = 1.0;   // ESP32-S3 SuperMini, Laenge am echten Board gemessen (Datenblatt: 22,52)
+usb_over = 1.9;                          // USB-C-Buchse steht so weit ueber die Platinenkante (gemessen)
+esp_z0 = 0.2;                            // Unterkante ESP-Platine (Innenboden = 0); Buchse ragt durch den Ausschnitt
 usb_h = 3.2;                             // Hoehe USB-C-Buchse ueber der Platine
 
 iw = g50 + l50 + cl + jst;   // Innenbreite
@@ -41,7 +43,9 @@ ih = z12 + w12 + 2*1.0 + 3*cl + 0.5 + w50;   // Innenhoehe (LD2412: 31, LD2410C:
 split_y = 11.8;            // Trennebene Gehaeuse / Deckel
 esp_y = split_y - 1.5 - esp_t;           // Vorderseite (Bauteilseite) der ESP-Platine
 // Rastlippe am oberen ESP-Ende: nur die Haelfte ohne Keramikantenne (S3 SuperMini, von vorne gesehen links)
-lip_x0 = -5.5; lip_x1 = 0.5;
+// Gemessen am echten Board: Antenne bei x = -0,9 ... 5,7, Pad von Pin 8 ab x = -7,6
+lip_x0 = -6.0; lip_x1 = -2.4;
+esp_top = esp_z0 + esp_l;                // Oberkante ESP-Platine
 lid_t   = 4.2;             // Deckel (enthaelt Schwalbenschwanz-Nut)
 D  = split_y + lid_t;      // Gesamttiefe
 W  = iw + 2*wall;
@@ -174,12 +178,12 @@ module lid() {
             // ESP-Auflage-Schienen
             for (sx=[-1,1]) box(sx*3.5-1, sx*3.5+1, split_y-1.5, split_y+0.01, 2, 20);
             // seitliche Fuehrungen und oberer Anschlag
-            for (sx=[-1,1]) box(sx*(esp_w/2+0.3), sx*(esp_w/2+1.8), split_y-1.5-esp_t-2.5, split_y+0.01, 12, esp_l+1.5);
+            for (sx=[-1,1]) box(sx*(esp_w/2+0.3), sx*(esp_w/2+1.8), split_y-1.5-esp_t-2.5, split_y+0.01, 12, esp_top+1.5);
             // oberer Anschlag mit Rastlippe: haelt das obere ESP-Ende in Richtung Radar
-            box(-6, 6, esp_y-1.5, split_y+0.01, esp_l+0.3, esp_l+1.8);
+            box(-6, 6, esp_y-1.5, split_y+0.01, esp_top+0.3, esp_top+1.8);
             hull() {
-                box(lip_x0, lip_x1, esp_y-1.5, esp_y-0.05, esp_l+0.3, esp_l+0.31);
-                box(lip_x0, lip_x1, esp_y-0.8, esp_y-0.05, esp_l-1.0, esp_l+0.31);
+                box(lip_x0, lip_x1, esp_y-1.5, esp_y-0.05, esp_top+0.3, esp_top+0.31);
+                box(lip_x0, lip_x1, esp_y-0.8, esp_y-0.05, esp_top-1.0, esp_top+0.31);
             }
         }
         // M2 Senkkopf
@@ -255,19 +259,21 @@ module boards() {
     color("seagreen")  box(bx0, bx0+l50, front_t+so, front_t+so+t50, bz0, bz0+w50);
     color("seagreen")  box(-l12/2, l12/2, front_t+so12, front_t+so12+t12, z12, z12+w12);
     color("white")     box(bx0+l50-6, bx0+l50+4, front_t+so+t50, front_t+so+t50+4.5, bz0+4, bz0+11);  // JST
-    color("royalblue") box(-esp_w/2, esp_w/2, split_y-1.5-esp_t, split_y-1.5, 0, esp_l);
+    color("royalblue") box(-esp_w/2, esp_w/2, split_y-1.5-esp_t, split_y-1.5, esp_z0, esp_top);
     color("red")       esp_antenna();
     color("black")     ld2450_header();
-    color("silver")    box(-4.5, 4.5, split_y-1.5-esp_t-3.2, split_y-1.5-esp_t, -0.7, 7);
+    color("silver")    esp_usb();
 }
 
 // Stiftleiste 2x4 (2,0 mm) auf der LD2450-Rueckseite, am Ende gegenueber der JST-Buchse
 module ld2450_header(pin_len = 6) {
     box(bx0+2, bx0+6, front_t+so+t50, front_t+so+t50+pin_len, bz0+3.8, bz0+11.9);
 }
-// Keramikantenne am oberen Ende des ESP32-S3 SuperMini (aus Produktfotos geschaetzt)
+// USB-C-Buchse (ragt usb_over ueber die Platinenkante)
+module esp_usb() { box(-4.5, 4.5, esp_y-usb_h, esp_y, esp_z0-usb_over, esp_z0+7); }
+// Keramikantenne am oberen Ende des ESP32-S3 SuperMini (am echten Board gemessen)
 module esp_antenna() {
-    box(2.4, 8.0, esp_y-1.2, esp_y, esp_l-2.3, esp_l-0.3);
+    box(-0.9, 5.7, esp_y-1.2, esp_y, esp_top-2.2, esp_top-0.2);
 }
 
 module sensor(explode=0) {
@@ -300,7 +306,7 @@ else if (part == "section_z") {   // Schnitt auf Hoehe z (Draufsicht)
 else if (part == "open") {        // Gehaeuse ohne Deckel + Platinen
     color("whitesmoke") shell(); boards();
 }
-else if (part == "lid_inside") { color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, split_y-1.5-esp_t, split_y-1.5, 0, esp_l); }
+else if (part == "lid_inside") { color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, split_y-1.5-esp_t, split_y-1.5, esp_z0, esp_top); }
 else if (part == "section_stand") {
     intersection() { union() { T() { sensor(); boards(); } color("tan") stand(); } box(-100, 0, -50, 100, -50, 100); }
 }
@@ -346,8 +352,9 @@ else if (part == "clash_boards") intersection() {
     union() {   // Platinen mit 0,05 mm Abstand verkleinert, damit reine Auflageflaechen nicht zaehlen
         box(bx0+0.05, bx0+l50-0.05, front_t+so+0.05, front_t+so+t50-0.05, bz0+0.05, bz0+w50-0.05);
         box(-l12/2+0.05, l12/2-0.05, front_t+so12+0.05, front_t+so12+t12-0.05, z12+0.05, z12+w12-0.05);
-        box(-esp_w/2+0.05, esp_w/2-0.05, esp_y+0.05, esp_y+esp_t-0.05, 0.05, esp_l-0.05);
-        ld2450_header(); esp_antenna();
+        box(-esp_w/2+0.05, esp_w/2-0.05, esp_y+0.05, esp_y+esp_t-0.05, esp_z0+0.05, esp_top-0.05);
+        ld2450_header(); esp_antenna(); esp_usb();
     }
 }
 else if (part == "section_corner50") intersection() { union() { shell(); boards(); } box(-100, 100, -50, 100, 30, 100); }
+else if (part == "lid_esp") { color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); color("red") esp_antenna(); color("silver") esp_usb(); }
