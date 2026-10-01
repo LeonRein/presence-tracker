@@ -22,6 +22,8 @@ Quelle: `radar-combo-case.scad` (OpenSCAD). Alle Maße sind oben als Parameter �
 
 PLA in Wandfarbe, 0,2 mm Schicht. **Stützstrukturen aus** (oder „nur auf der Druckplatte“), sonst füllt der Slicer den Spalt unter den Federstegen. Die beiden Federstege zwischen den Radar-Taschen werden als Brücke 1 mm über der Front gedruckt; sie dürfen nicht mit der Front verkleben, sonst federn sie nicht. Lüfter 100 %, Brücken-Umfänge erkennen an.
 
+**Nach dem Druck:** Unter dem LD2450-Federsteg (zwischen den beiden Radar-Taschen) sitzen vier kleine Säulen, die nur die Brücke beim Drucken stützen. Vor dem Einsetzen des LD2450 herausbrechen: den Steg an jeder Säule mit einem kleinen Schraubendreher Richtung LD2410C-Tasche drücken, bis die Säule abreißt. Erst danach federt der Steg über seine ganze Länge.
+
 **Teststück zuerst:** `stl/test_beams.stl` ist nur die Front mit beiden Taschen, Federstegen und Rastnasen (Wände gekürzt, etwa 15 Minuten Druck). Damit prüfen, ob die Stege frei sind und beide Radare einrasten, bevor das ganze Gehäuse gedruckt wird. **Kein Silk-, Metallic- oder Carbon-Filament**, das dämpft das Radar.
 Maße stammen aus den Hi-Link-Datenblättern. Beim JST-Stecker und beim ESP-Board sind es Schätzwerte.
 Druck zuerst `shell.stl` und prüf die Passung.

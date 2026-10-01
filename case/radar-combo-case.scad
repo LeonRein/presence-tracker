@@ -35,6 +35,8 @@ so12 = static_radar == "LD2412" ? 1.0 : 1.2;   // Abstand, LD2410C hat Bauteile 
 fb   = 0.9;    // Dicke eines Federstegs
 fgap = 1.0;    // Luft zwischen Steg und Front (Steg wird als Bruecke gedruckt, darf etwas durchhaengen)
 sgap = 0.7;    // Schlitz zwischen den beiden Stegen
+fh50 = 5.0;    // LD2450-Federsteg reicht nach hinten bis hier (y): hoeher = steifer, ohne mehr Dehnung
+npil = 4;      // Ausbrech-Saeulen unter dem LD2450-Steg (nur fuer den Druck, danach herausbrechen)
 so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 
 esp_w = 18; esp_l = 23.0; esp_t = 1.0;   // ESP32-S3 SuperMini, Laenge am echten Board gemessen (Datenblatt: 22,52)
@@ -122,15 +124,17 @@ module shell() {
             // Fuellrippe zwischen linker Wand und Platine: fuehrt die LD2450 seitlich (Spiel cl)
             box(-iw/2, bx0-cl, front_t, top50, bz0-cl-fb, ih);
             box(bx0+l50-1.5, bx0+l50+cl, front_t, front_t+so, bz0-cl, ih);
-            // untere Rippe = Federsteg: schwebt fgap ueber der Front, gehalten nur an den
-            // Enden (Abstandsleisten) und in der Mitte -> die inneren Rastnasen federn
-            box(-iw/2, bx0+l50+cl+rib, front_t+fgap, top50, bz0-cl-fb, bz0-cl);
+            // untere Rippe = Federsteg: schwebt fgap ueber der Front und ist nur an den Enden
+            // gehalten -> federt ueber die ganze Laenge, keine Mittelstuetze, die abbrechen kann.
+            // Nach hinten bis fh50 erhoeht: steifer, ohne mehr Dehnung.
+            box(-iw/2, bx0+l50+cl+rib, front_t+fgap, fh50, bz0-cl-fb, bz0-cl);
             box(-iw/2, bx0+1.5, front_t, top50, bz0-cl-fb, bz0-cl);             // linkes Ende
-            // Mittelstuetze: so breit, dass beide Federstrecken gleich lang sind (so lang wie
-            // die kuerzere rechte Strecke), statt eines schmalen 2-mm-Stegs
-            let (m1 = 1, span = (bx0+l50-1.5) - m1, m0 = (bx0+1.5) + span)
-                box(m0, m1, front_t, top50, bz0-cl-fb, bz0-cl);
             box(bx0+l50-1.5, bx0+l50+cl+rib, front_t, top50, bz0-cl-fb, bz0-cl); // rechtes Ende
+            // Ausbrech-Saeulen: stuetzen die Bruecke beim Druck (Spannweite ~8 mm),
+            // werden danach herausgebrochen
+            let (x0 = bx0+1.5, x1 = bx0+l50-1.5)
+                for (i = [1:npil]) let (xp = x0 + i*(x1-x0)/(npil+1))
+                    box(xp-0.4, xp+0.4, front_t-0.01, front_t+fgap+0.01, bz0-cl-fb, bz0-cl);
             // Stecker-Seite: nur kurze Stuecke oben/unten
             box(bx0+l50+cl, bx0+l50+cl+rib, front_t, top50, bz0-cl-fb, bz0+3);
             box(bx0+l50+cl, bx0+l50+cl+rib, front_t, top50, ih-3, ih);
@@ -394,6 +398,6 @@ else if (part == "lid_esp") { color("gainsboro") lid(); color("royalblue") box(-
 else if (part == "section_beams") intersection() { shell(); box(-100, secx, -50, 100, -50, 100); }
 else if (part == "shell_only") color("whitesmoke") shell();
 else if (part == "test_beams")  // Teststueck: Front mit Taschen, Federstegen und Rastnasen, Waende gekuerzt
-    rotate([90,0,0]) intersection() { shell(); box(-100, 100, -1, front_t + so + t50 + 1.2, zo0-1, zo1+1); }
+    rotate([90,0,0]) intersection() { shell(); box(-100, 100, -1, max(front_t + so + t50 + 1.2, fh50 + 0.4), zo0-1, zo1+1); }
 else if (part == "clash_lid_shell") intersection() { shell(); lid(); }
 else if (part == "bottom_view") { color("whitesmoke") shell(); color("gainsboro") lid(); color("royalblue") box(-esp_w/2, esp_w/2, esp_y, esp_y+esp_t, esp_z0, esp_top); color("silver") esp_usb(); }
