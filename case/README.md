@@ -17,7 +17,9 @@ wird sie für den LD2412 umgebaut (dann 34,1 × 72,8 mm).
 Der Sensor wird auf einen Halter geschoben (Schwalbenschwanz):
 
 - **Eckhalter** (`stl/corner.stl`): Keil für die Raumecke, der Sensor schaut diagonal in den Raum.
-- **Schrankfuß** (`stl/stand.stl`): um 10° nach unten geneigt, mit Kabelkanal unten.
+- **Schrankfuß** (`stl/stand.stl`): um 10° nach unten geneigt. `stl/stand_flat.stl` ist dieselbe Form ohne Neigung.
+  Beide werden auf den Schrank geklebt (doppelseitiges Klebeband). Unter dem Sensor sind 20 mm frei für einen
+  gewinkelten USB-C-Stecker (Kopf bis 18 mm), das Kabel läuft durch einen 10 × 10 mm großen Tunnel unter dem Fuß nach hinten.
 
 Quelle: `radar-combo-case.scad` (OpenSCAD). Alle Maße sind oben als Parameter änderbar.
 
@@ -29,7 +31,7 @@ Quelle: `radar-combo-case.scad` (OpenSCAD). Alle Maße sind oben als Parameter �
 | `lid.stl` | Rückseite nach unten | Nut und Senkungen druckbar ohne Stützen |
 | `corner.stl` | stehend | – |
 | `test_beams.stl` | Front nach unten | Teststück für Federstege, Radar-Taschen und Trennrippe |
-| `stand.stl` | auf der Bodenplatte | – |
+| `stand.stl`, `stand_flat.stl` | auf der Bodenplatte | Tunnel oben 10 mm Brücke |
 
 PLA in Wandfarbe, 0,2 mm Schicht. **Stützstrukturen aus** (oder „nur auf der Druckplatte“), sonst füllt der Slicer den Spalt unter den Federstegen. Die Federstege der beiden Radar-Taschen werden als Brücke 1 mm über der Front gedruckt; sie dürfen nicht mit der Front verkleben, sonst federn sie nicht. Lüfter 100 %, Brücken-Umfänge erkennen an.
 
@@ -46,7 +48,9 @@ Druck zuerst `shell.stl` und prüf die Passung.
 - dünne Litze (28–30 AWG) für den LD2410C
 - 2× M2×10 Senkkopf, selbstschneidend (Deckel). Der Deckel hat Durchgangslöcher (Ø 2,6), das Gewinde greift nur im Dom (Ø 2,0). Nicht mit Gewalt anziehen.
 - Eckhalter: 2 Schrauben 3–3,5 mm (Kopf bis Ø 7,5 mm, mind. 30 mm lang) + Dübel, oder doppelseitiges Klebeband
-- Schrankfuß: am besten ein **gewinkeltes USB-C-Kabel**
+- Schrankfuß: ein **gewinkeltes USB-C-Kabel** (90°, Kopf höchstens 18 mm hoch), damit das Kabel unter dem
+  Sensor nach hinten abgeht. Den Stecker so herum einstecken, dass das Kabel nach hinten zeigt (USB-C ist
+  verdrehsicher, beide Lagen passen). Ein gerader Stecker passt nicht.
 
 ## Verkabelung (ESP32-S3 SuperMini)
 

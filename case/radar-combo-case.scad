@@ -11,7 +11,7 @@
 // Trennrippe mit Schlitz fuer ein optionales Abschirmblech.
 //
 // Export:  openscad -D 'part="shell"'  -o shell.stl  radar-combo-case.scad
-//          part = "shell" | "lid" | "corner" | "stand" | "assembly" | "assembly_stand"
+//          part = "shell" | "lid" | "corner" | "stand" | "stand_flat" | "assembly" | "assembly_stand"
 
 part = "assembly";
 secz = 20;
@@ -105,8 +105,10 @@ dt_top  = ih - 12;              // Nut oben geschlossen -> Sensor liegt auf
 z_r0    = zo0 + 13;             // Eckhalter: Schiene beginnt hier, darunter und darueber je eine Schraube
 
 // Schrankfuss
-tilt = 10;       // Neigung nach unten (Grad)
-elev = 16;       // Abstand Sensor-Unterkante -> Schrank (Platz fuer USB-Stecker, gewinkelt empfohlen)
+tilt = 10;       // Neigung nach unten (Grad); "stand_flat" ist dieselbe Form mit 0 Grad
+elev = 20;       // Abstand Sensor-Unterkante -> Schrank: Platz fuer einen gewinkelten USB-C-Stecker
+usb_head = 18;   // Freiraum unter der Buchse fuer den Steckerkopf (gewinkelte Stecker: ca. 7-15 mm)
+cable_w = 10; cable_h = 10;   // Kabeltunnel unter dem Fuss nach hinten (Breite, Hoehe)
 
 // ---------- Grundformen ----------
 module ycyl(h, r1, r2) { rotate([-90,0,0]) cylinder(h=h, r1=r1, r2=r2); }
@@ -419,24 +421,28 @@ module corner() {
 }
 
 // ---------- Schrankfuss ----------
-ep = elev - zo0*cos(tilt);
-module T() { translate([0,0,ep]) rotate([tilt,0,0]) children(); }
+// Wird auf den Schrank geklebt, darum ohne Kufen nach vorne. t = Neigung nach unten (Grad).
+function ep(t) = elev - zo0*cos(t);
+module T(t = tilt) { translate([0,0,ep(t)]) rotate([t,0,0]) children(); }
 
-module stand() {
-    y0 = (D + ep*sin(tilt))/cos(tilt) + 0.5;
+module stand(t = tilt) {
+    y0 = (D + ep(t)*sin(t))/cos(t) + 0.5;
     difference() {
-        union() {
-            hull() {
-                T() box(-15, 15, D, D+8, zo0, dt_top+2);
-                box(-20, 20, y0, y0+32, 0, 5);
-            }
-            // Kufen nach vorne unter den Sensor: der hohe Sensor kippt sonst nach vorne.
-            // Die Mitte bleibt frei fuer den USB-Stecker.
-            for (sx=[-1,1]) box(sx*8, sx*20, -14, y0+1, 0, 3);
+        hull() {
+            T(t) box(-15, 15, D, D+8, zo0, dt_top+2);
+            box(-20, 20, y0, y0+32, 0, 5);
         }
-        box(-3.5, 3.5, -50, 200, -1, 4);   // Kabelkanal unten
+        // Kabeltunnel: das Kabel laeuft vom Stecker unter dem Sensor nach hinten unter dem Fuss durch
+        box(-cable_w/2, cable_w/2, -50, 200, -1, cable_h);
     }
-    T() rail();
+    T(t) rail();
+}
+
+// Freiraum fuer USB-C-Stecker und Kabel (muss frei bleiben): Kopf unter der Buchse (Sensor-Koordinaten),
+// Kabel auf dem Schrank nach hinten
+module usb_keepout(t = tilt) {
+    T(t) box(-6.5, 6.5, esp_y-usb_h/2-4, esp_y-usb_h/2+4, zo0-usb_head, zo0-0.01);
+    box(-cable_w/2+0.5, cable_w/2-0.5, 0, 200, 0.01, cable_h-0.5);
 }
 
 // ---------- Vorschau ----------
@@ -479,6 +485,7 @@ if (part == "shell") rotate([90,0,0]) shell();                 // Front nach unt
 else if (part == "lid") translate([0,0,D]) rotate([-90,0,0]) lid();   // Rueckseite nach unten
 else if (part == "corner") translate([0,0,-zo0]) corner();
 else if (part == "stand") stand();
+else if (part == "stand_flat") stand(0);
 else if (part == "assembly") {
     sensor(); boards();
     translate([0, 0, 0]) color("tan", 0.9) corner();
@@ -490,7 +497,15 @@ else if (part == "exploded") {
 else if (part == "assembly_stand") {
     T() { sensor(); boards(); }
     color("tan") stand();
+    color("red", 0.4) usb_keepout();
 }
+else if (part == "assembly_stand_flat") {
+    T(0) { sensor(); boards(); }
+    color("tan") stand(0);
+    color("red", 0.4) usb_keepout(0);
+}
+else if (part == "chk_stand_usb")      intersection() { union() { stand(); T() sensor(); } usb_keepout(); }    // muss leer sein
+else if (part == "chk_stand_flat_usb") intersection() { union() { stand(0); T(0) sensor(); } usb_keepout(0); }  // muss leer sein
 else if (part == "section_x") {   // Schnitt bei x = 0 (Seitenansicht)
     intersection() { union() { sensor(); boards(); color("tan") corner(); } box(-100, 0, -50, 100, -50, 100); }
 }
@@ -527,6 +542,10 @@ else if (part == "m_corner")   mirror([0,1,0]) {
 }
 else if (part == "m_stand")    mirror([0,1,0]) {
     T() color("white") body(); color("white") stand();
+    color("burlywood") translate([-60,-40,-3]) cube([120, 120, 3]);
+}
+else if (part == "m_stand_flat") mirror([0,1,0]) {
+    T(0) color("white") body(); color("white") stand(0);
     color("burlywood") translate([-60,-40,-3]) cube([120, 120, 3]);
 }
 else if (part == "m_exploded") mirror([0,1,0]) {
