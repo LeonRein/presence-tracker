@@ -85,6 +85,9 @@ eb_t   = 1.2;               // Dicke des Federstegs (z), wie die Radar-Stege
 eb_gap = 1.0;               // Luft zwischen Steg und Deckelinnenseite (Bruecke)
 eb_ytop = 7.6;              // Steg reicht bis hier nach vorne (y)
 notch_hw = 6.65;            // halbe Breite des USB-Ausschnitts (Platz fuer die Fluegel mit den Keilnasen)
+wing_fl  = 1.5;             // 45-Grad-Verstaerkung der Fluegel nach aussen (im Boden, x); nach oben ist kein
+                            // Platz: dort sitzen Bauteile und das 5V-Pad mit den Draehten
+wing_y0  = esp_y + 0.15;    // Vorderkante der Nase = Fuss der freistehenden Fluegel
 lid_t   = 4.2;             // Deckel (enthaelt Schwalbenschwanz-Nut)
 D  = split_y + lid_t;      // Gesamttiefe
 W  = iw + 2*wall;
@@ -136,6 +139,16 @@ module ridge_x(x0, x1, y, z, dir) {   // dir: +1 = ragt nach +z, -1 = nach -z
         box(x0, x1, y-0.5, y+0.5, z - (dir<0 ? 0.01 : 0), z + (dir<0 ? 0 : 0.01));
         box(x0, x1, y-0.05, y+0.05, dir>0 ? z : z-0.55, dir>0 ? z+0.55 : z);
     }
+}
+
+// Grundriss (xy) von Nase und Fluegeln im Boden: vorne neben der Buchse schmal, zum Fuss der Fluegel
+// hin unter 45 Grad nach aussen verbreitert (druckbar: der Deckel liegt beim Druck auf der Rueckseite).
+// Der Ausschnitt im Gehaeuse ist derselbe Umriss mit Spiel.
+module wing_outline(y1) {
+    yf = wing_y0 - wing_fl;   // hier beginnt die Schraege
+    xo = notch_hw - 0.15;
+    polygon([[-xo, esp_y-usb_h-0.15], [xo, esp_y-usb_h-0.15], [xo, yf], [xo+wing_fl, wing_y0],
+             [xo+wing_fl, y1], [-xo-wing_fl, y1], [-xo-wing_fl, wing_y0], [-xo, yf]]);
 }
 
 // ---------- Gehaeuse ----------
@@ -248,10 +261,12 @@ module shell() {
         // USB-C Ausschnitt (unten, zur Rueckseite offen)
         // Vorderkante 0,3 mm vor der Buchse: haelt das untere ESP-Ende in Richtung Radar
         // breiter als die Buchse: links/rechts sitzen die Fluegel der Deckelnase mit den Keilnasen
-        box(-notch_hw, notch_hw, esp_y-usb_h-0.3, split_y+1, zo0-1, 0.01);
+        // aussen 45-Grad-Schraege wie die Fluegel (Spiel 0,15)
+        translate([0, 0, zo0-1]) linear_extrude(height = 0.01 - zo0 + 1) offset(delta = 0.15) wing_outline(split_y+1);
         // Lueftung oben und unten
         for (x=[-10:4:10]) box(x-0.7, x+0.7, 6, 10.5, ih-0.01, zo1+1);
-        for (x=[-10.4,-8.2,8.2,10.4]) box(x-0.7, x+0.7, 6, 10.5, zo0-1, 0.01);
+        // aussen neben dem Ausschnitt; die aeusseren liegen schon in der Eckenrundung, darum bis z = 0,5
+        for (x=[-11.6,-9.6,9.6,11.6]) box(x-0.7, x+0.7, 6, 10.5, zo0-1, 0.5);
     }
 }
 
@@ -277,8 +292,22 @@ module lid() {
             intersection() { body(); box(-4.65, 4.65, esp_y+0.15, split_y+0.01, zo0-1, 0); }
             // Fluegel links/rechts der Buchse bis an die Vorderkante des Ausschnitts, darauf je eine
             // feste Keilnase vor der Platinenvorderseite (45 Grad, druckbar; wie die festen Radar-Nasen)
+            // Fluegel mit 45-Grad-Verstaerkung nach aussen: am Fuss 3,35 statt 1,85 mm breit
+            intersection() {
+                body();
+                difference() {
+                    translate([0, 0, zo0-1]) linear_extrude(height = -zo0 + 1) wing_outline(split_y+0.01);
+                    box(-4.65, 4.65, esp_y-usb_h-1, wing_y0, zo0-2, 1);   // Platz fuer die Buchse
+                }
+            }
+            // 45-Grad-Kehle am Fuss von Nase und Fluegeln, auf der Platinenseite hinter der ESP-Rueckseite
+            // (dort ragt nichts heraus). Endet vor dem 5V-/TX-Pad mit den Drahtenden (ab x ~ 6,8);
+            // so hoch wie die Auflage-Schienen (1,5 mm), die Platine liegt auch hier auf
+            hull() {
+                box(-6.3, 6.3, split_y-1.5, split_y+0.01, -0.01, 0);
+                box(-6.3, 6.3, split_y-0.01, split_y+0.01, -0.01, 1.5);
+            }
             for (sx=[-1,1]) {
-                intersection() { body(); box(sx*4.65, sx*(notch_hw-0.15), esp_y-usb_h-0.3+0.15, split_y+0.01, zo0-1, 0); }
                 hull() {
                     box(sx*4.65, sx*(notch_hw-0.15), esp_y-0.75, esp_y-0.05, -0.01, 0);
                     box(sx*4.65, sx*(notch_hw-0.15), esp_y-0.75, esp_y-0.74, -0.01, 0.7);
