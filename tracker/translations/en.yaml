@@ -1,0 +1,7 @@
+configuration:
+  log_level:
+    name: Log level
+    description: How verbose the log is.
+  topic_prefix:
+    name: MQTT prefix
+    description: The sensors publish to <prefix>/<name>/frame. Must match mqtt_prefix in the ESPHome configuration.

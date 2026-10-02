@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Presence Tracker</title>
+<link rel="stylesheet" href="static/style.css?v={{v}}">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6m-2 7h4a2 2 0 0 1 2 2v5h-2v6h-4v-6H8v-5a2 2 0 0 1 2-2"/></svg>
+    <span>Presence Tracker</span>
+  </div>
+  <nav id="tabs">
+    <button data-tab="live" class="active">Live</button>
+    <button data-tab="plan">Grundriss</button>
+    <button data-tab="sensors">Sensoren</button>
+    <button data-tab="zones">Zonen</button>
+    <button data-tab="calibration">Kalibrierung</button>
+    <button data-tab="settings">Einstellungen</button>
+  </nav>
+  <div id="status" class="status"></div>
+</header>
+<main>
+  <section id="map-wrap">
+    <svg id="map" tabindex="0"></svg>
+    <div id="hint" class="hint" hidden></div>
+    <div class="map-tools">
+      <button id="zoom-fit" title="Alles zeigen">⤢</button>
+      <button id="zoom-in" title="Vergrößern">+</button>
+      <button id="zoom-out" title="Verkleinern">−</button>
+    </div>
+    <div id="cursor" class="cursor"></div>
+  </section>
+  <aside id="panel"></aside>
+</main>
+<div id="toast" class="toast" hidden></div>
+<script type="module" src="static/js/main.js?v={{v}}"></script>
+</body>
+</html>

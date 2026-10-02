@@ -1,0 +1,7 @@
+configuration:
+  log_level:
+    name: Log-Level
+    description: Wie ausführlich das Protokoll ist.
+  topic_prefix:
+    name: MQTT-Präfix
+    description: Die Sensoren senden an <Präfix>/<Name>/frame. Muss zu mqtt_prefix in der ESPHome-Konfiguration passen.
