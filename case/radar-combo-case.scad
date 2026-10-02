@@ -265,8 +265,9 @@ module shell() {
         translate([0, 0, zo0-1]) linear_extrude(height = 0.01 - zo0 + 1) offset(delta = 0.15) wing_outline(split_y+1);
         // Lueftung oben und unten
         for (x=[-10:4:10]) box(x-0.7, x+0.7, 6, 10.5, ih-0.01, zo1+1);
-        // aussen neben dem Ausschnitt; die aeusseren liegen schon in der Eckenrundung, darum bis z = 0,5
-        for (x=[-11.6,-9.6,9.6,11.6]) box(x-0.7, x+0.7, 6, 10.5, zo0-1, 0.5);
+        // je einer im Boden neben dem Ausschnitt, je zwei in den Seitenwaenden direkt ueber der Eckenrundung
+        for (x=[-10,10]) box(x-0.7, x+0.7, 6, 10.5, zo0-1, 0.01);
+        for (sx=[-1,1], z=[zo0+R+1.3, zo0+R+3.7]) box(sx*(iw/2-0.01), sx*(W/2+1), 6, 10.5, z-0.7, z+0.7);
     }
 }
 
