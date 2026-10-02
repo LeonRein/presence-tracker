@@ -53,7 +53,7 @@ so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 ridge_up  = 0.6;   // Rastnasen-Mitte ueber der Platinenrueckseite (Nase beginnt 0,1 mm darueber)
 inner_top = front_t + max(so + t50, so12 + t12) + ridge_up + 0.5;   // knapp ueber den Nasen
 
-esp_w = 18; esp_l = 23.0; esp_t = 1.65;  // ESP32-S3 SuperMini; Laenge und Dicke gemessen (Datenblatt 22,52),
+esp_w = 18; esp_l = 23.2; esp_t = 1.65;  // ESP32-S3 SuperMini; Laenge 23,0 gemessen, +0,2 Spiel (war zu knapp; Datenblatt 22,52),
                                          // Dicke angenommen (Standard 1,6) - federnder Arm gleicht 1,2..1,9 aus
 usb_over = 1.9;                          // USB-C-Buchse steht so weit ueber die Platinenkante (gemessen)
 esp_z0 = 0;                              // ESP-Unterkante liegt auf dem Boden bzw. der Deckelnase; Buchse ragt durch den Ausschnitt
