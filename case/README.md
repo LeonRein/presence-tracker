@@ -1,8 +1,19 @@
 # Kombi-Präsenzsensor LD2450 + LD2410C – Gehäuse
 
-Flaches Gehäuse (56 × 39,6 × 16 mm) für beide Radare und einen ESP32-S3/C3 SuperMini.
+Schmales, hochkantes Gehäuse (30,2 × 77,8 × 16 mm) für beide Radare und einen ESP32-S3/C3 SuperMini.
 Die untere Tasche ist für den **LD2410C** ausgelegt. Mit `static_radar = "LD2412"` in der `.scad`-Datei
-wird sie für den LD2412 umgebaut (dann ist das Gehäuse 34,2 mm hoch).
+wird sie für den LD2412 umgebaut (dann 34,1 × 72,8 mm).
+
+**Anordnung** (wie beim Apollo R PRO-1):
+
+- **LD2450 hochkant** (lange Seite senkrecht) an der rechten Wand, JST-Buchse unten. Nur so misst er den
+  Winkel in der Waagerechten, also links/rechts im Raum.
+- **LD2410C quer** darunter, also um 90° zum LD2450 gedreht. Patch-Antennen sind linear polarisiert;
+  gekreuzt sehen sich die beiden Radare deutlich schwächer (Ziel: weniger Fehlerkennungen beim LD2410C).
+- Dazwischen 11,6 mm Abstand von Platinenkante zu Platinenkante (Raum für den JST-Stecker) und eine
+  **Trennrippe mit Schlitz** für ein optionales Abschirmblech, siehe unten.
+- Die Platinen werden wie bisher gehalten: dieselben Taschen, Federstege, Rastnasen und Ausbrech-Säulen,
+  die LD2450-Tasche ist nur gedreht.
 Der Sensor wird auf einen Halter geschoben (Schwalbenschwanz):
 
 - **Eckhalter** (`stl/corner.stl`): Keil für die Raumecke, der Sensor schaut diagonal in den Raum.
@@ -17,12 +28,12 @@ Quelle: `radar-combo-case.scad` (OpenSCAD). Alle Maße sind oben als Parameter �
 | `shell.stl` | Front nach unten | Front nur 0,6 mm (Radom, 3 Schichten à 0,2 mm), keine Stützen |
 | `lid.stl` | Rückseite nach unten | Nut und Senkungen druckbar ohne Stützen |
 | `corner.stl` | stehend | – |
-| `test_beams.stl` | Front nach unten | Teststück für Federstege und Radar-Taschen |
+| `test_beams.stl` | Front nach unten | Teststück für Federstege, Radar-Taschen und Trennrippe |
 | `stand.stl` | auf der Bodenplatte | – |
 
-PLA in Wandfarbe, 0,2 mm Schicht. **Stützstrukturen aus** (oder „nur auf der Druckplatte“), sonst füllt der Slicer den Spalt unter den Federstegen. Die beiden Federstege zwischen den Radar-Taschen werden als Brücke 1 mm über der Front gedruckt; sie dürfen nicht mit der Front verkleben, sonst federn sie nicht. Lüfter 100 %, Brücken-Umfänge erkennen an.
+PLA in Wandfarbe, 0,2 mm Schicht. **Stützstrukturen aus** (oder „nur auf der Druckplatte“), sonst füllt der Slicer den Spalt unter den Federstegen. Die Federstege der beiden Radar-Taschen werden als Brücke 1 mm über der Front gedruckt; sie dürfen nicht mit der Front verkleben, sonst federn sie nicht. Lüfter 100 %, Brücken-Umfänge erkennen an.
 
-**Nach dem Druck:** Unter dem LD2450-Federsteg (zwischen den beiden Radar-Taschen) sitzen vier kleine Säulen, die nur die Brücke beim Drucken stützen. Vor dem Einsetzen des LD2450 herausbrechen: den Steg an jeder Säule mit einem kleinen Schraubendreher Richtung LD2410C-Tasche drücken, bis die Säule abreißt. Erst danach federt der Steg über seine ganze Länge.
+**Nach dem Druck:** Unter dem LD2450-Federsteg (links neben dem LD2450) sitzen vier kleine Säulen, die nur die Brücke beim Drucken stützen. Vor dem Einsetzen des LD2450 herausbrechen: den Steg an jeder Säule mit einem kleinen Schraubendreher nach links (weg vom LD2450) drücken, bis die Säule abreißt. Erst danach federt der Steg über seine ganze Länge.
 Genauso unter dem LD2410C-Federsteg (zwei Säulen) und im **Deckel** unter dem ESP-Federsteg (drei Säulen): den Steg an jeder Säule mit einem kleinen Schraubendreher vom ESP weg drücken, bis sie abreißt.
 
 **Teststück zuerst:** `stl/test_beams.stl` ist nur die Front mit beiden Taschen, Federstegen und Rastnasen (Wände gekürzt, etwa 15 Minuten Druck). Damit prüfen, ob die Stege frei sind und beide Radare einrasten, bevor das ganze Gehäuse gedruckt wird. **Kein Silk-, Metallic- oder Carbon-Filament**, das dämpft das Radar.
@@ -51,7 +62,7 @@ Druck zuerst `shell.stl` und prüf die Passung.
 | LD2410C | TX → | GPIO8 | `rx_pin: GPIO8` |
 
 Die Pins sind so gewählt, dass die Drähte im Gehäuse kurz bleiben: Die JST-Buchse des LD2450 sitzt
-(von vorne gesehen) rechts, gegenüber von GPIO6/7. Die Lötlöcher des LD2410C (TX/RX) liegen nah bei GPIO8/9.
+(von vorne gesehen) rechts der Mitte direkt über dem ESP, auf der Seite von GPIO6/7. Die Lötlöcher des LD2410C (TX/RX) liegen nah bei GPIO8/9.
 Am ESP-Pin 5V und GND kommen je zwei Drähte an, einer zu jedem Radar.
 
 LD2450-Anschluss: **JST-ZH-Kabel (1,5 mm Raster, 4-polig)**, Belegung an der Buchse von oben: 5V · RX · TX · GND
@@ -67,12 +78,32 @@ Baudrate: LD2450 und LD2410C 256000 (ein LD2412 hätte laut Datenblatt 115200).
 
 ## Zusammenbau
 
-1. LD2450: JST-ZH-Kabel in die Buchse stecken, die Stiftleiste bleibt ungenutzt. Den Radar mit den goldenen Antennen nach vorne einsetzen: zuerst die Oberkante unter die festen Nasen an der Gehäusewand schieben, dann die Unterkante über die Nasen auf dem federnden Steg zwischen den Taschen drücken. Die Buchse sitzt von vorne gesehen rechts, dort ist im Gehäuse Platz für den Stecker.
+1. LD2450: JST-ZH-Kabel in die Buchse stecken, die Stiftleiste bleibt ungenutzt. Den Radar hochkant mit den goldenen Antennen nach vorne und der Buchse **unten** einsetzen: zuerst die rechte Längskante unter die festen Nasen an der rechten Gehäusewand schieben, dann die linke Kante über die Nasen auf dem federnden Steg drücken. Unter dem Radar ist Platz für den Stecker. Das Kabel dort nach hinten biegen und rechts am ESP vorbei führen; links der Mitte sitzt die WLAN-Antenne des ESP.
 2. LD2410C: Die eingelötete 5-polige Stiftleiste **muss ab** (auslöten, oder den Kunststoff aufschneiden und die Pins einzeln ziehen). Hinter dem LD2410C sitzt der ESP mit nur etwa 3 mm Abstand. Dann 4 dünne Litzen (VCC, GND, TX, RX) von hinten in die Lötlöcher an der Oberkante löten und flach zur Seite wegführen. Dann den Radar mit den Antennen nach vorne einsetzen, die Lötlöcher oben: zuerst die Unterkante unter die festen Nasen am Boden schieben, dann die Oberkante über die Nasen auf dem federnden Steg drücken.
 3. Alle Kabel an den ESP löten. Den ESP wie die Radare einsetzen, Bauteilseite zum Radar, USB-C nach unten: zuerst das USB-Ende schräg über die beiden festen Keilnasen neben der Buchse auf die Deckelnase setzen, dann das obere Ende auf die Schienen drücken, bis es unter der Rastnase am Federsteg einrastet. Ausgelegt für eine 1,65 mm dicke Platine. Die seitlichen Führungen halten den ESP seitlich. Ein Streifen doppelseitiges Klebeband auf den Schienen ist optional, ein Stück Kapton-Band hinten auf dem LD2410C schützt zusätzlich vor Kurzschluss.
-4. Deckel einsetzen (die USB-Buchse gleitet in den Ausschnitt unten) und mit 2× M2 verschrauben.
-5. Halter montieren und den Sensor von oben aufschieben. Beim Eckhalter sitzt pro Wand eine Schraube, die senkrecht in die Wand geht. Den Schraubendreher schräg von vorne durch die Senkbohrung neben der Schiene ansetzen.
+4. Optional: Abschirmblech in den Schlitz der Trennrippe zwischen den Radaren stecken (siehe unten).
+5. Deckel einsetzen (die USB-Buchse gleitet in den Ausschnitt unten) und mit 2× M2 verschrauben. Beide Schrauben sitzen links neben dem LD2450.
+6. Halter montieren und den Sensor von oben aufschieben. Beim Eckhalter sitzt pro Wand eine Schraube, die senkrecht in die Wand geht: unten unter der Schiene in die rechte Wand, oben über der Schiene in die linke. Den Schraubendreher schräg von vorne ansetzen.
 
 Bei Bedarf ein Tropfen Heißkleber am Platinenrand, falls ein Radar wackelt.
 
 Montagehöhe laut Datenblatt: 1,5–2 m.
+
+**Nach dem Einbau x prüfen:** Von vorne gesehen nach links gehen. Das Vorzeichen von x hängt davon ab, wie herum der LD2450
+hochkant sitzt (Buchse oben oder unten). Ist links und rechts vertauscht, x im Tracker spiegeln.
+
+## Störungen zwischen den Radaren
+
+LD2450 und LD2410C senden beide im 24-GHz-Band. Der LD2450 strahlt in den LD2410C ein, und der meldet dann Bewegung, wo keine ist.
+Dagegen hilft im Gehäuse:
+
+1. **Gekreuzte Lage** (90°): Gleich polarisierte Patch-Antennen koppeln stark, gekreuzte schwach.
+2. **Abstand**: Platinenkanten 11,6 mm auseinander statt wie bisher ca. 2 mm.
+3. **Abschirmblech (optional)**: Die Trennrippe hat einen 0,6-mm-Schlitz bis auf das Radom. Ein Streifen Alublech
+   (0,1–0,3 mm, z. B. aus einer Getränkedose) oder doppelt gefaltetes Kupferband, ca. 4 × 27 mm, blockiert den direkten Weg
+   entlang der Front. Es liegt etwa 3 mm vor der WLAN-Antenne des ESP. Nach dem Einbau die WLAN-Signalstärke prüfen.
+
+**Vor dem Druck kurz testen**, ob die gekreuzte Lage beim eigenen Exemplar hilft. Welche Polarisation die Module haben,
+steht in keinem Datenblatt. LD2410 Engineering Mode einschalten, Raum leer, die Gate-Energien (`LD2410 Gx Move/Still Energy`)
+beobachten. Den LD2450 dabei nacheinander 1) abstecken, 2) quer und 3) hochkant 1–2 cm über den LD2410C halten. Ist 3) deutlich
+ruhiger als 2) und nah an 1), passt die Anordnung. Wenn nicht, müsste der LD2410C ebenfalls hochkant.

@@ -4,6 +4,12 @@
 // Koordinaten (Sensor): x = rechts, y = Tiefe (0 = Front, +y Richtung Wand), z = oben
 //                       z = 0 ist der Innenboden.
 //
+// Anordnung (von vorne): LD2450 hochkant an der rechten Wand, JST-Buchse unten.
+// Darunter liegt der LD2410C quer, also um 90 Grad zum LD2450 gedreht wie beim
+// Apollo R PRO-1. Die Antennen beider Radare sind dann gekreuzt polarisiert.
+// Zwischen beiden liegen der Raum fuer den JST-Stecker (Abstand) und eine
+// Trennrippe mit Schlitz fuer ein optionales Abschirmblech.
+//
 // Export:  openscad -D 'part="shell"'  -o shell.stl  radar-combo-case.scad
 //          part = "shell" | "lid" | "corner" | "stand" | "assembly" | "assembly_stand"
 
@@ -23,7 +29,7 @@ ri       = R - wall; // Innenradius der Gehaeuseecken -> ueberall gleich dicke W
 
 l50 = 44;  w50 = 15; t50 = 1.2;   // LD2450 (gemessen 1,25; mit 1,2 sitzt er nachweislich perfekt)
 jst = 7;                          // Platz fuer den JST-Stecker des LD2450 (0 = Kabel direkt angeloetet)
-g50 = 1.5;                        // Abstand LD2450 zur linken Wand, damit die Platinenecke
+g50 = 1.5;                        // Abstand LD2450 zur oberen Wand, damit die Platinenecke
                                   // an der Eckenrundung (ri) vorbeikommt (mind. ~1,35 bei ri = 2,4)
 // Radar fuer stille Personen (untere Tasche): "LD2410C" (22 x 16 mm) oder "LD2412" (28 x 11 mm)
 static_radar = "LD2410C";
@@ -34,7 +40,10 @@ so12 = static_radar == "LD2412" ? 1.0 : 1.2;   // Abstand, LD2410C hat Bauteile 
 // Federstege zwischen den Taschen: tragen die inneren Rastnasen, nur an den Enden gehalten
 fb   = 1.2;    // Dicke eines Federstegs (= Dicke der uebrigen Innenwaende)
 fgap = 1.0;    // Luft zwischen Steg und Front (Steg wird als Bruecke gedruckt, darf etwas durchhaengen)
-sgap = 0.7;    // Schlitz zwischen den beiden Stegen
+sgap = 0.7;    // Federweg hinter einem Steg (LD2410C-Steg -> Trennrippe, LD2450-Steg -> freie Spalte)
+// Trennrippe zwischen den Radaren: zwei Rippen mit Schlitz fuer ein Abschirmblech (optional)
+fen_rib  = 0.8;   // Dicke je Rippe
+fen_slot = 0.6;   // Schlitz (Alublech 0,1-0,3 mm oder gefaltetes Kupferband)
 rib  = 1.2;    // Dicke der festen Innenrippen
 npil = 4;      // Ausbrech-Saeulen unter dem LD2450-Steg (nur fuer den Druck, danach herausbrechen)
 npil12 = 2;    // dito unter dem LD2410C-Steg
@@ -50,9 +59,17 @@ usb_over = 1.9;                          // USB-C-Buchse steht so weit ueber die
 esp_z0 = 0;                              // ESP-Unterkante liegt auf dem Boden bzw. der Deckelnase; Buchse ragt durch den Ausschnitt
 usb_h = 3.2;                             // Hoehe USB-C-Buchse ueber der Platine
 
-iw = g50 + l50 + cl + jst;   // Innenbreite
+lcl = 0.15;                // Spiel Deckellippe -> Gehaeuse
+// Innenbreite: LD2450 (15) + Federsteg + freie Spalte links fuer Schraubdome und Kabel;
+// mindestens so breit wie die LD2410C-/LD2412-Tasche
+iw = max(27, l12 + 2*cl + 2*rib);
 z12 = 1.5;                 // Unterkante untere Radar-Platine
-ih = z12 + w12 + 3*cl + 2*fb + sgap + w50;   // Innenhoehe (LD2412: 31, LD2410C: 35.75)
+z12t = z12 + w12 + cl + fb;          // Oberkante LD2410C-Tasche (Federsteg)
+zf0 = z12t + sgap;                   // Trennrippe unten
+zf1 = zf0 + 2*fen_rib + fen_slot;    // Trennrippe oben
+z50b = zf1 + cl + jst;               // Unterkante LD2450 (JST-Ende)
+ih = z50b + l50 + g50;               // Innenhoehe (LD2410C: 74,5)
+x50 = iw/2 - cl - w50;               // linke Kante LD2450
 split_y = 11.8;            // Trennebene Gehaeuse / Deckel
 esp_y = split_y - 1.5 - esp_t;           // Vorderseite (Bauteilseite) der ESP-Platine
 // Rastlippe am oberen ESP-Ende: nur die Haelfte ohne Keramikantenne (S3 SuperMini, von vorne gesehen links)
@@ -61,7 +78,9 @@ esp_y = split_y - 1.5 - esp_t;           // Vorderseite (Bauteilseite) der ESP-P
 rid_x0 = -6.0; rid_x1 = -2.0;    // obere Rastnase im antennenfreien Streifen
 esp_top = esp_z0 + esp_l;                // Oberkante ESP-Platine
 // ESP wie die Radare: oben Rastnase auf einem schwebenden Federsteg, unten feste Keilnasen
-eb_x0 = -14.5; eb_x1 = 12;  // Federsteg zwischen zwei Pfosten (x); links LD2450-Stiftleiste, rechts JST-Stecker
+// Federsteg zwischen zwei Pfosten (x), so lang wie das schmale Gehaeuse erlaubt (22,7 mm);
+// die 45-Grad-Stuetzen der Pfosten enden an der Deckellippe
+eb_x0 = -(iw/2 - lcl) + 2; eb_x1 = -eb_x0;
 eb_t   = 1.2;               // Dicke des Federstegs (z), wie die Radar-Stege
 eb_gap = 1.0;               // Luft zwischen Steg und Deckelinnenseite (Bruecke)
 eb_ytop = 7.6;              // Steg reicht bis hier nach vorne (y)
@@ -72,15 +91,15 @@ W  = iw + 2*wall;
 zo0 = -wall;  zo1 = ih + wall;
 H  = zo1 - zo0;
 
-// Radar-Positionen
-bx0 = -iw/2 + g50;              // LD2450 linke Kante (Stecker-Seite rechts)
-bz0 = ih - cl - w50;            // LD2450 Unterkante
-
-boss_x = 21.5; boss_z = 6;      // M2-Schrauben Deckel
+// M2-Schrauben Deckel: beide in der freien Spalte links neben dem LD2450,
+// der untere Dom ueber den Pfosten des ESP-Federstegs
+boss_x = -iw/2 + 4;
+bosses = [[boss_x, 34], [boss_x, ih - 6.5]];
 
 // Schwalbenschwanz (Halter-Schiene / Deckel-Nut)
 dt_base = 5;  dt_tip = 7;  dt_h = 3;  dt_cl = 0.25;
-dt_top  = ih - 7;               // Nut oben geschlossen -> Sensor liegt auf
+dt_top  = ih - 12;              // Nut oben geschlossen -> Sensor liegt auf
+z_r0    = zo0 + 13;             // Eckhalter: Schiene beginnt hier, darunter und darueber je eine Schraube
 
 // Schrankfuss
 tilt = 10;       // Neigung nach unten (Grad)
@@ -120,8 +139,47 @@ module ridge_x(x0, x1, y, z, dir) {   // dir: +1 = ragt nach +z, -1 = nach -z
 }
 
 // ---------- Gehaeuse ----------
-module shell() {
+// LD2450 in eigenen Koordinaten (wie im alten, liegenden Gehaeuse):
+//   u = laengs (0 = Ende mit der Stiftleiste, l50 = JST-Ende), v = quer (0 = Federsteg-Seite),
+//   Endwand bei u = -g50, Seitenwand bei v = w50 + cl.
+// place50() dreht das um 90 Grad im Uhrzeigersinn (von vorne gesehen): JST-Ende unten,
+// Seitenwand = rechte Gehaeusewand, Endwand = Decke, Federsteg links.
+module place50() { translate([x50, 0, ih - g50]) rotate([0, 90, 0]) children(); }
+
+module pocket50() {
     top50 = inner_top;
+    wv = w50 + cl;   // Seitenwand
+    // Abstandsleisten an den Enden
+    // (bis an Wand, Rippe und Rippenstuecke verlaengert, damit keine 0,25-mm-Spalte bleiben)
+    box(-g50, 1.5, front_t, front_t+so, -cl, wv);
+    // Fuellrippe zwischen Endwand und Platine: fuehrt die LD2450 in Laengsrichtung (Spiel cl)
+    box(-g50, -cl, front_t, top50, -cl-fb, wv);
+    box(l50-1.5, l50+cl, front_t, front_t+so, -cl, wv);
+    // Rippe auf der Federsteg-Seite: schwebt fgap ueber der Front und ist nur an den Enden
+    // gehalten -> federt ueber die ganze Laenge, keine Mittelstuetze, die abbrechen kann.
+    box(-g50, l50+cl+rib, front_t+fgap, top50, -cl-fb, -cl);
+    box(-g50, 1.5, front_t, top50, -cl-fb, -cl);             // Ende an der Decke
+    box(l50-1.5, l50+cl+rib, front_t, top50, -cl-fb, -cl);   // JST-Ende
+    // Ausbrech-Saeulen: stuetzen die Bruecke beim Druck (Spannweite ~8 mm),
+    // werden danach herausgebrochen
+    let (x0 = 1.5, x1 = l50-1.5)
+        for (i = [1:npil]) let (xp = x0 + i*(x1-x0)/(npil+1))
+            // ueber die volle Stegbreite, in Laengsrichtung nur 0,8 mm (bricht leicht ab)
+            box(xp-0.4, xp+0.4, front_t-0.01, front_t+fgap+0.01, -cl-fb, -cl);
+    // Stecker-Seite: nur kurze Stuecke an beiden Laengskanten
+    // (mit 45-Grad-Stuetze nach aussen Richtung Stecker-Raum, wie im Deckel)
+    for (zr = [[-cl-fb, 3], [wv-3, wv]]) hull() {
+        box(l50+cl, l50+cl+rib, front_t, top50, zr[0], zr[1]);
+        box(l50+cl, l50+cl+rib+(top50-front_t), front_t-0.01, front_t, zr[0], zr[1]);
+    }
+    // Rastnasen: fest an der Seitenwand, federnd am Steg
+    ridge_x(6, 14, front_t+so+t50+0.35, -cl, 1);
+    ridge_x(30, 38, front_t+so+t50+0.35, -cl, 1);
+    ridge_x(6, 14, front_t+so+t50+0.35, wv, -1);
+    ridge_x(30, 38, front_t+so+t50+0.35, wv, -1);
+}
+
+module shell() {
     top12 = inner_top;
     difference() {
         union() {
@@ -129,54 +187,36 @@ module shell() {
                 intersection() { body(); box(-W, W, -1, split_y, zo0-1, zo1+1); }
                 cavity();
             }
-            // --- LD2450 Tasche ---
-            // Abstandsleisten an den Enden
-            // (bis an Wand, Rippe und Rippenstuecke verlaengert, damit keine 0,25-mm-Spalte bleiben)
-            box(-iw/2, bx0+1.5, front_t, front_t+so, bz0-cl, ih);
-            // Fuellrippe zwischen linker Wand und Platine: fuehrt die LD2450 seitlich (Spiel cl)
-            box(-iw/2, bx0-cl, front_t, top50, bz0-cl-fb, ih);
-            box(bx0+l50-1.5, bx0+l50+cl, front_t, front_t+so, bz0-cl, ih);
-            // untere Rippe = Federsteg: schwebt fgap ueber der Front und ist nur an den Enden
-            // gehalten -> federt ueber die ganze Laenge, keine Mittelstuetze, die abbrechen kann.
-            box(-iw/2, bx0+l50+cl+rib, front_t+fgap, top50, bz0-cl-fb, bz0-cl);
-            box(-iw/2, bx0+1.5, front_t, top50, bz0-cl-fb, bz0-cl);             // linkes Ende
-            box(bx0+l50-1.5, bx0+l50+cl+rib, front_t, top50, bz0-cl-fb, bz0-cl); // rechtes Ende
-            // Ausbrech-Saeulen: stuetzen die Bruecke beim Druck (Spannweite ~8 mm),
-            // werden danach herausgebrochen
-            let (x0 = bx0+1.5, x1 = bx0+l50-1.5)
-                for (i = [1:npil]) let (xp = x0 + i*(x1-x0)/(npil+1))
-                    // ueber die volle Stegbreite, in Laengsrichtung nur 0,8 mm (bricht leicht ab)
-                    box(xp-0.4, xp+0.4, front_t-0.01, front_t+fgap+0.01, bz0-cl-fb, bz0-cl);
-            // Stecker-Seite: nur kurze Stuecke oben/unten
-            // (mit 45-Grad-Stuetze nach aussen Richtung Stecker-Raum, wie im Deckel)
-            for (zr = [[bz0-cl-fb, bz0+3], [ih-3, ih]]) hull() {
-                box(bx0+l50+cl, bx0+l50+cl+rib, front_t, top50, zr[0], zr[1]);
-                box(bx0+l50+cl, bx0+l50+cl+rib+(top50-front_t), front_t-0.01, front_t, zr[0], zr[1]);
-            }
-            // Rastnasen
-            ridge_x(bx0+6, bx0+14, front_t+so+t50+0.35, bz0-cl, 1);
-            ridge_x(bx0+30, bx0+38, front_t+so+t50+0.35, bz0-cl, 1);
-            ridge_x(bx0+6, bx0+14, front_t+so+t50+0.35, ih, -1);
-            ridge_x(bx0+30, bx0+38, front_t+so+t50+0.35, ih, -1);
+            // Innenteile, aussen auf die Gehaeuseform beschnitten (45-Grad-Stuetzen laufen in die Wand)
+            intersection() {
+                intersection() { body(); box(-W, W, -1, split_y, zo0-1, zo1+1); }
+                union() {
+            // --- LD2450 Tasche (hochkant) ---
+            place50() pocket50();
+
+            // --- Trennrippe zwischen den Radaren ---
+            // zwei Rippen von Wand zu Wand, dazwischen ein Schlitz bis auf das Radom: dort kann ein
+            // Streifen Alublech oder gefaltetes Kupferband (ca. 4 x 27 mm) eingeschoben werden
+            for (zz = [zf0, zf1 - fen_rib]) box(-iw/2, iw/2, front_t, inner_top, zz, zz + fen_rib);
 
             // --- Tasche LD2410C / LD2412 ---
             difference() {
-                // steht auf dem Boden; obere Rippe = Federsteg (Dicke fb), darueber Schlitz sgap
-                box(-l12/2-cl-rib, l12/2+cl+rib, front_t, top12, 0, z12+w12+cl+fb);
+                // steht auf dem Boden; obere Rippe = Federsteg (Dicke fb), darueber Luft sgap
+                box(-l12/2-cl-rib, l12/2+cl+rib, front_t, top12, 0, z12t);
                 box(-l12/2-cl, l12/2+cl, front_t-1, top12+1, z12-cl, z12+w12+cl);
                 // Luft unter dem Steg: nur die Seitenrippen halten ihn
-                box(-l12/2-cl, l12/2+cl, front_t-1, front_t+fgap, z12+w12+cl-0.01, z12+w12+cl+fb+0.01);
+                box(-l12/2-cl, l12/2+cl, front_t-1, front_t+fgap, z12+w12+cl-0.01, z12t+0.01);
             }
             // 45-Grad-Stuetzen aussen an den Seitenrippen der LD2410C-Tasche (wie im Deckel)
             for (sx=[-1,1]) hull() {
-                box(sx*(l12/2+cl), sx*(l12/2+cl+rib), front_t, top12, 0, z12+w12+cl+fb);
-                box(sx*(l12/2+cl), sx*(l12/2+cl+rib+(top12-front_t)), front_t-0.01, front_t, 0, z12+w12+cl+fb);
+                box(sx*(l12/2+cl), sx*(l12/2+cl+rib), front_t, top12, 0, z12t);
+                box(sx*(l12/2+cl), sx*(l12/2+cl+rib+(top12-front_t)), front_t-0.01, front_t, 0, z12t);
             }
             // Ausbrech-Saeulen unter dem LD2410C-Federsteg (wie beim LD2450): stuetzen die Bruecke
             // beim Druck, werden danach herausgebrochen
             let (x0 = -l12/2-cl, x1 = l12/2+cl)
                 for (i = [1:npil12]) let (xp = x0 + i*(x1-x0)/(npil12+1))
-                    box(xp-0.4, xp+0.4, front_t-0.01, front_t+fgap+0.01, z12+w12+cl, z12+w12+cl+fb);
+                    box(xp-0.4, xp+0.4, front_t-0.01, front_t+fgap+0.01, z12+w12+cl, z12t);
             if (static_radar == "LD2410C")
                 // Auflage nur an den kurzen Seiten: auf der Front sitzen Bauteile entlang der
                 // Unterkante, Chip und Antennen in der Mitte (am echten Board geprueft).
@@ -193,23 +233,25 @@ module shell() {
                 ridge_x(sx*6-3, sx*6+3, front_t+so12+t12+ridge_up, z12+w12+cl, -1);
             }
 
-            // --- Schraubdome ---
-            for (sx=[-1,1]) {
-                translate([sx*boss_x, front_t, boss_z]) ycyl(split_y-front_t, 2.75, 2.75);
-                translate([sx*boss_x, front_t-0.01, boss_z]) ycyl(1.51, 4.25, 2.75);      // 45-Grad-Fase am Fuss
-                // Rippe zur Seitenwand, endet 0,3 mm unter der Deckellippe
-                box(sx*boss_x, sx*(iw/2+0.01), front_t, split_y-1.5-0.3, boss_z-0.75, boss_z+0.75);
+            // --- Schraubdome (freie Spalte links) ---
+            for (b = bosses) {
+                translate([b[0], front_t, b[1]]) ycyl(split_y-front_t, 2.75, 2.75);
+                translate([b[0], front_t-0.01, b[1]]) ycyl(1.51, 4.25, 2.75);      // 45-Grad-Fase am Fuss
+                // Rippe zur linken Seitenwand, endet 0,3 mm unter der Deckellippe
+                box(b[0], -iw/2-0.01, front_t, split_y-1.5-0.3, b[1]-0.75, b[1]+0.75);
+            }
+                }
             }
         }
         // Schraubloecher M2
-        for (sx=[-1,1]) translate([sx*boss_x, split_y-9, boss_z]) ycyl(9.1, 1.0, 1.0);   // M2 selbstschneidend: Kern 2,0
+        for (b = bosses) translate([b[0], split_y-9, b[1]]) ycyl(9.1, 1.0, 1.0);   // M2 selbstschneidend: Kern 2,0
         // USB-C Ausschnitt (unten, zur Rueckseite offen)
         // Vorderkante 0,3 mm vor der Buchse: haelt das untere ESP-Ende in Richtung Radar
         // breiter als die Buchse: links/rechts sitzen die Fluegel der Deckelnase mit den Keilnasen
         box(-notch_hw, notch_hw, esp_y-usb_h-0.3, split_y+1, zo0-1, 0.01);
         // Lueftung oben und unten
-        for (x=[-22:4:14]) box(x-0.7, x+0.7, 6, 10.5, ih-0.01, zo1+1);
-        for (x=[-22,-18,-14,10,14,18]) box(x-0.7, x+0.7, 6, 10.5, zo0-1, 0.01);
+        for (x=[-10:4:10]) box(x-0.7, x+0.7, 6, 10.5, ih-0.01, zo1+1);
+        for (x=[-10.4,-8.2,8.2,10.4]) box(x-0.7, x+0.7, 6, 10.5, zo0-1, 0.01);
     }
 }
 
@@ -225,7 +267,7 @@ module esp_pillars() {
 }
 
 module lid() {
-    lip_h = 1.5; lip_w = 1.2; lcl = 0.15;
+    lip_h = 1.5; lip_w = 1.2;
     difference() {
         union() {
             intersection() { body(); box(-W, W, split_y, D+1, zo0-1, zo1+1); }
@@ -242,6 +284,10 @@ module lid() {
                     box(sx*4.65, sx*(notch_hw-0.15), esp_y-0.75, esp_y-0.74, -0.01, 0.7);
                 }
             }
+            // Teile im Gehaeuse: auf den Umriss der Lippe beschnitten (45-Grad-Stuetzen enden dort)
+            intersection() {
+                rrect_y(iw-2*lcl, lcl, ih-lcl, max(0.2, ri-lcl), 0, split_y+0.01);
+                union() {
             // Lippe (steckt im Gehaeuse)
             difference() {
                 rrect_y(iw-2*lcl, lcl, ih-lcl, max(0.2, ri-lcl), split_y-lip_h, split_y+0.01);
@@ -251,7 +297,7 @@ module lid() {
                     rrect_y(iw-2*lcl-2*lip_w-1.6, lcl+lip_w+0.8, ih-lcl-lip_w-0.8, 0.5, split_y-0.01, split_y+1);
                 }
                 box(-10.5, 10.5, split_y-lip_h-1, split_y+1, -1, 3);        // Platz fuer ESP-Pins unten
-                for (sx=[-1,1]) translate([sx*boss_x, split_y-5, boss_z]) ycyl(6, 3.0, 3.0);
+                for (b = bosses) translate([b[0], split_y-5, b[1]]) ycyl(6, 3.0, 3.0);
             }
             // ESP-Auflage-Schienen
             // (Fuss beidseitig 1 mm breiter, 45 Grad)
@@ -269,7 +315,7 @@ module lid() {
             // Federsteg ueber dem oberen ESP-Ende (wie zwischen den Radar-Taschen): schwebt eb_gap ueber
             // der Deckelinnenseite, haengt nur an zwei Pfosten, biegt in der Schichtebene
             box(eb_x0, eb_x1, eb_ytop, split_y-eb_gap, esp_top+cl, esp_top+cl+eb_t);
-            // Pfosten: 3 mm breit, 45-Grad-Stuetzen nach aussen und nach hinten (weg vom ESP)
+            // Pfosten: 2 mm bis zur Lippe, 45-Grad-Stuetzen nach aussen und nach hinten (weg vom ESP)
             for (e = [[eb_x0, -1], [eb_x1, 1]]) hull() {
                 box(e[0]-e[1]*0.01, e[0]+e[1]*3, eb_ytop, split_y+0.01, esp_top+cl, esp_top+cl+eb_t+1.0);
                 box(e[0]-e[1]*0.01, e[0]+e[1]*(3+split_y-eb_ytop), split_y-0.01, split_y+0.01,
@@ -287,9 +333,11 @@ module lid() {
                 box(rid_x0, rid_x1, eb_ytop, split_y+0.01, esp_top+cl+eb_t+0.6, esp_top+cl+eb_t+1.8);
                 box(rid_x0, rid_x1, split_y-0.01, split_y+0.01, esp_top+cl+eb_t+0.6, esp_top+cl+eb_t+1.8+(split_y-eb_ytop));
             }
+                }
+            }
         }
         // M2 Senkkopf
-        for (sx=[-1,1]) translate([sx*boss_x, split_y-1, boss_z]) {
+        for (b = bosses) translate([b[0], split_y-1, b[1]]) {
             ycyl(lid_t+2, 1.3, 1.3);                                   // Durchgang 2,6: Gewinde greift hier nicht
             translate([0, lid_t+1-1.2, 0]) ycyl(1.21, 1.3, 2.2);
             translate([0, lid_t+1, 0]) ycyl(1, 2.2, 2.2);
@@ -300,8 +348,8 @@ module lid() {
 }
 
 // ---------- Schiene fuer Halter ----------
-module rail() {
-    translate([0, D, zo0]) linear_extrude(height = dt_top - 0.3 - zo0)
+module rail(z0 = zo0) {
+    translate([0, D, z0]) linear_extrude(height = dt_top - 0.3 - z0)
         polygon([[-dt_base, 0.01], [dt_base, 0.01], [dt_tip, -(dt_h-0.3)], [-dt_tip, -(dt_h-0.3)]]);
 }
 
@@ -317,20 +365,20 @@ module teardrop_bore(h, r) {
 }
 
 module corner() {
-    hz = (zo0 + zo1) / 2;
     difference() {
         union() {
             translate([0,0,zo0]) linear_extrude(height=H)
                 polygon([[-(cW-D), D], [cW-D, D], [0, cW]]);
-            rail();
+            rail(z_r0);
         }
         // je eine Schraube pro Wand (3-3,5 mm, Kopf bis 7,5 mm), Kopf versenkt, Zugang von vorne.
-        // Eintritt bei x = +-15, damit der Schraubendreher an der Schiene vorbeikommt.
+        // Der Sensor ist schmal: die Schrauben sitzen mittig unter und ueber der Schiene,
+        // dort kommt der Schraubendreher frei an. Unten in die rechte, oben in die linke Wand.
         // Tropfenform, damit die liegenden Bohrungen ohne Stuetzen druckbar sind.
-        for (sx=[-1,1]) {
-            xe = sx*15;
-            to_wall = (cW - D - 15)/2*sqrt(2);      // Laenge der Achse bis zur Wand
-            translate([xe, D, hz]) rotate([0,0,-sx*45]) rotate([-90,0,0]) {
+        for (s = [[1, (zo0 + z_r0)/2], [-1, (dt_top - 0.3 + zo1)/2]]) {
+            sx = s[0];
+            to_wall = (cW - D)/sqrt(2);             // Laenge der Achse bis zur Wand
+            translate([0, D, s[1]]) rotate([0,0,-sx*45]) rotate([-90,0,0]) {
                 translate([0,0,-1]) teardrop_bore(to_wall + 2, 1.9);
                 // beginnt 5 mm vor dem Eintrittspunkt: die Bohrung trifft die Front unter 45 Grad,
                 // sonst bleibt innen ein Steg stehen, an dem der Schraubenkopf haengt
@@ -347,9 +395,14 @@ module T() { translate([0,0,ep]) rotate([tilt,0,0]) children(); }
 module stand() {
     y0 = (D + ep*sin(tilt))/cos(tilt) + 0.5;
     difference() {
-        hull() {
-            T() box(-15, 15, D, D+8, zo0, dt_top+2);
-            box(-20, 20, y0, y0+32, 0, 5);
+        union() {
+            hull() {
+                T() box(-15, 15, D, D+8, zo0, dt_top+2);
+                box(-20, 20, y0, y0+32, 0, 5);
+            }
+            // Kufen nach vorne unter den Sensor: der hohe Sensor kippt sonst nach vorne.
+            // Die Mitte bleibt frei fuer den USB-Stecker.
+            for (sx=[-1,1]) box(sx*8, sx*20, -14, y0+1, 0, 3);
         }
         box(-3.5, 3.5, -50, 200, -1, 4);   // Kabelkanal unten
     }
@@ -358,18 +411,22 @@ module stand() {
 
 // ---------- Vorschau ----------
 module boards() {
-    color("seagreen")  box(bx0, bx0+l50, front_t+so, front_t+so+t50, bz0, bz0+w50);
+    color("seagreen")  ld2450_board();
     color("seagreen")  box(-l12/2, l12/2, front_t+so12, front_t+so12+t12, z12, z12+w12);
-    color("white")     box(bx0+l50-6, bx0+l50+4, front_t+so+t50, front_t+so+t50+4.5, bz0+4, bz0+11);  // JST
+    color("white")     ld2450_jst();
     color("royalblue") box(-esp_w/2, esp_w/2, split_y-1.5-esp_t, split_y-1.5, esp_z0, esp_top);
     color("red")       esp_antenna();
     color("black")     ld2450_header();
     color("silver")    esp_usb();
 }
 
+// LD2450 in seinen eigenen Koordinaten (u laengs, v quer, siehe pocket50), gedreht platziert
+module ld2450_board(e = 0) { place50() box(e, l50-e, front_t+so+e, front_t+so+t50-e, e, w50-e); }
+// JST-Stecker (ragt 4 mm ueber das Platinenende)
+module ld2450_jst() { place50() box(l50-6, l50+4, front_t+so+t50, front_t+so+t50+4.5, 4, 11); }
 // Stiftleiste 2x4 (2,0 mm) auf der LD2450-Rueckseite, am Ende gegenueber der JST-Buchse
 module ld2450_header(pin_len = 6) {
-    box(bx0+2, bx0+6, front_t+so+t50, front_t+so+t50+pin_len, bz0+3.8, bz0+11.9);
+    place50() box(2, 6, front_t+so+t50, front_t+so+t50+pin_len, 3.8, 11.9);
 }
 // Bauteile auf der LD2410C-Vorderseite (vom Foto des echten Boards; Loetloecher oben)
 module ld2410c_front_parts() {
@@ -457,7 +514,7 @@ else if (part == "corner_section") intersection() { corner(); box(-60, 60, 0, 80
 else if (part == "clash_boards") intersection() {
     union() { shell(); lid(); }
     union() {   // Platinen mit 0,05 mm Abstand verkleinert, damit reine Auflageflaechen nicht zaehlen
-        box(bx0+0.05, bx0+l50-0.05, front_t+so+0.05, front_t+so+t50-0.05, bz0+0.05, bz0+w50-0.05);
+        ld2450_board(0.05);
         box(-l12/2+0.05, l12/2-0.05, front_t+so12+0.05, front_t+so12+t12-0.05, z12+0.05, z12+w12-0.05);
         box(-esp_w/2+0.05, esp_w/2-0.05, esp_y+0.05, esp_y+esp_t-0.05, esp_z0+0.05, esp_top-0.05);
         ld2450_header(); esp_antenna(); esp_usb();
@@ -477,8 +534,12 @@ else if (part == "chk_eb_gap") intersection() { lid(); difference() {   // muss 
     box(eb_x0+0.05, eb_x1-0.05, split_y-eb_gap+0.05, split_y-0.05, esp_top+cl+0.05, esp_top+cl+eb_t-0.05);
     for (i = [1:npil_esp]) let (xp = eb_x0 + i*(eb_x1-eb_x0)/(npil_esp+1)) box(xp-0.45, xp+0.45, 0, 20, 0, 40); } }
 else if (part == "chk_eb_free") intersection() { lid(); box(eb_x0+0.05, eb_x1-0.05, eb_ytop+0.05, split_y-0.05, esp_top+cl+eb_t+0.05, esp_top+cl+eb_t+0.55); }  // muss leer sein: Federweg hinter dem Steg
-else if (part == "clash_lid_jst") intersection() { lid(); box(bx0+l50-6, bx0+l50+4, front_t+so+t50, front_t+so+t50+4.5, bz0+4, bz0+11); }   // muss leer sein: JST-Stecker
+else if (part == "clash_lid_jst") intersection() { lid(); ld2450_jst(); }   // muss leer sein: JST-Stecker
 else if (part == "chk_pil_esp") intersection() { lid(); box(eb_x0+0.5, eb_x1-0.5, split_y-eb_gap+0.1, split_y-0.1, esp_top+cl+0.05, esp_top+cl+eb_t-0.05); }   // 3 Saeulen erwartet
 else if (part == "chk_pil_12") intersection() { shell(); box(-l12/2, l12/2, front_t+0.1, front_t+fgap-0.1, z12+w12+cl+0.05, z12+w12+cl+fb-0.05); }    // 2 Saeulen erwartet
-else if (part == "clash_shell_jst") intersection() { shell(); box(bx0+l50+0.05, bx0+l50+4, front_t+so+t50, front_t+so+t50+4.5, bz0+4, bz0+11); }   // muss leer sein: JST-Stecker
-else if (part == "chk_beam50_free") intersection() { shell(); box(bx0+1.6, bx0+l50-1.6, front_t+0.05, front_t+fgap-0.05, bz0-cl-fb+0.05, bz0-cl-0.05); }   // nur die 4 Saeulen erwartet
+else if (part == "clash_shell_jst") intersection() { shell(); place50() box(l50+0.05, l50+4, front_t+so+t50, front_t+so+t50+4.5, 4, 11); }   // muss leer sein: JST-Stecker
+else if (part == "chk_beam50_free") intersection() { shell(); place50() box(1.6, l50-1.6, front_t+0.05, front_t+fgap-0.05, -cl-fb+0.05, -cl-0.05); }   // nur die 4 Saeulen erwartet
+else if (part == "chk_beam50_flex") intersection() { shell(); place50() box(1.6, l50-1.6, front_t+fgap+0.05, inner_top-0.05, -cl-fb-sgap, -cl-fb-0.05); }   // muss leer sein: Federweg neben dem LD2450-Steg
+else if (part == "chk_beam12_flex") intersection() { shell(); box(-l12/2+0.05, l12/2-0.05, front_t+fgap+0.05, inner_top-0.05, z12t+0.05, zf0-0.05); }   // muss leer sein: Federweg ueber dem LD2410C-Steg
+else if (part == "chk_fence_slot") intersection() { shell(); box(-iw/2+0.05, iw/2-0.05, front_t+0.05, D, zf0+fen_rib+0.05, zf1-fen_rib-0.05); }   // muss leer sein: Schlitz fuer das Blech
+else if (part == "front_view") { color("whitesmoke") shell(); boards(); }
