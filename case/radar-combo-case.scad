@@ -380,9 +380,17 @@ module lid() {
 }
 
 // ---------- Schiene fuer Halter ----------
-module rail(z0 = zo0) {
-    translate([0, D, z0]) linear_extrude(height = dt_top - 0.3 - z0)
-        polygon([[-dt_base, 0.01], [dt_base, 0.01], [dt_tip, -(dt_h-0.3)], [-dt_tip, -(dt_h-0.3)]]);
+// unteres Ende unter 45 Grad (in Drucklage) abgeschraegt, sonst haengt die Schiene dort frei ueber;
+// t = Neigung, mit der die Schiene gedruckt wird (Schrankfuss), die Schraege gleicht sie aus
+module rail(z0 = zo0, t = 0) {
+    k = tan(45 + t);   // Anstieg der Schraege im Sensor-Koordinatensystem
+    intersection() {
+        translate([0, D, z0]) linear_extrude(height = dt_top - 0.3 - z0)
+            polygon([[-dt_base, 0.01], [dt_base, 0.01], [dt_tip, -(dt_h-0.3)], [-dt_tip, -(dt_h-0.3)]]);
+        // Prisma in der yz-Ebene, entlang x extrudiert: oberhalb der Linie z = z0 + (D - y) * k
+        rotate([90, 0, 90]) linear_extrude(height = 2*dt_tip + 2, center = true)
+            polygon([[D + 1, z0 - k], [D + 1, dt_top + 1], [D - dt_h - 1, dt_top + 1], [D - dt_h - 1, z0 + (dt_h + 1)*k]]);
+    }
 }
 
 // ---------- Eckhalter ----------
@@ -435,7 +443,7 @@ module stand(t = tilt) {
         // Kabeltunnel: das Kabel laeuft vom Stecker unter dem Sensor nach hinten unter dem Fuss durch
         box(-cable_w/2, cable_w/2, -50, 200, -1, cable_h);
     }
-    T(t) rail();
+    T(t) rail(zo0, t);
 }
 
 // Freiraum fuer USB-C-Stecker und Kabel (muss frei bleiben): Kopf unter der Buchse (Sensor-Koordinaten),
