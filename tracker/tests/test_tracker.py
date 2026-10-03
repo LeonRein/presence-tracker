@@ -232,7 +232,7 @@ def test_out_to_the_balcony_and_back():
     # back inside: tracked again right away, balcony empty
     end = person.waypoints[-1][0]
     assert counts(samples, end - 2, end) == {1}
-    assert not tracker.region_people.get(balcony)
+    assert not tracker.occupancy.visits.get(balcony)
 
 
 def test_echo_in_the_balcony_door_is_no_person():
@@ -244,3 +244,16 @@ def test_echo_in_the_balcony_door_is_no_person():
     assert counts(samples, 20, 90) == {1}
     # the echo was measured all along, it just never became a person
     assert any(tr.status == "tentative" and abs(tr.position()[0] - 5.6) < 0.5 for tr in tracker.tracks)
+
+
+def test_two_people_never_fuse():
+    # 19:30: one sits on the sofa, the other comes in, walks right behind them and sits down
+    # next to them; up close the radar sees only one target for both
+    config = room_config()
+    sitter = Person([(0, 3.0, 1.0), (60, 3.0, 1.0)])
+    other = Person(walk(DOOR, (3.3, 1.6), (3.35, 1.15), start=5, speed=0.9, pauses={2: 40}))
+    # as at 19:32: each sensor sees only one of them, never both at once
+    sensors = [SimSensor(config.sensors[0], blind_to=(1,), blind_after=12),
+               SimSensor(config.sensors[1], blind_to=(0,), blind_after=12)]
+    tracker, samples = run(config, [sitter, other], 55, sensors)
+    assert counts(samples, 15, 55) == {2}

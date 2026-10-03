@@ -42,6 +42,9 @@ class SimSensor:
     still_gap: float = 20.0
     ghost_rate: float = 0.0  # LD2450 ghosts per minute
     ld2410_ghost_period: float = 7.0
+    resolution: float = 0.0  # m, people closer than this to each other come out as one target
+    blind_to: tuple = ()  # indices of people this sensor doesn't see from blind_after on (hidden behind someone)
+    blind_after: float = 0.0
     seq: int = 0
     _dropped: dict = field(default_factory=dict)
     _ghost_until: float = -1.0
@@ -64,6 +67,8 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
     c = s.config
     targets = []
     for i, person in enumerate(people):
+        if i in s.blind_to and t >= s.blind_after:
+            continue
         pos = person.position(t)
         if pos is None or not c.sees(pos[0], pos[1], walls):
             continue
@@ -97,6 +102,17 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
         gx, gy = s._ghost_pos
         targets.append((math.hypot(gx, gy), {"x": round(gx * 1000), "y": round(gy * 1000), "speed": 0, "resolution": 360}))
     targets.sort(key=lambda item: item[0])
+    if s.resolution:
+        # the radar can't separate people close together: one target in between
+        merged = []
+        for r, tgt in targets:
+            other = next((m for m in merged if math.hypot(m[1]["x"] - tgt["x"], m[1]["y"] - tgt["y"]) < s.resolution * 1000), None)
+            if other is None:
+                merged.append((r, tgt))
+            else:
+                other[1]["x"] = (other[1]["x"] + tgt["x"]) // 2
+                other[1]["y"] = (other[1]["y"] + tgt["y"]) // 2
+        targets = merged
     targets = [tgt for _, tgt in targets[:3]]
     for slot, tgt in enumerate(targets, 1):
         tgt["slot"] = slot

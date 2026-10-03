@@ -141,7 +141,13 @@ class TrackerParams:
     tentative_timeout: float = 0.8  # s without detection until a new track is dropped
     echo_radius: float = 3.0  # m, no new track this close to a walking person (multipath echoes)
     closed_exit_distance: float = 1.5  # m out of a closed room's door, if nobody went in before
-    region_max_time: float = 6 * 3600.0  # s, after this a person counted into a closed room is forgotten
+    # closed rooms without a sensor, see unobserved.py
+    dwell_median: float = 120.0  # s, prior: typical stay in such a room, until visits are learned
+    dwell_spread: float = 1.5  # prior: spread of ln(duration), wide: long stays stay possible
+    dwell_prior_weight: float = 3.0  # the prior counts like this many visits
+    missed_return: float = 0.1  # chance to miss someone coming out while a sensor watches the door
+    return_min_prob: float = 0.15  # someone at the door is a returning person above this probability
+    forget_prob: float = 0.05  # visits below this probability are dropped
     rejoin_time: float = 10.0  # s, someone who left through a door and shows up again is picked up
     rejoin_radius: float = 2.5  # m, upper bound for picking up a lost track again directly
     takeover_speed: float = 1.5  # m/s, a lost track that could have walked to a new one becomes it
@@ -155,6 +161,7 @@ class TrackerParams:
     max_lost_time: float = 4 * 3600.0  # s, upper bound for a lost track without any support
     merge_distance: float = 0.5  # m, two tracks this close for merge_time are one person
     merge_time: float = 1.0
+
     warmup: float = 30.0  # s after start in which tracks may appear anywhere
     # outputs
     lead_time: float = 1.0  # s, "approaching" looks this far ahead
@@ -207,11 +214,15 @@ class Config:
             return [next((z for z in rooms if z.contains(c[0] + k * nx, c[1] + k * ny)), None) for k in (0.4, -0.4)]
 
         links = []  # ([room or None, room or None], door or None)
+        normals = {}  # id(door) -> normal of its wall, pointing to the first side
         for d in self.doors:
             c = (d["x"], d["y"])
             piece = min(walls, key=lambda p: distance_to_segment(c[0], c[1], p[0], p[1]), default=None)
             if piece is not None:
                 links.append((sides(c, piece), d))
+                (ax, ay), (bx, by), _ = piece
+                length = math.hypot(bx - ax, by - ay)
+                normals[id(d)] = (-(by - ay) / length, (bx - ax) / length)
         for piece in pieces:
             if piece[2] == "divider":
                 (ax, ay), (bx, by), _ = piece
@@ -256,6 +267,10 @@ class Config:
             zone = ZoneConfig(f"door-{d['id']}", "Tür", kind="entry", shape="circle", center=[d["x"], d["y"]],
                               radius=max(1.2, d.get("width", 0.9) / 2 + 0.5))
             zone.region = region
+            # a point 0.5 m into the observed room: if a sensor sees it, it sees people at the door
+            (nx, ny) = normals[id(d)]
+            k = 0.5 if a is inner[0] else -0.5
+            zone.watch = (d["x"] + k * nx, d["y"] + k * ny)
             if region == "outside" or self.regions[region]["open"]:
                 out.append(zone)
             else:

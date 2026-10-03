@@ -24,6 +24,7 @@ import numpy as np
 from .assignment import assign
 from .imm import IMM, STILL, WALK, IMMState
 from .model import Config, SensorConfig
+from .unobserved import Occupancy
 
 TENTATIVE, CONFIRMED = "tentative", "confirmed"
 _BIG = 1e9
@@ -61,6 +62,8 @@ class Track:
     co_detected: dict = field(default_factory=dict)  # other track id -> last time both in one frame
     zones: set = field(default_factory=set)
     last_walking: float = -math.inf  # last detection while moving
+    last_velocity: np.ndarray = field(default_factory=lambda: np.zeros(2))  # at the last detection
+    has_origin: bool = False  # came in through a door/entry, back from a counted room, or was there at the start
     closed_region: str | None = None  # born in a closed unobserved region (balcony, kitchen) or at its door
     left_region: str | None = None  # went into this closed region when it ended
 
@@ -131,7 +134,8 @@ class Tracker:
         self.unknown_sensors: dict[str, float] = {}
         self.listeners = []  # called with (event, data) for calibration and debugging
         self.exited: list = []  # tracks that left through an entry recently: (track, time)
-        self.region_people: dict = {}  # closed region -> times people went in and haven't come out
+        self.occupancy = Occupancy(config.params)  # people in closed rooms without a sensor
+        self.last_step: float | None = None
 
     # ------------------------------------------------------------------ input
 
@@ -272,8 +276,8 @@ class Tracker:
             if near is not None:
                 if near not in self.tracks:
                     self.exited = [(tr, te) for tr, te in self.exited if tr is not near]
-                    if near.left_region and self.region_people.get(near.left_region):
-                        self.region_people[near.left_region].pop()
+                    if near.left_region:
+                        self.occupancy.undo_last(near.left_region)
                     near.left_region = None
                     self.tracks.append(near)
                     self._emit("rejoined", near)
@@ -303,6 +307,7 @@ class Tracker:
         tr.hits += 1
         tr.last_hit = t
         vx, vy = tr.velocity()
+        tr.last_velocity = np.array([vx, vy])
         if tr.walk_prob > 0.5 and math.hypot(vx, vy) > 0.2:
             tr.last_walking = t
         tr.last_support = t
@@ -314,8 +319,10 @@ class Tracker:
         at_entry = warmup or any(z.contains(*d.pos) for z in self.config.entry_zones)
         walk = 0.7 if abs(d.speed) > 0.15 else 0.4
         tr = Track(self.next_id, IMMState.from_position(d.pos, d.R, walk), t, t, at_entry)
+        tr.has_origin = at_entry
         if not warmup:
             tr.closed_region = self.config.closed_region_at(*d.pos)
+            tr.has_origin = tr.has_origin or tr.closed_region is not None
         self.next_id += 1
         self._update(tr, d, t, measure=False)
         tr.expected = 1
@@ -368,11 +375,12 @@ class Tracker:
                 continue
             ratio = tr.hits / max(tr.expected, 1)
             if tr.closed_region:
-                # out of a closed region (balcony, kitchen) only comes who went in before
-                inside = self.region_people.get(tr.closed_region)
-                if inside:
+                # out of a closed region (balcony, kitchen) only comes who went in before:
+                # likely enough that someone is still in there -> it's them coming back
+                if self.occupancy.best(tr.closed_region, t) >= p.return_min_prob:
                     if t - tr.first_hit >= p.confirm_time_entry and ratio >= p.confirm_ratio:
-                        inside.pop(0)
+                        self.occupancy.came_back(tr.closed_region, t)
+                        tr.has_origin = True
                         tr.status = CONFIRMED
                         self._emit("came back", (tr, tr.closed_region))
                     continue
@@ -412,15 +420,37 @@ class Tracker:
                     if reason == "left via entry":
                         self.exited.append((tr, t))
                     elif reason == "went into a closed room":
-                        self.region_people.setdefault(tr.left_region, []).append(t)
+                        self.occupancy.went_in(tr.left_region, t, self._went_in_certainty(tr))
                         self.exited.append((tr, t))
                     continue
             keep.append(tr)
         self.tracks = keep
         self.exited = [(tr, te) for tr, te in self.exited if t - te < p.rejoin_time]
-        for rid, times in self.region_people.items():  # forget after a long time (missed a return)
-            times[:] = [te for te in times if t - te < p.region_max_time]
+        if self.last_step is not None and t > self.last_step:
+            self.occupancy.step(t, t - self.last_step, self._doors_watched(t))
+        self.last_step = t
         self._merge(t)
+
+    def _went_in_certainty(self, tr: Track) -> float:
+        """p0: lost at the door while walking toward it: very likely in; otherwise less so."""
+        door = self.config.door_of(tr.left_region)
+        if door is None:
+            return 0.6
+        if any(z.contains(*tr.position()) for z in self.config.closed_rooms):
+            return 0.9  # lost already behind the door
+        to_door = np.array(door.geometry.center) - tr.position()
+        v = tr.last_velocity
+        toward = float(np.dot(to_door, v)) > 0 or np.linalg.norm(to_door) < 0.3
+        return 0.9 if toward else 0.6
+
+    def _doors_watched(self, t: float) -> dict:
+        """Closed region -> some sensor that is online sees (the room side of) its door."""
+        out = {}
+        for door in self.config.closed_doors:
+            out[door.region] = out.get(door.region, False) or any(
+                self._online(s.id) and s.sees(*door.watch, self.config.wall_segments)
+                for s in self.config.sensors if s.enabled and s.placed)
+        return out
 
     def _shadowed(self, tr: Track, t: float) -> bool:
         """Someone is walking close by. Nobody appears out of nowhere next to a walking person:
@@ -441,8 +471,15 @@ class Tracker:
         """Where two sensors look, a new person must show up in both. A reflection or a static
         ghost almost always shows up in one only."""
         x, y = tr.position()
-        certain = {s.id for s in self.config.sensors if s.enabled and s.placed and self._sees_well(s, x, y)}
+        # only sensors that are online: one that is unplugged can't confirm anybody
+        certain = {s.id for s in self.config.sensors if s.enabled and s.placed and self._online(s.id)
+                   and self._sees_well(s, x, y)}
         return len(certain & set(tr.last_hit_by)) >= min(2, len(certain))
+
+    def _online(self, sensor_id: str) -> bool:
+        """Frames arrive (at least the 5 s heartbeat while nothing is detected)."""
+        rt = self.runtime.get(sensor_id)
+        return rt is not None and self.now - rt.last_frame < 15
 
     def _sees_well(self, s: SensorConfig, x: float, y: float) -> bool:
         """Well inside the field of view: the LD2450 is weak near its edges and its maximum range."""
@@ -490,12 +527,20 @@ class Tracker:
         return None
 
     def _merge(self, t: float):
+        """Two tracks for one person: one of them came out of nowhere mid-room (e.g. the walker's
+        track stuck on an echo for a moment and a new one picked up the walker). Such a track may
+        be merged into another. A track with an origin (came in through a door or entry, came
+        back from a counted room, was there at the start) is a person and never fuses with
+        anyone; if the radar can't separate two people up close, one becomes a lost track."""
         p = self.config.params
         active = [tr for tr in self.tracks if tr.status == CONFIRMED and not tr.lost(t, p.lost_after)]
         remove = set()
         for i, a in enumerate(active):
             for b in active[i + 1:]:
                 if a.id in remove or b.id in remove:
+                    continue
+                younger = b if b.born > a.born else a
+                if younger.has_origin:
                     continue
                 close = np.linalg.norm(a.position() - b.position()) < p.merge_distance
                 if not close:
@@ -506,7 +551,6 @@ class Tracker:
                     continue
                 if t - a.co_detected.get(b.id, -math.inf) < p.merge_time:
                     continue  # one sensor saw both at once: two people
-                younger = b if b.born > a.born else a
                 remove.add(younger.id)
                 self._emit("merged", younger)
         if remove:
@@ -548,6 +592,10 @@ class Tracker:
                 "ld2410": {"present": rt.ld_present, "distance": round(rt.ld_distance, 2),
                            "move_gates": rt.move_gates, "still_gates": rt.still_gates},
             }
-        regions = {rid: {"name": r["name"], "open": r["open"], "count": len(self.region_people.get(rid, []))}
-                   for rid, r in self.config.regions.items()}
+        regions = {}
+        for rid, r in self.config.regions.items():
+            probs = self.occupancy.probs(rid, t)
+            regions[rid] = {"name": r["name"], "open": r["open"], "count": sum(pr >= 0.5 for pr in probs),
+                            "probabilities": [round(pr, 3) for pr in probs],
+                            **({} if r["open"] else {"dwell": self.occupancy.stats(rid)})}
         return {"t": t, "tracks": tracks, "sensors": sensors, "regions": regions}

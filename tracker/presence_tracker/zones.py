@@ -14,6 +14,7 @@ class ZoneState:
     still: int = 0
     approaching: bool = False
     eta: float | None = None  # s until the first approaching track enters
+    probability: float | None = None  # rooms without a sensor: someone is in there
 
     @property
     def occupied(self) -> bool:
@@ -22,7 +23,9 @@ class ZoneState:
     def to_dict(self) -> dict:
         return {"count": self.count, "occupied": self.occupied, "moving": self.moving,
                 "still": self.still, "approaching": self.approaching,
-                "eta": None if self.eta is None else round(self.eta, 2)}
+                "eta": None if self.eta is None else round(self.eta, 2),
+                # in 5 % steps: Home Assistant gets a new state only now and then
+                **({} if self.probability is None else {"probability": round(self.probability * 20) / 20})}
 
 
 def is_moving(tr: Track, now: float, lost_after: float) -> bool:
@@ -68,16 +71,20 @@ def evaluate(config: Config, tracker: Tracker) -> dict:
                     st.approaching = True
                     st.eta = tau if st.eta is None else min(st.eta, tau)
                     break
-    # closed rooms without a sensor (balcony, kitchen): counted in and out at their door
+    # closed rooms without a sensor (balcony, kitchen): probability that someone went in and is
+    # still there (unobserved.py)
     for rid, region in config.regions.items():
-        n = len(tracker.region_people.get(rid, []))
-        if region["open"] or not n:
+        if region["open"]:
             continue
+        probs = tracker.occupancy.probs(rid, now)
+        p_any = 1 - math.prod(1 - pr for pr in probs)
+        n = max(sum(pr >= 0.5 for pr in probs), 1 if p_any >= 0.5 else 0)
         total.count += n
         total.still += n
         for room_id in region["rooms"]:
             if room_id in states and len(region["rooms"]) == 1:
                 states[room_id].count += n
                 states[room_id].still += n
+                states[room_id].probability = p_any
     states["_total"] = total
     return states

@@ -52,6 +52,13 @@ class App:
 
     def _reset_tracker(self):
         self.tracker = Tracker(self.config)
+        # learned stays in rooms without a sensor survive restarts
+        dwell_path = self.data_dir / "dwell.json"
+        if dwell_path.exists():
+            try:
+                self.tracker.occupancy.dwell = json.loads(dwell_path.read_text())
+            except ValueError:
+                log.warning("dwell.json unreadable, starting without learned stays")
         self.clocks = defaultdict(SensorClock)
         self.calibrator = getattr(self, "calibrator", None) or Calibrator(self.config)
         self.calibrator.config = self.config
@@ -117,6 +124,11 @@ class App:
             start = time.process_time()
             self.tracker.step(self.clock())
             self.zone_states = evaluate(self.config, self.tracker)
+            if self.tracker.occupancy.changed and not self.replay:
+                self.tracker.occupancy.changed = False
+                tmp = self.data_dir / "dwell.tmp"
+                tmp.write_text(json.dumps(self.tracker.occupancy.dwell))
+                tmp.replace(self.data_dir / "dwell.json")
             self.stats["cpu"] += time.process_time() - start
             await self.discovery.states(self.zone_states)
             now = time.monotonic()
@@ -224,6 +236,7 @@ class App:
         self.config = config
         self.tracker.config = config
         self.tracker.imm.p = config.params
+        self.tracker.occupancy.p = config.params
         self.calibrator.config = config
         config.save(self.config_path)
         if self.client is not None:

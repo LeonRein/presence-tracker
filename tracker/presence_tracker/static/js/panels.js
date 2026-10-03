@@ -43,6 +43,7 @@ const LIVE = {
         st.moving ? `<span class="badge ok">${st.moving} bewegt</span>` : '',
         st.still ? `<span class="badge">${st.still} ruhig</span>` : '',
         st.approaching ? `<span class="badge warn">gleich${st.eta != null ? ` (${st.eta.toFixed(1)} s)` : ''}</span>` : '',
+        st.probability != null && st.probability > 0 ? `<span class="badge" title="Wahrscheinlichkeit, dass noch jemand drin ist (Raum ohne Sensor)">${Math.round(st.probability * 100)} %</span>` : '',
       ].join('') : '';
       return `<div class="item"><span class="swatch" style="background:${color}"></span><span class="grow">${esc(z.name)}</span>${badges}</div>`;
     }).join('');
@@ -73,6 +74,14 @@ const LIVE = {
         <span class="badge ${online ? 'ok' : 'bad'}">${online ? 'online' : 'offline'}</span>
         <span class="meta">${sv ? sv.detections.length : 0} Ziele${sv?.ld2410?.present ? ` · LD2410 ${fmt(sv.ld2410.distance, 1)} m` : ''}</span></div>`;
     }).join('') || '<p class="note">Noch keine Daten von Sensoren.</p>';
+  },
+  unobserved() {
+    const regions = Object.values(state.live?.regions || {}).filter(r => !r.open);
+    if (!regions.length) return '<p class="note">Keine geschlossenen Räume ohne Sensor.</p>';
+    const fmtS = s => s >= 90 ? `${Math.round(s / 60)} min` : `${s} s`;
+    return regions.map(r => `<div class="item"><span class="grow">${esc(r.name)}</span>
+      ${r.probabilities.map(p => `<span class="badge ${p >= 0.5 ? 'on' : ''}">${Math.round(p * 100)} %</span>`).join('')}
+      <span class="meta">typisch ${fmtS(r.dwell.median)}, 90 % unter ${fmtS(r.dwell.p90)}${r.dwell.visits ? ` (${r.dwell.visits} Besuche)` : ' (Annahme)'}</span></div>`).join('');
   },
   load() {
     const l = state.live?.load;
@@ -128,6 +137,8 @@ function livePanel(panel, view) {
   panel.append(h(`<div>
     <div class="card" data-live="total"></div>
     <h3>Räume und Bereiche</h3><div class="list" data-live="zones"></div>
+    <h3>Räume ohne Sensor</h3><div class="list" data-live="unobserved"></div>
+    <p class="note">Wer hineingeht, wird gezählt. Die Wahrscheinlichkeit, dass noch jemand drin ist, sinkt mit der Zeit, je nachdem, wie lange Besuche dort üblicherweise dauern.</p>
     <h3>Sensoren</h3><div class="list" data-live="sensorHealth"></div>
     <h3>Spuren</h3><div data-live="tracks"></div>
     <h3>Anzeige</h3>
@@ -592,6 +603,10 @@ const PARAMS = [
     ['warmup', 'Anlaufzeit', 's', 'Nach dem Start dürfen Personen überall sofort erkannt werden.', 1],
     ['echo_radius', 'Kein Auftauchen neben Gehenden', 'm', 'So nah bei jemandem, der gerade geht, entsteht keine neue Person: dort erscheinen Echos (Mehrwege-Reflexionen), die mitlaufen.', 0.1],
     ['rejoin_radius', 'Wiederaufnahme bis', 'm', 'Taucht eine eben verlorene Person bis zu diesem Abstand wieder auf (so weit sie in der Zeit gehen konnte), wird sie ohne neue Bestätigung weiterverfolgt.', 0.1],
+    ['dwell_median', 'Räume ohne Sensor: typischer Aufenthalt', 's', 'Annahme, bis genug Besuche gelernt sind.', 10],
+    ['dwell_spread', 'Streuung des Aufenthalts', '', 'Streuung von ln(Dauer) der Annahme.', 0.1],
+    ['missed_return', 'Rückkehr übersehen', '', 'Wahrscheinlichkeit, dass jemand unbemerkt herauskommt, solange ein Sensor die Tür sieht.', 0.05],
+    ['return_min_prob', 'Rückkehr ab', '', 'Ab dieser Wahrscheinlichkeit, dass noch jemand drin ist, gilt eine Person an der Tür als zurückkommend.', 0.05],
     ['takeover_speed', 'Übernahme durch verdeckte Person', 'm/s', 'Taucht mitten im Raum jemand auf, den eine verdeckte Person mit diesem Tempo erreicht haben könnte, ist es dieselbe.', 0.1],
   ]],
   ['Verdeckte Personen', [

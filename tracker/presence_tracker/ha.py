@@ -24,7 +24,7 @@ def _entities(zone_id: str, name: str) -> list:
         ("sensor", "count", {**base, "name": f"{name} Personen", "icon": "mdi:account-multiple",
                               "state_class": "measurement", "value_template": "{{ value_json.count }}",
                               "json_attributes_topic": state,
-                              "json_attributes_template": "{{ {'moving': value_json.moving, 'still': value_json.still} | tojson }}"}),
+                              "json_attributes_template": "{{ {'moving': value_json.moving, 'still': value_json.still, 'probability': value_json.probability | default(none)} | tojson }}"}),
         ("binary_sensor", "moving", {**base, "name": f"{name} Bewegung", "device_class": "motion",
                                       "value_template": "{{ 'ON' if value_json.moving > 0 else 'OFF' }}"}),
         ("binary_sensor", "approaching", {**base, "name": f"{name} wird betreten", "icon": "mdi:walk",
