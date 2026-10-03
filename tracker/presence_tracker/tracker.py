@@ -24,6 +24,7 @@ import numpy as np
 from .assignment import assign
 from .imm import IMM, STILL, WALK, IMMState
 from .model import Config, SensorConfig
+from .sensormodel import SensorModel
 from .unobserved import Occupancy
 
 TENTATIVE, CONFIRMED = "tentative", "confirmed"
@@ -135,6 +136,7 @@ class Tracker:
         self.listeners = []  # called with (event, data) for calibration and debugging
         self.exited: list = []  # tracks that left through an entry recently: (track, time)
         self.occupancy = Occupancy(config.params)  # people in closed rooms without a sensor
+        self.sensor_model = SensorModel(config)  # what each sensor sees and how reliably (learning only)
         self.last_step: float | None = None
 
     # ------------------------------------------------------------------ input
@@ -159,7 +161,8 @@ class Tracker:
         self._ld2410(sensor, rt, t, frame.get("ld2410") or {})
         self._predict_all(t)
         self._count_expected(sensor)
-        self._associate(sensor, [d for d in detections if not d.hidden and not d.stale], t)
+        updates = self._associate(sensor, [d for d in detections if not d.hidden and not d.stale], t)
+        self.sensor_model.learn(self, sensor, t, detections, updates)
         for listener in self.listeners:
             listener("frame", (sensor, t, detections))
 
@@ -173,11 +176,15 @@ class Tracker:
             wx, wy, ground, slant = s.to_world(lx, ly, p.target_height)
             dx, dy = wx - s.x, wy - s.y
             u = np.array([dx, dy]) / max(ground, 1e-3)
-            # measurement noise: range along u, angle across it, worse at wide angles
+            # measurement error: along the line of sight and across it, both growing with the
+            # distance (across faster: an angle error), worse toward the edge of the view. Not the
+            # tiny frame-to-frame jitter (1-5 cm), but the real offset of 15-30 cm at 3-5 m
+            # (which part of the body reflects, angle bias, calibration).
             az = math.degrees(math.atan2(lx, ly))
-            sigma_t = max(ground * math.radians(p.sigma_angle) * (1 + 0.5 * (az / 60) ** 2), 0.05)
+            sigma_r = p.range_sigma_base + p.range_sigma_slope * ground
+            sigma_t = (p.lateral_sigma_base + p.lateral_sigma_slope * ground) * (1 + 0.5 * (az / 60) ** 2)
             rot = np.array([[u[0], -u[1]], [u[1], u[0]]])
-            R = rot @ np.diag([p.sigma_range**2, sigma_t**2]) @ rot.T
+            R = rot @ np.diag([sigma_r**2, sigma_t**2]) @ rot.T
             speed = target.get("speed", 0) / 1000 * (slant / ground if ground > 0 else 1)
             pos = np.array([wx, wy])
             ignored = any(z.contains(wx, wy) for z in self.config.zones_of("ignore"))
@@ -225,10 +232,11 @@ class Tracker:
                 if sensor.sees(x, y, walls):
                     tr.expected += 1
 
-    def _associate(self, sensor: SensorConfig, detections: list, t: float):
+    def _associate(self, sensor: SensorConfig, detections: list, t: float) -> list:
+        """Returns [(detection, track)] for the tracks updated with a measurement."""
         p = self.config.params
         if not detections:
-            return
+            return []
         tracks = self.tracks
         n, m = len(detections), len(tracks)
         cost = [[_BIG] * (m + n) for _ in range(n)]
@@ -242,12 +250,14 @@ class Tracker:
         result = assign(cost)
 
         updated = []
+        pairs = []
         unassigned = []
         for i, j in enumerate(result):
             d = detections[i]
             if j < m and cost[i][j] < _BIG:
                 self._update(tracks[j], d, t)
                 updated.append(tracks[j])
+                pairs.append((d, tracks[j]))
             else:
                 unassigned.append(d)
 
@@ -293,10 +303,14 @@ class Tracker:
                 updated.append(near)
                 continue
             self._birth(d, t)
+        return pairs
 
     def _update(self, tr: Track, d: Detection, t: float, measure: bool = True):
         p = self.config.params
         if measure:
+            # (Counting the frames of one sensor as partly dependent - the LD2450 smooths
+            # internally - made tracks lag behind walkers and spawn duplicates: tried, measured
+            # worse on the recordings, left out.)
             z = np.array([d.pos[0], d.pos[1], d.speed])
             R = np.zeros((3, 3))
             R[:2, :2] = d.R

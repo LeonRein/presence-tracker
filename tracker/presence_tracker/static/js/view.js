@@ -160,6 +160,15 @@ export class MapView {
     }
 
     // blind-spot map
+    // learned / assumed map of one sensor (detection probability or ghosts)
+    if (state.sensorMap && this.sensorMapImage) {
+      const sm = this.sensorMapImage;
+      const [sx, sy] = this.P(sm.x0, sm.y1);
+      const k = sm.cell * this.s;
+      out.push(`<image href="${sm.url}" width="${sm.cols}" height="${sm.rows}" style="image-rendering:pixelated;pointer-events:none"
+        transform="matrix(${k},0,0,${k},${sx},${sy})"/>`);
+    }
+
     if (state.showCoverage && this.coverage) {
       const cv = this.coverage;
       const [sx, sy] = this.P(cv.x0, cv.y1);

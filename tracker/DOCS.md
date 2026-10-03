@@ -54,6 +54,10 @@ betreten wird. Wer wer ist, spielt keine Rolle.
    Aus den Messungen ergibt sich, wie die Sensoren zueinander stehen (Abstand, Drehung, x-Richtung). Diese
    starre Anordnung wird auf die eingezeichneten Positionen gelegt; die Blickrichtungen müssen nur grob stimmen.
 
+**Sensormodell** (Tab *Sensoren*, Sensor auswählen): Karten, wo der Sensor wie zuverlässig erkennt (angenommen und
+aus dem Betrieb gelernt) und wo er Geister meldet, dazu der gelernte Messfehler nach Abstand. Die App lernt das
+nebenbei; das Tracking nutzt es in dieser Version noch nicht.
+
 Rückgängig mit Strg+Z, Wiederholen mit Strg+Y. Alles wird automatisch gespeichert (`/data/tracker.json`).
 
 ## Entitäten in Home Assistant

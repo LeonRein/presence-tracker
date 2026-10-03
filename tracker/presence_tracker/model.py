@@ -120,8 +120,12 @@ class ZoneConfig:
 class TrackerParams:
     target_height: float = 1.0  # height of the reflecting body (chest), for the slant correction
     # LD2450 measurement noise, inflated because its frames are smoothed and correlated
-    sigma_range: float = 0.15
-    sigma_angle: float = 5.0  # degrees
+    # LD2450 measurement error (1 sigma) = base + slope * distance on the floor; values from a
+    # sweep over the 2026-10-03 recordings
+    range_sigma_base: float = 0.15  # m, along the line of sight
+    range_sigma_slope: float = 0.02
+    lateral_sigma_base: float = 0.10  # m, across it
+    lateral_sigma_slope: float = 0.05
     sigma_speed: float = 0.25  # m/s
     # motion models
     walk_accel: float = 2.0  # m/s^2, process noise of the walking model

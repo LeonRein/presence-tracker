@@ -15,6 +15,7 @@ function panelEdit(fn, opts) {
 }
 
 export function renderPanel(panel, view, what) {
+  mapView = view;
   if (skipRender && what === 'config') return;
   const fn = { live: livePanel, plan: planPanel, sensors: sensorsPanel, zones: zonesPanel, calibration: calibrationPanel, settings: settingsPanel }[state.tab];
   panel.innerHTML = '';
@@ -79,9 +80,9 @@ const LIVE = {
     const regions = Object.values(state.live?.regions || {}).filter(r => !r.open);
     if (!regions.length) return '<p class="note">Keine geschlossenen Räume ohne Sensor.</p>';
     const fmtS = s => s >= 90 ? `${Math.round(s / 60)} min` : `${s} s`;
-    return regions.map(r => `<div class="item"><span class="grow">${esc(r.name)}</span>
-      ${r.probabilities.map(p => `<span class="badge ${p >= 0.5 ? 'on' : ''}">${Math.round(p * 100)} %</span>`).join('')}
-      <span class="meta">typisch ${fmtS(r.dwell.median)}, 90 % unter ${fmtS(r.dwell.p90)}${r.dwell.visits ? ` (${r.dwell.visits} Besuche)` : ' (Annahme)'}</span></div>`).join('');
+    return regions.map(r => `<div class="item" style="flex-wrap:wrap"><span class="grow">${esc(r.name)}</span>
+      ${r.probabilities.length ? r.probabilities.map(p => `<span class="badge ${p >= 0.5 ? 'on' : ''}">${Math.round(p * 100)} %</span>`).join('') : '<span class="badge">leer</span>'}
+      <div class="meta" style="flex-basis:100%">Aufenthalt typisch ${fmtS(r.dwell.median)}, 90 % unter ${fmtS(r.dwell.p90)}${r.dwell.visits ? ` (aus ${r.dwell.visits} Besuchen)` : ' (Annahme, noch nichts gelernt)'}</div></div>`).join('');
   },
   load() {
     const l = state.live?.load;
@@ -395,6 +396,10 @@ function sensorDetail(el, s) {
       <label class="field">Reichweite (m)<input type="number" step="0.5" value="${s.range}" data-k="range"></label>
     </div>
     <label class="check"><input type="checkbox" data-k="mirror" ${s.mirror ? 'checked' : ''}> x-Achse gespiegelt</label>
+    <h3>Sensormodell</h3>
+    <div class="seg" id="smap">${[['', 'aus'], ['prior', 'Erkennung angenommen'], ['learned', 'gelernt'], ['clutter', 'Geister']].map(([k, l]) =>
+      `<button data-layer="${k}" class="${(state.sensorMap?.sensor === s.id ? state.sensorMap.layer : '') === k ? 'active' : ''}">${l}</button>`).join('')}</div>
+    <div id="smap-info" class="note"></div>
     <p class="note">Prüfen: Vor dem Sensor nach rechts gehen (vom Sensor aus gesehen). Der Punkt auf der Karte muss mitgehen, sonst Haken setzen. Die Kalibrierung erkennt das auch selbst.</p>
     <label class="check"><input type="checkbox" data-k="enabled" ${s.enabled ? 'checked' : ''}> Für die Verfolgung verwenden</label>
     <h3>Jetzt gemessen (Sensorkoordinaten)</h3>
@@ -413,7 +418,59 @@ function sensorDetail(el, s) {
     });
   }
   el.querySelector('#replace').onclick = () => setTool({ name: 'place', id: s.id });
+  for (const b of el.querySelectorAll('#smap button')) {
+    b.onclick = () => {
+      state.sensorMap = b.dataset.layer ? { sensor: s.id, layer: b.dataset.layer } : null;
+      showSensorMap(el.querySelector('#smap-info'));
+      for (const x of el.querySelectorAll('#smap button')) x.classList.toggle('active', x === b);
+    };
+  }
+  showSensorMap(el.querySelector('#smap-info'));
   el.querySelector('#unplace')?.addEventListener('click', deleteSelection);
+}
+
+let mapView = null;
+
+// Heatmap of one sensor's model: detection probability (assumed or learned) or ghost rate
+async function showSensorMap(info) {
+  const view = mapView;
+  const sel = state.sensorMap;
+  if (!sel) { view.sensorMapImage = null; view.render(); info.textContent = ''; return; }
+  let data;
+  try { data = await api('api/sensormodel?sensor=' + encodeURIComponent(sel.sensor)); } catch (e) { info.textContent = e.message; return; }
+  const m = data.maps;
+  if (!m || !m.cols) { info.textContent = 'Dafür braucht es Räume.'; return; }
+  const grid = m[sel.layer];
+  const canvas = document.createElement('canvas');
+  canvas.width = m.cols; canvas.height = m.rows;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(m.cols, m.rows);
+  const maxClutter = Math.max(1e-6, ...grid.flat().filter(v => v != null));
+  for (let c = 0; c < m.cols; c++) {
+    for (let r = 0; r < m.rows; r++) {
+      const v = grid[c][r];
+      if (v == null || (sel.layer !== 'clutter' && v <= 0.01)) continue;
+      const i = 4 * ((m.rows - 1 - r) * m.cols + c);
+      if (sel.layer === 'clutter') {
+        img.data.set([214, 69, 69, Math.round(40 + 200 * Math.min(v / maxClutter, 1))], i);
+      } else {
+        // low = red, high = green
+        img.data.set([Math.round(220 * (1 - v)), Math.round(170 * v + 40), 70, 150], i);
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  view.sensorMapImage = { url: canvas.toDataURL(), x0: m.x0, y1: m.y0 + m.rows * m.cell, cell: m.cell, cols: m.cols, rows: m.rows };
+  view.render();
+  const acc = data.accuracy, mod = data.model;
+  const total = (r) => Math.hypot(mod.range_base + mod.range_slope * r, mod.lateral_base + mod.lateral_slope * r);
+  info.innerHTML = {
+    prior: 'Aus der Geometrie: 0 hinter Wänden, fällt zum Rand des Sichtfelds und zur Reichweite hin ab. Rot = selten, grün = fast immer erkannt.',
+    learned: `Wie oft der Sensor eine sicher vorhandene Person dort tatsächlich gemeldet hat (${m.learned_cells} Felder mit genug Daten).`,
+    clutter: `Wo der Sensor Ziele meldet, obwohl ein anderer Sensor die Stelle gut sieht und dort niemand ist (${m.clutter_cells} Felder prüfbar). Je röter, desto öfter.`,
+  }[sel.layer] + (acc ? `<br>Messfehler gelernt: ${fmt(100 * (acc.base + 3 * acc.slope), 0)} cm bei 3 m, ${fmt(100 * (acc.base + 5 * acc.slope), 0)} cm bei 5 m
+    (Modell: ${fmt(100 * total(3), 0)} / ${fmt(100 * total(5), 0)} cm, ${acc.samples} Paare)` : '<br>Messfehler: noch zu wenig gemeinsame Messungen.')
+    + '<br>Noch nur Anzeige: das Tracking nutzt diese Karten noch nicht.';
 }
 
 export function refreshCoverage(view) {
@@ -586,8 +643,10 @@ function calibrationResult(el, r) {
 const PARAMS = [
   ['Messung', [
     ['target_height', 'Höhe des Oberkörpers', 'm', 'Für die Umrechnung des schrägen Abstands auf den Boden.', 0.05],
-    ['sigma_range', 'Messrauschen Abstand', 'm', 'Größer = Filter glättet stärker, reagiert langsamer.', 0.01],
-    ['sigma_angle', 'Messrauschen Winkel', '°', 'Seitliche Ungenauigkeit des LD2450.', 0.5],
+    ['range_sigma_base', 'Messfehler in Blickrichtung, Grundwert', 'm', 'Fehler = Grundwert + Anstieg × Abstand. Größer = Filter glättet stärker, reagiert langsamer.', 0.01],
+    ['range_sigma_slope', 'Messfehler in Blickrichtung, Anstieg', 'm/m', '', 0.005],
+    ['lateral_sigma_base', 'Messfehler seitlich, Grundwert', 'm', 'Seitlich wächst der Fehler schneller mit dem Abstand (Winkelfehler).', 0.01],
+    ['lateral_sigma_slope', 'Messfehler seitlich, Anstieg', 'm/m', '', 0.005],
     ['sigma_speed', 'Messrauschen Geschwindigkeit', 'm/s', '', 0.05],
   ]],
   ['Bewegung', [

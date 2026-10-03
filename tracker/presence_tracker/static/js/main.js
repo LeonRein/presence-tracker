@@ -58,7 +58,7 @@ for (const b of document.querySelectorAll('#tabs button')) {
     for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('active', x === b);
     state.tool = null;
     if (state.selection && !SELECTABLE[state.tab].includes(state.selection.kind)) state.selection = null;
-    if (state.tab !== 'sensors') state.showCoverage = false;
+    if (state.tab !== 'sensors') { state.showCoverage = false; state.sensorMap = null; }
     history.replaceState(null, '', '#' + state.tab);
     emit('tab');
   };

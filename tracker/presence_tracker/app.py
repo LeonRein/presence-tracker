@@ -59,6 +59,8 @@ class App:
                 self.tracker.occupancy.dwell = json.loads(dwell_path.read_text())
             except ValueError:
                 log.warning("dwell.json unreadable, starting without learned stays")
+        self.tracker.sensor_model.load(self.data_dir / "sensormodel.json")
+        self.last_model_save = time.monotonic()
         self.clocks = defaultdict(SensorClock)
         self.calibrator = getattr(self, "calibrator", None) or Calibrator(self.config)
         self.calibrator.config = self.config
@@ -124,6 +126,10 @@ class App:
             start = time.process_time()
             self.tracker.step(self.clock())
             self.zone_states = evaluate(self.config, self.tracker)
+            if self.tracker.sensor_model.changed and not self.replay and time.monotonic() - self.last_model_save > 600:
+                self.tracker.sensor_model.changed = False
+                self.last_model_save = time.monotonic()
+                self.tracker.sensor_model.save(self.data_dir / "sensormodel.json")
             if self.tracker.occupancy.changed and not self.replay:
                 self.tracker.occupancy.changed = False
                 tmp = self.data_dir / "dwell.tmp"
@@ -181,6 +187,8 @@ class App:
         finally:
             if self.client is not None:
                 await self._publish(ha.AVAILABILITY, "offline", True)
+            if not self.replay:
+                self.tracker.sensor_model.save(self.data_dir / "sensormodel.json")
             await runner.cleanup()
 
     # ------------------------------------------------------------------- web
@@ -198,6 +206,7 @@ class App:
         app.router.add_get("/api/ha/cameras", self.h_cameras)
         app.router.add_get("/api/ha/map", self.h_map)
         app.router.add_post("/api/tracks/reset", self.h_reset_tracks)
+        app.router.add_get("/api/sensormodel", self.h_sensormodel)
         return app
 
     async def h_index(self, request):
@@ -237,6 +246,8 @@ class App:
         self.tracker.config = config
         self.tracker.imm.p = config.params
         self.tracker.occupancy.p = config.params
+        self.tracker.sensor_model.config = config
+        self.tracker.sensor_model.rebuild()
         self.calibrator.config = config
         config.save(self.config_path)
         if self.client is not None:
@@ -293,6 +304,18 @@ class App:
         else:
             raise web.HTTPNotFound()
         return web.json_response(self.calibrator.status())
+
+    async def h_sensormodel(self, request):
+        """Detection probability (assumed and learned) and ghost map of one sensor, and the learned
+        measurement error next to the one the tracker uses."""
+        model = self.tracker.sensor_model
+        p = self.config.params
+        return web.json_response({
+            "maps": model.maps(request.query.get("sensor", "")),
+            "accuracy": model.accuracy_fit(),
+            "model": {"range_base": p.range_sigma_base, "range_slope": p.range_sigma_slope,
+                      "lateral_base": p.lateral_sigma_base, "lateral_slope": p.lateral_sigma_slope},
+        })
 
     async def h_reset_tracks(self, request):
         self.tracker.tracks.clear()

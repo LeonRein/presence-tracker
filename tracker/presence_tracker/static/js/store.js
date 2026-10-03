@@ -14,6 +14,7 @@ export const state = {
   tool: null,           // active drawing tool name
   selectable: [],       // element kinds that can be selected in the current tab
   showCoverage: false,
+  sensorMap: null,      // {sensor, layer: 'prior' | 'learned' | 'clutter'} shown on the map
   showRaw: true,
   calibResult: null,
 };
