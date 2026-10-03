@@ -154,6 +154,8 @@ class TrackerParams:
     dwell_median: float = 120.0  # s, prior: typical stay in such a room, until visits are learned
     dwell_spread: float = 1.5  # prior: spread of ln(duration), wide: long stays stay possible
     dwell_prior_weight: float = 3.0  # the prior counts like this many visits
+    dwell_median_open: float = 1800.0  # s, the same for an open region (bedroom, the way out): hours are normal
+    dwell_spread_open: float = 2.0
     missed_return: float = 0.1  # chance to miss someone coming out while a sensor watches the door
     # lost tracks: where they are (whereabouts.py)
     lost_after: float = 1.5  # s without detection until a track counts as lost
@@ -166,20 +168,38 @@ class TrackerParams:
     walk_memory: float = 1.0  # s, a walk counts this long after the IMM saw it (people slow down at a door)
     doorway_walk: float = 0.9  # lost in a doorway: went through with this probability (nobody stays there)
     duplicate_prior: float = 0.02  # chance that a well measured track is a second one of a person
+    unseen_diffusion: float = 0.02  # m^2/s, how far someone unseen may have shifted (variance per second)
+    newcomer_density: float = 0.001  # per m^2: someone we didn't know of shows up mid-room
     end_prob: float = 0.9  # a track ends when it most probably never was a person of its own
     residents: int = 2  # people who live here
+    # experimental particle filter over the residents (pf.py)
+    pf_getup_share: float = 0.58  # still -> walking hazard share / (s + time): fitted to 790 still
+    pf_getup_time: float = 5.6  # episodes of 2026-10-03 (median 13 s, 90 % 194 s)
+    pf_stop_rate: float = 0.5  # 1/s, walking -> still
+    pf_goal_stop_rate: float = 0.1  # 1/s, the same on the way to a door
+    pf_door_rate: float = 2.0  # 1/s, a walker at a door goes through it
+    pf_door_goal: float = 0.5  # share of people getting up who head for a door (any of them)
+    pf_drop_still: float = 1 / 70  # 1/s, LD2450 drops someone still (1129 dropouts in 1348 min)
+    pf_drop_walking: float = 1 / 300  # 1/s, ... someone walking
+    pf_kernel: float = 0.1  # m, particle spread added to the measurement error
+    pf_pos_weight: float = 1.0  # exponent of the position likelihood ratio
+    pf_hidden_jitter: float = 0.01  # m/sqrt(s), wander of someone the LD2450 dropped (dead still)
+    pf_hidden_pd: float = 0.1  # share of the detection probability left for someone dropped
+    pf_place_floor: float = 0.2  # place prior: floor relative to the mean density of people
+    pf_leave_proposal: float = 0.01  # 1/s, how often "left unseen through a door" is proposed for someone dropped
+    pf_jump_rate: float = 1e-4  # 1/s, prior that the model lost someone (they are elsewhere)
+    pf_jump_proposal: float = 0.02  # per frame and particle, how often that is proposed at an unexplained detection
+    pf_body: float = 0.3  # m, two people are never closer than this
+    pf_overlap: float = 5.0  # log penalty per evidence_time for a particle that has them closer
     guest_prob: float = 0.05  # prior for each person more than that (a guest)
-    unseen_speed: float = 1.5  # m/s, how far an unseen person may have walked per second
-    reach_min: float = 1.0  # m, reach right after the loss
     flow_threshold: float = 0.05  # a region hypothesis counts as a visit from this mass on
     birth_return: float = 0.6  # cap for the prior of a new track at a door with someone probably behind it
-    takeover_mass: float = 0.2  # a confirmed new track takes over a lost one with at least this mass here/near/behind that door
     mass_penalty_cap: float = 8.0  # chi-square units, at most this much penalty for a small "here" mass in the association
     # LD2410C: evidence for or against "still here" (distance only, no direction)
     ld2410_hold: float = 1.5  # s, gaps in the LD2410C presence up to this long are bridged
     ld2410_fov: float = 50.0  # degrees, where the LD2410C is trusted to see
-    merge_distance: float = 0.5  # m, two tracks this close for merge_time are one person
-    merge_time: float = 1.0
+    ld2410_beam: float = 120.0  # degrees, where people still put energy into its gates
+    ld2410_evidence_time: float = 3.0  # s of LD2410C energies that count as one independent observation
 
     warmup: float = 30.0  # s after start in which tracks may appear anywhere
     # outputs

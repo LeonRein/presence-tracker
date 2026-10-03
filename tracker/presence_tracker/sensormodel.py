@@ -49,6 +49,13 @@ GAP_PRIOR = {
     "walking": (1.0, 0.74, 0.67, 0.66, 0.64, 0.58, 0.54, 0.39, 0.20, 0.06, 0.02),
 }
 GAP_PRIOR_WEIGHT = 200  # the prior counts like this many observed gaps
+# LD2450 resolution: P(both of two people at distance d get a target | at least one does), by
+# distance bin (upper edges), measured 2026-10-03 on pairs of confirmed tracks (both in view).
+# One person gets two targets far more rarely (SPLIT_RATE per frame, measured <= 0.0013).
+RES_EDGES = (0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, math.inf)
+RES_PRIOR = (0.0, 0.02, 0.15, 0.41, 0.76, 0.80, 0.69, 0.59, 0.68)
+RES_PRIOR_WEIGHT = 500  # frames
+SPLIT_RATE = 0.002
 MAX_GAPS = 2000
 # LD2410C energy histograms, prior counts per bin (0-10, ..., 90-100): with a person in the gate,
 # and with nobody within one gate of it (measured 2026-10-03). Gates beyond 4.5 m: flat, i.e. no
@@ -80,6 +87,7 @@ class SensorModel:
         self.clutter = {}
         self.accuracy = []  # [range_a, range_b, offset] of simultaneous detections of one person
         self.gaps = {"still": [], "walking": []}  # learned LD2450 dropout durations of people who stayed
+        self.pairs = [[0.0, 0.0] for _ in RES_EDGES]  # per distance bin: [both detected, one detected] frames
         self.ld_occ = {}  # sensor -> GATES x BINS counts of LD2410C energy with a person sitting in the gate
         self.ld_move = {}  # ... with a person moving in the gate (a different population: higher)
         self.ld_emp = {}  # ... with nobody within two gates
@@ -237,6 +245,17 @@ class SensorModel:
             del self.gaps[mode][:-MAX_GAPS]
             self.changed = True
 
+    def learn_pair(self, distance: float, both: bool):
+        """Two people (sure ones) at this distance in view of a sensor, at least one detected."""
+        self.pairs[_res_bin(distance)][0 if both else 1] += 1
+        self.changed = True
+
+    def resolution(self, distance: float) -> float:
+        """P(both of two people at this distance are detected | at least one is)."""
+        k = _res_bin(distance)
+        both, one = self.pairs[k]
+        return (RES_PRIOR_WEIGHT * RES_PRIOR[k] + both) / (RES_PRIOR_WEIGHT + both + one)
+
     def redetection_survival(self, mode: str, tau: float) -> float:
         """Share of dropouts (of people who stay put) that last longer than tau."""
         if tau <= GAP_TAUS[0]:
@@ -367,7 +386,7 @@ class SensorModel:
                     for sid, g in store.items()}
         return {"trials": sparse(self.trials), "hits": sparse(self.hits), "exposure": sparse(self.exposure),
                 "clutter": sparse(self.clutter), "accuracy": self.accuracy, "last_decay": self.last_decay,
-                "gaps": self.gaps, "ld_occ": {k: v.round(2).tolist() for k, v in self.ld_occ.items()},
+                "gaps": self.gaps, "pairs": self.pairs, "ld_occ": {k: v.round(2).tolist() for k, v in self.ld_occ.items()},
                 "ld_move": {k: v.round(2).tolist() for k, v in self.ld_move.items()},
                 "ld_emp": {k: v.round(2).tolist() for k, v in self.ld_emp.items()}}
 
@@ -385,6 +404,8 @@ class SensorModel:
                         grid[i, j] = v
         self.accuracy = [tuple(a) for a in data.get("accuracy", [])][-MAX_ACCURACY_SAMPLES:]
         self.gaps = {k: list(data.get("gaps", {}).get(k, []))[-MAX_GAPS:] for k in ("still", "walking")}
+        pairs = data.get("pairs")
+        self.pairs = [list(map(float, x)) for x in pairs] if pairs and len(pairs) == len(RES_EDGES) else [[0.0, 0.0] for _ in RES_EDGES]
         for name in ("ld_occ", "ld_move", "ld_emp"):
             store = getattr(self, name)
             for sid, rows in data.get(name, {}).items():
@@ -401,3 +422,7 @@ class SensorModel:
     def load(self, path: pathlib.Path):
         if path.exists():
             self.load_dict(json.loads(path.read_text()))
+
+
+def _res_bin(distance: float) -> int:
+    return next(k for k, edge in enumerate(RES_EDGES) if distance < edge)

@@ -186,8 +186,9 @@ class Whereabouts:
             self.w[DEAD] = self.p.duplicate_prior
 
     def collapse(self):
-        """Seen again for sure: everything but "never a person" collapses onto the room."""
-        dead = self.p.duplicate_prior
+        """Seen again for sure: everything but "never a person" collapses onto the room (being
+        measured says where a person is, not whether this track is a person of its own)."""
+        dead = self.w[DEAD]
         for k in self.w:
             self.w[k] = 0.0
         self.w[ROOM], self.w[DEAD] = 1.0 - dead, dead

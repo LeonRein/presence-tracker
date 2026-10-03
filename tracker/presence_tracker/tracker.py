@@ -22,12 +22,13 @@ import numpy as np
 from .assignment import assign
 from .imm import IMM, STILL, WALK, IMMState
 from .model import Config, SensorConfig
-from .sensormodel import GATE, PD_MAX, SensorModel
+from .sensormodel import GATE, PD_MAX, SPLIT_RATE, SensorModel
 from .unobserved import Dwell
 from .whereabouts import DEAD, NOT_HOME, ROOM, Whereabouts
 
 TENTATIVE, CONFIRMED = "tentative", "confirmed"
 _BIG = 1e9
+MAX_TARGETS = 3  # the LD2450 reports at most this many targets per frame
 DOOR_HALF_WIDTH = 0.45  # m
 TURN = 0.35  # rad, a walker's heading changes this much on the way (people steer toward doors)
 PATH_STEP = 0.25  # m, sampling of the way to a door
@@ -61,8 +62,7 @@ class Track:
     existence: float = 0.0  # probability that this new track is a real person (while tentative)
     where: Whereabouts | None = None  # where the person is while unseen (once confirmed)
     last_hit_by: dict = field(default_factory=dict)
-    near_since: dict = field(default_factory=dict)  # other track id -> time they came close
-    co_detected: dict = field(default_factory=dict)  # other track id -> last time both in one frame
+    co_detected: set = field(default_factory=set)  # ids of tracks measured in the same frame: other people
     zones: set = field(default_factory=set)
     last_walking: float = -math.inf  # last detection while moving
     last_velocity: np.ndarray = field(default_factory=lambda: np.zeros(2))  # at the last detection
@@ -154,7 +154,8 @@ class Tracker:
         self.now = start or 0.0
         self.unknown_sensors: dict[str, float] = {}
         self.listeners = []  # called with (event, data) for calibration and debugging
-        self.dwell = Dwell(config.params)  # how long people stay in rooms without a sensor
+        # how long people stay in rooms without a sensor
+        self.dwell = Dwell(config.params, [rid for rid, r in config.regions.items() if r["open"]] + ["outside"])
         self.sensor_model = SensorModel(config)  # what each sensor sees and how reliably
         self.last_step: float | None = None
 
@@ -183,6 +184,7 @@ class Tracker:
         updates = self._associate(sensor, [d for d in detections if not d.hidden and not d.stale], t, weight)
         self._existence(sensor, t, frame_gap, updates)
         self._lost_evidence(sensor, t, weight, {id(tr) for _, tr, _ in updates})
+        self._pair_evidence(sensor, t, weight, {id(tr) for _, tr, _ in updates})
         self._ld2410(sensor, rt, t, frame.get("ld2410") or {}, weight)
         self.sensor_model.learn(self, sensor, t, detections, [(d, tr) for d, tr, _ in updates])
         for listener in self.listeners:
@@ -346,7 +348,7 @@ class Tracker:
         for a in updated:
             for b in updated:
                 if a is not b:
-                    a.co_detected[b.id] = t
+                    a.co_detected.add(b.id)
 
         for d in unassigned:
             if d.ignored:
@@ -532,6 +534,34 @@ class Tracker:
                     if s_before > 0 and since > 0:
                         tr.where.update(ROOM, s_now / s_before, share)
 
+    def _pair_evidence(self, sensor: SensorConfig, t: float, weight: float, updated: set):
+        """Two measured tracks close together: two people, or one person with a second track?
+        Per frame of a sensor that sees both, with at least one of them detected: two people at
+        distance d both get a target with the learned resolution r(d); one person gets two
+        targets only by a rare split. So "both detected" says two people (split / r), "only one"
+        says one person ((1 - split) / (1 - r)); the younger track would be the second one.
+        Up close the radar can't tell (r ~ 0): no evidence either way. A sensor reporting its
+        maximum of targets may have left anyone out: no evidence. Sure pairs teach r(d)."""
+        p = self.config.params
+        model = self.sensor_model
+        if len(self.runtime[sensor.id].detections) >= MAX_TARGETS:
+            return
+        tracks = [tr for tr in self.tracks if tr.where is not None and not tr.lost(t, p.lost_after)
+                  and self._pd(sensor, tr.position()) / PD_MAX > 0.5]
+        for i, a in enumerate(tracks):
+            for b in tracks[i + 1:]:
+                n = (id(a) in updated) + (id(b) in updated)
+                if n == 0:
+                    continue
+                d = float(np.linalg.norm(a.position() - b.position()))
+                r = min(max(model.resolution(d), 0.01), 0.99)
+                if a.where.dead() < 0.01 and b.where.dead() < 0.01 and a.real is not None and b.real is not None \
+                        and min(a.real, b.real) > 0.95:
+                    model.learn_pair(d, n == 2)
+                ratio = SPLIT_RATE / r if n == 2 else (1 - SPLIT_RATE) / (1 - r)
+                younger = b if b.born > a.born else a
+                younger.where.update(DEAD, ratio, weight)
+
     def _ld2410(self, s: SensorConfig, rt: SensorRuntime, t: float, ld: dict, weight: float):
         """LD2410C: energy per 0.75 m gate. For a lost track at gate g, the energy there is
         evidence for or against "still here" by the learned energy distributions (with a person
@@ -554,31 +584,33 @@ class Tracker:
             return
         energies = [max(a, b) for a, b in zip(rt.move_gates, rt.still_gates)]
 
-        def gate_of(x, y):
+        def gate_of(x, y, fov=p.ld2410_fov):
             lx, ly = s.to_local(x, y)
-            if ly <= 0 or abs(math.degrees(math.atan2(lx, ly))) > p.ld2410_fov / 2:
+            if ly <= 0 or abs(math.degrees(math.atan2(lx, ly))) > fov / 2:
                 return None
             slant = math.hypot(lx, ly, s.height - p.target_height)
             return int(slant / GATE)
 
-        # who explains which gate: seen people and this sensor's own detections
+        # who explains which gate: seen people and this sensor's own detections, anywhere in
+        # the beam (evidence is only taken inside the narrower trusted cone, but energy comes
+        # from everybody the beam reaches)
         explained = set()  # the energy spills into the neighbouring gates, two each way
         for tr in self.tracks:
             if tr.status == CONFIRMED and not tr.lost(t, p.lost_after):
-                g = gate_of(*tr.position())
+                g = gate_of(*tr.position(), fov=p.ld2410_beam)
                 if g is not None:
                     explained.update(range(g - 2, g + 3))
         for d in rt.detections:
             if not d.hidden and not d.stale:
-                g = gate_of(*d.pos)
+                g = gate_of(*d.pos, fov=p.ld2410_beam)
                 if g is not None:
                     explained.update(range(g - 2, g + 3))
         # evidence for lost tracks. The LD2410C can't count: energy at a distance where another
         # lost person probably is explains itself either way. With q the chance that someone
         # else is there, the ratio for this one is q * 1 + (1 - q) * ratio.
-        lost = [(tr, gate_of(*tr.position())) for tr in self.tracks
+        lost = [(tr, gate_of(*tr.position()), gate_of(*tr.position(), fov=p.ld2410_beam)) for tr in self.tracks
                 if tr.where is not None and tr.lost(t, p.lost_after) and tr.where.room() >= 0.01]
-        for tr, g in lost:
+        for tr, g, _ in lost:
             x, y = tr.position()
             if g is None or g >= len(energies) or not s.sees(x, y, self.config.wall_segments, margin=0.3):
                 continue
@@ -588,10 +620,12 @@ class Tracker:
             ratio = max(self.sensor_model.ld2410_ratio(s.id, k, energies[k], moving=tr.walk_prob > 0.5)
                         for k in (g - 1, g, g + 1) if 0 <= k < len(energies))
             nobody_else = 1.0
-            for other, go in lost:
+            for other, _, go in lost:
                 if other is not tr and go is not None and abs(go - g) <= 2:
                     nobody_else *= 1 - other.where.room()
-            tr.where.update(ROOM, (1 - nobody_else) + nobody_else * ratio, weight)
+            # gate energies stay correlated much longer than LD2450 frames (a reflector, the
+            # person's own breathing pattern): one independent observation per ld2410_evidence_time
+            tr.where.update(ROOM, (1 - nobody_else) + nobody_else * ratio, weight * p.evidence_time / p.ld2410_evidence_time)
         # learning: sure people's gates are occupied (sitting and moving are different
         # populations); gates nobody is near are empty
         still, moving = set(), set()
@@ -606,7 +640,7 @@ class Tracker:
         blocked = set(explained)
         for tr in self.tracks:  # lost people might be anywhere near their last place
             if tr.where is not None and tr.lost(t, p.lost_after) and tr.where.room() > 0.05:
-                g = gate_of(*tr.position())
+                g = gate_of(*tr.position(), fov=p.ld2410_beam)
                 if g is not None:
                     blocked.update(range(g - 2, g + 3))
         self.sensor_model.learn_ld2410(s.id, t, energies, still, moving, blocked)
@@ -614,7 +648,7 @@ class Tracker:
     # ----------------------------------------------------------- housekeeping
 
     def step(self, t: float):
-        """Confirm new tracks, move the mass of unseen people, end tracks, merge duplicates.
+        """Confirm new tracks, move the mass of unseen people, end tracks.
         Call regularly (a few times per second)."""
         p = self.config.params
         self.now = max(self.now, t)
@@ -631,18 +665,19 @@ class Tracker:
                 drop.add(tr.id)
                 continue
             if tr.existence >= p.confirm_prob:
-                lost = self._takeover_candidate(tr, t)
+                lost, place = self._identity(tr, t)
                 if lost is not None:
-                    # nobody appears out of nowhere: it's the lost person, who moved unseen
-                    if tr.portal_region is None or lost.where.region(tr.portal_region) < p.takeover_mass:
+                    # nobody appears out of nowhere: it's someone we know, who moved unseen
+                    if place == ROOM:
                         self._redetected(lost, tr.first_pos, tr.first_hit)
                     lost.state = tr.state
                     lost.t, lost.last_hit, lost.last_walking = tr.t, tr.last_hit, tr.last_walking
                     lost.last_walk, lost.walk_velocity, lost.loss_handled = tr.last_walk, tr.walk_velocity, False
                     lost.last_hit_by.update(tr.last_hit_by)
+                    lost.co_detected |= tr.co_detected
                     lost.has_origin = True
-                    if tr.portal_region and lost.where.region(tr.portal_region) >= p.takeover_mass:
-                        region = tr.portal_region
+                    if place != ROOM:
+                        region = place
                         self._someone_came_out(region, lost)
                         duration = lost.where.returned(region, t, self.dwell)
                         self._emit("returned", (lost, region, duration))
@@ -684,7 +719,6 @@ class Tracker:
                     continue
             keep.append(tr)
         self.tracks = keep
-        self._merge(t)
         self._count()
 
     def _count(self):
@@ -741,55 +775,40 @@ class Tracker:
         rt = self.runtime.get(sensor_id)
         return rt is not None and self.now - rt.last_frame < 15
 
-    def _takeover_candidate(self, tr: Track, t: float):
-        """The nearest lost track that could have walked to tr's position since it was last seen
-        and most probably is still inside the observed area."""
-        p = self.config.params
-        pos = tr.position()
-        if tr.portal_region:
-            behind = [o for o in self.tracks if o.where is not None and o.where.region(tr.portal_region) >= p.takeover_mass]
-            if behind:
-                return max(behind, key=lambda o: o.where.region(tr.portal_region))
-        best, best_d = None, None
-        for other in self.tracks:
-            if other.where is None or not other.lost(t, p.lost_after):
-                continue
-            if other.where.room() < p.takeover_mass:
-                continue
-            d = float(np.linalg.norm(other.position() - pos))
-            if d <= p.reach_min + p.unseen_speed * (tr.first_hit - other.last_hit) and (best is None or d < best_d):
-                best, best_d = other, d
-        return best
+    def _identity(self, tr: Track, t: float) -> tuple:
+        """Who is the new, confirmed track? (track, place) or (None, None) for a newcomer.
 
-    def _merge(self, t: float):
-        """Two tracks for one person: one of them came out of nowhere mid-room (e.g. the walker's
-        track stuck on an echo for a moment and a new one picked up the walker). Such a track may
-        be merged into another. A track with an origin (came in through a door or entry, came
-        back from a counted room, was there at the start) is a person and never fuses with
-        anyone; if the radar can't separate two people up close, one becomes a lost track."""
+        Every known person who was never measured together with it is a candidate, at each
+        place they may be: in the room (density of its first measurement under that person's
+        position, the Kalman uncertainty plus unseen_diffusion for the time unseen) or behind
+        the door the new track appeared at (spread over the doorway). A newcomer has the
+        density newcomer_density mid-room or behind a closed door, the doorway's own density
+        at a door to an open region (people come and go there), both times the chance of one
+        more person than the tracks at home already are (residents, guest_prob). The most
+        probable explanation wins."""
         p = self.config.params
-        active = [tr for tr in self.tracks if tr.status == CONFIRMED and not tr.lost(t, p.lost_after)]
-        remove = set()
-        for i, a in enumerate(active):
-            for b in active[i + 1:]:
-                if a.id in remove or b.id in remove:
-                    continue
-                younger = b if b.born > a.born else a
-                if younger.has_origin:
-                    continue
-                close = np.linalg.norm(a.position() - b.position()) < p.merge_distance
-                if not close:
-                    a.near_since.pop(b.id, None)
-                    continue
-                since = a.near_since.setdefault(b.id, t)
-                if t - since < p.merge_time:
-                    continue
-                if t - a.co_detected.get(b.id, -math.inf) < p.merge_time:
-                    continue  # one sensor saw both at once: two people
-                remove.add(younger.id)
-                self._emit("merged", younger)
-        if remove:
-            self.tracks = [tr for tr in self.tracks if tr.id not in remove]
+        pos = tr.first_pos if tr.first_pos is not None else tr.position()
+        portal = next((q for q in self.config.portals if q.contains(pos[0], pos[1])), None)
+        door_density = 1 / (math.pi * portal.radius**2) if portal is not None and portal.radius > 0 else 0.0
+        home = sum(o.real if o.real is not None else 1.0 for o in self.tracks if o.where is not None)
+        extra = max(home + 1 - p.residents, 0.0)
+        newcomer = (door_density if portal is not None and not portal.closed else p.newcomer_density) * p.guest_prob**extra
+        best, best_place, best_score = None, None, newcomer
+        for o in self.tracks:
+            if o.where is None or o is tr or tr.id in o.co_detected or o.id in tr.co_detected:
+                continue
+            unseen = max(tr.first_hit - o.last_hit, 0.0)
+            x, P = o.state.mean()
+            var = float(P[0, 0] + P[1, 1]) / 2 + p.unseen_diffusion * unseen
+            d2 = float(np.sum((pos - x[:2]) ** 2))
+            score = o.where.room() * math.exp(-d2 / (2 * var)) / (2 * math.pi * var)
+            if score > best_score:
+                best, best_place, best_score = o, ROOM, score
+            if portal is not None:
+                score = o.where.region(portal.region) * door_density
+                if score > best_score:
+                    best, best_place, best_score = o, portal.region, score
+        return best, best_place
 
     def _emit(self, event: str, data):
         for listener in self.listeners:

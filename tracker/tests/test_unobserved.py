@@ -108,7 +108,7 @@ def test_returns_end_visits_and_duplicates_die():
     w.w[ROOM], w.w["kueche"], w.t_in["kueche"] = 0.1, 0.9, 100.0
     w.normalize()
     assert w.returned("kueche", 160.0, d) == 60.0
-    assert d.dwell["kueche"] == [60.0] and w.room() == pytest.approx(1 - p.duplicate_prior)
+    assert d.dwell["kueche"] == [60.0] and w.room() == pytest.approx(1.0)
     # someone else's track came out of the kitchen: what of this one was in there was them
     w.w[ROOM], w.w["kueche"], w.w[DEAD] = 0.0, 0.95, 0.05
     w.duplicate("kueche", 0.95)

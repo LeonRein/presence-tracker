@@ -102,7 +102,7 @@ def test_two_people_crossing():
 
 
 def test_five_people_with_three_target_limit():
-    config = room_config()
+    config = room_config(residents=5)  # a party: the household's size is known
     spots = [(1.5, 1.5), (2.5, 3), (3.5, 1.5), (4.5, 3.2), (5, 1.2)]
     people = [Person(walk(DOOR, spot, start=3 * i, pauses={1: 120})) for i, spot in enumerate(spots)]
     sensors = sim_sensors(config, still_dropout=0.05)

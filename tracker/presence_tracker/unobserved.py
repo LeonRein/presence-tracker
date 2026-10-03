@@ -15,8 +15,9 @@ MAX_SAMPLES = 300
 
 
 class Dwell:
-    def __init__(self, params):
+    def __init__(self, params, open_regions=()):
         self.p = params
+        self.open = set(open_regions)  # regions with the bedroom or the way out: stays of hours
         self.dwell: dict[str, list[float]] = {}  # learned visit durations per region, s
         self.changed = False  # dwell has new data (for saving)
 
@@ -25,7 +26,8 @@ class Dwell:
         if dt <= 0:
             return 1.0
         p = self.p
-        prior = 0.5 * math.erfc((math.log(dt) - math.log(p.dwell_median)) / (p.dwell_spread * math.sqrt(2)))
+        median, spread = (p.dwell_median_open, p.dwell_spread_open) if region in self.open else (p.dwell_median, p.dwell_spread)
+        prior = 0.5 * math.erfc((math.log(dt) - math.log(median)) / (spread * math.sqrt(2)))
         samples = self.dwell.get(region, [])
         longer = sum(d > dt for d in samples)
         return (p.dwell_prior_weight * prior + longer) / (p.dwell_prior_weight + len(samples))
