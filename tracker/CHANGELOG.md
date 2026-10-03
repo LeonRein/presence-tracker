@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+- Gelerntes übernehmen: `POST api/learned` nimmt ein offline aus Aufnahmen gelerntes Sensormodell und
+  Aufenthaltsdauern entgegen.
+- Tab *Sensoren*: Der Abschnitt „Was der Sensor gelernt hat“ ist als reine Anzeige erkennbar (Auswahl
+  „Karte einblenden“), der gelernte Messfehler steht immer da.
+
 ## 0.3.0
 
 Erster Schritt zu einem durchgehend probabilistischen Tracker.

@@ -207,6 +207,7 @@ class App:
         app.router.add_get("/api/ha/map", self.h_map)
         app.router.add_post("/api/tracks/reset", self.h_reset_tracks)
         app.router.add_get("/api/sensormodel", self.h_sensormodel)
+        app.router.add_post("/api/learned", self.h_import_learned)
         return app
 
     async def h_index(self, request):
@@ -315,6 +316,23 @@ class App:
             "accuracy": model.accuracy_fit(),
             "model": {"range_base": p.range_sigma_base, "range_slope": p.range_sigma_slope,
                       "lateral_base": p.lateral_sigma_base, "lateral_slope": p.lateral_sigma_slope},
+        })
+
+    async def h_import_learned(self, request):
+        """Take over what was learned elsewhere, e.g. offline from recordings: {"sensormodel":
+        <sensormodel.json>, "dwell": {region: [seconds, ...]}}. Replaces the current state."""
+        data = await request.json()
+        if "sensormodel" in data:
+            self.tracker.sensor_model.load_dict(data["sensormodel"])
+            self.tracker.sensor_model.save(self.data_dir / "sensormodel.json")
+        if "dwell" in data:
+            self.tracker.occupancy.dwell = {k: [float(x) for x in v] for k, v in data["dwell"].items()}
+            self.tracker.occupancy.changed = True
+        model = self.tracker.sensor_model
+        return web.json_response({
+            "accuracy": model.accuracy_fit(),
+            "learned_cells": {s.id: model.maps(s.id).get("learned_cells") for s in self.config.sensors},
+            "dwell": {k: len(v) for k, v in self.tracker.occupancy.dwell.items()},
         })
 
     async def h_reset_tracks(self, request):

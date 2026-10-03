@@ -226,26 +226,33 @@ class SensorModel:
 
     # --------------------------------------------------------- persistence
 
-    def save(self, path: pathlib.Path):
+    def to_dict(self) -> dict:
         def sparse(store):
             return {sid: {f"{i},{j}": round(float(g[i, j]), 2) for i, j in zip(*np.nonzero(g > 0.01))}
                     for sid, g in store.items()}
-        data = {"trials": sparse(self.trials), "hits": sparse(self.hits), "exposure": sparse(self.exposure),
+        return {"trials": sparse(self.trials), "hits": sparse(self.hits), "exposure": sparse(self.exposure),
                 "clutter": sparse(self.clutter), "accuracy": self.accuracy, "last_decay": self.last_decay}
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data))
-        tmp.replace(path)
 
-    def load(self, path: pathlib.Path):
-        if not path.exists():
-            return
-        data = json.loads(path.read_text())
+    def load_dict(self, data: dict):
+        """Replace everything learned (e.g. learned offline from recordings and imported)."""
         for name in ("trials", "hits", "exposure", "clutter"):
             store = getattr(self, name)
+            for grid in store.values():
+                grid[:] = 0
             for sid, cells in data.get(name, {}).items():
                 grid = store.setdefault(sid, np.zeros((SIZE, SIZE), dtype=np.float32))
                 for key, v in cells.items():
                     i, j = map(int, key.split(","))
-                    grid[i, j] = v
-        self.accuracy = [tuple(a) for a in data.get("accuracy", [])]
+                    if 0 <= i < SIZE and 0 <= j < SIZE:
+                        grid[i, j] = v
+        self.accuracy = [tuple(a) for a in data.get("accuracy", [])][-MAX_ACCURACY_SAMPLES:]
         self.last_decay = data.get("last_decay")
+
+    def save(self, path: pathlib.Path):
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.to_dict()))
+        tmp.replace(path)
+
+    def load(self, path: pathlib.Path):
+        if path.exists():
+            self.load_dict(json.loads(path.read_text()))

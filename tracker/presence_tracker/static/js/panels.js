@@ -396,9 +396,11 @@ function sensorDetail(el, s) {
       <label class="field">Reichweite (m)<input type="number" step="0.5" value="${s.range}" data-k="range"></label>
     </div>
     <label class="check"><input type="checkbox" data-k="mirror" ${s.mirror ? 'checked' : ''}> x-Achse gespiegelt</label>
-    <h3>Sensormodell</h3>
-    <div class="seg" id="smap">${[['', 'aus'], ['prior', 'Erkennung angenommen'], ['learned', 'gelernt'], ['clutter', 'Geister']].map(([k, l]) =>
-      `<button data-layer="${k}" class="${(state.sensorMap?.sensor === s.id ? state.sensorMap.layer : '') === k ? 'active' : ''}">${l}</button>`).join('')}</div>
+    <h3>Was der Sensor gelernt hat</h3>
+    <p class="note">Nur zum Anschauen: blendet eine Karte über den Grundriss ein. Das ändert nichts am Tracking.</p>
+    <label class="field">Karte einblenden<select id="smap">${[['', 'keine'], ['prior', 'Erkennung: Annahme aus der Geometrie'],
+      ['learned', 'Erkennung: im Betrieb gelernt'], ['clutter', 'Geister: im Betrieb gelernt']].map(([k, l]) =>
+      `<option value="${k}" ${(state.sensorMap?.sensor === s.id ? state.sensorMap.layer : '') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <div id="smap-info" class="note"></div>
     <p class="note">Prüfen: Vor dem Sensor nach rechts gehen (vom Sensor aus gesehen). Der Punkt auf der Karte muss mitgehen, sonst Haken setzen. Die Kalibrierung erkennt das auch selbst.</p>
     <label class="check"><input type="checkbox" data-k="enabled" ${s.enabled ? 'checked' : ''}> Für die Verfolgung verwenden</label>
@@ -418,26 +420,29 @@ function sensorDetail(el, s) {
     });
   }
   el.querySelector('#replace').onclick = () => setTool({ name: 'place', id: s.id });
-  for (const b of el.querySelectorAll('#smap button')) {
-    b.onclick = () => {
-      state.sensorMap = b.dataset.layer ? { sensor: s.id, layer: b.dataset.layer } : null;
-      showSensorMap(el.querySelector('#smap-info'));
-      for (const x of el.querySelectorAll('#smap button')) x.classList.toggle('active', x === b);
-    };
-  }
-  showSensorMap(el.querySelector('#smap-info'));
+  el.querySelector('#smap').onchange = e => {
+    state.sensorMap = e.target.value ? { sensor: s.id, layer: e.target.value } : null;
+    showSensorMap(el.querySelector('#smap-info'), s.id);
+  };
+  showSensorMap(el.querySelector('#smap-info'), s.id);
   el.querySelector('#unplace')?.addEventListener('click', deleteSelection);
 }
 
 let mapView = null;
 
 // Heatmap of one sensor's model: detection probability (assumed or learned) or ghost rate
-async function showSensorMap(info) {
+async function showSensorMap(info, sensorId) {
   const view = mapView;
-  const sel = state.sensorMap;
-  if (!sel) { view.sensorMapImage = null; view.render(); info.textContent = ''; return; }
+  const sel = state.sensorMap?.sensor === sensorId ? state.sensorMap : null;
   let data;
-  try { data = await api('api/sensormodel?sensor=' + encodeURIComponent(sel.sensor)); } catch (e) { info.textContent = e.message; return; }
+  try { data = await api('api/sensormodel?sensor=' + encodeURIComponent(sensorId)); } catch (e) { info.textContent = e.message; return; }
+  const acc = data.accuracy, mod = data.model;
+  const total = (r) => Math.hypot(mod.range_base + mod.range_slope * r, mod.lateral_base + mod.lateral_slope * r);
+  const accText = acc
+    ? `Messfehler gelernt: ${fmt(100 * (acc.base + 3 * acc.slope), 0)} cm bei 3 m, ${fmt(100 * (acc.base + 5 * acc.slope), 0)} cm bei 5 m
+       (das Tracking rechnet mit ${fmt(100 * total(3), 0)} / ${fmt(100 * total(5), 0)} cm; aus ${acc.samples} Messungen zweier Sensoren).`
+    : 'Messfehler: noch zu wenig Stellen, an denen zwei Sensoren dieselbe Person sehen.';
+  if (!sel) { view.sensorMapImage = null; view.render(); info.innerHTML = accText; return; }
   const m = data.maps;
   if (!m || !m.cols) { info.textContent = 'Dafür braucht es Räume.'; return; }
   const grid = m[sel.layer];
@@ -462,15 +467,11 @@ async function showSensorMap(info) {
   ctx.putImageData(img, 0, 0);
   view.sensorMapImage = { url: canvas.toDataURL(), x0: m.x0, y1: m.y0 + m.rows * m.cell, cell: m.cell, cols: m.cols, rows: m.rows };
   view.render();
-  const acc = data.accuracy, mod = data.model;
-  const total = (r) => Math.hypot(mod.range_base + mod.range_slope * r, mod.lateral_base + mod.lateral_slope * r);
   info.innerHTML = {
     prior: 'Aus der Geometrie: 0 hinter Wänden, fällt zum Rand des Sichtfelds und zur Reichweite hin ab. Rot = selten, grün = fast immer erkannt.',
     learned: `Wie oft der Sensor eine sicher vorhandene Person dort tatsächlich gemeldet hat (${m.learned_cells} Felder mit genug Daten).`,
     clutter: `Wo der Sensor Ziele meldet, obwohl ein anderer Sensor die Stelle gut sieht und dort niemand ist (${m.clutter_cells} Felder prüfbar). Je röter, desto öfter.`,
-  }[sel.layer] + (acc ? `<br>Messfehler gelernt: ${fmt(100 * (acc.base + 3 * acc.slope), 0)} cm bei 3 m, ${fmt(100 * (acc.base + 5 * acc.slope), 0)} cm bei 5 m
-    (Modell: ${fmt(100 * total(3), 0)} / ${fmt(100 * total(5), 0)} cm, ${acc.samples} Paare)` : '<br>Messfehler: noch zu wenig gemeinsame Messungen.')
-    + '<br>Noch nur Anzeige: das Tracking nutzt diese Karten noch nicht.';
+  }[sel.layer] + '<br>' + accText;
 }
 
 export function refreshCoverage(view) {
