@@ -37,7 +37,6 @@ export async function loadConfig() {
   state.config = data.config;
   state.config.background ??= {};
   state.config.background.layers ??= [];
-  state.config.doors ??= [];
   state.sensorsSeen = data.sensors_seen;
   state.replay = data.replay;
   state.haAvailable = data.ha;
@@ -57,7 +56,7 @@ async function save() {
   saving = saving.then(async () => {
     try {
       const r = await api('api/config', { method: 'PUT', body: JSON.stringify(state.config) });
-      if (r.rooms_from_walls && r.rooms) mergeRooms(r.rooms);
+      mergeRooms(r.rooms);
     } catch (e) {
       toast('Speichern fehlgeschlagen: ' + e.message, 5000);
     }

@@ -2,7 +2,7 @@
 
 export const SENSOR_COLORS = ['#e8590c', '#0c8599', '#9c36b5', '#2b8a3e', '#c2255c', '#5c7cfa', '#a16207', '#0b7285'];
 export const ZONE_KINDS = {
-  room: { label: 'Raum', color: '#2f6fde', note: 'Wird an Home Assistant gemeldet und zählt für die Abdeckung' },
+  room: { label: 'Raum', color: '#2f6fde' },  // from the walls, not drawn
   area: { label: 'Bereich', color: '#1f9d55', note: 'Wird an Home Assistant gemeldet (z. B. Sofa, Esstisch)' },
   entry: { label: 'Eingang', color: '#d48806', note: 'Hier dürfen Personen auftauchen und verschwinden (Treppe, Haustür, Balkon)' },
   ignore: { label: 'Störer', color: '#d64545', note: 'Hier entstehen keine neuen Personen (Ventilator, Vorhang, Pflanze)' },

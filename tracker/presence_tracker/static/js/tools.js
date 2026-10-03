@@ -158,7 +158,7 @@ function linkedWallVertices(c, p, skipWall = -1) {
 
 const isZoneSel = sel => sel?.kind === 'zone' || sel?.kind === 'room';
 // rooms derived from the walls have no geometry of their own
-const isFixedRoom = sel => sel?.kind === 'room' && state.config.rooms_from_walls;
+const isFixedRoom = sel => sel?.kind === 'room';
 
 // closest real wall (no divider) within `tol`: {a, dir, len, t, d}
 function nearestWall(c, p, tol) {
@@ -719,7 +719,7 @@ export class ZoneTool {
     const zone = { id: uid('z'), name: `${ZONE_KINDS[kind].label} ${count}`, kind, ...geom };
     edit(c => c.zones.push(zone));
     setTool(null);
-    select({ kind: kind === 'room' ? 'room' : 'zone', id: zone.id });
+    select({ kind: 'zone', id: zone.id });
   }
 
   key(ev) {

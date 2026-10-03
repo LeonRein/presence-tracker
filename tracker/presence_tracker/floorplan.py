@@ -1,6 +1,6 @@
 """Rooms from walls.
 
-The floor plan is drawn as walls only. Every wall is a polyline with a kind:
+The floor plan is drawn as walls only. Every wall is one straight segment with a kind:
   wall     a real wall: blocks the radar's line of sight
   divider  a room boundary without a wall (e.g. between living and dining area): splits rooms,
            blocks nothing
@@ -22,76 +22,10 @@ MIN_ROOM_AREA = 0.3  # m², smaller closed areas are slivers, not rooms
 DOOR_REACH = 0.25  # m, a door belongs to a wall segment this close to its center
 
 
-def normalize_walls(walls: list) -> list:
-    """Every wall is one straight segment {"points": [a, b], "kind"}. Old configs stored plain point
-    lists and polylines; they are split at their corners (straight-through points are dropped)."""
-    out = []
-    for w in walls:
-        if isinstance(w, dict):
-            pts, kind = w.get("points", []), w.get("kind", "wall")
-        else:
-            pts, kind = w, "wall"
-        pts = _drop_collinear_points([list(p) for p in pts])
-        for a, b in zip(pts, pts[1:]):
-            if math.dist(a, b) > 1e-6:
-                out.append({"points": [a, b], "kind": kind})
-    return out
-
-
-def _straight(o, a, b, tol: float = 0.005) -> bool:
-    """a lies on the straight line from o to b, between them."""
-    length = math.dist(o, b)
-    return length > 0 and abs(_cross(o, a, b)) / length < tol and math.dist(o, a) + math.dist(a, b) < length + tol
-
-
-def _drop_collinear_points(pts: list) -> list:
-    out = pts[:1]
-    for i in range(1, len(pts) - 1):
-        if not _straight(out[-1], pts[i], pts[i + 1]):
-            out.append(pts[i])
-    return out + pts[-1:] if len(pts) > 1 else out
-
-
-def merge_collinear(walls: list, snap: float = SNAP) -> list:
-    """Join segments of the same kind that continue each other in a straight line, where nothing
-    else meets: what looks like one straight wall is one wall."""
-    walls = [dict(w, points=[list(p) for p in w["points"]]) for w in walls]
-    changed = True
-    while changed:
-        changed = False
-        for i, w in enumerate(walls):
-            for end in (0, 1):
-                p = w["points"][end]
-                touching = [(j, e) for j, v in enumerate(walls) for e in (0, 1)
-                            if j != i and math.dist(p, v["points"][e]) < 0.002]
-                passing = [j for j, v in enumerate(walls)
-                           if j != i and (j, 0) not in touching and (j, 1) not in touching
-                           and distance_to_segment(p[0], p[1], *v["points"]) < snap]
-                if len(touching) != 1 or passing:
-                    continue
-                j, e = touching[0]
-                v = walls[j]
-                far_w, far_v = w["points"][1 - end], v["points"][1 - e]
-                if v["kind"] != w["kind"] or not _straight(far_w, p, far_v):
-                    continue
-                walls[i] = {"points": [far_w, far_v], "kind": w["kind"]}
-                del walls[j]
-                changed = True
-                break
-            if changed:
-                break
-    return walls
-
-
 def wall_pieces(walls: list) -> list:
-    """All straight pieces of all walls: (a, b, kind)."""
-    out = []
-    for w in walls:
-        pts = w["points"]
-        for a, b in zip(pts, pts[1:]):
-            if math.dist(a, b) > 1e-6:
-                out.append((tuple(a), tuple(b), w["kind"]))
-    return out
+    """All walls as (a, b, kind)."""
+    return [(tuple(w["points"][0]), tuple(w["points"][1]), w["kind"]) for w in walls
+            if math.dist(w["points"][0], w["points"][1]) > 1e-6]
 
 
 # ------------------------------------------------------------------ line of sight
@@ -270,26 +204,14 @@ def interior_point(poly: list) -> list:
 def sync_rooms(zones: list, walls: list) -> list:
     """Room zones for the current walls; other zones unchanged. `zones` are dicts.
 
-    A room keeps its id, name and entry flag when its anchor lies in one of the new areas. Old
-    rooms without an anchor (drawn by hand before) use a point inside their outline.
+    A room keeps its id, name and entry flag when its anchor lies in one of the new areas.
     """
     polys = faces(walls)
     rooms = [z for z in zones if z.get("kind") == "room"]
     others = [z for z in zones if z.get("kind") != "room"]
-    anchors = {}
-    for r in rooms:
-        a = r.get("anchor")
-        if not a:
-            outline = r.get("points") or []
-            if r.get("shape") == "rect" and len(outline) == 2:
-                (x1, y1), (x2, y2) = outline
-                outline = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
-            a = interior_point(outline) if len(outline) >= 3 else None
-        anchors[r["id"]] = a
-
     matched: dict[int, dict] = {}
     for r in rooms:
-        a = anchors[r["id"]]
+        a = r.get("anchor")
         if not a:
             continue
         for k, poly in enumerate(polys):

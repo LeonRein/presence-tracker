@@ -22,7 +22,7 @@ from .tracker import SensorClock, Tracker
 from .zones import evaluate
 
 log = logging.getLogger(__name__)
-STATIC = pathlib.Path(__file__).parent / "static"
+STATIC = (pathlib.Path(__file__).parent / "static").resolve()
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}
 
 
@@ -174,16 +174,9 @@ class App:
     # ------------------------------------------------------------------- web
 
     def web_app(self) -> web.Application:
-        @web.middleware
-        async def no_cache(request, handler):
-            response = await handler(request)
-            if request.path.startswith("/static/"):
-                response.headers["Cache-Control"] = "no-cache"
-            return response
-
-        app = web.Application(client_max_size=20 * 1024 * 1024, middlewares=[no_cache])
+        app = web.Application(client_max_size=20 * 1024 * 1024)
         app.router.add_get("/", self.h_index)
-        app.router.add_static("/static", STATIC)
+        app.router.add_get("/static/{stamp}/{path:.+}", self.h_static)
         app.router.add_get("/images/{name}", self.h_image)
         app.router.add_get("/api/config", self.h_get_config)
         app.router.add_put("/api/config", self.h_put_config)
@@ -197,10 +190,17 @@ class App:
 
     async def h_index(self, request):
         html = (STATIC / "index.html").read_text()
-        # cache busting for the static files
-        stamp = str(int(max(p.stat().st_mtime for p in STATIC.iterdir())))
+        # all static files live under a path that changes with any of them, so the browser never
+        # mixes modules of two versions and may cache them for good
+        stamp = str(int(max(p.stat().st_mtime for p in STATIC.rglob("*") if p.is_file())))
         return web.Response(text=html.replace("{{v}}", stamp), content_type="text/html",
                             headers={"Cache-Control": "no-cache"})
+
+    async def h_static(self, request):
+        path = (STATIC / request.match_info["path"]).resolve()
+        if STATIC not in path.parents or not path.is_file():
+            raise web.HTTPNotFound()
+        return web.FileResponse(path, headers={"Cache-Control": "max-age=31536000, immutable"})
 
     async def h_image(self, request):
         name = request.match_info["name"]
@@ -229,8 +229,7 @@ class App:
         if self.client is not None:
             await self.discovery.sync(config.zones)
         # rooms are derived from the walls here; the editor takes them over
-        return web.json_response({"ok": True, "rooms": [z.to_dict() for z in config.zones_of("room")],
-                                  "rooms_from_walls": config.rooms_from_walls})
+        return web.json_response({"ok": True, "rooms": [z.to_dict() for z in config.zones_of("room")]})
 
     async def h_live(self, request):
         ws = web.WebSocketResponse(heartbeat=30)

@@ -8,7 +8,7 @@ import math
 import pathlib
 from dataclasses import asdict, dataclass, field, fields
 
-from .floorplan import merge_collinear, normalize_walls, sight_segments, sync_rooms
+from .floorplan import sight_segments, sync_rooms
 from .geometry import Shape, line_of_sight
 
 
@@ -154,13 +154,10 @@ class Config:
     zones: list = field(default_factory=list)
     walls: list = field(default_factory=list)  # [{"points": [a, b], "kind": "wall" | "divider"}], one segment each
     doors: list = field(default_factory=list)  # [{"id", "x", "y", "width"}] on a wall
-    # rooms are the closed areas between the walls; off for configs with hand-drawn rooms
-    rooms_from_walls: bool = True
     background: dict = field(default_factory=dict)  # image placement, see web UI
     params: TrackerParams = field(default_factory=TrackerParams)
 
     def __post_init__(self):
-        self.walls = normalize_walls(self.walls)
         self.rebuild()
 
     def rebuild(self):
@@ -181,12 +178,10 @@ class Config:
 
     def to_dict(self) -> dict:
         return {
-            "version": 3,
             "sensors": [{k.name: getattr(s, k.name) for k in fields(s)} for s in self.sensors],
             "zones": [z.to_dict() for z in self.zones],
             "walls": self.walls,
             "doors": self.doors,
-            "rooms_from_walls": self.rooms_from_walls,
             "background": self.background,
             "params": asdict(self.params),
         }
@@ -197,23 +192,15 @@ class Config:
             names = {f.name for f in fields(dc)}
             return dc(**{k: v for k, v in data.items() if k in names})
 
-        zones = d.get("zones", [])
-        walls = normalize_walls(d.get("walls", []))
-        if d.get("version", 1) < 3:
-            # version 3: one wall = one straight segment; pieces that continue each other are joined once
-            walls = merge_collinear(walls)
-        # configs from before version 2 have hand-drawn rooms and doors as gaps in the walls:
-        # deriving rooms would merge them, so they keep their rooms until switched over
-        rooms_from_walls = d.get("rooms_from_walls", not any(z.get("kind") == "room" for z in zones))
-        if rooms_from_walls and walls:
-            zones = sync_rooms(zones, walls)
+        walls = [{"points": [list(p) for p in w["points"]], "kind": w.get("kind", "wall")} for w in d.get("walls", [])]
+        # rooms are the closed areas between the walls
+        zones = sync_rooms(d.get("zones", []), walls)
         return cls(
             sensors=[pick(SensorConfig, s) for s in d.get("sensors", [])],
             zones=[pick(ZoneConfig, z) for z in zones],
             walls=walls,
             doors=[{"id": str(x.get("id", "")), "x": float(x["x"]), "y": float(x["y"]),
                     "width": float(x.get("width", 0.9))} for x in d.get("doors", [])],
-            rooms_from_walls=bool(rooms_from_walls),
             background=d.get("background", {}),
             params=pick(TrackerParams, d.get("params", {})),
         )

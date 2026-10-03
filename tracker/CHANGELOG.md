@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2
+
+- Statische Dateien liegen unter einem Pfad, der sich mit jeder Änderung ändert: Der Browser mischt nie mehr
+  Module zweier Versionen (Fehler „list.map is not a function“ nach einem Update).
+- Übergangscode entfernt: Umwandlung alter Wand-Linienzüge, Modus mit von Hand gezeichneten Räumen,
+  Raum-Import aus der Saugroboter-Karte.
+
 ## 0.2.1
 
 - Jede Wand ist ein gerades Segment von Ecke zu Ecke. Bestehende Linienzüge werden beim Laden einmalig in
