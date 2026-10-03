@@ -161,8 +161,11 @@ class PersonFilter:
         cy = self.y0 + (self.cells[:, 1] + 0.5) * RES
         i = ((cx - ORIGIN[0]) / CELL).astype(int)
         j = ((cy - ORIGIN[1]) / CELL).astype(int)
-        mean = sm[i, j].mean() if len(cx) else 1.0
-        self._prior_grid = (sm + self.p.pf_place_floor * mean) / max(mean * (1 + self.p.pf_place_floor), 1e-9)
+        mean = sm[i, j].mean() if len(cx) else 0.0
+        if mean <= 0:  # nothing learned yet: everywhere alike
+            self._prior_grid = np.ones_like(sm)
+            return
+        self._prior_grid = (sm + self.p.pf_place_floor * mean) / (mean * (1 + self.p.pf_place_floor))
 
     def _unseen_maps(self):
         """Per door, on the walkable grid: probability that someone walking from that cell
@@ -400,6 +403,7 @@ class PersonFilter:
         lam = np.array([self.sm.clutter_density(s.id, d.pos[0], d.pos[1], p.clutter_density, p.clutter_floor) for d in dets]) / 4.0
         # position likelihood of detection j under person i, with a small kernel for the particle spread
         g = np.zeros((self.n, self.k, m))
+        peak = np.zeros(m)  # density at the measured spot itself: "a person right here"
         for j, d in enumerate(dets):
             cov = d.R + np.eye(2) * p.pf_kernel**2
             inv = np.linalg.inv(cov)
@@ -411,7 +415,10 @@ class PersonFilter:
             s2 = p.sigma_speed**2 + np.where(self.walk, 0.3**2, 0.0)  # walkers' speed is uncertain
             d2 = d2 + (d.speed - v_r) ** 2 / s2
             g[..., j] = np.exp(-0.5 * d2) / (2 * math.pi * math.sqrt(det) * np.sqrt(2 * math.pi * s2))
-        hit = (pd ** w)[..., None] * (g / lam) ** p.pf_pos_weight  # (n, k, m)
+            peak[j] = 1 / (2 * math.pi * math.sqrt(det) * math.sqrt(2 * math.pi * p.sigma_speed**2))
+        # where exactly: full weight, like a Kalman update; person or ghost: tempered like every
+        # other piece of evidence (a ghost lasting a second is one observation, not ten)
+        hit = (pd ** w)[..., None] * (g / peak) * (peak / lam) ** w  # (n, k, m)
         total = np.zeros(self.n)
         for a in itertools.product(range(m + 1), repeat=self.k):
             used = [x for x in a if x > 0]
@@ -466,8 +473,12 @@ class PersonFilter:
         ratio = {}
         for moving in (False, True):
             r = np.ones(n_g + 1)
+            single = [self.sm.ld2410_ratio(s.id, k, energies[k], moving=moving) for k in range(n_g)]
             for g in range(n_g):
-                r[g] = max(self.sm.ld2410_ratio(s.id, k, energies[k], moving=moving) for k in (g - 1, g, g + 1) if 0 <= k < n_g)
+                # the person's gate is uncertain by about one (slant, which part of the body):
+                # the likelihood is the mixture over the gates it could be in
+                ks = [(k, wt) for k, wt in ((g - 1, 0.25), (g, 0.5), (g + 1, 0.25)) if 0 <= k < n_g]
+                r[g] = sum(single[k] * wt for k, wt in ks) / sum(wt for _, wt in ks)
             ratio[moving] = r
         dx = self.pos[..., 0] - s.x
         dy = self.pos[..., 1] - s.y

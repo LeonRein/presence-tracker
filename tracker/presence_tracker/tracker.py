@@ -70,6 +70,7 @@ class Track:
     portal_region: str | None = None  # born at a door: the region behind it
     last_evidence: dict = field(default_factory=dict)  # sensor -> last time its frame was evidence while lost
     rejoin_pos: np.ndarray | None = None  # where a lost track was first measured again
+    rejoin_lost_at: float = 0.0  # ... and when it had been measured before that
     first_pos: np.ndarray | None = None  # where it was first measured
     last_walk: float = 0.0  # walk probability recently (fades within ~1 s): people slow down at a door
     walk_velocity: np.ndarray = field(default_factory=lambda: np.zeros(2))  # at the last measurement while walking
@@ -332,6 +333,7 @@ class Tracker:
                 g = IMM.likelihood(tr.state, d.pos, d.R)  # before the update
                 if tr.where is not None and tr.lost(t, p.lost_after):
                     tr.rejoin_pos = d.pos.copy()
+                    tr.rejoin_lost_at = tr.last_hit
                     self._redetected(tr, d.pos, t)
                 self._update(tr, d, t)
                 if tr.where is not None:
@@ -429,6 +431,15 @@ class Tracker:
         speed = float(np.linalg.norm(v))
         if speed < 0.2:
             return []
+        # the walker is in a dropout already (lost): it goes on for the rest of the way with the
+        # learned survival of walkers' dropouts, not with fresh, independent chances per frame
+        lost_for = max(self.now - tr.last_hit, 0.0)
+        s0 = self.sensor_model.redetection_survival("walking", lost_for)
+
+        def unseen(q):
+            way = float(np.linalg.norm(np.array(q.geometry.center) - pos)) / self.config.params.walk_speed
+            cont = self.sensor_model.redetection_survival("walking", lost_for + way) / max(s0, 1e-9)
+            return max(self._unseen_way(pos, q), cont)
         u = v / speed
         perp = np.array([-u[1], u[0]])
         x, P = tr.state.mean()
@@ -439,7 +450,7 @@ class Tracker:
         for q in portals:
             dvec = np.array(q.geometry.center) - pos
             if q.contains(pos[0], pos[1]):
-                out.append((q.region, 1.0, self._unseen_way(pos, q)))  # in the doorway: through it
+                out.append((q.region, 1.0, unseen(q)))  # in the doorway: through it
                 continue
             along = float(dvec @ u)
             if along <= 0:
@@ -448,7 +459,7 @@ class Tracker:
             sigma = math.sqrt(sigma_pos2 + (along * sigma_theta) ** 2)
             prior = 0.5 * (math.erf((DOOR_HALF_WIDTH - miss) / (sigma * math.sqrt(2)))
                            - math.erf((-DOOR_HALF_WIDTH - miss) / (sigma * math.sqrt(2))))
-            out.append((q.region, prior, self._unseen_way(pos, q)))
+            out.append((q.region, prior, unseen(q)))
         total = sum(pr for _, pr, _ in out)
         if total > 1:
             out = [(r, pr / total, un) for r, pr, un in out]
@@ -617,8 +628,9 @@ class Tracker:
             if g in explained:
                 continue
             # the exact gate is uncertain (slant range, where on the body the echo comes from)
-            ratio = max(self.sensor_model.ld2410_ratio(s.id, k, energies[k], moving=tr.walk_prob > 0.5)
-                        for k in (g - 1, g, g + 1) if 0 <= k < len(energies))
+            ks = [(k, wt) for k, wt in ((g - 1, 0.25), (g, 0.5), (g + 1, 0.25)) if 0 <= k < len(energies)]
+            ratio = sum(self.sensor_model.ld2410_ratio(s.id, k, energies[k], moving=tr.walk_prob > 0.5) * wt
+                        for k, wt in ks) / sum(wt for _, wt in ks)
             nobody_else = 1.0
             for other, _, go in lost:
                 if other is not tr and go is not None and abs(go - g) <= 2:
@@ -797,7 +809,10 @@ class Tracker:
         for o in self.tracks:
             if o.where is None or o is tr or tr.id in o.co_detected or o.id in tr.co_detected:
                 continue
-            unseen = max(tr.first_hit - o.last_hit, 0.0)
+            # unseen since it was lost (a measurement taken just now while the room mass is still
+            # small doesn't make its position certain)
+            seen = o.rejoin_lost_at if o.rejoin_pos is not None else o.last_hit
+            unseen = max(tr.first_hit - seen, 0.0)
             x, P = o.state.mean()
             var = float(P[0, 0] + P[1, 1]) / 2 + p.unseen_diffusion * unseen
             d2 = float(np.sum((pos - x[:2]) ** 2))

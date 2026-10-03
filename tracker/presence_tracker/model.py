@@ -167,7 +167,7 @@ class TrackerParams:
     walk_speed: float = 1.0  # m/s, typical walking speed: time spent in view on the way to a door
     walk_memory: float = 1.0  # s, a walk counts this long after the IMM saw it (people slow down at a door)
     doorway_walk: float = 0.9  # lost in a doorway: went through with this probability (nobody stays there)
-    duplicate_prior: float = 0.02  # chance that a well measured track is a second one of a person
+    duplicate_prior: float = 0.05  # chance that a well measured track is a second one of a person
     unseen_diffusion: float = 0.02  # m^2/s, how far someone unseen may have shifted (variance per second)
     newcomer_density: float = 0.001  # per m^2: someone we didn't know of shows up mid-room
     end_prob: float = 0.9  # a track ends when it most probably never was a person of its own
@@ -191,7 +191,7 @@ class TrackerParams:
     pf_jump_proposal: float = 0.02  # per frame and particle, how often that is proposed at an unexplained detection
     pf_body: float = 0.3  # m, two people are never closer than this
     pf_overlap: float = 5.0  # log penalty per evidence_time for a particle that has them closer
-    guest_prob: float = 0.05  # prior for each person more than that (a guest)
+    guest_prob: float = 0.01  # prior for each person more than that (a guest)
     flow_threshold: float = 0.05  # a region hypothesis counts as a visit from this mass on
     birth_return: float = 0.6  # cap for the prior of a new track at a door with someone probably behind it
     mass_penalty_cap: float = 8.0  # chi-square units, at most this much penalty for a small "here" mass in the association
@@ -199,7 +199,7 @@ class TrackerParams:
     ld2410_hold: float = 1.5  # s, gaps in the LD2410C presence up to this long are bridged
     ld2410_fov: float = 50.0  # degrees, where the LD2410C is trusted to see
     ld2410_beam: float = 120.0  # degrees, where people still put energy into its gates
-    ld2410_evidence_time: float = 3.0  # s of LD2410C energies that count as one independent observation
+    ld2410_evidence_time: float = 10.0  # s of LD2410C energies that count as one independent observation
 
     warmup: float = 30.0  # s after start in which tracks may appear anywhere
     # outputs

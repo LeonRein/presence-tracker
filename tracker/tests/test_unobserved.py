@@ -55,7 +55,7 @@ def test_someone_sitting_does_not_drift_to_the_doors():
         rate = p.getup_share / (t + p.getup_time)
         w.go(t, 1 - math.exp(-rate * 0.2), [("kueche", 1 / 3, 0.1), ("balkon", 1 / 3, 0.1)])
         t += 0.2
-    assert w.room() > 0.85
+    assert w.room() > 0.8  # the rest: never a person of its own (duplicate_prior) and a little to the doors
     # without any evidence the room keeps the person; evidence against the room (nothing
     # re-detected, the LD2410C quiet) moves them to where they could have gone: the doors
     # and "never a person" share in proportion to their mass
