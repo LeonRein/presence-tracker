@@ -183,3 +183,64 @@ def test_frozen_ld2450_target_is_not_tracked():
         tracker.step(0.1 * k)
     assert all(d.stale for d in tracker.runtime["a"].detections)
     assert not tracker.confirmed()
+
+
+def balcony_config() -> Config:
+    """The test room with a balcony behind its right wall: concrete, one door, no sensor."""
+    w = lambda a, b: {"points": [list(a), list(b)], "kind": "wall"}
+    return Config.from_dict({
+        "sensors": [
+            {"id": "a", "x": 0.05, "y": 0.05, "heading": 45, "placed": True},
+            {"id": "b", "x": 5.95, "y": 0.05, "heading": 135, "placed": True},
+        ],
+        "walls": [w((0, 0), (6, 0)), w((6, 0), (6, 5)), w((6, 5), (0, 5)), w((0, 5), (0, 0)),
+                  w((6, 1), (7.5, 1)), w((7.5, 1), (7.5, 3)), w((7.5, 3), (6, 3))],
+        "doors": [{"id": "balcony", "x": 6.0, "y": 2.0, "width": 0.9}],
+        "zones": [{"id": "door", "name": "Tür", "kind": "entry", "shape": "rect", "points": [[0, 4.0], [1.0, 5.0]]}],
+        "params": {"warmup": 0},
+    })
+
+
+def run_walls(config, people, duration, **kw):
+    sensors = sim_sensors(config, **kw)
+    tracker = Tracker(config, start=0.0)
+    samples = []
+    next_sample = 0.0
+    for t, sid, frame in simulate(people, sensors, duration, walls=config.wall_segments):
+        tracker.process_frame(sid, t, frame)
+        tracker.step(t)
+        if t >= next_sample:
+            samples.append((t, len(tracker.confirmed()), evaluate(config, tracker)))
+            next_sample = t + 0.5
+    return tracker, samples
+
+
+def test_balcony_is_a_closed_room():
+    config = balcony_config()
+    assert [r["open"] for r in config.regions.values()] == [False]
+
+
+def test_out_to_the_balcony_and_back():
+    config = balcony_config()
+    balcony = next(iter(config.regions))
+    person = Person(walk(DOOR, (3, 2.5), (5.5, 2.0), (7.0, 2.0), (5.0, 2.0), (3, 3), start=2, pauses={3: 40}))
+    tracker, samples = run_walls(config, [person], person.waypoints[-1][0] + 2)
+    on_balcony = [(t, n, s) for t, n, s in samples if 25 <= t <= 50]
+    # nobody visible, but the person is counted on the balcony, and in the house
+    assert all(n == 0 and s["_total"].count == 1 for t, n, s in on_balcony)
+    assert all(s[next(z for z in config.regions[balcony]["rooms"])].count == 1 for t, n, s in on_balcony)
+    # back inside: tracked again right away, balcony empty
+    end = person.waypoints[-1][0]
+    assert counts(samples, end - 2, end) == {1}
+    assert not tracker.region_people.get(balcony)
+
+
+def test_echo_in_the_balcony_door_is_no_person():
+    config = balcony_config()
+    # someone sits in the room; a static reflection shows up in the glass door the whole time
+    sitter = Person([(0, 3.0, 2.5), (90, 3.0, 2.5)])
+    echo = Person([(5, 5.6, 2.0), (90, 5.6, 2.0)])  # in front of the balcony door, like the real ones
+    tracker, samples = run_walls(config, [sitter, echo], 90)
+    assert counts(samples, 20, 90) == {1}
+    # the echo was measured all along, it just never became a person
+    assert any(tr.status == "tentative" and abs(tr.position()[0] - 5.6) < 0.5 for tr in tracker.tracks)

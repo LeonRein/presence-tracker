@@ -68,5 +68,16 @@ def evaluate(config: Config, tracker: Tracker) -> dict:
                     st.approaching = True
                     st.eta = tau if st.eta is None else min(st.eta, tau)
                     break
+    # closed rooms without a sensor (balcony, kitchen): counted in and out at their door
+    for rid, region in config.regions.items():
+        n = len(tracker.region_people.get(rid, []))
+        if region["open"] or not n:
+            continue
+        total.count += n
+        total.still += n
+        for room_id in region["rooms"]:
+            if room_id in states and len(region["rooms"]) == 1:
+                states[room_id].count += n
+                states[room_id].still += n
     states["_total"] = total
     return states

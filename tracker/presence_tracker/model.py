@@ -140,6 +140,8 @@ class TrackerParams:
     confirm_ratio: float = 0.5  # share of sensor frames that must contain the new track
     tentative_timeout: float = 0.8  # s without detection until a new track is dropped
     echo_radius: float = 3.0  # m, no new track this close to a walking person (multipath echoes)
+    closed_exit_distance: float = 1.5  # m out of a closed room's door, if nobody went in before
+    region_max_time: float = 6 * 3600.0  # s, after this a person counted into a closed room is forgotten
     rejoin_time: float = 10.0  # s, someone who left through a door and shows up again is picked up
     rejoin_radius: float = 2.5  # m, upper bound for picking up a lost track again directly
     takeover_speed: float = 1.5  # m/s, a lost track that could have walked to a new one becomes it
@@ -178,38 +180,91 @@ class Config:
             s._update()
         self.wall_segments = sight_segments(self.walls, self.doors)
         self.sensor_by_id = {s.id: s for s in self.sensors}
-        self.exit_doors = self._exit_doors()
+        self.exit_doors = self._unobserved()
         self.entry_zones = [z for z in self.zones if z.kind == "entry" or (z.kind == "room" and z.entry)] + self.exit_doors
 
-    def _exit_doors(self) -> list:
-        """Doors into a room that no sensor covers (or to the outside) work like entries: people
-        appear and leave there. Circles around those doors, derived, not stored."""
+    def _unobserved(self) -> list:
+        """Rooms that no sensor covers, grouped into regions connected by doors.
+
+        A region is *open* if people can come from elsewhere into it (an entry room such as the
+        stairs, an entry zone, or a door to the outside), otherwise *closed* (balcony, kitchen
+        with a single door): whoever comes out of a closed region must have gone in before.
+        Sets self.regions {id: {name, rooms, open}} and self.closed_doors; returns the circles
+        around doors into open regions, which work like entries. Derived, not stored."""
+        self.regions, self.closed_doors, self.closed_rooms = {}, [], []
         placed = [s for s in self.sensors if s.enabled and s.placed]
         rooms = self.zones_of("room")
         if not placed or not rooms:
             return []
         covered = {z.id: self._room_covered(z, placed) for z in rooms}
-        pieces = [p for p in wall_pieces(self.walls) if p[2] == "wall"]
-        out = []
-        for d in self.doors:
-            c = (d["x"], d["y"])
-            piece = min(pieces, key=lambda p: distance_to_segment(c[0], c[1], p[0], p[1]), default=None)
-            if piece is None:
-                continue
+        pieces = wall_pieces(self.walls)
+        walls = [p for p in pieces if p[2] == "wall"]
+
+        def sides(c, piece):
             (ax, ay), (bx, by), _ = piece
             length = math.hypot(bx - ax, by - ay)
             nx, ny = -(by - ay) / length, (bx - ax) / length
-            sides = []
-            for k in (0.4, -0.4):
-                px, py = c[0] + k * nx, c[1] + k * ny
-                sides.append(next((z for z in rooms if z.contains(px, py)), None))
-            if any(r is None or not covered[r.id] for r in sides) and any(r is not None and covered[r.id] for r in sides):
-                out.append(ZoneConfig(f"door-{d['id']}", "Tür", kind="entry", shape="circle", center=list(c),
-                                      radius=max(1.2, d.get("width", 0.9) / 2 + 0.5)))
+            return [next((z for z in rooms if z.contains(c[0] + k * nx, c[1] + k * ny)), None) for k in (0.4, -0.4)]
+
+        links = []  # ([room or None, room or None], door or None)
+        for d in self.doors:
+            c = (d["x"], d["y"])
+            piece = min(walls, key=lambda p: distance_to_segment(c[0], c[1], p[0], p[1]), default=None)
+            if piece is not None:
+                links.append((sides(c, piece), d))
+        for piece in pieces:
+            if piece[2] == "divider":
+                (ax, ay), (bx, by), _ = piece
+                links.append((sides(((ax + bx) / 2, (ay + by) / 2), piece), None))
+
+        parent = {z.id: z.id for z in rooms if not covered[z.id]}
+
+        def find(r):
+            while parent[r] != r:
+                r = parent[r]
+            return r
+        for (a, b), _ in links:
+            if a is not None and b is not None and a.id in parent and b.id in parent:
+                parent[find(a.id)] = find(b.id)
+
+        groups = {}
+        for rid in parent:
+            groups.setdefault(find(rid), []).append(rid)
+        by_id = {z.id: z for z in rooms}
+        user_entries = self.zones_of("entry")
+        for root, members in groups.items():
+            outside = any((a is None and b is not None and b.id in members) or (b is None and a is not None and a.id in members)
+                          for (a, b), _ in links)
+            def middle(z):
+                x0, y0, x1, y1 = z.geometry.bounds()
+                return (x0 + x1) / 2, (y0 + y1) / 2
+            entry = any(by_id[r].entry for r in members) or any(
+                by_id[r].contains(*middle(z)) for z in user_entries for r in members)
+            self.regions[root] = {"name": " + ".join(by_id[r].name for r in sorted(members)), "rooms": sorted(members),
+                                  "open": outside or entry}
+
+        self.closed_rooms = [by_id[r] for region in self.regions.values() if not region["open"] for r in region["rooms"]]
+        out = []
+        for (a, b), d in links:
+            if d is None:
+                continue
+            inner = [r for r in (a, b) if r is not None and covered[r.id]]
+            other = [r for r in (a, b) if r is None or not covered[r.id]]
+            if len(inner) != 1 or len(other) != 1:
+                continue
+            region = "outside" if other[0] is None else find(other[0].id)
+            zone = ZoneConfig(f"door-{d['id']}", "Tür", kind="entry", shape="circle", center=[d["x"], d["y"]],
+                              radius=max(1.2, d.get("width", 0.9) / 2 + 0.5))
+            zone.region = region
+            if region == "outside" or self.regions[region]["open"]:
+                out.append(zone)
+            else:
+                self.closed_doors.append(zone)
         return out
 
     def _room_covered(self, room, sensors) -> bool:
-        """A sensor sees at least 30 % of the room."""
+        """Sensors see most of the room. Seeing a part through a door (31 % of the balcony
+        through the glass door) doesn't make it observed."""
         x0, y0, x1, y1 = room.geometry.bounds()
         n = seen = 0
         y = y0 + 0.2
@@ -221,16 +276,34 @@ class Config:
                     seen += any(s.sees(x, y, self.wall_segments) for s in sensors)
                 x += 0.4
             y += 0.4
-        return n > 0 and seen / n >= 0.3
+        return n > 0 and seen / n >= 0.6
+
+    def closed_region_at(self, x: float, y: float) -> str | None:
+        """The closed unobserved region at this point: in one of its rooms or at its door."""
+        for z in self.closed_doors:
+            if z.contains(x, y):
+                return z.region
+        for rid, region in self.regions.items():
+            if not region["open"] and any(z.id in region["rooms"] and z.contains(x, y) for z in self.zones_of("room")):
+                return rid
+        return None
+
+    def door_of(self, region: str):
+        return next((z for z in self.closed_doors if z.region == region), None)
 
     def zones_of(self, kind: str) -> list:
         return [z for z in self.zones if z.kind == kind]
 
     def hidden(self, s: SensorConfig, pos, u, margin: float) -> bool:
         """The radar can't see through the (concrete) walls: a point more than `margin` behind
-        one, or outside all rooms, is a reflection. u: unit vector from the sensor to the point."""
+        one, outside all rooms or inside a closed room without a sensor is a reflection.
+        u: unit vector from the sensor to the point."""
         rooms = self.zones_of("room")
         if rooms and not any(z.contains(pos[0], pos[1], margin) for z in rooms):
+            return True
+        # a closed room without a sensor (balcony) is not observed, not even through its glass
+        # door: what shows up in there is a reflection; people are counted at the door instead
+        if any(z.contains(pos[0], pos[1], -margin) for z in self.closed_rooms):
             return True
         back = (float(pos[0] - u[0] * margin), float(pos[1] - u[1] * margin))
         return not line_of_sight(s.sight_origin(), back, self.wall_segments)

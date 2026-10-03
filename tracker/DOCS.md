@@ -18,6 +18,12 @@ betreten wird. Wer wer ist, spielt keine Rolle.
   Abstand bestätigt eine verdeckte Person. Die Energie pro Entfernungsstufe steht im Tab *Sensoren*.
 - **Wände**: Die Radare sehen nicht durch die Betonwände. Ein Messpunkt hinter einer Wand oder außerhalb aller
   Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*).
+- **Räume ohne Sensor**: Zusammenhängende Räume ohne Sensor bilden einen unbeobachteten Bereich. Enthält er
+  einen Eingang (Treppenhaus), ist er *offen*: An seinen Türen kommen und gehen Personen wie an einem Eingang.
+  Sonst ist er *geschlossen* (Balkon, Küche mit nur einer Tür): Die App zählt, wer hineingeht, und nur so viele
+  können wieder herauskommen. Ein Spiegelbild in der Balkontür wird so nie zur Person, und für den Balkon
+  und die Küche gibt es trotzdem „besetzt“ und die Personenzahl. Was ein Sensor durch die Tür in einem
+  geschlossenen Raum sieht, wird verworfen.
 - **Mehrere Sensoren**: Messungen aller Sensoren gehen in dieselben Spuren. Sieht ein Sensor dieselbe Person
   wie ein anderer, wird sie nicht doppelt gezählt.
 
@@ -34,6 +40,8 @@ betreten wird. Wer wer ist, spielt keine Rolle.
    - *Raumgrenze*: teilt einen Raum ohne Wand, z. B. Wohn- und Essbereich.
 
    Die **Räume** entstehen automatisch als geschlossene Flächen zwischen Wänden, Türen und Raumgrenzen.
+   Auch Räume ohne Sensor einzeichnen (Balkon, Küche, Flur): Daraus weiß die App, wo Personen
+   herkommen können.
    Sie werden nur benannt. *Eingang* markiert Räume, in denen Personen auftauchen und verschwinden dürfen
    (Treppenhaus). Beim Verschieben von Wänden behält jeder Raum seinen Namen und damit seine Entitäten.
 3. **Zonen** (Tab *Zonen*), frei gezeichnet als Rechteck, Kreis oder Polygon:

@@ -48,12 +48,11 @@ class SimSensor:
     _ghost_pos: tuple = (0.0, 0.0)
 
 
-def simulate(people: list, sensors: list, duration: float, rate: float = 11.0, seed: int = 1):
-    """Yield (t, sensor_id, frame) in time order."""
+def simulate(people: list, sensors: list, duration: float, rate: float = 11.0, seed: int = 1, walls: list = ()):
+    """Yield (t, sensor_id, frame) in time order. walls: sight-blocking segments (Config.wall_segments)."""
     rng = random.Random(seed)
     dt = 1 / rate
     t = 0.0
-    walls = []
     while t < duration:
         for k, s in enumerate(sensors):
             ts = t + k * dt / len(sensors)

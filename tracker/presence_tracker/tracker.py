@@ -61,6 +61,8 @@ class Track:
     co_detected: dict = field(default_factory=dict)  # other track id -> last time both in one frame
     zones: set = field(default_factory=set)
     last_walking: float = -math.inf  # last detection while moving
+    closed_region: str | None = None  # born in a closed unobserved region (balcony, kitchen) or at its door
+    left_region: str | None = None  # went into this closed region when it ended
 
     def position(self) -> np.ndarray:
         return self.state.mu @ self.state.x[:, :2]
@@ -129,6 +131,7 @@ class Tracker:
         self.unknown_sensors: dict[str, float] = {}
         self.listeners = []  # called with (event, data) for calibration and debugging
         self.exited: list = []  # tracks that left through an entry recently: (track, time)
+        self.region_people: dict = {}  # closed region -> times people went in and haven't come out
 
     # ------------------------------------------------------------------ input
 
@@ -269,6 +272,9 @@ class Tracker:
             if near is not None:
                 if near not in self.tracks:
                     self.exited = [(tr, te) for tr, te in self.exited if tr is not near]
+                    if near.left_region and self.region_people.get(near.left_region):
+                        self.region_people[near.left_region].pop()
+                    near.left_region = None
                     self.tracks.append(near)
                     self._emit("rejoined", near)
                 # velocity from the way it went while unseen
@@ -304,10 +310,12 @@ class Tracker:
 
     def _birth(self, d: Detection, t: float):
         p = self.config.params
-        at_entry = (any(z.contains(*d.pos) for z in self.config.entry_zones)
-                    or (self.start is not None and t - self.start < p.warmup))
+        warmup = self.start is not None and t - self.start < p.warmup
+        at_entry = warmup or any(z.contains(*d.pos) for z in self.config.entry_zones)
         walk = 0.7 if abs(d.speed) > 0.15 else 0.4
         tr = Track(self.next_id, IMMState.from_position(d.pos, d.R, walk), t, t, at_entry)
+        if not warmup:
+            tr.closed_region = self.config.closed_region_at(*d.pos)
         self.next_id += 1
         self._update(tr, d, t, measure=False)
         tr.expected = 1
@@ -358,12 +366,29 @@ class Tracker:
                 self._emit("dropped", tr)
                 drop.add(tr.id)
                 continue
-            if not tr.born_at_entry and self._shadowed(tr, t):
+            ratio = tr.hits / max(tr.expected, 1)
+            if tr.closed_region:
+                # out of a closed region (balcony, kitchen) only comes who went in before
+                inside = self.region_people.get(tr.closed_region)
+                if inside:
+                    if t - tr.first_hit >= p.confirm_time_entry and ratio >= p.confirm_ratio:
+                        inside.pop(0)
+                        tr.status = CONFIRMED
+                        self._emit("came back", (tr, tr.closed_region))
+                    continue
+                # nobody went in (as far as we know, e.g. after a restart): only someone who
+                # really walks out of it, seen for longer, counts. An echo in the glass doesn't.
+                door = self.config.door_of(tr.closed_region)
+                if door is None or np.linalg.norm(tr.position() - np.array(door.geometry.center)) < p.closed_exit_distance \
+                        or self.config.closed_region_at(*tr.position()):
+                    continue
+                need = 2 * p.confirm_time
+            elif not tr.born_at_entry and self._shadowed(tr, t):
                 # an echo walking along with someone: start the confirmation over
                 tr.first_hit, tr.hits, tr.expected = t, 0, 0
                 continue
-            need = p.confirm_time_entry if tr.born_at_entry else p.confirm_time
-            ratio = tr.hits / max(tr.expected, 1)
+            else:
+                need = p.confirm_time_entry if tr.born_at_entry else p.confirm_time
             if t - tr.first_hit >= need and ratio >= p.confirm_ratio and self._seen_by_enough(tr):
                 lost = self._takeover_candidate(tr, t)
                 if lost is not None:
@@ -386,10 +411,15 @@ class Tracker:
                     self._emit("ended", (tr, reason))
                     if reason == "left via entry":
                         self.exited.append((tr, t))
+                    elif reason == "went into a closed room":
+                        self.region_people.setdefault(tr.left_region, []).append(t)
+                        self.exited.append((tr, t))
                     continue
             keep.append(tr)
         self.tracks = keep
         self.exited = [(tr, te) for tr, te in self.exited if t - te < p.rejoin_time]
+        for rid, times in self.region_people.items():  # forget after a long time (missed a return)
+            times[:] = [te for te in times if t - te < p.region_max_time]
         self._merge(t)
 
     def _shadowed(self, tr: Track, t: float) -> bool:
@@ -442,8 +472,13 @@ class Tracker:
         since = t - tr.last_hit
         if since > p.exit_timeout:
             # only someone walking goes out; a person sitting next to a door stays
-            if tr.last_hit - tr.last_walking <= 3.0 and any(z.contains(x, y) for z in self.config.entry_zones):
+            walking = tr.last_hit - tr.last_walking <= 3.0
+            if walking and any(z.contains(x, y) for z in self.config.entry_zones):
                 return "left via entry"
+            region = self.config.closed_region_at(x, y)
+            if walking and region:
+                tr.left_region = region
+                return "went into a closed room"
             if not self.config.visible_sensors(x, y, margin=-0.2):
                 return "left coverage"
         if t - tr.last_support > p.max_lost_time:
@@ -513,4 +548,6 @@ class Tracker:
                 "ld2410": {"present": rt.ld_present, "distance": round(rt.ld_distance, 2),
                            "move_gates": rt.move_gates, "still_gates": rt.still_gates},
             }
-        return {"t": t, "tracks": tracks, "sensors": sensors}
+        regions = {rid: {"name": r["name"], "open": r["open"], "count": len(self.region_people.get(rid, []))}
+                   for rid, r in self.config.regions.items()}
+        return {"t": t, "tracks": tracks, "sensors": sensors, "regions": regions}
