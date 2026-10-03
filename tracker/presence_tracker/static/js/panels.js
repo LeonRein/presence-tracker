@@ -138,6 +138,7 @@ function livePanel(panel, view) {
       <span><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="var(--still)"/></svg>ruhig</span>
       <span><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="var(--lost)"/></svg>verdeckt</span>
       <span><svg width="12" height="12"><circle cx="6" cy="6" r="3" fill="var(--muted)"/></svg>Messpunkt</span>
+      <span><svg width="12" height="12"><circle cx="6" cy="6" r="3.5" fill="none" stroke="var(--muted)" stroke-width="1.5"/></svg>außerhalb (Reflexion)</span>
       <span><svg width="16" height="12"><path d="M1 10 A 9 9 0 0 1 15 10" stroke="var(--muted)" stroke-dasharray="2 3" fill="none" stroke-width="2"/></svg>LD2410C-Abstand</span>
     </div>
     <div class="row" style="margin-top:12px"><button class="btn" id="reset">Spuren neu aufnehmen</button></div>
@@ -503,7 +504,7 @@ function calibrationPanel(panel, view) {
     <ol class="steps">
       <li>Sensoren grob auf der Karte platzieren und ausrichten.</li>
       <li>Den Sensor wählen, dessen Lage am sichersten stimmt (Anker). Er bleibt, wie er ist.</li>
-      <li>Aufnahme starten. <b>Allein</b> 2–3 Minuten langsam durch alle Bereiche gehen, die zwei Sensoren gleichzeitig sehen. Kreuz und quer, auch nah an den Rändern.</li>
+      <li>Alle anderen verlassen die Räume der beteiligten Sensoren. Aufnahme starten und <b>allein</b> 2–3 Minuten in normalem Tempo durch alle Bereiche gehen, die zwei Sensoren gleichzeitig sehen: kreuz und quer, auch nah an den Rändern. Nur Messungen in Bewegung zählen, Stehenbleiben bringt nichts.</li>
       <li>Berechnen, Ergebnis prüfen und übernehmen.</li>
     </ol>
     <label class="field">Anker<select id="anchor">${placed.map(s => `<option value="${esc(s.id)}" ${s.id === calibAnchor ? 'selected' : ''}>${esc(s.name || s.id)}</option>`).join('')}</select></label>
@@ -537,17 +538,19 @@ function calibrationResult(el, r) {
   if (r.error) { el.innerHTML = `<p class="note" style="color:var(--bad)">${esc(r.error)}</p>`; return; }
   const rows = Object.entries(r.sensors).map(([id, s]) => {
     const cur = sensorById(id);
-    const quality = s.rms < 0.15 && s.inliers / s.pairs > 0.7 ? 'ok' : s.rms < 0.25 ? 'warn' : 'bad';
-    return `<tr><td><label class="check"><input type="checkbox" data-id="${esc(id)}" checked>${esc(cur?.name || id)}</label></td>
+    const label = { ok: 'gut', warn: 'unsicher', bad: 'unbrauchbar' }[s.quality];
+    return `<tr><td><label class="check"><input type="checkbox" data-id="${esc(id)}" ${s.quality === 'bad' ? '' : 'checked'}>${esc(cur?.name || id)}</label></td>
       <td>${fmt(s.shift * 100, 0)} cm</td><td>${s.turn > 0 ? '+' : ''}${fmt(s.turn, 1)}°</td>
       <td>${s.mirror !== cur?.mirror ? '<b>ändern</b>' : '–'}</td>
-      <td><span class="badge ${quality}">${fmt(s.rms * 100, 0)} cm</span></td><td>${s.inliers}/${s.pairs}</td></tr>`;
+      <td>${fmt(s.rms * 100, 0)} cm</td><td>${Math.round(100 * s.inliers / s.pairs)} % von ${s.pairs}</td>
+      <td><span class="badge ${s.quality}">${label}</span></td></tr>
+      ${s.reason ? `<tr><td colspan="7" class="note">${esc(s.reason)}</td></tr>` : ''}`;
   }).join('');
   el.append(h(`<div class="card" style="margin-top:12px">
     <b>Ergebnis</b> <span class="note">(Anker: ${esc(sensorById(r.anchor)?.name || r.anchor)})</span>
-    <table class="data" style="margin-top:8px"><tr><th>Sensor</th><th>Versatz</th><th>Drehung</th><th>Spiegel</th><th>Fehler</th><th>Paare</th></tr>${rows || '<tr><td colspan="6">nichts berechnet</td></tr>'}</table>
-    ${r.unsolved.length ? `<p class="note">Nicht lösbar (zu wenig gemeinsame Daten): ${r.unsolved.map(id => esc(sensorById(id)?.name || id)).join(', ')}</p>` : ''}
-    <p class="note">Fehler: mittlere Abweichung zwischen den Sensoren nach der Korrektur. Unter 15 cm ist gut.</p>
+    <table class="data" style="margin-top:8px"><tr><th>Sensor</th><th>Versatz</th><th>Drehung</th><th>Spiegel</th><th>Fehler</th><th>passend</th><th></th></tr>${rows || '<tr><td colspan="7">nichts berechnet</td></tr>'}</table>
+    ${r.unsolved.length ? `<p class="note">Keine passende Lösung für ${r.unsolved.map(id => esc(sensorById(id)?.name || id)).join(', ')}: zu wenig gemeinsame Messungen in Bewegung, oder der Sensor ist mehr als 1,5 m bzw. 45° falsch eingezeichnet.</p>` : ''}
+    <p class="note">Fehler: mittlere Abweichung zwischen den Sensoren nach der Korrektur, unter 15 cm ist gut. Passend: Anteil der Messungen, die nach der Korrektur übereinstimmen.</p>
     ${rows ? '<button class="btn primary" id="apply">Übernehmen</button>' : ''}
   </div>`));
   el.querySelector('#apply')?.addEventListener('click', () => {
@@ -598,6 +601,7 @@ const PARAMS = [
   ['Zuordnung', [
     ['gate', 'Zuordnungsschwelle (χ²)', '', 'Größer = Messungen werden großzügiger bestehenden Personen zugeordnet.', 0.5],
     ['max_gate_radius', 'Maximaler Zuordnungsradius', 'm', '', 0.05],
+    ['outside_margin', 'Toleranz außerhalb der Räume', 'm', 'Messpunkte weiter außerhalb aller Räume sind Reflexionen (z. B. an Fenstern) und werden verworfen.', 0.05],
     ['split_radius', 'Doppelte Ziele zusammenfassen', 'm', 'Der LD2450 meldet eine Person manchmal als zwei Ziele.', 0.05],
     ['merge_distance', 'Spuren verschmelzen unter', 'm', '', 0.05],
     ['merge_time', 'Verschmelzen nach', 's', '', 0.1],

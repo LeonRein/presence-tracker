@@ -39,6 +39,7 @@ class Detection:
     speed: float  # radial speed on the floor, m/s, negative = approaching
     local: tuple  # raw LD2450 x, y in meters (sensor frame), for calibration
     ignored: bool = False  # inside an interference zone
+    outside: bool = False  # outside all rooms: a reflection behind a wall, not used for tracking
 
 
 @dataclass
@@ -146,7 +147,7 @@ class Tracker:
         self._ld2410(sensor, rt, t, frame.get("ld2410") or {})
         self._predict_all(t)
         self._count_expected(sensor)
-        self._associate(sensor, detections, t)
+        self._associate(sensor, [d for d in detections if not d.outside], t)
         for listener in self.listeners:
             listener("frame", (sensor, t, detections))
 
@@ -168,7 +169,9 @@ class Tracker:
             speed = target.get("speed", 0) / 1000 * (slant / ground if ground > 0 else 1)
             pos = np.array([wx, wy])
             ignored = any(z.contains(wx, wy) for z in self.config.zones_of("ignore"))
-            out.append(Detection(s.id, target.get("slot", 0), pos, R, u, speed, (lx, ly), ignored))
+            rooms = self.config.zones_of("room")
+            outside = bool(rooms) and not any(z.contains(wx, wy, p.outside_margin) for z in rooms)
+            out.append(Detection(s.id, target.get("slot", 0), pos, R, u, speed, (lx, ly), ignored, outside))
         return out
 
     # ------------------------------------------------------------- filtering
@@ -393,7 +396,7 @@ class Tracker:
                 "online": t - rt.last_frame < 15,
                 "detections": [{"x": round(float(d.pos[0]), 3), "y": round(float(d.pos[1]), 3),
                                 "lx": round(d.local[0], 3), "ly": round(d.local[1], 3),
-                                "speed": round(d.speed, 2), "ignored": d.ignored}
+                                "speed": round(d.speed, 2), "ignored": d.ignored, "outside": d.outside}
                                for d in rt.detections] if t - rt.last_frame < 1.0 else [],
                 "ld2410": {"present": rt.ld_present, "distance": round(rt.ld_distance, 2),
                            "move_gates": rt.move_gates, "still_gates": rt.still_gates},

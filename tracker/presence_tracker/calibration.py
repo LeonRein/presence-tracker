@@ -1,11 +1,16 @@
 """Automatic sensor calibration from one person walking through overlapping fields of view.
 
-While a session runs, every frame with exactly one target is stored per sensor (floor
-coordinates in the sensor frame). For two sensors, the target of one is interpolated to the
-frame times of the other, giving pairs of the same point seen by both. One sensor is the anchor
-(its pose stays as placed); the others get position, heading and the x direction (mirror) from a
-2D rigid fit (Kabsch) with RANSAC against the already solved sensors, then a few rounds of
-refinement with all pairs.
+While a session runs, the one *moving* target of each frame is stored per sensor (floor
+coordinates in the sensor frame). Moving only: someone sitting still elsewhere would otherwise
+pair with the walker, and a single still spot says nothing about rotation. For two sensors, the
+target of one is interpolated to the frame times of the other, giving pairs of the same point
+seen by both.
+
+One sensor is the anchor (its pose stays as placed); the others get position, heading and the
+x direction (mirror) from a 2D rigid fit (Kabsch) with RANSAC against the already solved
+sensors, then a few rounds of refinement with all pairs. The fit stays near the pose the user
+drew (MAX_SHIFT, MAX_TURN): with wrong pairs (two people, reflections), an unconstrained RANSAC
+happily finds a consensus meters away. Each result gets a quality verdict.
 """
 
 import math
@@ -18,6 +23,13 @@ from .model import Config, SensorConfig
 
 MAX_GAP = 0.25  # s, interpolate only between frames this close
 INLIER = 0.35  # m
+MIN_SPEED = 0.05  # m/s, radial speed for a target to count as moving
+MAX_SHIFT = 1.5  # m from the drawn position
+MAX_TURN = 45.0  # degrees from the drawn heading
+# quality thresholds
+MIN_PAIRS = 100
+MIN_INLIER_RATIO = 0.5
+MIN_SPREAD = 0.5  # m, standard deviation of the inlier points along their narrowest direction
 
 
 def _rot(a: float) -> np.ndarray:
@@ -30,6 +42,10 @@ def _pose_matrix(s: SensorConfig):
     return np.array([s.x, s.y]), _rot(math.radians(s.heading) - math.pi / 2)
 
 
+def _heading(angle: float) -> float:
+    return (math.degrees(angle) + 90) % 360
+
+
 def kabsch(src: np.ndarray, dst: np.ndarray):
     """Rotation angle and translation with dst ~ R src + t (least squares)."""
     cs, cd = src.mean(0), dst.mean(0)
@@ -39,25 +55,46 @@ def kabsch(src: np.ndarray, dst: np.ndarray):
     return angle, t
 
 
-def ransac(src: np.ndarray, dst: np.ndarray, iterations: int = 200, seed: int = 0):
+def ransac(src: np.ndarray, dst: np.ndarray, valid=None, iterations: int = 1000, seed: int = 0):
+    """Robust rigid fit. valid(angle, t) rejects hypotheses (e.g. far from the drawn pose)."""
     rng = random.Random(seed)
     n = len(src)
+    if n < 3:
+        return None
     best = None
     for _ in range(iterations):
         i, j = rng.sample(range(n), 2)
         if np.linalg.norm(src[i] - src[j]) < 0.5:
             continue
         angle, t = kabsch(src[[i, j]], dst[[i, j]])
-        err = np.linalg.norm(src @ _rot(angle).T + t - dst, axis=1)
-        inliers = err < INLIER
+        if valid and not valid(angle, t):
+            continue
+        inliers = np.linalg.norm(src @ _rot(angle).T + t - dst, axis=1) < INLIER
         if best is None or inliers.sum() > best.sum():
             best = inliers
     if best is None or best.sum() < 3:
         return None
-    angle, t = kabsch(src[best], dst[best])
-    err = np.linalg.norm(src @ _rot(angle).T + t - dst, axis=1)
-    inliers = err < INLIER
-    return angle, t, inliers, float(np.sqrt((err[inliers] ** 2).mean()))
+    for _ in range(3):  # refit on the inliers, which may change them
+        angle, t = kabsch(src[best], dst[best])
+        err = np.linalg.norm(src @ _rot(angle).T + t - dst, axis=1)
+        best = err < INLIER
+        if best.sum() < 3:
+            return None
+    spread = float(np.sqrt(max(np.linalg.eigvalsh(np.cov(dst[best].T))[0], 0.0)))
+    return angle, t, best, float(np.sqrt((err[best] ** 2).mean())), spread
+
+
+def verdict(pairs: int, inliers: int, spread: float) -> tuple:
+    """(quality: ok | warn | bad, German reason)."""
+    if pairs < MIN_PAIRS:
+        return "bad", f"Nur {pairs} gemeinsame Messungen, mindestens {MIN_PAIRS} nötig. Länger durch die Überschneidung gehen."
+    ratio = inliers / pairs
+    if ratio < MIN_INLIER_RATIO:
+        return "bad", (f"Nur {100 * ratio:.0f} % der Messungen passen zusammen. Wahrscheinlich war noch jemand im Bereich, "
+                       "oder Reflexionen stören. Allein wiederholen.")
+    if spread < MIN_SPREAD:
+        return "warn", "Die Messpunkte liegen fast auf einer Linie. Kreuz und quer gehen, damit die Drehung sicher bestimmt ist."
+    return "ok", ""
 
 
 class Calibrator:
@@ -74,8 +111,12 @@ class Calibrator:
         self.active = False
 
     def on_frame(self, sensor: SensorConfig, t: float, detections: list):
-        if self.active and len(detections) == 1 and not detections[0].ignored:
-            self.series[sensor.id].append((t, *detections[0].local))
+        if not self.active:
+            return
+        # exactly one moving target; people sitting still elsewhere don't matter
+        moving = [d for d in detections if not d.ignored and abs(d.speed) >= MIN_SPEED]
+        if len(moving) == 1:
+            self.series[sensor.id].append((t, *moving[0].local))
 
     def status(self) -> dict:
         ids = sorted(self.series)
@@ -122,15 +163,23 @@ class Calibrator:
         """Proposed poses for all sensors that overlap (directly or via others) with the anchor."""
         sensors = [s.id for s in self.config.sensors if s.id in self.series]
         if anchor not in sensors:
-            return {"error": "Der Anker-Sensor hat keine Daten."}
-        pose = {anchor: _pose_matrix(self.config.sensor_by_id[anchor]) + (self.config.sensor_by_id[anchor].mirror,)}
+            return {"error": "Der Anker-Sensor hat keine Messungen von einer Person in Bewegung."}
+        a = self.config.sensor_by_id[anchor]
+        pose = {anchor: _pose_matrix(a) + (a.mirror,)}
         pair_cache = {}
 
-        def pairs(a, b):
-            key = (a, b)
-            if key not in pair_cache:
-                pair_cache[key] = self._pairs(a, b)
-            return pair_cache[key]
+        def pairs(x, y):
+            if (x, y) not in pair_cache:
+                pair_cache[(x, y)] = self._pairs(x, y)
+            return pair_cache[(x, y)]
+
+        def near_drawn(sid):
+            s = self.config.sensor_by_id[sid]
+
+            def valid(angle, t):
+                turn = (_heading(angle) - s.heading + 180) % 360 - 180
+                return math.hypot(t[0] - s.x, t[1] - s.y) <= MAX_SHIFT and abs(turn) <= MAX_TURN
+            return valid
 
         def fit(sid, solved):
             """Fit sensor sid against the solved sensors; tries both x directions."""
@@ -142,21 +191,21 @@ class Calibrator:
                     if len(ra) == 0:
                         continue
                     p, R, other_mirror = pose[other]
-                    world = self._ground(other, ra, other_mirror) @ R.T + p
+                    dst.append(self._ground(other, ra, other_mirror) @ R.T + p)
                     src.append(self._ground(sid, rb, mirror))
-                    dst.append(world)
                 if not src:
                     return None
                 src, dst = np.concatenate(src), np.concatenate(dst)
                 if len(src) < min_pairs:
                     return None
-                result = ransac(src, dst)
+                result = ransac(src, dst, valid=near_drawn(sid))
                 if result is None:
                     continue
-                angle, t, inliers, rms = result
+                angle, t, inliers, rms, spread = result
                 score = (inliers.sum(), -rms)
                 if best is None or score > best[0]:
-                    best = (score, angle, t, mirror, int(inliers.sum()), len(src), rms)
+                    best = (score, angle, t, mirror, {"inliers": int(inliers.sum()), "pairs": len(src),
+                                                      "rms": rms, "spread": spread})
             return best
 
         pending = [s for s in sensors if s != anchor]
@@ -166,10 +215,9 @@ class Calibrator:
             fits = [(sid, f) for sid, f in fits if f is not None]
             if not fits:
                 break
-            sid, f = max(fits, key=lambda item: item[1][0])
-            _, angle, t, mirror, n_in, n, rms = f
+            sid, (_, angle, t, mirror, stats) = max(fits, key=lambda item: item[1][0])
             pose[sid] = (t, _rot(angle), mirror)
-            results[sid] = {"inliers": n_in, "pairs": n, "rms": rms}
+            results[sid] = stats
             pending.remove(sid)
 
         # refinement: re-fit every non-anchor sensor against all others
@@ -178,21 +226,22 @@ class Calibrator:
                 f = fit(sid, [o for o in pose if o != sid])
                 if f is None:
                     continue
-                _, angle, t, mirror, n_in, n, rms = f
+                _, angle, t, mirror, stats = f
                 pose[sid] = (t, _rot(angle), mirror)
-                results[sid] = {"inliers": n_in, "pairs": n, "rms": rms}
+                results[sid] = stats
 
         out = {}
         for sid, stats in results.items():
             p, R, mirror = pose[sid]
-            heading = (math.degrees(math.atan2(R[1, 0], R[0, 0])) + 90) % 360
+            heading = _heading(math.atan2(R[1, 0], R[0, 0]))
             current = self.config.sensor_by_id[sid]
+            quality, reason = verdict(stats["pairs"], stats["inliers"], stats["spread"])
             out[sid] = {
                 "x": round(float(p[0]), 3), "y": round(float(p[1]), 3), "heading": round(heading, 1),
                 "mirror": bool(mirror),
                 "shift": round(math.hypot(p[0] - current.x, p[1] - current.y), 3),
                 "turn": round((heading - current.heading + 180) % 360 - 180, 1),
+                "quality": quality, "reason": reason,
                 **{k: (round(v, 3) if isinstance(v, float) else v) for k, v in stats.items()},
             }
-        missing = [s for s in pending]
-        return {"anchor": anchor, "sensors": out, "unsolved": missing}
+        return {"anchor": anchor, "sensors": out, "unsolved": pending}

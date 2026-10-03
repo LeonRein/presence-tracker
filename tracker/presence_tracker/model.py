@@ -122,6 +122,7 @@ class TrackerParams:
     still_jitter: float = 0.08  # m/sqrt(s), position wander of a sitting/standing person
     walk_to_still: float = 0.7  # switching rates, 1/s
     still_to_walk: float = 0.3
+    outside_margin: float = 0.4  # m, detections farther outside all rooms are reflections and dropped
     # association
     gate: float = 13.8  # chi-square, 2 dof, 99.9 %
     max_gate_radius: float = 1.0  # m, gating radius cap for tracks that were lost for a while
