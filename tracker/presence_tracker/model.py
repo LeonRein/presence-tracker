@@ -8,7 +8,8 @@ import math
 import pathlib
 from dataclasses import asdict, dataclass, field, fields
 
-from .geometry import Shape, line_of_sight, wall_segments
+from .floorplan import normalize_walls, sight_segments, sync_rooms
+from .geometry import Shape, line_of_sight
 
 
 @dataclass
@@ -89,6 +90,8 @@ class ZoneConfig:
     points: list = field(default_factory=list)
     center: list | None = None
     radius: float = 0.0
+    anchor: list | None = None  # rooms from walls: a point inside, identifies the room after edits
+    entry: bool = False  # rooms: people may appear and leave here (stairwell, front door)
 
     def __post_init__(self):
         self.geometry = Shape(self.shape, self.points, self.center, self.radius)
@@ -101,6 +104,9 @@ class ZoneConfig:
         if self.shape != "circle":
             d.pop("center")
             d.pop("radius")
+        if self.kind != "room":
+            d.pop("anchor")
+            d.pop("entry")
         return d
 
 
@@ -146,19 +152,24 @@ class TrackerParams:
 class Config:
     sensors: list = field(default_factory=list)
     zones: list = field(default_factory=list)
-    walls: list = field(default_factory=list)  # polylines [[x, y], ...]
+    walls: list = field(default_factory=list)  # [{"points": [[x, y], ...], "kind": "wall" | "divider"}]
+    doors: list = field(default_factory=list)  # [{"id", "x", "y", "width"}] on a wall
+    # rooms are the closed areas between the walls; off for configs with hand-drawn rooms
+    rooms_from_walls: bool = True
     background: dict = field(default_factory=dict)  # image placement, see web UI
     params: TrackerParams = field(default_factory=TrackerParams)
 
     def __post_init__(self):
+        self.walls = normalize_walls(self.walls)
         self.rebuild()
 
     def rebuild(self):
         """Recompute derived data after an edit."""
         for s in self.sensors:
             s._update()
-        self.wall_segments = wall_segments(self.walls)
+        self.wall_segments = sight_segments(self.walls, self.doors)
         self.sensor_by_id = {s.id: s for s in self.sensors}
+        self.entry_zones = [z for z in self.zones if z.kind == "entry" or (z.kind == "room" and z.entry)]
 
     def zones_of(self, kind: str) -> list:
         return [z for z in self.zones if z.kind == kind]
@@ -170,10 +181,12 @@ class Config:
 
     def to_dict(self) -> dict:
         return {
-            "version": 1,
+            "version": 2,
             "sensors": [{k.name: getattr(s, k.name) for k in fields(s)} for s in self.sensors],
             "zones": [z.to_dict() for z in self.zones],
             "walls": self.walls,
+            "doors": self.doors,
+            "rooms_from_walls": self.rooms_from_walls,
             "background": self.background,
             "params": asdict(self.params),
         }
@@ -184,10 +197,20 @@ class Config:
             names = {f.name for f in fields(dc)}
             return dc(**{k: v for k, v in data.items() if k in names})
 
+        zones = d.get("zones", [])
+        walls = normalize_walls(d.get("walls", []))
+        # configs from before version 2 have hand-drawn rooms and doors as gaps in the walls:
+        # deriving rooms would merge them, so they keep their rooms until switched over
+        rooms_from_walls = d.get("rooms_from_walls", not any(z.get("kind") == "room" for z in zones))
+        if rooms_from_walls and walls:
+            zones = sync_rooms(zones, walls)
         return cls(
             sensors=[pick(SensorConfig, s) for s in d.get("sensors", [])],
-            zones=[pick(ZoneConfig, z) for z in d.get("zones", [])],
-            walls=d.get("walls", []),
+            zones=[pick(ZoneConfig, z) for z in zones],
+            walls=walls,
+            doors=[{"id": str(x.get("id", "")), "x": float(x["x"]), "y": float(x["y"]),
+                    "width": float(x.get("width", 0.9))} for x in d.get("doors", [])],
+            rooms_from_walls=bool(rooms_from_walls),
             background=d.get("background", {}),
             params=pick(TrackerParams, d.get("params", {})),
         )

@@ -1,11 +1,11 @@
 // Blind-spot map: which parts of the rooms no sensor can see (field of view, range, walls).
-import { sensorSees, wallSegments, zoneContains, zoneOutline } from './util.js';
+import { sensorSees, sightSegments, zoneContains, zoneOutline } from './util.js';
 
 export function computeCoverage(config, cell = 0.1) {
   const rooms = config.zones.filter(z => z.kind === 'room');
   if (!rooms.length) return null;
   const sensors = config.sensors.filter(s => s.placed && s.enabled);
-  const segs = wallSegments(config.walls);
+  const segs = sightSegments(config);
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const z of rooms) for (const [x, y] of zoneOutline(z, 16)) {
     x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);

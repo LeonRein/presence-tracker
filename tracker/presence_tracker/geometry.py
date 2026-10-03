@@ -38,15 +38,6 @@ def distance_to_segment(x: float, y: float, a, b) -> float:
     return math.hypot(x - ax - t * dx, y - ay - t * dy)
 
 
-def wall_segments(walls: list) -> list:
-    """Polylines [[x, y], ...] -> list of segments ((x1, y1), (x2, y2))."""
-    segments = []
-    for line in walls:
-        for a, b in zip(line, line[1:]):
-            segments.append((tuple(a), tuple(b)))
-    return segments
-
-
 def line_of_sight(a, b, segments: list) -> bool:
     return not any(segments_intersect(a, b, s, e) for s, e in segments)
 

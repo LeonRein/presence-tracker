@@ -1,15 +1,15 @@
 import { refreshCoverage, renderPanel, updateLive } from './panels.js';
 import { emit, loadConfig, onChange, redo, select, setTool, state, undo } from './store.js';
-import { AlignTool, PlaceSensorTool, SelectTool, WallTool, ZoneTool } from './tools.js';
+import { AlignTool, DoorTool, PlaceSensorTool, SelectTool, WallTool, ZoneTool } from './tools.js';
 import { esc, toast } from './util.js';
 import { MapView } from './view.js';
 
 // what can be selected and edited in which tab; everything else is display only
 const SELECTABLE = {
   live: [],
-  plan: ['wall', 'layer'],
+  plan: ['wall', 'door', 'room', 'layer'],
   sensors: ['sensor'],
-  zones: ['zone'],
+  zones: ['zone', 'room'],
   calibration: [],
   settings: [],
 };
@@ -21,7 +21,8 @@ const hint = document.getElementById('hint');
 function makeController() {
   const t = state.tool;
   let ctl;
-  if (t === 'wall') ctl = new WallTool();
+  if (t === 'wall' || t === 'divider') ctl = new WallTool(t);
+  else if (t === 'door') ctl = new DoorTool();
   else if (t?.name === 'zone') ctl = new ZoneTool(t.shape, t.kind);
   else if (t?.name === 'place') ctl = new PlaceSensorTool(t.id);
   else if (t?.name === 'align') ctl = new AlignTool(t.layer);
@@ -42,9 +43,11 @@ function updateHint() {
 onChange(what => {
   if (what === 'tool' || what === 'tab') makeController();
   if (what === 'selection') view.renderOverlay();
-  if (what === 'config' && state.showCoverage) refreshCoverage(view);
+  if ((what === 'config' || what === 'rooms') && state.showCoverage) refreshCoverage(view);
   else view.render();
   updateHint();
+  // new room outlines from the server: don't rebuild the panel under the user's typing
+  if (what === 'rooms' && panel.contains(document.activeElement) && document.activeElement.matches('input, select')) return;
   renderPanel(panel, view, what);
 });
 

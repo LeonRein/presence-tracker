@@ -88,10 +88,63 @@ export function zoneCenter(z) {
   return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
 }
 
-export function wallSegments(walls) {
-  const segs = [];
-  for (const line of walls) for (let i = 0; i + 1 < line.length; i++) segs.push([line[i], line[i + 1]]);
-  return segs;
+// Straight pieces of the walls: [a, b, kind, wallIndex]
+export function wallPieces(walls, kind = null) {
+  const out = [];
+  walls.forEach((w, wi) => {
+    if (kind && w.kind !== kind) return;
+    for (let i = 0; i + 1 < w.points.length; i++) out.push([w.points[i], w.points[i + 1], w.kind, wi]);
+  });
+  return out;
+}
+
+export function distToSegment(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2)) : 0;
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+}
+
+export const DOOR_REACH = 0.25; // m, as in floorplan.py
+
+// The wall piece a door sits on: {a, b, dir, t, length} (t = distance of the door center from a)
+export function doorPlacement(walls, door) {
+  let best = null;
+  for (const [a, b] of wallPieces(walls, 'wall')) {
+    const d = distToSegment([door.x, door.y], a, b);
+    if (d < DOOR_REACH && (!best || d < best.d)) best = { d, a, b };
+  }
+  if (!best) return null;
+  const { a, b } = best;
+  const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const dir = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+  const t = (door.x - a[0]) * dir[0] + (door.y - a[1]) * dir[1];
+  return { a, b, dir, t, length };
+}
+
+// Segments that block the radar: real walls (no room dividers) without their door openings
+export function sightSegments(config) {
+  const cuts = new Map();
+  for (const door of config.doors || []) {
+    const pl = doorPlacement(config.walls, door);
+    if (!pl) continue;
+    const key = pl.a.join() + '|' + pl.b.join();
+    if (!cuts.has(key)) cuts.set(key, []);
+    cuts.get(key).push([Math.max(pl.t - door.width / 2, 0), Math.min(pl.t + door.width / 2, pl.length)]);
+  }
+  const out = [];
+  for (const [a, b] of wallPieces(config.walls, 'wall')) {
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const u = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+    const at = t => [a[0] + u[0] * t, a[1] + u[1] * t];
+    let start = 0;
+    for (const [t0, t1] of (cuts.get(a.join() + '|' + b.join()) || []).sort((x, y) => x[0] - y[0])) {
+      if (t0 > start) out.push([at(start), at(t0)]);
+      start = Math.max(start, t1);
+    }
+    if (start < length) out.push([at(start), b]);
+  }
+  return out;
 }
 
 // Sensor geometry, same conventions as model.py: heading = viewing direction (degrees, CCW from +x),

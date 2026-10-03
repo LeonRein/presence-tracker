@@ -228,7 +228,9 @@ class App:
         config.save(self.config_path)
         if self.client is not None:
             await self.discovery.sync(config.zones)
-        return web.json_response({"ok": True})
+        # rooms are derived from the walls here; the editor takes them over
+        return web.json_response({"ok": True, "rooms": [z.to_dict() for z in config.zones_of("room")],
+                                  "rooms_from_walls": config.rooms_from_walls})
 
     async def h_live(self, request):
         ws = web.WebSocketResponse(heartbeat=30)

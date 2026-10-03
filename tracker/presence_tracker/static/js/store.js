@@ -37,6 +37,7 @@ export async function loadConfig() {
   state.config = data.config;
   state.config.background ??= {};
   state.config.background.layers ??= [];
+  state.config.doors ??= [];
   state.sensorsSeen = data.sensors_seen;
   state.replay = data.replay;
   state.haAvailable = data.ha;
@@ -49,12 +50,33 @@ const undoStack = [];
 const redoStack = [];
 const saveSoon = debounce(save, 500);
 
+let saving = Promise.resolve();
+
 async function save() {
-  try {
-    await api('api/config', { method: 'PUT', body: JSON.stringify(state.config) });
-  } catch (e) {
-    toast('Speichern fehlgeschlagen: ' + e.message, 5000);
-  }
+  // one request at a time, so that an older answer never overwrites a newer state
+  saving = saving.then(async () => {
+    try {
+      const r = await api('api/config', { method: 'PUT', body: JSON.stringify(state.config) });
+      if (r.rooms_from_walls && r.rooms) mergeRooms(r.rooms);
+    } catch (e) {
+      toast('Speichern fehlgeschlagen: ' + e.message, 5000);
+    }
+  });
+  return saving;
+}
+
+// The server derives the rooms from the walls. Take over their outlines; names and the entry
+// flag edited meanwhile stay as they are here.
+function mergeRooms(rooms) {
+  const c = state.config;
+  const local = new Map(c.zones.filter(z => z.kind === 'room').map(z => [z.id, z]));
+  const merged = rooms.map(r => {
+    const l = local.get(r.id);
+    return l ? { ...r, name: l.name, entry: !!l.entry } : r;
+  });
+  const before = JSON.stringify(c.zones.filter(z => z.kind === 'room').map(z => [z.id, z.points]));
+  c.zones = [...merged, ...c.zones.filter(z => z.kind !== 'room')];
+  if (JSON.stringify(merged.map(z => [z.id, z.points])) !== before) emit('rooms');
 }
 
 export function edit(fn, { merge = null } = {}) {

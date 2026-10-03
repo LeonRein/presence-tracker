@@ -257,7 +257,7 @@ class Tracker:
 
     def _birth(self, d: Detection, t: float):
         p = self.config.params
-        at_entry = (any(z.contains(*d.pos) for z in self.config.zones_of("entry"))
+        at_entry = (any(z.contains(*d.pos) for z in self.config.entry_zones)
                     or (self.start is not None and t - self.start < p.warmup))
         walk = 0.7 if abs(d.speed) > 0.15 else 0.4
         tr = Track(self.next_id, IMMState.from_position(d.pos, d.R, walk), t, t, at_entry)
@@ -327,7 +327,7 @@ class Tracker:
         x, y = tr.position()
         since = t - tr.last_hit
         if since > p.exit_timeout:
-            if any(z.contains(x, y) for z in self.config.zones_of("entry")):
+            if any(z.contains(x, y) for z in self.config.entry_zones):
                 return "left via entry"
             if not self.config.visible_sensors(x, y, margin=-0.2):
                 return "left coverage"

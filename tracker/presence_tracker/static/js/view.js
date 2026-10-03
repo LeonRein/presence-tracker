@@ -1,7 +1,10 @@
 // SVG map: projection, pan/zoom, and drawing of the plan, sensors, zones and live data.
 // Everything is drawn in screen pixels; world coordinates are meters with y pointing up.
 import { state, sensorColor } from './store.js';
-import { ZONE_KINDS, esc, rad, zoneCenter, zoneOutline } from './util.js';
+import { ZONE_KINDS, doorPlacement, esc, rad, sightSegments, zoneCenter, zoneOutline } from './util.js';
+
+// rooms marked as entry (stairwell) look like entry zones
+const zoneStyle = z => (z.kind === 'room' && z.entry ? ZONE_KINDS.entry : ZONE_KINDS[z.kind] || ZONE_KINDS.area);
 
 const imageSizes = new Map(); // url -> {w, h}
 
@@ -37,7 +40,7 @@ export class MapView {
     const c = state.config;
     const xs = [], ys = [];
     const add = (x, y) => { xs.push(x); ys.push(y); };
-    for (const w of c.walls) for (const [x, y] of w) add(x, y);
+    for (const w of c.walls) for (const [x, y] of w.points) add(x, y);
     for (const z of c.zones) for (const [x, y] of zoneOutline(z, 8)) add(x, y);
     for (const s of c.sensors) if (s.placed) add(s.x, s.y);
     if (xs.length < 2) {
@@ -78,16 +81,7 @@ export class MapView {
       this.pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);
       if (this.pointers.size === 2) { this.pinch = this._pinchState(); this.pan = null; return; }
       const world = this.eventWorld(ev);
-      // own double-click detection: the native dblclick is unreliable when the handles are
-      // redrawn between the clicks, and touch screens don't send it at all
-      const now = performance.now();
-      const last = this.lastDown;
-      if (ev.button === 0 && last && now - last.t < 350 && Math.hypot(ev.clientX - last.x, ev.clientY - last.y) < 8) {
-        this.lastDown = null;
-        this.controller?.dblclick?.(world, ev);
-        return;
-      }
-      if (ev.button === 0) this.lastDown = { t: now, x: ev.clientX, y: ev.clientY };
+      this.downAt = [ev.clientX, ev.clientY];
       const hit = ev.target.closest?.('[data-kind]');
       const handled = ev.button === 0 && this.controller?.down?.(world, hit, ev);
       if (!handled) this.pan = { x: ev.clientX, y: ev.clientY, cx: this.cx, cy: this.cy, moved: false, hit };
@@ -114,6 +108,15 @@ export class MapView {
     });
     const up = ev => {
       this.pointers.delete(ev.pointerId);
+      // own double-click detection on release: two clicks without movement in between. The native
+      // dblclick is unreliable when the handles are redrawn between the clicks, touch screens
+      // don't send it, and "click, then drag right away" must stay a drag.
+      const still = this.downAt && Math.hypot(ev.clientX - this.downAt[0], ev.clientY - this.downAt[1]) < 5;
+      const now = performance.now();
+      const last = this.lastClick;
+      const double = ev.button === 0 && still && last && now - last.t < 400
+        && Math.hypot(ev.clientX - last.x, ev.clientY - last.y) < 8;
+      this.lastClick = ev.button === 0 && still && !double ? { t: now, x: ev.clientX, y: ev.clientY } : null;
       if (this.pointers.size < 2) this.pinch = null;
       if (this.pan) {
         svg.classList.remove('panning');
@@ -122,6 +125,7 @@ export class MapView {
         return;
       }
       this.controller?.up?.(this.eventWorld(ev), ev);
+      if (double) this.controller?.dblclick?.(this.eventWorld(ev), ev);
     };
     svg.addEventListener('pointerup', up);
     svg.addEventListener('pointercancel', up);
@@ -167,13 +171,14 @@ export class MapView {
     // zones
     const zoneStates = state.live?.zones || {};
     for (const z of c.zones) {
-      const kind = ZONE_KINDS[z.kind] || ZONE_KINDS.area;
+      const kind = zoneStyle(z);
       const zs = zoneStates[z.id];
       const occupied = zs?.occupied && state.tab === 'live';
-      const selected = sel?.kind === 'zone' && sel.id === z.id;
-      const fillOpacity = occupied ? 0.28 : (z.kind === 'room' ? 0.05 : 0.12);
+      const dataKind = z.kind === 'room' ? 'room' : 'zone';
+      const selected = sel?.kind === dataKind && sel.id === z.id;
+      const fillOpacity = occupied ? 0.28 : selected ? 0.16 : (z.kind === 'room' ? 0.05 : 0.12);
       const cls = `zone${selected ? ' selected' : ''}${zs?.approaching && state.tab === 'live' ? ' approaching' : ''}`;
-      const common = `class="${cls}" fill="${kind.color}" fill-opacity="${fillOpacity}" stroke="${kind.color}" data-kind="zone" data-id="${esc(z.id)}" ${pe('zone')}`;
+      const common = `class="${cls}" fill="${kind.color}" fill-opacity="${fillOpacity}" stroke="${kind.color}" data-kind="${dataKind}" data-id="${esc(z.id)}" ${pe(dataKind)}`;
       if (z.shape === 'circle') {
         const [x, y] = this.P(...z.center);
         out.push(`<circle cx="${x}" cy="${y}" r="${z.radius * this.s}" ${common}/>`);
@@ -182,21 +187,48 @@ export class MapView {
       }
     }
 
-    // walls
+    // walls with their door openings left out; room dividers dashed; the selected one on top
+    const wallPath = sightSegments(c).map(([a, b]) => `M${this.P(...a).join(',')}L${this.P(...b).join(',')}`).join('');
+    out.push(`<path class="wall" d="${wallPath}" pointer-events="none"/>`);
     for (let i = 0; i < c.walls.length; i++) {
+      const w = c.walls[i];
       const selected = sel?.kind === 'wall' && sel.id === i;
-      const pts = this.pts(c.walls[i]);
-      out.push(`<polyline class="wall${selected ? ' selected' : ''}" points="${pts}" pointer-events="none"/>`);
+      const pts = this.pts(w.points);
+      if (w.kind === 'divider' || selected) {
+        out.push(`<polyline class="wall${w.kind === 'divider' ? ' divider' : ''}${selected ? ' selected' : ''}" points="${pts}" pointer-events="none"/>`);
+      }
       // wider invisible line to grab it
       if (state.selectable.includes('wall')) out.push(`<polyline class="wall-hit" points="${pts}" data-kind="wall" data-id="${i}"/>`);
+    }
+
+    // doors: an opening in the wall with a thin leaf line
+    for (const door of c.doors || []) {
+      const pl = doorPlacement(c.walls, door);
+      const selected = sel?.kind === 'door' && sel.id === door.id;
+      if (!pl) {
+        const [x, y] = this.P(door.x, door.y);
+        out.push(`<circle cx="${x}" cy="${y}" r="6" fill="var(--bad)" data-kind="door" data-id="${esc(door.id)}" ${pe('door')}><title>Tür ohne Wand</title></circle>`);
+        continue;
+      }
+      const at = t => this.P(pl.a[0] + pl.dir[0] * t, pl.a[1] + pl.dir[1] * t);
+      const [x0, y0] = at(pl.t - door.width / 2), [x1, y1] = at(pl.t + door.width / 2);
+      const nx = -(y1 - y0), ny = x1 - x0, nl = Math.hypot(nx, ny) || 1, k = 5 / nl;
+      out.push(`<g class="door${selected ? ' selected' : ''}" pointer-events="none">
+          <line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}"/>
+          <line x1="${x0 - nx * k}" y1="${y0 - ny * k}" x2="${x0 + nx * k}" y2="${y0 + ny * k}"/>
+          <line x1="${x1 - nx * k}" y1="${y1 - ny * k}" x2="${x1 + nx * k}" y2="${y1 + ny * k}"/>
+        </g>`);
+      if (state.selectable.includes('door')) {
+        out.push(`<line class="wall-hit" x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" data-kind="door" data-id="${esc(door.id)}"/>`);
+      }
     }
 
     // zone labels on top of walls
     for (const z of c.zones) {
       if (z.kind === 'room' || state.tab !== 'live' || this.s > 25) {
-        const kind = ZONE_KINDS[z.kind] || ZONE_KINDS.area;
+        const kind = zoneStyle(z);
         const zs = zoneStates[z.id];
-        const [x, y] = this.P(...zoneCenter(z));
+        const [x, y] = this.P(...(z.anchor || zoneCenter(z)));
         const count = state.tab === 'live' && zs ? ` · ${zs.count}` : '';
         out.push(`<text class="zone-label" x="${x}" y="${y}" text-anchor="middle" fill="${kind.color}" pointer-events="none">${esc(z.name)}${count}</text>`);
       }

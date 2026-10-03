@@ -23,13 +23,19 @@ betreten wird. Wer wer ist, spielt keine Rolle.
 
 1. **Sensoren** mit der ESPHome-Konfiguration aus diesem Repo flashen. Die App bekommt die MQTT-Zugangsdaten
    vom Supervisor (Mosquitto-App muss laufen) und findet die Sensoren unter `presence/+/frame` selbst.
-2. **Grundriss** (Tab *Grundriss*): *Saugroboter-Karte* lädt die Karte samt Räumen aus Home Assistant und
-   passt sie ein. Alternativ ein Bild hochladen und per *2-Punkt-Ausrichtung* einpassen. Dann die Wände
-   nachzeichnen (Türen als Lücken). Wände bestimmen, was ein Sensor sehen kann.
-3. **Zonen** (Tab *Zonen*):
-   - *Raum*: jeder Raum, für Home Assistant und die Abdeckungskarte
-   - *Bereich*: z. B. Sofa, Esstisch
-   - *Eingang*: wo Personen das überwachte Gebiet betreten oder verlassen
+2. **Grundriss** (Tab *Grundriss*): *Saugroboter-Karte* lädt die Karte aus Home Assistant und
+   passt sie ein. Alternativ ein Bild hochladen und per *2-Punkt-Ausrichtung* einpassen. Dann nachzeichnen:
+   - *Wand*: echte Wände, sie bestimmen, was ein Sensor sehen kann. Punkte rasten in 45°-Schritten ein.
+   - *Tür*: auf eine Wand klicken. Eine Tür trennt zwei Räume, ist für Radar und Personen aber offen.
+     Ein Durchgang ohne Tür bleibt eine Lücke in der Wand, die Räume auf beiden Seiten sind dann ein Raum.
+   - *Raumgrenze*: teilt einen Raum ohne Wand, z. B. Wohn- und Essbereich.
+
+   Die **Räume** entstehen automatisch als geschlossene Flächen zwischen Wänden, Türen und Raumgrenzen.
+   Sie werden nur benannt. *Eingang* markiert Räume, in denen Personen auftauchen und verschwinden dürfen
+   (Treppenhaus). Beim Verschieben von Wänden behält jeder Raum seinen Namen und damit seine Entitäten.
+3. **Zonen** (Tab *Zonen*), frei gezeichnet als Rechteck, Kreis oder Polygon:
+   - *Bereich*: z. B. Sofa, Esstisch, für Home Assistant
+   - *Eingang*: kleine Bereiche, wo Personen das Gebiet betreten oder verlassen (Balkontür)
    - *Störer*: Ventilator, Vorhang, Pflanze. Dort entstehen keine neuen Personen.
 4. **Sensoren** (Tab *Sensoren*): jeden Sensor platzieren, Blickrichtung drehen, Montagehöhe eintragen.
    *Tote Winkel zeigen* färbt Stellen, die kein Sensor sieht, rot.

@@ -1,6 +1,6 @@
 // Map interaction: selecting/dragging, drawing walls and zones, placing sensors, aligning images.
 import { edit, endMerge, emit, select, sensorById, setTool, state } from './store.js';
-import { ZONE_KINDS, deg, dist, rad, toast, uid, zoneOutline } from './util.js';
+import { ZONE_KINDS, deg, dist, doorPlacement, rad, toast, uid, wallPieces, zoneOutline } from './util.js';
 import { bgToWorld, loadSize } from './view.js';
 
 const SNAP_PX = 10;
@@ -10,7 +10,7 @@ const LINK_EPS = 0.002; // m, wall ends closer than this are joined and move tog
 function vertices(exclude = null) {
   const c = state.config;
   const out = [];
-  c.walls.forEach((w, i) => w.forEach((p, j) => {
+  c.walls.forEach((w, i) => w.points.forEach((p, j) => {
     if (!exclude?.pairs?.has(`${i}:${j}`)) out.push(p);
   }));
   for (const z of c.zones) {
@@ -24,9 +24,9 @@ function segments(exclude = null) {
   const c = state.config;
   const out = [];
   c.walls.forEach((w, i) => {
-    for (let j = 0; j + 1 < w.length; j++) {
+    for (let j = 0; j + 1 < w.points.length; j++) {
       if (exclude?.pairs?.has(`${i}:${j}`) || exclude?.pairs?.has(`${i}:${j + 1}`)) continue;
-      out.push([w[j], w[j + 1]]);
+      out.push([w.points[j], w.points[j + 1]]);
     }
   });
   return out;
@@ -131,10 +131,29 @@ function neighbors(pts, i, closed) {
 // all wall vertices at the same place as `p` (joined wall ends)
 function linkedWallVertices(c, p, skipWall = -1) {
   const out = [];
-  c.walls.forEach((w, i) => w.forEach((q, j) => {
+  c.walls.forEach((w, i) => w.points.forEach((q, j) => {
     if (i !== skipWall && dist(p, q) < LINK_EPS) out.push([i, j]);
   }));
   return out;
+}
+
+const isZoneSel = sel => sel?.kind === 'zone' || sel?.kind === 'room';
+// rooms derived from the walls have no geometry of their own
+const isFixedRoom = sel => sel?.kind === 'room' && state.config.rooms_from_walls;
+
+// closest point on a real wall within `tol`
+function nearestWallPoint(c, p, tol) {
+  let best = null;
+  for (const [a, b] of wallPieces(c.walls, 'wall')) {
+    const len = dist(a, b);
+    if (len < 1e-6) continue;
+    const dir = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    const t = Math.max(0, Math.min(len, (p[0] - a[0]) * dir[0] + (p[1] - a[1]) * dir[1]));
+    const q = [a[0] + t * dir[0], a[1] + t * dir[1]];
+    const d = dist(p, q);
+    if (d < tol && (!best || d < best.d)) best = { d, q };
+  }
+  return best && round3(best.q);
 }
 
 // ----------------------------------------------------------------- select / drag
@@ -144,10 +163,13 @@ export class SelectTool {
 
   hint() {
     const sel = state.selection;
-    if (sel?.kind === 'wall' || (sel?.kind === 'zone' && state.config.zones.find(z => z.id === sel.id)?.shape === 'polygon')) {
+    if (isFixedRoom(sel)) return '';
+    if (sel?.kind === 'door') return 'Tür entlang der Wand ziehen · an den Enden die Breite ändern';
+    const z = isZoneSel(sel) && state.config.zones.find(z => z.id === sel.id);
+    if (sel?.kind === 'wall' || z?.shape === 'polygon') {
       return 'Punkte und Kanten ziehen · Doppelklick auf eine Kante fügt einen Punkt ein, auf einen Punkt löscht ihn · Shift: ohne Einrasten';
     }
-    if (sel?.kind === 'zone') return 'Ecken und Seiten ziehen · nochmal anklicken und ziehen verschiebt die Zone · Shift: ohne Einrasten';
+    if (z) return 'Ecken und Seiten ziehen · nochmal anklicken und ziehen verschiebt die Zone · Shift: ohne Einrasten';
     return '';
   }
 
@@ -156,7 +178,7 @@ export class SelectTool {
     if (!sel) return '';
     const c = state.config;
     const out = [];
-    if (sel.kind === 'zone') {
+    if (isZoneSel(sel) && !isFixedRoom(sel)) {
       const z = c.zones.find(z => z.id === sel.id);
       if (!z) return '';
       if (z.shape === 'circle') out.push(handle(view, [z.center[0] + z.radius, z.center[1]], 'radius'));
@@ -169,10 +191,19 @@ export class SelectTool {
         z.points.forEach((p, i) => out.push(handle(view, p, `vertex-${i}`)));
       }
     } else if (sel.kind === 'wall') {
-      const w = c.walls[sel.id];
+      const w = c.walls[sel.id]?.points;
       if (!w) return '';
       for (let i = 0; i + 1 < w.length; i++) out.push(edgeGrip(view, w[i], w[i + 1], `edge-${i}`));
       w.forEach((p, i) => out.push(handle(view, p, `vertex-${i}`)));
+    } else if (sel.kind === 'door') {
+      const door = (c.doors || []).find(d => d.id === sel.id);
+      const pl = door && doorPlacement(c.walls, door);
+      if (pl) {
+        for (const [sign, role] of [[-1, 'doorend-0'], [1, 'doorend-1']]) {
+          const t = pl.t + sign * door.width / 2;
+          out.push(handle(view, [pl.a[0] + pl.dir[0] * t, pl.a[1] + pl.dir[1] * t], role));
+        }
+      }
     } else if (sel.kind === 'sensor') {
       const s = sensorById(sel.id);
       if (!s?.placed) return '';
@@ -187,7 +218,7 @@ export class SelectTool {
 
   // points of the selected wall/polygon zone (live object inside the config)
   _points(c, sel) {
-    if (sel.kind === 'wall') return c.walls[sel.id];
+    if (sel.kind === 'wall') return c.walls[sel.id]?.points;
     return c.zones.find(z => z.id === sel.id)?.points;
   }
 
@@ -196,7 +227,7 @@ export class SelectTool {
       const sel = state.selection;
       const d = { role: hit.dataset.role, start: world, merge: uid('drag') };
       const c = state.config;
-      if (sel.kind === 'wall' || sel.kind === 'zone') {
+      if (sel.kind === 'wall' || isZoneSel(sel)) {
         const pts = this._points(c, sel);
         d.orig = pts ? pts.map(p => [...p]) : null;
         const [role, idx] = d.role.split('-');
@@ -216,8 +247,12 @@ export class SelectTool {
       const id = kind === 'wall' ? +hit.dataset.id : hit.dataset.id;
       const already = state.selection?.kind === kind && state.selection.id === id;
       select({ kind, id });
-      // drag the body only when it was already selected (avoids moving things by accident)
-      if (already || kind === 'sensor') this.drag = { role: 'body', kind, id, start: world, last: world, merge: uid('drag') };
+      // drag the body only when it was already selected (avoids moving things by accident);
+      // rooms made from walls only move with their walls
+      const movable = !isFixedRoom({ kind, id });
+      if (movable && (already || kind === 'sensor' || kind === 'door')) {
+        this.drag = { role: 'body', kind, id, start: world, last: world, merge: uid('drag') };
+      }
       return true;
     }
     return false;
@@ -237,7 +272,7 @@ export class SelectTool {
       const dx = world[0] - d.last[0], dy = world[1] - d.last[1];
       d.last = world;
       edit(c => {
-        if (d.kind === 'zone') {
+        if (d.kind === 'zone' || d.kind === 'room') {
           const z = c.zones.find(z => z.id === d.id);
           if (z.shape === 'circle') z.center = [z.center[0] + dx, z.center[1] + dy].map(v => +v.toFixed(3));
           else z.points = z.points.map(([x, y]) => [+(x + dx).toFixed(3), +(y + dy).toFixed(3)]);
@@ -246,7 +281,12 @@ export class SelectTool {
           const p = snap(view, world, ev);
           s.x = +p[0].toFixed(3); s.y = +p[1].toFixed(3);
         } else if (d.kind === 'wall') {
-          c.walls[d.id] = c.walls[d.id].map(([x, y]) => [+(x + dx).toFixed(3), +(y + dy).toFixed(3)]);
+          c.walls[d.id].points = c.walls[d.id].points.map(([x, y]) => [+(x + dx).toFixed(3), +(y + dy).toFixed(3)]);
+        } else if (d.kind === 'door') {
+          // a door slides along its wall (or jumps to another wall it is dragged onto)
+          const door = c.doors.find(x => x.id === d.id);
+          const q = nearestWallPoint(c, world, 2 * SNAP_PX / view.s);
+          if (q) { door.x = q[0]; door.y = q[1]; }
         } else if (d.kind === 'layer') {
           const l = c.background.layers.find(l => l.id === d.id);
           l.x = +(l.x + dx).toFixed(4); l.y = +(l.y + dy).toFixed(4);
@@ -261,6 +301,19 @@ export class SelectTool {
         if (!ev.shiftKey) a = Math.round(a / 5) * 5;
         s.heading = +(((a % 360) + 360) % 360).toFixed(1);
       }, { merge: d.merge });
+      return;
+    }
+    if (d.role.startsWith('doorend')) {
+      edit(c => {
+        const door = c.doors.find(x => x.id === sel.id);
+        const pl = doorPlacement(c.walls, door);
+        if (!pl) return;
+        const t = (world[0] - pl.a[0]) * pl.dir[0] + (world[1] - pl.a[1]) * pl.dir[1];
+        let w = 2 * Math.abs(t - pl.t);
+        if (!ev.shiftKey) w = Math.round(w * 100) / 100;
+        door.width = +Math.max(0.3, Math.min(w, 4)).toFixed(3);
+      }, { merge: d.merge });
+      view.renderOverlay();
       return;
     }
     if (d.role === 'radius') {
@@ -278,7 +331,7 @@ export class SelectTool {
         return;
       }
       const pts = this._points(c, sel);
-      const closed = sel.kind === 'zone';
+      const closed = sel.kind !== 'wall';
       const exclude = sel.kind === 'wall' ? { pairs: d.pairs } : { zone: sel.id };
       const moved = role === 'vertex'
         ? { [i]: snap(view, world, ev, neighbors(d.orig, i, closed), exclude) }
@@ -286,7 +339,7 @@ export class SelectTool {
       for (const [k, p] of Object.entries(moved)) {
         pts[k] = p;
         for (const link of d.links || []) {
-          if (link.k === +k) for (const [wi, wj] of link.linked) c.walls[wi][wj] = [...p];
+          if (link.k === +k) for (const [wi, wj] of link.linked) c.walls[wi].points[wj] = [...p];
         }
       }
     }, { merge: d.merge });
@@ -356,7 +409,7 @@ export class SelectTool {
     // the handles were redrawn between the two clicks, so ask what is under the pointer now
     const hit = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('[data-kind="handle"]');
     const sel = state.selection;
-    if (!hit || !sel) return;
+    if (!hit || !sel || isFixedRoom(sel)) return;
     const [role, idx] = hit.dataset.role.split('-');
     const i = +idx;
     if (role === 'vertex') {
@@ -388,9 +441,11 @@ export class SelectTool {
 export function deleteSelection() {
   const sel = state.selection;
   if (!sel) return;
+  if (isFixedRoom(sel)) { toast('Räume entstehen aus den Wänden. Zum Entfernen die Wand löschen.'); return; }
   edit(c => {
-    if (sel.kind === 'zone') c.zones = c.zones.filter(z => z.id !== sel.id);
+    if (sel.kind === 'zone' || sel.kind === 'room') c.zones = c.zones.filter(z => z.id !== sel.id);
     else if (sel.kind === 'wall') c.walls.splice(sel.id, 1);
+    else if (sel.kind === 'door') c.doors = c.doors.filter(d => d.id !== sel.id);
     else if (sel.kind === 'layer') c.background.layers = c.background.layers.filter(l => l.id !== sel.id);
     else if (sel.kind === 'sensor') {
       const s = c.sensors.find(s => s.id === sel.id);
@@ -403,8 +458,11 @@ export function deleteSelection() {
 // ------------------------------------------------------------------- walls
 
 export class WallTool {
-  constructor() { this.points = []; this.cursor = null; }
-  hint() { return 'Klicken setzt Eckpunkte · Doppelklick oder Enter beendet die Wand · Esc bricht ab · Shift: ohne Einrasten'; }
+  constructor(kind = 'wall') { this.kind = kind; this.points = []; this.cursor = null; }
+  hint() {
+    const what = this.kind === 'divider' ? 'die Raumgrenze' : 'die Wand';
+    return `Klicken setzt Eckpunkte · Doppelklick oder Enter beendet ${what} · Esc bricht ab · Shift: ohne Einrasten`;
+  }
 
   down(world, hit, ev) {
     const p = snap(this.view, world, ev, [this.points[this.points.length - 1]]);
@@ -423,8 +481,8 @@ export class WallTool {
 
   finish() {
     if (this.points.length >= 2) {
-      const pts = this.points;
-      edit(c => c.walls.push(pts));
+      const wall = { points: this.points, kind: this.kind };
+      edit(c => c.walls.push(wall));
     }
     this.points = [];
     this.view.renderOverlay();
@@ -443,7 +501,7 @@ export class WallTool {
   overlay(view) {
     const pts = this.cursor ? [...this.points, this.cursor] : this.points;
     const out = [];
-    if (pts.length > 1) out.push(`<polyline class="wall-draft" points="${view.pts(pts)}"/>`);
+    if (pts.length > 1) out.push(`<polyline class="wall-draft${this.kind === 'divider' ? ' divider' : ''}" points="${view.pts(pts)}"/>`);
     if (this.cursor) {
       const [x, y] = view.P(...this.cursor);
       out.push(`<circle cx="${x}" cy="${y}" r="4" fill="var(--accent)"/>`);
@@ -517,7 +575,7 @@ export class ZoneTool {
     const zone = { id: uid('z'), name: `${ZONE_KINDS[kind].label} ${count}`, kind, ...geom };
     edit(c => c.zones.push(zone));
     setTool(null);
-    select({ kind: 'zone', id: zone.id });
+    select({ kind: kind === 'room' ? 'room' : 'zone', id: zone.id });
   }
 
   key(ev) {
@@ -543,6 +601,31 @@ export class ZoneTool {
     }
     return guidesOverlay(view);
   }
+}
+
+// ------------------------------------------------------------------- doors
+
+export class DoorTool {
+  hint() { return 'Auf eine Wand klicken, um dort eine Tür zu setzen · Esc bricht ab'; }
+  move(world) {
+    this.cursor = nearestWallPoint(state.config, world, 2 * SNAP_PX / this.view.s);
+    this.view.renderOverlay();
+  }
+  down(world) {
+    const q = nearestWallPoint(state.config, world, 2 * SNAP_PX / this.view.s);
+    if (!q) { toast('Türen sitzen auf einer Wand (keine Raumgrenze).'); return true; }
+    const door = { id: uid('d'), x: q[0], y: q[1], width: 0.9 };
+    edit(c => { c.doors ??= []; c.doors.push(door); });
+    setTool(null);
+    select({ kind: 'door', id: door.id });
+    return true;
+  }
+  overlay(view) {
+    if (!this.cursor) return '';
+    const [x, y] = view.P(...this.cursor);
+    return `<circle cx="${x}" cy="${y}" r="6" fill="none" stroke="var(--accent)" stroke-width="2"/>`;
+  }
+  key(ev) { if (ev.key === 'Escape') { setTool(null); return true; } return false; }
 }
 
 // ----------------------------------------------------------------- sensors

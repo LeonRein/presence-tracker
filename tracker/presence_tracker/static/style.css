@@ -168,7 +168,11 @@ table.data td { padding: 4px 4px; border-bottom: 1px solid var(--line); }
 /* map */
 .wall { stroke: var(--wall); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; fill: none; }
 .wall.selected { stroke: var(--accent); }
+.wall.divider { stroke-width: 2; stroke-dasharray: 6 5; opacity: .7; }
+.door line { stroke: var(--muted); stroke-width: 1.5; }
+.door.selected line { stroke: var(--accent); stroke-width: 2.5; }
 .wall-draft { stroke: var(--accent); stroke-width: 3; stroke-dasharray: 6 4; fill: none; }
+.wall-draft.divider { stroke-width: 2; stroke-dasharray: 2 4; }
 .zone { stroke-width: 1.5; }
 .zone.selected { stroke-width: 2.5; stroke-dasharray: 6 3; }
 .zone-label { font-size: 12px; font-weight: 600; paint-order: stroke; stroke: var(--map-bg); stroke-width: 3px; }

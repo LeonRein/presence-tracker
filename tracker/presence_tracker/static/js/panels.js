@@ -5,7 +5,7 @@ import { AlignTool, PlaceSensorTool, WallTool, ZoneTool, autoFitImage, deleteSel
 import { ZONE_KINDS, dist, esc, fmt, h, toast, uid, zoneOutline } from './util.js';
 
 let skipRender = false;
-let zoneKind = 'room';
+let zoneKind = 'area';
 let calibAnchor = null;
 
 // edits from panel inputs: don't rebuild the panel under the user's cursor
@@ -152,16 +152,19 @@ function livePanel(panel, view) {
 function planPanel(panel, view) {
   const c = state.config;
   const sel = state.selection;
-  const drawing = state.tool === 'wall';
+  const tool = state.tool;
+  const toolBtn = (name, label) => `<button class="${tool === name ? 'active' : ''}" data-tool="${name}">${label}</button>`;
+  const rooms = c.zones.filter(z => z.kind === 'room');
   panel.append(h(`<div>
     <h2>Grundriss</h2>
-    <p class="note">Koordinaten in Metern. Am besten zuerst die Saugroboter-Karte oder ein Bild des Grundrisses laden, dann die Wände nachzeichnen. Türen sind Lücken in den Wänden.</p>
-    <h3>Wände (${c.walls.length})</h3>
-    <div class="row">
-      <button class="btn ${drawing ? 'active' : ''}" id="wall">${drawing ? 'Zeichnen beenden' : 'Wand zeichnen'}</button>
-      ${sel?.kind === 'wall' ? '<button class="btn danger" id="del-wall">Wand löschen</button>' : ''}
-    </div>
-    ${sel?.kind === 'wall' ? `<p class="note">${wallInfo(c.walls[sel.id])} · Punkte oder Kanten ziehen (rastet in 45°-Schritten ein). Doppelklick auf eine Kante fügt einen Punkt ein, auf einen Punkt löscht ihn. Verbundene Wandenden wandern mit.</p>` : '<p class="note">Wand anklicken zum Bearbeiten. Rückgängig: Strg+Z.</p>'}
+    ${c.rooms_from_walls ? '' : `<div class="card" style="border-color:var(--warn)">
+      <b>Räume werden hier noch von Hand gezeichnet.</b>
+      <p class="note">Neu: Räume entstehen automatisch aus den Wänden. Vorher müssen Lücken in den Wänden mit Wand + Tür geschlossen sein, sonst fließen Räume ineinander. Mit Strg+Z lässt sich das Umstellen rückgängig machen.</p>
+      <button class="btn primary" id="convert">Räume aus Wänden ableiten</button></div>`}
+    <p class="note">Wände zeichnen, Türen auf die Wände setzen. Räume sind die geschlossenen Flächen dazwischen: Eine Tür trennt zwei Räume, ein Durchgang ohne Tür bleibt einfach eine Lücke in der Wand und verbindet sie zu einem Raum. Eine Raumgrenze teilt einen Raum ohne Wand (z. B. Wohn- und Essbereich).</p>
+    <div class="seg" id="tools">${toolBtn('wall', 'Wand')}${toolBtn('divider', 'Raumgrenze')}${toolBtn('door', 'Tür')}</div>
+    <div id="detail" style="margin-top:12px"></div>
+    ${c.rooms_from_walls ? `<h3>Räume (${rooms.length})</h3><div class="list" id="rooms"></div>` : ''}
     <h3>Hintergrund</h3>
     <div class="list" id="layers"></div>
     <div class="row" style="margin-top:8px">
@@ -170,8 +173,30 @@ function planPanel(panel, view) {
     </div>
     <div id="layer-edit"></div>
   </div>`));
-  panel.querySelector('#wall').onclick = () => setTool(drawing ? null : 'wall');
-  panel.querySelector('#del-wall')?.addEventListener('click', deleteSelection);
+  for (const b of panel.querySelectorAll('#tools button')) b.onclick = () => setTool(tool === b.dataset.tool ? null : b.dataset.tool);
+  panel.querySelector('#convert')?.addEventListener('click', () => {
+    if (confirm('Räume ab jetzt aus den Wänden ableiten? Namen bleiben erhalten, wenn ein Raum seine alte Fläche wiederfindet.')) {
+      edit(c => { c.rooms_from_walls = true; });
+    }
+  });
+
+  const detail = panel.querySelector('#detail');
+  if (sel?.kind === 'wall' && c.walls[sel.id]) wallDetail(detail, sel.id);
+  else if (sel?.kind === 'door') doorDetail(detail, sel.id);
+  else if (sel?.kind === 'room') { const z = c.zones.find(z => z.id === sel.id); if (z) roomDetail(detail, z); }
+  else detail.append(h('<p class="note">Wand, Tür oder Raum anklicken zum Bearbeiten. Rückgängig: Strg+Z.</p>'));
+
+  const roomList = panel.querySelector('#rooms');
+  for (const z of roomList ? rooms : []) {
+    const st = state.live?.zones?.[z.id];
+    const item = h(`<div class="item ${sel?.kind === 'room' && sel.id === z.id ? 'selected' : ''}">
+      <span class="swatch" style="background:${z.entry ? ZONE_KINDS.entry.color : ZONE_KINDS.room.color}"></span>
+      <span class="grow">${esc(z.name)}</span>${z.entry ? '<span class="badge warn">Eingang</span>' : ''}
+      <span class="meta">${zoneArea(z).toFixed(1)} m²</span>${st ? `<span class="badge ${st.count ? 'on' : ''}">${st.count}</span>` : ''}</div>`);
+    item.onclick = () => select({ kind: 'room', id: z.id });
+    roomList.append(item);
+  }
+  if (roomList && !rooms.length) roomList.append(h('<p class="note">Noch keine geschlossenen Räume.</p>'));
 
   const list = panel.querySelector('#layers');
   for (const l of c.background.layers) {
@@ -200,6 +225,49 @@ function planPanel(panel, view) {
   panel.querySelector('#vacuum')?.addEventListener('click', () => importVacuum(view));
 
   if (sel?.kind === 'layer') layerEditor(panel.querySelector('#layer-edit'), view, sel.id);
+}
+
+function wallDetail(el, i) {
+  const w = state.config.walls[i];
+  el.append(h(`<div class="card">
+    <div class="row"><b style="flex:1">${w.kind === 'divider' ? 'Raumgrenze' : 'Wand'}</b><button class="btn danger" id="del">Löschen</button></div>
+    <div class="seg" id="kind"><button data-kind="wall" class="${w.kind === 'wall' ? 'active' : ''}">Wand</button><button data-kind="divider" class="${w.kind === 'divider' ? 'active' : ''}">Raumgrenze</button></div>
+    <p class="note">${wallInfo(w.points)} · Punkte oder Kanten ziehen (rastet in 45°-Schritten ein). Doppelklick auf eine Kante fügt einen Punkt ein, auf einen Punkt löscht ihn. Verbundene Wandenden wandern mit.</p>
+  </div>`));
+  el.querySelector('#del').onclick = deleteSelection;
+  for (const b of el.querySelectorAll('#kind button')) b.onclick = () => edit(c => { c.walls[i].kind = b.dataset.kind; });
+}
+
+function doorDetail(el, id) {
+  const door = (state.config.doors || []).find(d => d.id === id);
+  if (!door) return;
+  el.append(h(`<div class="card">
+    <div class="row"><b style="flex:1">Tür</b><button class="btn danger" id="del">Löschen</button></div>
+    <label class="field">Breite (m)<input type="number" step="0.01" min="0.3" value="${door.width}" id="width"></label>
+    <p class="note">Entlang der Wand ziehen verschiebt die Tür, die Griffe an den Enden ändern die Breite. Für die Räume ist die Tür zu, für Radar und Personen offen.</p>
+  </div>`));
+  el.querySelector('#del').onclick = deleteSelection;
+  el.querySelector('#width').onchange = e => panelEdit(c => { c.doors.find(d => d.id === id).width = Math.max(0.3, +e.target.value); });
+}
+
+// name and entry flag of a room; its outline comes from the walls
+function roomDetail(el, z) {
+  const st = state.live?.zones?.[z.id];
+  el.append(h(`<div class="card">
+    <label class="field">Raum<input type="text" value="${esc(z.name)}" id="name"></label>
+    <label class="check" style="margin-top:8px"><input type="checkbox" id="entry" ${z.entry ? 'checked' : ''}> Eingang (Treppenhaus, Haustür)</label>
+    <p class="note">Hier dürfen Personen auftauchen und verschwinden. Fläche ${zoneArea(z).toFixed(2)} m²${st ? `, jetzt ${st.count} ${st.count === 1 ? 'Person' : 'Personen'}` : ''}.</p>
+    ${state.config.rooms_from_walls ? '<p class="note">Die Form folgt den Wänden. Zum Ändern im Tab Grundriss die Wände verschieben.</p>' : ''}
+  </div>`));
+  el.querySelector('#name').onchange = e => panelEdit(c => { c.zones.find(x => x.id === z.id).name = e.target.value; });
+  el.querySelector('#entry').onchange = e => edit(c => { c.zones.find(x => x.id === z.id).entry = e.target.checked; });
+}
+
+function zoneArea(z) {
+  const pts = zoneOutline(z, 64);
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; a += x1 * y2 - x2 * y1; }
+  return Math.abs(a) / 2;
 }
 
 function wallInfo(w) {
@@ -386,13 +454,19 @@ function renderCoverageStats(panel) {
 
 // ------------------------------------------------------------------ zones
 
+// zone kinds that are drawn by hand (rooms come from the walls unless the config is old)
+const drawableKinds = () => Object.entries(ZONE_KINDS).filter(([k]) => k !== 'room' || !state.config.rooms_from_walls);
+
 function zonesPanel(panel, view) {
   const c = state.config;
-  const sel = state.selection?.kind === 'zone' ? c.zones.find(z => z.id === state.selection.id) : null;
+  const selKind = state.selection?.kind;
+  const sel = selKind === 'zone' || selKind === 'room' ? c.zones.find(z => z.id === state.selection.id) : null;
   const tool = state.tool?.name === 'zone' ? state.tool : null;
+  if (!drawableKinds().some(([k]) => k === zoneKind)) zoneKind = 'area';
   panel.append(h(`<div>
     <h2>Zonen</h2>
-    <div class="seg" id="kinds" style="margin-bottom:6px">${Object.entries(ZONE_KINDS).map(([k, v]) => `<button data-kind="${k}" class="${zoneKind === k ? 'active' : ''}">${v.label}</button>`).join('')}</div>
+    ${c.rooms_from_walls ? '<p class="note">Räume entstehen aus den Wänden (Tab Grundriss). Hier kommen Bereiche, Eingänge und Störer dazu.</p>' : ''}
+    <div class="seg" id="kinds" style="margin-bottom:6px">${drawableKinds().map(([k, v]) => `<button data-kind="${k}" class="${zoneKind === k ? 'active' : ''}">${v.label}</button>`).join('')}</div>
     <p class="note">${ZONE_KINDS[zoneKind].note}</p>
     <div class="row">
       ${['rect', 'circle', 'polygon'].map(s => `<button class="btn ${tool?.shape === s ? 'active' : ''}" data-shape="${s}">${{ rect: 'Rechteck', circle: 'Kreis', polygon: 'Polygon' }[s]}</button>`).join('')}
@@ -414,12 +488,13 @@ function zonesPanel(panel, view) {
       const st = state.live?.zones?.[z.id];
       const item = h(`<div class="item ${sel?.id === z.id ? 'selected' : ''}"><span class="swatch" style="background:${meta.color}"></span>
         <span class="grow">${esc(z.name)}</span>${st ? `<span class="badge ${st.count ? 'on' : ''}">${st.count}</span>` : ''}</div>`);
-      item.onclick = () => select({ kind: 'zone', id: z.id });
+      item.onclick = () => select({ kind: z.kind === 'room' ? 'room' : 'zone', id: z.id });
       list.append(item);
     }
     groups.append(list);
   }
-  if (sel) zoneDetail(panel.querySelector('#detail'), sel);
+  if (sel?.kind === 'room' && c.rooms_from_walls) roomDetail(panel.querySelector('#detail'), sel);
+  else if (sel) zoneDetail(panel.querySelector('#detail'), sel);
 }
 
 function zoneDetail(el, z) {
@@ -432,7 +507,7 @@ function zoneDetail(el, z) {
   el.append(h(`<div class="card">
     <label class="field">Name<input type="text" value="${esc(z.name)}" id="name"></label>
     <div class="grid2" style="margin-top:8px">
-      <label class="field">Typ<select id="kind">${Object.entries(ZONE_KINDS).map(([k, v]) => `<option value="${k}" ${z.kind === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select></label>
+      <label class="field">Typ<select id="kind">${drawableKinds().map(([k, v]) => `<option value="${k}" ${z.kind === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select></label>
       <label class="field">Fläche<input type="text" value="${area.toFixed(2)} m²" disabled></label>
     </div>
     ${z.kind === 'room' || z.kind === 'area' ? `<div data-live="zoneNow" data-id="${esc(z.id)}"></div>` : ''}
