@@ -23,14 +23,64 @@ DOOR_REACH = 0.25  # m, a door belongs to a wall segment this close to its cente
 
 
 def normalize_walls(walls: list) -> list:
-    """Old configs stored walls as plain point lists."""
+    """Every wall is one straight segment {"points": [a, b], "kind"}. Old configs stored plain point
+    lists and polylines; they are split at their corners (straight-through points are dropped)."""
     out = []
     for w in walls:
         if isinstance(w, dict):
-            out.append({"points": [list(p) for p in w.get("points", [])], "kind": w.get("kind", "wall")})
+            pts, kind = w.get("points", []), w.get("kind", "wall")
         else:
-            out.append({"points": [list(p) for p in w], "kind": "wall"})
-    return [w for w in out if len(w["points"]) >= 2]
+            pts, kind = w, "wall"
+        pts = _drop_collinear_points([list(p) for p in pts])
+        for a, b in zip(pts, pts[1:]):
+            if math.dist(a, b) > 1e-6:
+                out.append({"points": [a, b], "kind": kind})
+    return out
+
+
+def _straight(o, a, b, tol: float = 0.005) -> bool:
+    """a lies on the straight line from o to b, between them."""
+    length = math.dist(o, b)
+    return length > 0 and abs(_cross(o, a, b)) / length < tol and math.dist(o, a) + math.dist(a, b) < length + tol
+
+
+def _drop_collinear_points(pts: list) -> list:
+    out = pts[:1]
+    for i in range(1, len(pts) - 1):
+        if not _straight(out[-1], pts[i], pts[i + 1]):
+            out.append(pts[i])
+    return out + pts[-1:] if len(pts) > 1 else out
+
+
+def merge_collinear(walls: list, snap: float = SNAP) -> list:
+    """Join segments of the same kind that continue each other in a straight line, where nothing
+    else meets: what looks like one straight wall is one wall."""
+    walls = [dict(w, points=[list(p) for p in w["points"]]) for w in walls]
+    changed = True
+    while changed:
+        changed = False
+        for i, w in enumerate(walls):
+            for end in (0, 1):
+                p = w["points"][end]
+                touching = [(j, e) for j, v in enumerate(walls) for e in (0, 1)
+                            if j != i and math.dist(p, v["points"][e]) < 0.002]
+                passing = [j for j, v in enumerate(walls)
+                           if j != i and (j, 0) not in touching and (j, 1) not in touching
+                           and distance_to_segment(p[0], p[1], *v["points"]) < snap]
+                if len(touching) != 1 or passing:
+                    continue
+                j, e = touching[0]
+                v = walls[j]
+                far_w, far_v = w["points"][1 - end], v["points"][1 - e]
+                if v["kind"] != w["kind"] or not _straight(far_w, p, far_v):
+                    continue
+                walls[i] = {"points": [far_w, far_v], "kind": w["kind"]}
+                del walls[j]
+                changed = True
+                break
+            if changed:
+                break
+    return walls
 
 
 def wall_pieces(walls: list) -> list:

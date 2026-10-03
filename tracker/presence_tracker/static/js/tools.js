@@ -1,6 +1,6 @@
 // Map interaction: selecting/dragging, drawing walls and zones, placing sensors, aligning images.
 import { edit, endMerge, emit, select, sensorById, setTool, state } from './store.js';
-import { ZONE_KINDS, deg, dist, doorPlacement, rad, toast, uid, wallPieces, zoneOutline } from './util.js';
+import { ZONE_KINDS, deg, dist, distToSegment, doorPlacement, rad, toast, uid, wallPieces, zoneOutline } from './util.js';
 import { bgToWorld, loadSize } from './view.js';
 
 const SNAP_PX = 10;
@@ -48,8 +48,9 @@ function intersectLines(a, da, b, db) {
 
 // Snap a point while drawing or dragging (hold Shift to disable). Priority:
 //   1. existing corners
-//   2. 45° directions from the neighbor points (both neighbors: their crossing, i.e. exact corners)
-//   3. a point on an existing wall
+//   2. a 45° direction from a neighbor point where it meets a wall (lines end exactly on walls)
+//   3. 45° directions from the neighbor points (both neighbors: their crossing, i.e. exact corners)
+//   4. a point on an existing wall
 // Sets snap.guides for the overlay.
 export const snapGuides = [];
 function snap(view, p, ev, anchors = [], exclude = null) {
@@ -70,6 +71,24 @@ function snap(view, p, ev, anchors = [], exclude = null) {
     const dir = [Math.cos(ang), Math.sin(ang)];
     const q = projectOnLine(p, a, dir);
     if (dist(q, p) < tol) rays.push({ a, dir, q, d: dist(q, p) });
+  }
+  // a ray that hits a wall near the pointer: take the hit point
+  let hit = null;
+  for (const r of rays) {
+    for (const [a, b] of segments(exclude)) {
+      const len = dist(a, b);
+      if (len < 1e-6) continue;
+      const sd = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+      const x = intersectLines(r.a, r.dir, a, sd);
+      if (!x) continue;
+      const t = (x[0] - a[0]) * sd[0] + (x[1] - a[1]) * sd[1];
+      const d = dist(x, p);
+      if (t >= -1e-6 && t <= len + 1e-6 && d < 1.5 * tol && (!hit || d < hit.d)) hit = { x, d, r };
+    }
+  }
+  if (hit) {
+    snapGuides.push({ type: 'ray', a: hit.r.a, b: hit.x }, { type: 'point', p: hit.x });
+    return round3(hit.x);
   }
   if (rays.length >= 2) {
     const x = intersectLines(rays[0].a, rays[0].dir, rays[1].a, rays[1].dir);
@@ -141,19 +160,28 @@ const isZoneSel = sel => sel?.kind === 'zone' || sel?.kind === 'room';
 // rooms derived from the walls have no geometry of their own
 const isFixedRoom = sel => sel?.kind === 'room' && state.config.rooms_from_walls;
 
-// closest point on a real wall within `tol`
-function nearestWallPoint(c, p, tol) {
+// closest real wall (no divider) within `tol`: {a, dir, len, t, d}
+function nearestWall(c, p, tol) {
   let best = null;
   for (const [a, b] of wallPieces(c.walls, 'wall')) {
     const len = dist(a, b);
     if (len < 1e-6) continue;
     const dir = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
     const t = Math.max(0, Math.min(len, (p[0] - a[0]) * dir[0] + (p[1] - a[1]) * dir[1]));
-    const q = [a[0] + t * dir[0], a[1] + t * dir[1]];
-    const d = dist(p, q);
-    if (d < tol && (!best || d < best.d)) best = { d, q };
+    const d = dist(p, [a[0] + t * dir[0], a[1] + t * dir[1]]);
+    if (d < tol && (!best || d < best.d)) best = { a, dir, len, t, d };
   }
-  return best && round3(best.q);
+  return best;
+}
+
+const along = (w, t) => round3([w.a[0] + w.dir[0] * t, w.a[1] + w.dir[1] * t]);
+
+// door center at t on wall w, kept so that the whole door stays on the wall
+const clampDoor = (w, t, width) => Math.max(Math.min(width / 2, w.len / 2), Math.min(t, w.len - Math.min(width / 2, w.len / 2)));
+
+// the other ends of the walls joined at a wall end
+function linkedFarEnds(c, links) {
+  return links.map(([wi, wj]) => c.walls[wi].points[1 - wj]);
 }
 
 // ----------------------------------------------------------------- select / drag
@@ -165,8 +193,11 @@ export class SelectTool {
     const sel = state.selection;
     if (isFixedRoom(sel)) return '';
     if (sel?.kind === 'door') return 'Tür entlang der Wand ziehen · an den Enden die Breite ändern';
+    if (sel?.kind === 'wall') {
+      return 'Enden oder die Wand ziehen · Doppelklick auf die Wand teilt sie, auf ein Ende verbindet es mit der anschließenden Wand · Shift: ohne Einrasten';
+    }
     const z = isZoneSel(sel) && state.config.zones.find(z => z.id === sel.id);
-    if (sel?.kind === 'wall' || z?.shape === 'polygon') {
+    if (z?.shape === 'polygon') {
       return 'Punkte und Kanten ziehen · Doppelklick auf eine Kante fügt einen Punkt ein, auf einen Punkt löscht ihn · Shift: ohne Einrasten';
     }
     if (z) return 'Ecken und Seiten ziehen · nochmal anklicken und ziehen verschiebt die Zone · Shift: ohne Einrasten';
@@ -193,7 +224,7 @@ export class SelectTool {
     } else if (sel.kind === 'wall') {
       const w = c.walls[sel.id]?.points;
       if (!w) return '';
-      for (let i = 0; i + 1 < w.length; i++) out.push(edgeGrip(view, w[i], w[i + 1], `edge-${i}`));
+      out.push(edgeGrip(view, w[0], w[1], 'edge-0'));
       w.forEach((p, i) => out.push(handle(view, p, `vertex-${i}`)));
     } else if (sel.kind === 'door') {
       const door = (c.doors || []).find(d => d.id === sel.id);
@@ -234,9 +265,26 @@ export class SelectTool {
         // joined wall ends move along
         if (sel.kind === 'wall' && (role === 'vertex' || role === 'edge')) {
           const idxs = role === 'vertex' ? [+idx] : [+idx, +idx + 1];
-          d.links = idxs.map(k => ({ k, linked: linkedWallVertices(c, pts[k], sel.id) }));
+          d.links = idxs.map(k => {
+            const linked = linkedWallVertices(c, pts[k], sel.id);
+            return { k, linked, far: linkedFarEnds(c, linked) };
+          });
           d.pairs = new Set(idxs.map(k => `${sel.id}:${k}`));
           for (const l of d.links) for (const [wi, wj] of l.linked) d.pairs.add(`${wi}:${wj}`);
+          // walls ending on this one (T-junctions) and doors on it move with it
+          const [a, b] = pts;
+          d.attached = [];
+          c.walls.forEach((w, wi) => w.points.forEach((q, wj) => {
+            if (wi === sel.id || d.pairs.has(`${wi}:${wj}`)) return;
+            const t = ((q[0] - a[0]) * (b[0] - a[0]) + (q[1] - a[1]) * (b[1] - a[1])) / (dist(a, b) ** 2);
+            if (t > 0 && t < 1 && distToSegment(q, a, b) < 0.03) {  // as SNAP in floorplan.py
+              d.attached.push({ wi, wj, far: w.points[1 - wj] });
+              d.pairs.add(`${wi}:${wj}`);
+            }
+          }));
+          d.doors = (c.doors || []).filter(door => distToSegment([door.x, door.y], a, b) < 0.01).map(door => ({
+            id: door.id, t: dist([door.x, door.y], a) / (dist(a, b) || 1),
+          }));
         }
       }
       this.drag = d;
@@ -283,10 +331,23 @@ export class SelectTool {
         } else if (d.kind === 'wall') {
           c.walls[d.id].points = c.walls[d.id].points.map(([x, y]) => [+(x + dx).toFixed(3), +(y + dy).toFixed(3)]);
         } else if (d.kind === 'door') {
-          // a door slides along its wall (or jumps to another wall it is dragged onto)
+          // a door slides along its wall (or jumps to another wall it is dragged onto), always
+          // completely on it
           const door = c.doors.find(x => x.id === d.id);
-          const q = nearestWallPoint(c, world, 2 * SNAP_PX / view.s);
-          if (q) { door.x = q[0]; door.y = q[1]; }
+          let w = nearestWall(c, world, 2 * SNAP_PX / view.s);
+          if (!w) {
+            // pointer away from all walls: follow it along the door's own wall
+            const pl = doorPlacement(c.walls, door);
+            if (pl) {
+              const t = (world[0] - pl.a[0]) * pl.dir[0] + (world[1] - pl.a[1]) * pl.dir[1];
+              w = { a: pl.a, dir: pl.dir, len: pl.length, t: Math.max(0, Math.min(pl.length, t)) };
+            }
+          }
+          if (w) {
+            const t = clampDoor(w, w.t, door.width);
+            [door.x, door.y] = along(w, t);
+            door.width = Math.min(door.width, +w.len.toFixed(3));
+          }
         } else if (d.kind === 'layer') {
           const l = c.background.layers.find(l => l.id === d.id);
           l.x = +(l.x + dx).toFixed(4); l.y = +(l.y + dy).toFixed(4);
@@ -306,12 +367,20 @@ export class SelectTool {
     if (d.role.startsWith('doorend')) {
       edit(c => {
         const door = c.doors.find(x => x.id === sel.id);
-        const pl = doorPlacement(c.walls, door);
+        // placement at drag start: the door must not hop to another wall while its width changes
+        d.pl ??= doorPlacement(c.walls, door);
+        const pl = d.pl;
         if (!pl) return;
-        const t = (world[0] - pl.a[0]) * pl.dir[0] + (world[1] - pl.a[1]) * pl.dir[1];
-        let w = 2 * Math.abs(t - pl.t);
-        if (!ev.shiftKey) w = Math.round(w * 100) / 100;
-        door.width = +Math.max(0.3, Math.min(w, 4)).toFixed(3);
+        // the dragged end moves along the wall (not past its ends), the other end stays
+        d.fixed ??= pl.t + (d.role === 'doorend-0' ? 1 : -1) * door.width / 2;
+        const fixed = d.fixed;
+        let t = Math.max(0, Math.min(pl.length, (world[0] - pl.a[0]) * pl.dir[0] + (world[1] - pl.a[1]) * pl.dir[1]));
+        if (!ev.shiftKey) t = fixed + Math.round((t - fixed) * 100) / 100;
+        if (Math.abs(t - fixed) < 0.3) t = fixed + Math.sign(t - fixed || -1) * 0.3;
+        const width = Math.abs(t - fixed);
+        const center = (t + fixed) / 2;
+        door.width = +width.toFixed(3);
+        [door.x, door.y] = round3([pl.a[0] + pl.dir[0] * center, pl.a[1] + pl.dir[1] * center]);
       }, { merge: d.merge });
       view.renderOverlay();
       return;
@@ -331,15 +400,46 @@ export class SelectTool {
         return;
       }
       const pts = this._points(c, sel);
-      const closed = sel.kind !== 'wall';
-      const exclude = sel.kind === 'wall' ? { pairs: d.pairs } : { zone: sel.id };
-      const moved = role === 'vertex'
-        ? { [i]: snap(view, world, ev, neighbors(d.orig, i, closed), exclude) }
-        : this._moveEdge(d.orig, i, closed, world, d.start, ev, exclude);
+      let moved;
+      if (sel.kind === 'wall') {
+        const exclude = { pairs: d.pairs };
+        if (role === 'vertex') {
+          // 45° from the other end and from the far ends of the walls joined here
+          const anchors = [d.orig[1 - i], ...d.links[0].far];
+          moved = { [i]: snap(view, world, ev, anchors, exclude) };
+        } else {
+          // ends slide along the wall joined there, if exactly one is
+          const prev = d.links[0].far.length === 1 ? d.links[0].far[0] : null;
+          const next = d.links[1].far.length === 1 ? d.links[1].far[0] : null;
+          const line = [prev, d.orig[0], d.orig[1], next].filter(Boolean);
+          const k = prev ? 1 : 0;
+          const m = this._moveEdge(line, k, false, world, d.start, ev, exclude);
+          moved = { 0: m[k], 1: m[k + 1] };
+        }
+      } else {
+        const exclude = { zone: sel.id };
+        moved = role === 'vertex'
+          ? { [i]: snap(view, world, ev, neighbors(d.orig, i, true), exclude) }
+          : this._moveEdge(d.orig, i, true, world, d.start, ev, exclude);
+      }
       for (const [k, p] of Object.entries(moved)) {
         pts[k] = p;
         for (const link of d.links || []) {
           if (link.k === +k) for (const [wi, wj] of link.linked) c.walls[wi].points[wj] = [...p];
+        }
+      }
+      if (sel.kind === 'wall') {
+        const [a, b] = pts;
+        const dir = [b[0] - a[0], b[1] - a[1]];
+        // T-junction walls keep their direction and end on the moved wall again
+        for (const { wi, wj, far } of d.attached || []) {
+          const own = c.walls[wi].points[wj];
+          const x = intersectLines(far, [own[0] - far[0], own[1] - far[1]], a, dir);
+          if (x) c.walls[wi].points[wj] = round3(x);
+        }
+        for (const { id, t } of d.doors || []) {
+          const door = c.doors.find(x => x.id === id);
+          if (door) [door.x, door.y] = round3([a[0] + dir[0] * t, a[1] + dir[1] * t]);
         }
       }
     }, { merge: d.merge });
@@ -412,6 +512,10 @@ export class SelectTool {
     if (!hit || !sel || isFixedRoom(sel)) return;
     const [role, idx] = hit.dataset.role.split('-');
     const i = +idx;
+    if (sel.kind === 'wall') {
+      this._splitOrJoin(role, i, world);
+      return;
+    }
     if (role === 'vertex') {
       // remove the vertex
       edit(c => {
@@ -428,6 +532,38 @@ export class SelectTool {
         pts.splice(i + 1, 0, round3(q));
       });
     }
+  }
+
+  // double click on a wall: on the wall splits it in two, on an end joins it with the one wall there
+  _splitOrJoin(role, i, world) {
+    const sel = state.selection;
+    const c = state.config;
+    const w = c.walls[sel.id];
+    if (role === 'edge') {
+      const [a, b] = w.points;
+      const len = dist(a, b) || 1;
+      const q = round3(projectOnLine(world, a, [(b[0] - a[0]) / len, (b[1] - a[1]) / len]));
+      if (dist(q, a) < 0.05 || dist(q, b) < 0.05) return;
+      edit(c => {
+        c.walls[sel.id].points = [a, q];
+        c.walls.push({ points: [q, b], kind: w.kind });
+      });
+      toast('Wand geteilt');
+      return;
+    }
+    const linked = linkedWallVertices(c, w.points[i], sel.id);
+    if (linked.length !== 1 || c.walls[linked[0][0]].kind !== w.kind) {
+      toast(linked.length ? 'Hier treffen mehrere Wände zusammen.' : 'An diesem Ende schließt keine Wand an.');
+      return;
+    }
+    const [wi, wj] = linked[0];
+    const keep = w.points[1 - i], far = c.walls[wi].points[1 - wj];
+    edit(c => {
+      c.walls[sel.id].points = [keep, far];
+      c.walls.splice(wi, 1);
+    });
+    select({ kind: 'wall', id: wi < sel.id ? sel.id - 1 : sel.id });
+    toast('Wände verbunden');
   }
 
   key(ev) {
@@ -481,8 +617,16 @@ export class WallTool {
 
   finish() {
     if (this.points.length >= 2) {
-      const wall = { points: this.points, kind: this.kind };
-      edit(c => c.walls.push(wall));
+      // one wall per straight segment; clicks along a straight line don't split it
+      const pts = [this.points[0]];
+      for (let k = 1; k < this.points.length; k++) {
+        const o = pts[pts.length - 1], a = this.points[k], b = this.points[k + 1];
+        const straight = b && Math.abs((a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])) / (dist(o, b) || 1) < 0.005
+          && dist(o, a) + dist(a, b) < dist(o, b) + 0.005;
+        if (!straight) pts.push(a);
+      }
+      const kind = this.kind;
+      edit(c => { for (let k = 0; k + 1 < pts.length; k++) c.walls.push({ points: [pts[k], pts[k + 1]], kind }); });
     }
     this.points = [];
     this.view.renderOverlay();
@@ -608,13 +752,16 @@ export class ZoneTool {
 export class DoorTool {
   hint() { return 'Auf eine Wand klicken, um dort eine Tür zu setzen · Esc bricht ab'; }
   move(world) {
-    this.cursor = nearestWallPoint(state.config, world, 2 * SNAP_PX / this.view.s);
+    const w = nearestWall(state.config, world, 2 * SNAP_PX / this.view.s);
+    this.cursor = w && along(w, w.t);
     this.view.renderOverlay();
   }
   down(world) {
-    const q = nearestWallPoint(state.config, world, 2 * SNAP_PX / this.view.s);
-    if (!q) { toast('Türen sitzen auf einer Wand (keine Raumgrenze).'); return true; }
-    const door = { id: uid('d'), x: q[0], y: q[1], width: 0.9 };
+    const w = nearestWall(state.config, world, 2 * SNAP_PX / this.view.s);
+    if (!w) { toast('Türen sitzen auf einer Wand (keine Raumgrenze).'); return true; }
+    const width = Math.min(0.9, +w.len.toFixed(3));
+    const [x, y] = along(w, clampDoor(w, w.t, width));
+    const door = { id: uid('d'), x, y, width };
     edit(c => { c.doors ??= []; c.doors.push(door); });
     setTool(null);
     select({ kind: 'door', id: door.id });

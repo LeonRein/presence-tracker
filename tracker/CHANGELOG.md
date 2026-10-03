@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+- Jede Wand ist ein gerades Segment von Ecke zu Ecke. Bestehende Linienzüge werden beim Laden einmalig in
+  Segmente geteilt, gerade aneinanderstoßende Stücke zusammengefasst.
+- Wand parallel ziehen: angrenzende Wände an den Ecken gleiten mit, Wände mit T-Stoß verlängern sich, Türen gehen mit.
+- Doppelklick auf eine Wand teilt sie, auf ein Ende verbindet es mit der anschließenden Wand.
+- Linien rasten exakt auf Wänden ein, wo eine 45°-Richtung eine Wand trifft.
+- Türen bleiben vollständig auf ihrer Wand; beim Ziehen eines Türendes bleibt das andere stehen.
+
 ## 0.2.0
 
 - Räume entstehen aus den Wänden: geschlossene Flächen zwischen Wänden, Türen und Raumgrenzen. Räume werden

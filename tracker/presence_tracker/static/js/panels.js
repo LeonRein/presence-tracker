@@ -232,7 +232,7 @@ function wallDetail(el, i) {
   el.append(h(`<div class="card">
     <div class="row"><b style="flex:1">${w.kind === 'divider' ? 'Raumgrenze' : 'Wand'}</b><button class="btn danger" id="del">Löschen</button></div>
     <div class="seg" id="kind"><button data-kind="wall" class="${w.kind === 'wall' ? 'active' : ''}">Wand</button><button data-kind="divider" class="${w.kind === 'divider' ? 'active' : ''}">Raumgrenze</button></div>
-    <p class="note">${wallInfo(w.points)} · Punkte oder Kanten ziehen (rastet in 45°-Schritten ein). Doppelklick auf eine Kante fügt einen Punkt ein, auf einen Punkt löscht ihn. Verbundene Wandenden wandern mit.</p>
+    <p class="note">${dist(w.points[0], w.points[1]).toFixed(2)} m · Enden oder die ganze Wand ziehen (rastet in 45°-Schritten und an Wänden ein). Angeschlossene Wände gehen mit. Doppelklick auf die Wand teilt sie, auf ein Ende verbindet es mit der anschließenden Wand.</p>
   </div>`));
   el.querySelector('#del').onclick = deleteSelection;
   for (const b of el.querySelectorAll('#kind button')) b.onclick = () => edit(c => { c.walls[i].kind = b.dataset.kind; });
@@ -268,13 +268,6 @@ function zoneArea(z) {
   let a = 0;
   for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; a += x1 * y2 - x2 * y1; }
   return Math.abs(a) / 2;
-}
-
-function wallInfo(w) {
-  if (!w) return '';
-  let len = 0;
-  for (let i = 0; i + 1 < w.length; i++) len += dist(w[i], w[i + 1]);
-  return `${w.length} Punkte, ${len.toFixed(2)} m`;
 }
 
 function layerEditor(el, view, id) {

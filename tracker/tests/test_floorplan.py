@@ -1,6 +1,6 @@
 import pytest
 
-from presence_tracker.floorplan import faces, sight_segments, sync_rooms
+from presence_tracker.floorplan import faces, merge_collinear, normalize_walls, sight_segments, sync_rooms
 from presence_tracker.geometry import line_of_sight
 from presence_tracker.model import Config
 
@@ -98,3 +98,31 @@ def test_entry_rooms_count_as_entry_zones():
     d = c.to_dict()
     d["zones"][0]["entry"] = True
     assert len(Config.from_dict(d).entry_zones) == 1
+
+
+def test_polylines_become_segments():
+    walls = normalize_walls([[[0, 0], [2, 0], [4, 0], [4, 3]], {"points": [[0, 1], [0, 2]], "kind": "divider"}])
+    # the straight-through point at (2, 0) is dropped, the corner at (4, 0) splits
+    assert walls == [{"points": [[0, 0], [4, 0]], "kind": "wall"}, {"points": [[4, 0], [4, 3]], "kind": "wall"},
+                     {"points": [[0, 1], [0, 2]], "kind": "divider"}]
+
+
+def test_merge_straight_pieces_but_not_at_junctions():
+    walls = [wall((0, 0), (2, 0)), wall((2, 0), (3, 0)), wall((3, 0), (5, 0)),  # one straight wall in 3 pieces
+             wall((3, 0), (3, 2)),  # ... but a wall meets at x = 3
+             wall((5, 0), (5, 2)),  # corner
+             wall((0, 3), (1, 3), kind="divider"), wall((1, 3), (2, 3))]  # different kinds stay apart
+    merged = merge_collinear(walls)
+    pts = sorted(tuple(map(tuple, w["points"])) for w in merged)
+    assert ((0, 0), (3, 0)) in pts and ((3, 0), (5, 0)) in pts
+    assert len(merged) == 6
+
+
+def test_old_config_walls_are_joined_once():
+    old = {"version": 2, "walls": [[[0, 0], [3, 0]], [[3, 0], [6, 0]], [[6, 0], [6, 4], [0, 4], [0, 0]]],
+           "rooms_from_walls": True}
+    c = Config.from_dict(old)
+    assert len(c.walls) == 4 and all(len(w["points"]) == 2 for w in c.walls)
+    # version 3 configs are taken as they are: deliberately split walls stay split
+    again = Config.from_dict({**c.to_dict(), "walls": c.walls + [wall((0, 2), (1, 2)), wall((1, 2), (2, 2))]})
+    assert len(again.walls) == 6

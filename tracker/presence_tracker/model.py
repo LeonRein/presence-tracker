@@ -8,7 +8,7 @@ import math
 import pathlib
 from dataclasses import asdict, dataclass, field, fields
 
-from .floorplan import normalize_walls, sight_segments, sync_rooms
+from .floorplan import merge_collinear, normalize_walls, sight_segments, sync_rooms
 from .geometry import Shape, line_of_sight
 
 
@@ -152,7 +152,7 @@ class TrackerParams:
 class Config:
     sensors: list = field(default_factory=list)
     zones: list = field(default_factory=list)
-    walls: list = field(default_factory=list)  # [{"points": [[x, y], ...], "kind": "wall" | "divider"}]
+    walls: list = field(default_factory=list)  # [{"points": [a, b], "kind": "wall" | "divider"}], one segment each
     doors: list = field(default_factory=list)  # [{"id", "x", "y", "width"}] on a wall
     # rooms are the closed areas between the walls; off for configs with hand-drawn rooms
     rooms_from_walls: bool = True
@@ -181,7 +181,7 @@ class Config:
 
     def to_dict(self) -> dict:
         return {
-            "version": 2,
+            "version": 3,
             "sensors": [{k.name: getattr(s, k.name) for k in fields(s)} for s in self.sensors],
             "zones": [z.to_dict() for z in self.zones],
             "walls": self.walls,
@@ -199,6 +199,9 @@ class Config:
 
         zones = d.get("zones", [])
         walls = normalize_walls(d.get("walls", []))
+        if d.get("version", 1) < 3:
+            # version 3: one wall = one straight segment; pieces that continue each other are joined once
+            walls = merge_collinear(walls)
         # configs from before version 2 have hand-drawn rooms and doors as gaps in the walls:
         # deriving rooms would merge them, so they keep their rooms until switched over
         rooms_from_walls = d.get("rooms_from_walls", not any(z.get("kind") == "room" for z in zones))
