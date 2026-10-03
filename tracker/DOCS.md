@@ -13,8 +13,9 @@ betreten wird. Wer wer ist, spielt keine Rolle.
   Eingangszonen (Treppe, Haustür, Balkon) schnell bestätigt, mitten im Raum erst nach etwa 2 s stimmiger
   Messungen. Eine Person, die der LD2450 nicht mehr sieht (stillsitzend, verdeckt, mehr als 3 Ziele),
   bleibt an ihrem Platz stehen, bis sie durch einen Eingang geht oder der LD2410C dort länger nichts mehr sieht.
-- Der **LD2410C** erzeugt nie selbst Personen. Seine Störungen durch den LD2450 sind kurz (Auslöser plus
-  etwa 5 s Haltezeit). Nur längere Präsenz im passenden Abstand bestätigt eine verdeckte Person.
+- Der **LD2410C** erzeugt nie selbst Personen. Seine Haltezeit steht auf 0, die App überbrückt kurze Lücken selbst
+  (*LD2410C-Haltezeit*). Seine Störungen durch den LD2450 dauern etwa 1 s. Nur längere Präsenz im passenden
+  Abstand bestätigt eine verdeckte Person. Die Energie pro Entfernungsstufe steht im Tab *Sensoren*.
 - **Mehrere Sensoren**: Messungen aller Sensoren gehen in dieselben Spuren. Sieht ein Sensor dieselbe Person
   wie ein anderer, wird sie nicht doppelt gezählt.
 

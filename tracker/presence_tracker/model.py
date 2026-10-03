@@ -130,7 +130,8 @@ class TrackerParams:
     exit_timeout: float = 3.0  # s until a lost track in an entry zone or outside coverage is removed
     absence_time: float = 60.0  # s without LD2410C support until a lost track is removed
     ld2410_support_window: float = 0.8  # m, LD2410C distance this close to a lost track supports it
-    ld2410_min_presence: float = 6.0  # s, shorter LD2410C presence is a ghost (trigger + ~5 s hold)
+    ld2410_hold: float = 1.5  # s, gaps in the LD2410C presence up to this long are bridged
+    ld2410_min_presence: float = 3.0  # s, shorter LD2410C presence is a ghost (interference, ~1 s)
     max_lost_time: float = 4 * 3600.0  # s, upper bound for a lost track without any support
     merge_distance: float = 0.5  # m, two tracks this close for merge_time are one person
     merge_time: float = 1.0

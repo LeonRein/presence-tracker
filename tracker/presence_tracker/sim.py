@@ -111,12 +111,12 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
         still = True
         sd = round(min(near) * 1000, -1)
     elif s.ld2410_ghost_period:
-        # as recorded: moving 0.1 s, moving+still 1 s, then the radar's hold time ~4 s
+        # as recorded: moving 0.1 s, then moving+still 1 s (the radar's own hold time is 0)
         phase = t % s.ld2410_ghost_period
         episode = int(t // s.ld2410_ghost_period)
         dist = round(random.Random(episode).uniform(0.5, 5.0) * 1000, -1)
         moving = phase < 1.1
-        still = 0.1 <= phase < 5.2
+        still = 0.1 <= phase < 1.1
         md = dist if moving else 0
         sd = dist if still else 0
     s.seq += 1

@@ -43,7 +43,9 @@ Topic `presence/<name>/frame`, QoS 0, nicht retained:
   "ld2410": {
     "moving": false, "still": true,
     "moving_distance": 0, "moving_energy": 0,
-    "still_distance": 1900, "still_energy": 47
+    "still_distance": 1900, "still_energy": 47,
+    "move_gates": [12, 30, 8, 4, 2, 1, 0, 0, 0],
+    "still_gates": [100, 64, 47, 20, 9, 5, 3, 2, 1]
   }
 }
 ```
@@ -59,6 +61,7 @@ Topic `presence/<name>/frame`, QoS 0, nicht retained:
 | `resolution` | Abstandsauflösung des Radars, mm |
 | `slot` | Platz 1–3 im LD2450. Bleibt meist gleich, ist aber **keine** feste Personen-ID |
 | `ld2410` | Statusdaten des LD2410C, Abstände in mm, Energie 0–100 |
+| `move_gates`, `still_gates` | Energie 0–100 je Entfernungsstufe (0,75 m, Stufe 0 = 0–0,75 m). Der Engineering Mode ist dafür immer an |
 
 Wann gesendet wird: bei jedem LD2450-Frame (etwa alle 90 ms), höchstens alle `frame_interval_ms` (50 ms, also jeder Frame).
 Ist nichts erkannt (kein Ziel, LD2410C ohne Präsenz), kommt einmal ein leerer Frame und danach
@@ -78,6 +81,8 @@ Zusätzlich veröffentlicht ESPHome alle nicht-internen Entitäten unter `presen
   Es hängt davon ab, wie herum der Sensor hängt.
 - Der LD2450 verliert stillsitzende Personen nach einiger Zeit. Der LD2410C erkennt sie weiter
   (`still`, nur Abstand, keine Richtung). Daran lässt sich sehen, dass ein verlorenes Ziel wahrscheinlich noch da ist.
+- Der LD2410C hat **keine Haltezeit** (Timeout 0, setzt die Firmware beim Start): `moving`/`still` zeigen,
+  was er gerade sieht. Wie lange Präsenz anhält, entscheidet der Tracker.
 - Zeitstempel beim Empfang im Skript setzen. Im LAN sind das wenige Millisekunden.
 - **Multi-Target** muss eingeschaltet sein (Schalter `LD2450 Multi Target`), sonst meldet der LD2450 nur ein Ziel.
 
@@ -131,7 +136,9 @@ Das geht nur, wenn das Repo öffentlich ist. Änderungen am Package landen dann 
 - Bluetooth an beiden Radaren schaltet die Firmware selbst ab (einmalig, der Radar startet dabei kurz neu).
   Die Schalter sind intern, in Home Assistant gibt es sie nicht. Für die HLKRadarTool-App
   in `radar-combo.yaml` bei `bluetooth:` die Zeilen `internal` und `on_turn_on` entfernen.
-- LD2410C-Gates einstellen: `LD2410 Engineering Mode` an, die Entitäten `LD2410 Moving/Still Energy` aktivieren
-  (sind standardmäßig deaktiviert) und die Schwellen `LD2410 Gx … Threshold` im leeren Raum knapp über das Rauschen legen.
+- LD2410C-Timeout und Engineering Mode stellt die Firmware selbst ein (Timeout 0, Engineering Mode an).
+  In Home Assistant gibt es dafür keine Entitäten mehr.
+- LD2410C-Gates einstellen: Die Energie pro Stufe zeigt die Tracker-App im Tab *Sensoren*. Die Schwellen
+  `LD2410 Gx … Threshold` im leeren Raum knapp über das Rauschen legen.
 - Zonen (`Zone 1–3 X1/Y1/X2/Y2`, in mm) sind nur für Automationen direkt in Home Assistant da, der Tracker braucht sie nicht.
   Zum Einzeichnen helfen die Entitäten `Target 1–3 X/Y` (standardmäßig deaktiviert, 1/s).

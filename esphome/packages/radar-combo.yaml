@@ -26,6 +26,20 @@ esphome:
       # radar is still booting and does not answer. Ask again later.
       - delay: 3s
       - button.press: ld2410_query_params
+      - delay: 2s
+      # No hold time in the radar: it reports what it sees right now, the
+      # tracker app decides how long presence lasts. Stored in the radar,
+      # so this only writes after a factory reset.
+      - lambda: |-
+          if (id(ld2410_timeout).state != 0) {
+            auto call = id(ld2410_timeout).make_call();
+            call.set_value(0);
+            call.perform();
+          }
+      # Engineering mode adds the energy per gate to every LD2410C frame.
+      # The radar forgets it on power loss, so switch it on after every boot.
+      - delay: 1s
+      - switch.turn_on: ld2410_engineering
 
 esp32:
   variant: esp32s3
@@ -145,6 +159,20 @@ ld2450:
           ld2410["moving_energy"] = moving ? mm(id(ld2410_moving_energy), 1) : 0;
           ld2410["still_distance"] = still ? mm(id(ld2410_still_distance), 10) : 0;
           ld2410["still_energy"] = still ? mm(id(ld2410_still_energy), 1) : 0;
+
+          // Energy (0-100) per 0.75 m gate, in engineering mode only
+          sensor::Sensor *move_gates[9] = {id(g0_move), id(g1_move), id(g2_move), id(g3_move), id(g4_move),
+                                           id(g5_move), id(g6_move), id(g7_move), id(g8_move)};
+          sensor::Sensor *still_gates[9] = {id(g0_still), id(g1_still), id(g2_still), id(g3_still), id(g4_still),
+                                            id(g5_still), id(g6_still), id(g7_still), id(g8_still)};
+          if (id(ld2410_engineering).state && !std::isnan(move_gates[0]->state)) {
+            JsonArray mg = ld2410["move_gates"].to<JsonArray>();
+            JsonArray sg = ld2410["still_gates"].to<JsonArray>();
+            for (int i = 0; i < 9; i++) {
+              mg.add(mm(move_gates[i], 1));
+              sg.add(mm(still_gates[i], 1));
+            }
+          }
         });
 
         seq++;
@@ -219,17 +247,18 @@ sensor:
     moving_energy: {id: ld2410_moving_energy, internal: true, filters: []}
     still_distance: {id: ld2410_still_distance, internal: true, filters: []}
     still_energy: {id: ld2410_still_energy, internal: true, filters: []}
-    # Energy per gate (0.75 m each) for setting the thresholds. Only sent
-    # while `LD2410 Engineering Mode` is on.
-    g0: {move_energy: {name: LD2410 G0 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G0 Still Energy, entity_category: diagnostic}}
-    g1: {move_energy: {name: LD2410 G1 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G1 Still Energy, entity_category: diagnostic}}
-    g2: {move_energy: {name: LD2410 G2 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G2 Still Energy, entity_category: diagnostic}}
-    g3: {move_energy: {name: LD2410 G3 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G3 Still Energy, entity_category: diagnostic}}
-    g4: {move_energy: {name: LD2410 G4 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G4 Still Energy, entity_category: diagnostic}}
-    g5: {move_energy: {name: LD2410 G5 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G5 Still Energy, entity_category: diagnostic}}
-    g6: {move_energy: {name: LD2410 G6 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G6 Still Energy, entity_category: diagnostic}}
-    g7: {move_energy: {name: LD2410 G7 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G7 Still Energy, entity_category: diagnostic}}
-    g8: {move_energy: {name: LD2410 G8 Move Energy, entity_category: diagnostic}, still_energy: {name: LD2410 G8 Still Energy, entity_category: diagnostic}}
+    # Energy per gate (0.75 m each), sent in every frame for the tracker
+    # (engineering mode is always on). Internal: 18 values at 10 Hz would
+    # flood the recorder. The tracker app shows them per sensor.
+    g0: {move_energy: {id: g0_move, internal: true, filters: []}, still_energy: {id: g0_still, internal: true, filters: []}}
+    g1: {move_energy: {id: g1_move, internal: true, filters: []}, still_energy: {id: g1_still, internal: true, filters: []}}
+    g2: {move_energy: {id: g2_move, internal: true, filters: []}, still_energy: {id: g2_still, internal: true, filters: []}}
+    g3: {move_energy: {id: g3_move, internal: true, filters: []}, still_energy: {id: g3_still, internal: true, filters: []}}
+    g4: {move_energy: {id: g4_move, internal: true, filters: []}, still_energy: {id: g4_still, internal: true, filters: []}}
+    g5: {move_energy: {id: g5_move, internal: true, filters: []}, still_energy: {id: g5_still, internal: true, filters: []}}
+    g6: {move_energy: {id: g6_move, internal: true, filters: []}, still_energy: {id: g6_still, internal: true, filters: []}}
+    g7: {move_energy: {id: g7_move, internal: true, filters: []}, still_energy: {id: g7_still, internal: true, filters: []}}
+    g8: {move_energy: {id: g8_move, internal: true, filters: []}, still_energy: {id: g8_still, internal: true, filters: []}}
 
   # Target positions for Home Assistant (e.g. a plotly card for drawing zones).
   # Off by default to keep the recorder small; enable them in HA when needed.
@@ -278,8 +307,10 @@ switch:
 
   - platform: ld2410
     ld2410_id: ld2410_radar
+    # Always on (see on_boot), the tracker needs the gate energies
     engineering_mode:
-      name: LD2410 Engineering Mode
+      id: ld2410_engineering
+      internal: true
     bluetooth:
       id: ld2410_bluetooth
       internal: true
@@ -339,8 +370,10 @@ number:
 
   - platform: ld2410
     ld2410_id: ld2410_radar
+    # Kept at 0 (see on_boot); the hold time is the tracker app's job
     timeout:
-      name: LD2410 Timeout
+      id: ld2410_timeout
+      internal: true
     max_move_distance_gate:
       name: LD2410 Max Move Gate
     max_still_distance_gate:

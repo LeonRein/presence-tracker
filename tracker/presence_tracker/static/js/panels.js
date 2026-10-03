@@ -83,7 +83,8 @@ const LIVE = {
     if (!sv) return '<p class="note">Keine Daten.</p>';
     const rows = sv.detections.map((d, i) => `<tr><td>${i + 1}</td><td>${fmt(d.lx)}</td><td>${fmt(d.ly)}</td><td>${fmt(d.speed, 2)}</td></tr>`).join('');
     return `<table class="data"><tr><th>Ziel</th><th>x (m)</th><th>y (m)</th><th>v (m/s)</th></tr>${rows || '<tr><td colspan="4">kein Ziel</td></tr>'}</table>
-      <p class="note">LD2410C: ${sv.ld2410.present ? `Präsenz in ${fmt(sv.ld2410.distance, 2)} m` : 'keine Präsenz'}</p>`;
+      <p class="note">LD2410C: ${sv.ld2410.present ? `Präsenz in ${fmt(sv.ld2410.distance, 2)} m` : 'keine Präsenz'}</p>
+      ${gateBars(sv.ld2410)}`;
   },
   zoneNow(ds) {
     const st = state.live?.zones?.[ds.id];
@@ -103,6 +104,23 @@ const LIVE = {
     return `${frames}<h3>Gemeinsam gesehen</h3>${pairs || '<p class="note">Noch keine Überschneidung. Durch Bereiche gehen, die zwei Sensoren sehen.</p>'}`;
   },
 };
+
+// LD2410C energy per 0.75 m gate: bewegt (move) and ruhig (still), 0-100
+function gateBars(ld) {
+  if (!ld?.still_gates) return '<p class="note">Keine Energiewerte pro Entfernungsstufe (Firmware mit Engineering Mode nötig).</p>';
+  const w = 26, hgt = 60, gap = 4;
+  const bars = ld.still_gates.map((sv, i) => {
+    const mv = ld.move_gates?.[i] ?? 0;
+    const x = i * (w + gap);
+    return `<rect x="${x}" y="${hgt - mv * hgt / 100}" width="${w / 2 - 1}" height="${mv * hgt / 100}" fill="var(--moving)"/>
+      <rect x="${x + w / 2}" y="${hgt - sv * hgt / 100}" width="${w / 2 - 1}" height="${sv * hgt / 100}" fill="var(--still)"/>
+      <text x="${x + w / 2}" y="${hgt + 12}" font-size="9" text-anchor="middle" fill="var(--muted)">${(i * 0.75).toFixed(1)}</text>`;
+  }).join('');
+  return `<h3>LD2410C-Energie pro Stufe</h3>
+    <svg viewBox="0 -2 ${9 * (w + gap)} ${hgt + 16}" width="100%" style="max-width:300px">${bars}</svg>
+    <div class="legend"><span><span class="swatch" style="background:var(--moving)"></span>bewegt</span>
+    <span><span class="swatch" style="background:var(--still)"></span>ruhig</span><span>Abstand in m</span></div>`;
+}
 
 // ------------------------------------------------------------------- live
 
@@ -508,7 +526,8 @@ const PARAMS = [
     ['coast_time', 'Weiterlaufen ohne Messung', 's', 'So lange bewegt sich eine verdeckte Person in der vorhergesagten Richtung weiter.', 0.1],
     ['exit_timeout', 'Verlassen über Eingang nach', 's', 'Verdeckt in einer Eingangszone oder außerhalb aller Sensoren.', 0.5],
     ['absence_time', 'Ohne LD2410C-Bestätigung nach', 's', 'Verdeckte Person endet, wenn kein LD2410C sie so lange bestätigt.', 5],
-    ['ld2410_min_presence', 'LD2410C-Mindestdauer', 's', 'Kürzere Präsenz ist ein Geist (Störung durch den LD2450 plus Haltezeit).', 0.5],
+    ['ld2410_hold', 'LD2410C-Haltezeit', 's', 'Lücken in der LD2410C-Präsenz bis zu dieser Länge werden überbrückt. Der Radar selbst hält nicht (Timeout 0).', 0.1],
+    ['ld2410_min_presence', 'LD2410C-Mindestdauer', 's', 'Kürzere Präsenz ist ein Geist (Störung durch den LD2450, etwa 1 s).', 0.5],
     ['ld2410_support_window', 'LD2410C-Abstandsfenster', 'm', '', 0.05],
     ['max_lost_time', 'Höchstens verdeckt', 's', 'Wo kein LD2410C hinsieht.', 60],
   ]],

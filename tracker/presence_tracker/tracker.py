@@ -9,10 +9,11 @@ The core rule: people do not appear or vanish out of nowhere.
     outside all sensors, when the LD2410C of every sensor covering that place has reported
     "nobody here" for a while, or after a long time without any support.
   - A detection close to a lost track picks that track up again instead of starting a new one.
-The LD2410C (distance only, with regular ghost detections) never creates tracks. A ghost is a
-short trigger followed by the radar's hold time (about 5 s), so only presence that lasts longer
-than that, at the distance of a lost track, supports the track. Without such support a lost
-track ends after a while.
+The LD2410C (distance only, with regular ghost detections) never creates tracks. Its own hold
+time is set to 0 in the firmware; the hold happens here: gaps up to ld2410_hold are bridged.
+A ghost (interference from the LD2450) lasts about a second, so only presence that lasts
+ld2410_min_presence, at the distance of a lost track, supports the track. Without such support
+a lost track ends after a while.
 """
 
 import math
@@ -80,7 +81,10 @@ class SensorRuntime:
     ld_present: bool = False
     ld_distance: float = 0.0  # m, on the floor
     ld_present_since: float | None = None
+    ld_last_present: float = -math.inf
     ld_ever_present: bool = False
+    move_gates: list | None = None  # LD2410C energy per 0.75 m gate (engineering mode)
+    still_gates: list | None = None
     frames: int = 0
 
 
@@ -266,13 +270,14 @@ class Tracker:
 
     def _ld2410(self, s: SensorConfig, rt: SensorRuntime, t: float, ld: dict):
         p = self.config.params
-        present = bool(ld.get("moving") or ld.get("still"))
-        if not present:
-            rt.ld_present = False
-            rt.ld_present_since = None
+        rt.move_gates = ld.get("move_gates")
+        rt.still_gates = ld.get("still_gates")
+        if not (ld.get("moving") or ld.get("still")):
+            rt.ld_present = t - rt.ld_last_present <= p.ld2410_hold
             return
-        if not rt.ld_present:
-            rt.ld_present_since = t
+        if rt.ld_present_since is None or t - rt.ld_last_present > p.ld2410_hold:
+            rt.ld_present_since = t  # a new episode
+        rt.ld_last_present = t
         rt.ld_present = True
         rt.ld_ever_present = True
         dist_mm = ld.get("still_distance") or ld.get("moving_distance") or 0
@@ -390,6 +395,7 @@ class Tracker:
                                 "lx": round(d.local[0], 3), "ly": round(d.local[1], 3),
                                 "speed": round(d.speed, 2), "ignored": d.ignored}
                                for d in rt.detections] if t - rt.last_frame < 1.0 else [],
-                "ld2410": {"present": rt.ld_present, "distance": round(rt.ld_distance, 2)},
+                "ld2410": {"present": rt.ld_present, "distance": round(rt.ld_distance, 2),
+                           "move_gates": rt.move_gates, "still_gates": rt.still_gates},
             }
         return {"t": t, "tracks": tracks, "sensors": sensors}
