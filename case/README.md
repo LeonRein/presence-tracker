@@ -16,7 +16,9 @@ wird sie für den LD2412 umgebaut (dann 34,1 × 72,8 mm).
   die LD2450-Tasche ist nur gedreht.
 Der Sensor wird auf einen Halter geschoben (Schwalbenschwanz):
 
-- **Eckhalter** (`stl/corner.stl`): Keil für die Raumecke, der Sensor schaut diagonal in den Raum.
+- **Eckhalter** (`stl/corner.stl`): Keil für die Raumecke, der Sensor schaut diagonal in den Raum. Die Spitze des Keils
+  ist abgeflacht: Echte Ecken sind durch Putz oder Acrylfuge leicht gerundet, bis 6 mm Radius liegt der Halter
+  trotzdem mit beiden Flächen an der Wand an (`corner_r` in der `.scad`-Datei).
 - **Schrankfuß** (`stl/stand.stl`): um 10° nach unten geneigt. `stl/stand_flat.stl` ist dieselbe Form ohne Neigung.
   Beide werden auf den Schrank geklebt (doppelseitiges Klebeband). Unter dem Sensor sind 20 mm frei für einen
   gewinkelten USB-C-Stecker (Kopf bis 18 mm), das Kabel läuft durch einen 10 × 10 mm großen Tunnel unter dem Fuß nach hinten.

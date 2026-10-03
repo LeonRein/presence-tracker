@@ -53,7 +53,7 @@ so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 ridge_up  = 0.6;   // Rastnasen-Mitte ueber der Platinenrueckseite (Nase beginnt 0,1 mm darueber)
 inner_top = front_t + max(so + t50, so12 + t12) + ridge_up + 0.5;   // knapp ueber den Nasen
 
-esp_w = 18; esp_l = 23.2; esp_t = 1.65;  // ESP32-S3 SuperMini; Laenge 23,0 gemessen, +0,2 Spiel (war zu knapp; Datenblatt 22,52),
+esp_w = 18; esp_l = 23.4; esp_t = 1.65;  // ESP32-S3 SuperMini; Laenge 23,0 gemessen, +0,4 Spiel (23,2 war noch zu knapp; Datenblatt 22,52),
                                          // Dicke angenommen (Standard 1,6) - federnder Arm gleicht 1,2..1,9 aus
 usb_over = 1.9;                          // USB-C-Buchse steht so weit ueber die Platinenkante (gemessen)
 esp_z0 = 0;                              // ESP-Unterkante liegt auf dem Boden bzw. der Deckelnase; Buchse ragt durch den Ausschnitt
@@ -100,7 +100,8 @@ boss_x = -iw/2 + 4;
 bosses = [[boss_x, 34], [boss_x, ih - 6.5]];
 
 // Schwalbenschwanz (Halter-Schiene / Deckel-Nut)
-dt_base = 5;  dt_tip = 7;  dt_h = 3;  dt_cl = 0.25;
+dt_base = 5;  dt_tip = 7;  dt_h = 3;  dt_cl = 0.25;   // dt_cl: Spiel der Nut im Deckel
+rail_cl = 0.1;   // zusaetzliches Spiel je Seite (x), nur an der Schiene von Eckhalter und Schrankfuss
 dt_top  = ih - 12;              // Nut oben geschlossen -> Sensor liegt auf
 z_r0    = zo0 + 13;             // Eckhalter: Schiene beginnt hier, darunter und darueber je eine Schraube
 
@@ -310,12 +311,9 @@ module lid() {
                 box(-6.3, 6.3, split_y-1.5, split_y+0.01, -0.01, 0);
                 box(-6.3, 6.3, split_y-0.01, split_y+0.01, -0.01, 1.5);
             }
-            for (sx=[-1,1]) {
-                hull() {
-                    box(sx*4.65, sx*(notch_hw-0.15), esp_y-0.75, esp_y-0.05, -0.01, 0);
-                    box(sx*4.65, sx*(notch_hw-0.15), esp_y-0.75, esp_y-0.74, -0.01, 0.7);
-                }
-            }
+            // Keilnasen auf den Fluegeln: dasselbe Profil wie alle Rastnasen (45 Grad beidseitig, 0,55 hoch),
+            // Einfuehrschraege nach vorne; die Halteschraege endet 0,05 vor der Platinenvorderseite
+            for (sx=[-1,1]) ridge_x(sx*4.65, sx*(notch_hw-0.15), esp_y-0.55, 0, 1);
             // Teile im Gehaeuse: auf den Umriss der Lippe beschnitten (45-Grad-Stuetzen enden dort)
             intersection() {
                 rrect_y(iw-2*lcl, lcl, ih-lcl, max(0.2, ri-lcl), 0, split_y+0.01);
@@ -386,7 +384,8 @@ module rail(z0 = zo0, t = 0) {
     k = tan(45 + t);   // Anstieg der Schraege im Sensor-Koordinatensystem
     intersection() {
         translate([0, D, z0]) linear_extrude(height = dt_top - 0.3 - z0)
-            polygon([[-dt_base, 0.01], [dt_base, 0.01], [dt_tip, -(dt_h-0.3)], [-dt_tip, -(dt_h-0.3)]]);
+            polygon([[-(dt_base-rail_cl), 0.01], [dt_base-rail_cl, 0.01],
+                     [dt_tip-rail_cl, -(dt_h-0.3)], [-(dt_tip-rail_cl), -(dt_h-0.3)]]);
         // Prisma in der yz-Ebene, entlang x extrudiert: oberhalb der Linie z = z0 + (D - y) * k
         rotate([90, 0, 90]) linear_extrude(height = 2*dt_tip + 2, center = true)
             polygon([[D + 1, z0 - k], [D + 1, dt_top + 1], [D - dt_h - 1, dt_top + 1], [D - dt_h - 1, z0 + (dt_h + 1)*k]]);
@@ -395,6 +394,10 @@ module rail(z0 = zo0, t = 0) {
 
 // ---------- Eckhalter ----------
 cW = W/2 + D - ch + 0.6;   // Wandebene: |x| + y = cW  (Fase des Sensors liegt parallel zur Wand)
+// Raumecken sind nie scharf (Putz, Spachtel, Acrylfuge): die Spitze des Keils ist abgeflacht und
+// beruehrt die Ecke nicht. Die Flaechen liegen erst ab corner_r von der Ecke an der Wand an,
+// dazwischen passt eine Rundung bis Radius corner_r. Grenze: Schraubenbohrung ab ca. 8,5 mm.
+corner_r = 6;
 
 // Bohrung entlang lokaler z-Achse mit Tropfenspitze Richtung Welt-+z (nach rotate([-90,0,0]))
 module teardrop_bore(h, r) {
@@ -408,7 +411,8 @@ module corner() {
     difference() {
         union() {
             translate([0,0,zo0]) linear_extrude(height=H)
-                polygon([[-(cW-D), D], [cW-D, D], [0, cW]]);
+                polygon([[-(cW-D), D], [cW-D, D], [corner_r/sqrt(2), cW-corner_r/sqrt(2)],
+                         [-corner_r/sqrt(2), cW-corner_r/sqrt(2)]]);
             rail(z_r0);
         }
         // je eine Schraube pro Wand (3-3,5 mm, Kopf bis 7,5 mm), Kopf versenkt, Zugang von vorne.
