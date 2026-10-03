@@ -34,7 +34,7 @@ export function updateLive(panel) {
 // "verdeckt" plus where the unseen person most likely is
 function whereText(w) {
   if (!w) return 'verdeckt';
-  const names = { here: 'hier', near: 'in der Nähe', gone: 'weg', outside: 'draußen' };
+  const names = { room: 'im Raum', dead: 'keine eigene Person' };
   const regions = state.live?.regions || {};
   return Object.entries(w).sort((a, b) => b[1] - a[1]).slice(0, 2)
     .map(([k, v]) => `${names[k] || regions[k]?.name || k} ${Math.round(v * 100)} %`).join(', ');
@@ -675,23 +675,24 @@ const PARAMS = [
     ['echo_radius', 'Umkreis für Echos', 'm', '', 0.1],
     ['warmup', 'Anlaufzeit', 's', 'Nach dem Start dürfen Personen überall sofort erkannt werden.', 1],
   ]],
+  ['Personen', [
+    ['residents', 'Bewohner', '', 'So viele Personen wohnen hier. Mehr Spuren als das sind wahrscheinlich doppelte Spuren oder Geister, außer sie werden klar gemessen.', 1],
+    ['guest_prob', 'Besuch', '', 'Annahme, wie wahrscheinlich jede weitere Person (Besuch) ist.', 0.01],
+  ]],
   ['Verdeckte Personen', [
     ['lost_after', 'Als verdeckt gelten nach', 's', '', 0.1],
     ['coast_time', 'Weiterlaufen ohne Messung', 's', 'So lange bewegt sich eine verdeckte Person in der vorhergesagten Richtung weiter.', 0.1],
-    ['leak_walking', 'Abfluss zu Türen, gehend', '1/s', 'Wie schnell die Wahrscheinlichkeit „noch hier“ einer gehend verlorenen Person zu den erreichbaren Türen abfließt.', 0.05],
-    ['leak_still', 'Abfluss zu Türen, sitzend', '1/s', 'Dasselbe für jemanden, der saß.', 0.001],
-    ['leak_near', 'Von „in der Nähe“ zu Türen', '1/s', 'Wie schnell „ungesehen in der Nähe“ zu den erreichbaren Türen weiterfließt.', 0.05],
     ['ld2410_fov', 'LD2410C-Sichtwinkel', '°', 'Innerhalb dieses Winkels zählt die Energie des LD2410C als Beweis.', 5],
-    ['unseen_speed', 'Tempo ungesehen', 'm/s', 'So weit kann eine ungesehene Person pro Sekunde gekommen sein (Reichweite für Türen und Wiederaufnahme).', 0.1],
-    ['door_scale', 'Nähe zählt', 'm', 'Die Wahrscheinlichkeit einer Tür fällt mit dem Abstand wie exp(−d/Wert).', 0.1],
-    ['toward_factor', 'Richtung zählt', '×', 'Eine Tür, auf die die Person zuging, ist so viel wahrscheinlicher.', 0.5],
-    ['door_pass_missed', 'Türdurchgang übersehen', '', 'Wahrscheinlichkeit, dass ein Sensor, der die Türschwelle sieht, jemanden beim Durchgehen übersieht. Eine gut beobachtete Tür, an der niemand gesehen wurde, ist entsprechend unwahrscheinlich.', 0.05],
-    ['takeover_mass', 'Übernahme ab', '', 'Eine neue, bestätigte Spur übernimmt eine verdeckte, die mit dieser Wahrscheinlichkeit hier, in der Nähe oder hinter dieser Tür ist.', 0.05],
+    ['getup_time', 'Aufstehen: Zeitskala', 's', 'Wer s Sekunden sitzt, steht mit der Rate Anteil/(s + Wert) auf und geht irgendwohin: je länger jemand sitzt, desto seltener. Nur so kommt eine verdeckte Person zu einer Tür, und nur zu dem Teil, den kein Sensor auf dem Weg sehen würde. Aus den Aufnahmen gemessen.', 10],
+    ['getup_share', 'Aufstehen: Anteil', '', '', 0.02],
+    ['doorway_walk', 'In einer Tür verloren', '', 'Wer in einer Tür nicht mehr gesehen wird, ging mit dieser Wahrscheinlichkeit hindurch (in Türen bleibt niemand lange stehen). Der Rest bleibt im Raum.', 0.05],
+    ['walk_speed', 'Gehtempo', 'm/s', 'So lange ist jemand auf dem Weg zu einer Tür im Blick der Sensoren.', 0.1],
+    ['duplicate_prior', 'Doppelte Spur möglich', '', 'Wahrscheinlichkeit, dass auch eine lange gemessene Spur nur die zweite Spur einer Person ist.', 0.01],
+    ['end_prob', 'Spur endet ab', '', 'Eine Spur endet, wenn sie mit dieser Wahrscheinlichkeit keine eigene Person war (Geist oder doppelte Spur). Menschen verschwinden nicht.', 0.05],
+    ['unseen_speed', 'Tempo ungesehen', 'm/s', 'So weit kann eine ungesehene Person pro Sekunde gekommen sein (Wiederaufnahme durch eine neue Spur).', 0.1],
+    ['takeover_mass', 'Übernahme ab', '', 'Eine neue, bestätigte Spur übernimmt eine verdeckte, die mit dieser Wahrscheinlichkeit im Raum (in Reichweite) oder hinter dieser Tür ist.', 0.05],
     ['birth_return', 'Rückkehr-Startwert höchstens', '', 'Startwahrscheinlichkeit einer neuen Spur an einer Tür, hinter der wahrscheinlich jemand ist.', 0.05],
     ['ld2410_hold', 'LD2410C-Haltezeit', 's', 'Lücken in der LD2410C-Präsenz bis zu dieser Länge werden überbrückt.', 0.1],
-    ['gone_prob', 'Spur endet ab', '', 'Anteil der Wahrscheinlichkeit, der „weg“ sein muss, damit eine Spur endet.', 0.05],
-    ['region_forget_time', 'Hinter Türen vergessen nach', 's', 'Zeitkonstante, mit der eine Person hinter einer Tür ohne Sensor aus dem Blick gerät (übersehene Rückkehr, doppelte Spur).', 60],
-    ['max_lost_time', 'Höchstens verdeckt', 's', '', 60],
     ['dwell_median', 'Räume ohne Sensor: typischer Aufenthalt', 's', 'Annahme, bis genug Besuche gelernt sind.', 10],
     ['dwell_spread', 'Streuung des Aufenthalts', '', 'Streuung von ln(Dauer) der Annahme.', 0.1],
     ['missed_return', 'Rückkehr übersehen', '', 'Wahrscheinlichkeit, dass jemand unbemerkt herauskommt, solange ein Sensor die Tür sieht.', 0.05],

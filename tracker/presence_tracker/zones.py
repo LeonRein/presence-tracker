@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from .model import Config
 from .tracker import Track, Tracker
-from .whereabouts import ABSENT, HERE, NEAR
+from .whereabouts import NOT_HOME, ROOM
 
 
 @dataclass
@@ -50,20 +50,21 @@ def evaluate(config: Config, tracker: Tracker) -> dict:
     not_in = {z.id: 1.0 for z in zones}  # product of (1 - mass)
     for tr in tracker.confirmed():
         where = tr.where
-        best = where.best()[0] if where is not None else HERE
-        if best in ABSENT:
+        best = tr.place()
+        if best in NOT_HOME:
             continue
+        w = where.view(tr.real) if where is not None else {ROOM: 1.0}
         x, y = tr.position()
-        here_mass = where.here() + where.w[NEAR] if where is not None else 1.0
+        room_mass = w.get(ROOM, 0.0)
         for z in zones:
-            if z.contains(x, y) and here_mass > 0:
-                not_in[z.id] *= 1 - here_mass
+            if z.contains(x, y) and room_mass > 0:
+                not_in[z.id] *= 1 - room_mass
         if where is not None:
-            for rid, mass in where.regions().items():
+            for rid, mass in ((k, v) for k, v in w.items() if k in where.regions()):
                 for room_id in config.regions.get(rid, {}).get("rooms", []):
                     if room_id in not_in:
                         not_in[room_id] *= 1 - mass
-        if best not in (HERE, NEAR):
+        if best != ROOM:
             total.count += 1
             total.still += 1
             rooms = config.regions.get(best, {}).get("rooms", [])

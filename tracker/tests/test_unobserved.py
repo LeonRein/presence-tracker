@@ -1,10 +1,12 @@
 """Where an unseen person is: stay durations and the hypothesis bookkeeping."""
 
+import math
+
 import pytest
 
 from presence_tracker.model import TrackerParams
 from presence_tracker.unobserved import Dwell
-from presence_tracker.whereabouts import GONE, HERE, NEAR, Whereabouts
+from presence_tracker.whereabouts import DEAD, ROOM, Whereabouts
 
 
 def params(**kw):
@@ -30,26 +32,53 @@ def test_long_stays_are_learned_too():
     assert d.stats("kueche")["median"] < 60
 
 
-def test_mass_flows_to_a_door_and_fades_when_the_visit_ends():
+def test_a_walker_lost_at_an_unwatched_door_went_through_it():
     p = params()
-    w = Whereabouts(p)
+    w = Whereabouts(p, existence=0.99)
+    # walking straight at the kitchen door (prior 0.9), nobody would have seen it (unseen 1.0)
+    w.lost()
+    w.go(0.0, 0.95, [("kueche", 0.9, 1.0)])
+    assert w.region("kueche") > 0.8 and w.t_in["kueche"] == 0.0
+    # the same walk past a sensor that sees the way well: mostly refuted, they stayed
+    w = Whereabouts(p, existence=0.99)
+    w.lost()
+    w.go(0.0, 0.95, [("kueche", 0.9, 0.05)])
+    assert w.region("kueche") < 0.3 and w.room() > w.region("kueche")
+
+
+def test_someone_sitting_does_not_drift_to_the_doors():
+    p = params()
+    w = Whereabouts(p, existence=0.99)
+    w.lost()
+    t = 0.0
+    while t < 600:  # ten minutes, doors well in view of a sensor
+        rate = p.getup_share / (t + p.getup_time)
+        w.go(t, 1 - math.exp(-rate * 0.2), [("kueche", 1 / 3, 0.1), ("balkon", 1 / 3, 0.1)])
+        t += 0.2
+    assert w.room() > 0.85
+    # without any evidence the room keeps the person; evidence against the room (nothing
+    # re-detected, the LD2410C quiet) moves them to where they could have gone: the doors
+    # and "never a person" share in proportion to their mass
+    for _ in range(40):
+        w.update(ROOM, 0.7, 1.0)
+    assert w.room() < 0.1
+    assert w.region("kueche") > 0 and w.dead() > 0
+
+
+def test_a_visit_that_ends_unseen_brings_the_person_back_not_away():
+    p = params()
     d = Dwell(p)
-    for _ in range(50):  # 10 s lost while walking, the kitchen door within reach
-        w.leak(0.2, True, [("kueche", 1.0)], t_last_seen=0.0)
-    assert w.region("kueche") > 0.6 and w.here() < 0.05  # the rest: moved unseen nearby
-    assert w.t_in["kueche"] == 0.0
-    # the sensors see the area around the last position and report nobody: not roaming nearby
-    for _ in range(10):
-        w.update(NEAR, 0.1, 1.0)
-    assert w.w[NEAR] < 0.01
-    # 20 minutes without a seen return, as the tracker steps it: the visit is over, the person
-    # came out unseen (gone) or, with a small remainder, is still in there
-    t = 10.0
-    while t < 1200:
-        w.leak(1.0, False, [], t_last_seen=0.0)
+    w = Whereabouts(p, existence=0.99)
+    w.w[ROOM], w.w["kueche"], w.w[DEAD], w.t_in["kueche"] = 0.0, 0.98, 0.02, 0.0
+    t = 1.0
+    while t < 1200:  # 20 minutes without a seen return
         w.end_visits(t, 1.0, d, {"kueche": True})
         t += 1.0
-    assert w.w[GONE] > 0.5 and w.region("kueche") < 0.45  # with 10 % unseen exits, "still in there" stays plausible
+    # nobody came out seen: the kitchen fades, partly back to the room (missed return),
+    # partly to "never a person" by renormalization; nothing is ever "gone"
+    assert w.region("kueche") < 0.9 and w.room() > 0.0
+    assert set(w.w) == {ROOM, DEAD, "kueche"}
+    assert sum(w.w.values()) == pytest.approx(1.0)
 
 
 def test_unwatched_door_fades_faster():
@@ -57,35 +86,30 @@ def test_unwatched_door_fades_faster():
     d = Dwell(p)
     watched, blind = Whereabouts(p), Whereabouts(p)
     for w in (watched, blind):
-        w.w[HERE], w.w["kueche"], w.t_in["kueche"] = 0.0, 1.0, 0.0
+        w.w[ROOM], w.w["kueche"], w.w[DEAD], w.t_in["kueche"] = 0.0, 0.9, 0.1, 0.0
     for t in range(1, 301):
         watched.end_visits(float(t), 1.0, d, {"kueche": True})
         blind.end_visits(float(t), 1.0, d, {"kueche": False})
     assert blind.region("kueche") < watched.region("kueche")
 
 
-def test_someone_sitting_keeps_their_place_unless_evidence_says_otherwise():
+def test_returns_end_visits_and_duplicates_die():
     p = params()
+    d = Dwell(p)
     w = Whereabouts(p)
-    for _ in range(300):  # a minute lost while sitting
-        w.leak(0.2, False, [("kueche", 1.0)], t_last_seen=0.0)
-    assert w.here() > 0.7
-    # the LD2410C says nobody is at that distance, again and again
-    for _ in range(40):
-        w.update(HERE, 0.7, 1.0)
-    assert w.here() < 0.1
-    # ... and the mass that went to the kitchen makes it the most probable whereabouts
-    w.w[HERE], w.w["kueche"], w.t_in["kueche"] = 0.1, 0.9, 0.0
+    w.w[ROOM], w.w["kueche"], w.t_in["kueche"] = 0.1, 0.9, 0.0
     w.normalize()
     assert "kueche" in w.visited
-    # until the person is seen at their place again: the "visit" ends; it is reported but not
-    # learned as a stay (we never saw them in the kitchen)
-    d = Dwell(p)
-    w.w[HERE], w.w["kueche"] = 0.9, 0.1
+    # measured again at their old place mid-room: the "visit" ends, reported but not learned
+    w.w[ROOM], w.w["kueche"] = 0.9, 0.1
     assert w.arrive(60.0, d, lambda region: False) == [("kueche", 60.0)]
     assert not d.dwell
-    # a confirmed return at the kitchen door, however, is a real visit and is learned
-    w.w[HERE], w.w["kueche"], w.t_in["kueche"] = 0.1, 0.9, 100.0
+    # a confirmed return at the kitchen door is a real visit and is learned
+    w.w[ROOM], w.w["kueche"], w.t_in["kueche"] = 0.1, 0.9, 100.0
     w.normalize()
     assert w.returned("kueche", 160.0, d) == 60.0
-    assert d.dwell["kueche"] == [60.0] and w.here() == 1.0
+    assert d.dwell["kueche"] == [60.0] and w.room() == pytest.approx(1 - p.duplicate_prior)
+    # someone else's track came out of the kitchen: what of this one was in there was them
+    w.w[ROOM], w.w["kueche"], w.w[DEAD] = 0.0, 0.95, 0.05
+    w.duplicate("kueche", 0.95)
+    assert w.dead() == pytest.approx(1.0)
