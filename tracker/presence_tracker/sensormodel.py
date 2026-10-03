@@ -16,8 +16,8 @@ when rooms are edited):
 Plus the measurement error by distance, from the offsets between two sensors that see the same
 person at the same time.
 
-For now this only learns and shows; the tracker doesn't use it yet. Counts fade with a half-life
-of HALF_LIFE, so the maps follow changes (furniture, a moved sensor).
+The tracker uses pd_effective and clutter_density for the existence probability of new tracks.
+Counts fade with a half-life of HALF_LIFE, so the maps follow changes (furniture, a moved sensor).
 """
 
 import json
@@ -100,9 +100,36 @@ class SensorModel:
         return PD_MAX * taper(az, s.fov / 2 - EDGE_ANGLE, s.fov / 2) * taper(r, s.range - EDGE_RANGE, s.range)
 
     def pd(self, sensor_id: str, x: float, y: float) -> float:
+        """Prior detection probability (geometry): from the map, or computed outside of it."""
         i, j = cell_of(x, y)
+        i0, j0, i1, j1 = self.box
         grid = self.prior.get(sensor_id)
-        return float(grid[i, j]) if grid is not None and 0 <= i < SIZE and 0 <= j < SIZE else 0.0
+        if grid is not None and i0 <= i < i1 and j0 <= j < j1:
+            return float(grid[i, j])
+        s = self.config.sensor_by_id.get(sensor_id)
+        return self.prior_pd(s, x, y) if s is not None and s.placed and s.enabled else 0.0
+
+    def pd_effective(self, sensor_id: str, x: float, y: float, weight: float = 20.0) -> float:
+        """Detection probability: the learned rate, pulled toward the prior while few trials exist
+        (the prior counts like `weight` trials). 0 where the geometry says the sensor can't see."""
+        prior = self.pd(sensor_id, x, y)
+        if prior <= 0:
+            return 0.0
+        i, j = cell_of(x, y)
+        trials = float(self.trials[sensor_id][i, j]) if sensor_id in self.trials else 0.0
+        hits = float(self.hits[sensor_id][i, j]) if sensor_id in self.hits else 0.0
+        return (hits + weight * prior) / (trials + weight)
+
+    def clutter_density(self, sensor_id: str, x: float, y: float, prior: float, floor: float,
+                        weight: float = 2000.0) -> float:
+        """Ghost targets per m^2 and frame of this sensor here: the learned rate, pulled toward the
+        prior while few frames were verifiable (the prior counts like `weight` frames)."""
+        i, j = cell_of(x, y)
+        if sensor_id not in self.exposure or not (0 <= i < SIZE and 0 <= j < SIZE):
+            return prior
+        exposure = float(self.exposure[sensor_id][i, j])
+        rate = (float(self.clutter[sensor_id][i, j]) + weight * prior * CELL * CELL) / (exposure + weight)
+        return max(rate / (CELL * CELL), floor)
 
     # ------------------------------------------------------------ learning
 

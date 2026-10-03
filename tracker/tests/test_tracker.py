@@ -158,16 +158,17 @@ def test_detections_behind_a_wall_are_reflections():
         params=TrackerParams(warmup=0),
     )
     tracker = Tracker(config, start=0.0)
-    frame = {"targets": [
-        {"x": 0, "y": 4500, "speed": 0},  # 1.5 m behind the wall
-        {"x": 0, "y": 3200, "speed": 0},  # 0.2 m behind it: noise at the wall, kept
-        {"x": 0, "y": 2000, "speed": 0},  # in front of it
-    ]}
-    tracker.process_frame("a", 1.0, frame)
+    def frame(k):  # a few millimeters of jitter, as real targets have
+        return {"targets": [
+            {"slot": 1, "x": k % 3, "y": 4500, "speed": 0},  # 1.5 m behind the wall
+            {"slot": 2, "x": k % 3, "y": 3200, "speed": 0},  # 0.2 m behind it: noise at the wall, kept
+            {"slot": 3, "x": k % 3, "y": 2000, "speed": 0},  # in front of it
+        ]}
+    tracker.process_frame("a", 1.0, frame(0))
     hidden = [d.hidden for d in tracker.runtime["a"].detections]
     assert hidden == [True, False, False]
-    for k in range(40):
-        tracker.process_frame("a", 1.0 + 0.1 * k, frame)
+    for k in range(1, 60):
+        tracker.process_frame("a", 1.0 + 0.1 * k, frame(k))
         tracker.step(1.0 + 0.1 * k)
     xs = sorted(round(float(tr.position()[0]), 1) for tr in tracker.confirmed())
     assert all(x < 3.4 for x in xs) and len(xs) >= 1
@@ -257,3 +258,23 @@ def test_two_people_never_fuse():
                SimSensor(config.sensors[1], blind_to=(0,), blind_after=12)]
     tracker, samples = run(config, [sitter, other], 55, sensors)
     assert counts(samples, 15, 55) == {2}
+
+
+def test_ghost_seen_by_one_of_two_sensors_never_becomes_a_person():
+    # both sensors look at (3, 2.5) well; only sensor a reports something there, for a minute
+    config = room_config()
+    tracker = Tracker(config, start=0.0)
+    for k in range(660):
+        t = k / 11
+        tracker.process_frame("a", t, {"targets": [{"slot": 1, "x": 0 + k % 7, "y": 3900 + k % 5, "speed": 0}]})
+        tracker.process_frame("b", t + 0.04, {"targets": []})
+        tracker.step(t)
+    assert not tracker.confirmed()
+
+
+def test_person_seen_by_both_sensors_confirms_quickly():
+    config = room_config()
+    person = Person([(0, 3.0, 2.5), (20, 3.0, 2.5)])
+    tracker, samples = run(config, [person], 20, sim_sensors(config), sample_every=0.1)
+    first = next(t for t, n, _ in samples if n)
+    assert first < 2.5

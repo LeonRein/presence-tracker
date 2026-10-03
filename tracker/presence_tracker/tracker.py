@@ -57,7 +57,7 @@ class Track:
     last_hit: float = 0.0
     last_support: float = 0.0
     hits: int = 0
-    expected: int = 0  # frames of sensors that should have seen it (while tentative)
+    existence: float = 0.0  # probability that this new track is a real person (while tentative)
     last_hit_by: dict = field(default_factory=dict)
     near_since: dict = field(default_factory=dict)  # other track id -> time they came close
     co_detected: dict = field(default_factory=dict)  # other track id -> last time both in one frame
@@ -147,6 +147,7 @@ class Tracker:
         self.now = max(self.now, t)
         sensor = self.config.sensor_by_id.get(sensor_id)
         rt = self.runtime.setdefault(sensor_id, SensorRuntime())
+        frame_gap = t - rt.last_frame
         rt.last_frame = t
         rt.frame = frame
         rt.frames += 1
@@ -160,9 +161,9 @@ class Tracker:
             return
         self._ld2410(sensor, rt, t, frame.get("ld2410") or {})
         self._predict_all(t)
-        self._count_expected(sensor)
         updates = self._associate(sensor, [d for d in detections if not d.hidden and not d.stale], t)
-        self.sensor_model.learn(self, sensor, t, detections, updates)
+        self._existence(sensor, t, frame_gap, updates)
+        self.sensor_model.learn(self, sensor, t, detections, [(d, tr) for d, tr, _ in updates])
         for listener in self.listeners:
             listener("frame", (sensor, t, detections))
 
@@ -224,16 +225,51 @@ class Tracker:
             self.imm.predict(tr.state, dt, force_still=coast, max_sigma=max_sigma)
             tr.t = t
 
-    def _count_expected(self, sensor: SensorConfig):
-        walls = self.config.wall_segments
+    def _pd(self, sensor: SensorConfig, pos: np.ndarray) -> float:
+        """Detection probability at pos, with the same tolerance at walls as the reflection filter:
+        someone sitting against a wall may be measured a few centimeters behind it."""
+        pd = self.sensor_model.pd_effective(sensor.id, *pos)
+        if pd <= 0:
+            u = pos - np.array([sensor.x, sensor.y])
+            back = pos - u / max(float(np.linalg.norm(u)), 1e-6) * self.config.params.wall_margin
+            pd = self.sensor_model.pd_effective(sensor.id, *back)
+        return pd
+
+    def _existence(self, sensor: SensorConfig, t: float, frame_gap: float, updates: list):
+        """Bayes update of the existence probability of new tracks with this sensor's frame.
+
+        A measurement assigned to the track: likelihood ratio (P_D g + (1 - P_D) lambda) / lambda,
+        with P_D the sensor's detection probability there, g the measurement density under the
+        track, lambda the ghost density there (higher next to a walking person: echoes).
+        No measurement although the sensor looks there: 1 - P_D. One frame counts only as a
+        fraction frame_gap / evidence_time of an independent observation: the LD2450 smooths,
+        a ghost that lasts a second must not count as eleven pieces of evidence."""
+        p = self.config.params
+        weight = min(max(frame_gap, 0.0), p.evidence_time) / p.evidence_time
+        if weight <= 0:
+            return
+        assigned = {id(tr): (d, g) for d, tr, g in updates}
+        walkers = [tr for tr in self.tracks if tr.status == CONFIRMED and not tr.lost(t, p.lost_after)
+                   and tr.walk_prob > 0.5 and float(np.linalg.norm(tr.velocity())) > 0.3]
         for tr in self.tracks:
-            if tr.status == TENTATIVE:
-                x, y = tr.position()
-                if sensor.sees(x, y, walls):
-                    tr.expected += 1
+            if tr.status != TENTATIVE:
+                continue
+            pd = self._pd(sensor, tr.position())
+            if id(tr) in assigned:
+                d, g = assigned[id(tr)]
+                lam = self.sensor_model.clutter_density(sensor.id, *d.pos, p.clutter_density, p.clutter_floor)
+                if any(np.linalg.norm(w.position() - d.pos) < p.echo_radius for w in walkers):
+                    lam *= p.echo_factor
+                ratio = (pd * g + (1 - pd) * lam) / lam
+            elif pd > 0.02:
+                ratio = 1 - pd
+            else:
+                continue
+            logit = math.log(tr.existence / (1 - tr.existence)) + weight * math.log(max(ratio, 1e-9))
+            tr.existence = min(max(1 / (1 + math.exp(-logit)), 1e-4), 1 - 1e-4)
 
     def _associate(self, sensor: SensorConfig, detections: list, t: float) -> list:
-        """Returns [(detection, track)] for the tracks updated with a measurement."""
+        """Returns [(detection, track, likelihood)] for the tracks updated with a measurement."""
         p = self.config.params
         if not detections:
             return []
@@ -255,9 +291,10 @@ class Tracker:
         for i, j in enumerate(result):
             d = detections[i]
             if j < m and cost[i][j] < _BIG:
+                g = IMM.likelihood(tracks[j].state, d.pos, d.R)  # before the update
                 self._update(tracks[j], d, t)
                 updated.append(tracks[j])
-                pairs.append((d, tracks[j]))
+                pairs.append((d, tracks[j], g))
             else:
                 unassigned.append(d)
 
@@ -334,12 +371,12 @@ class Tracker:
         walk = 0.7 if abs(d.speed) > 0.15 else 0.4
         tr = Track(self.next_id, IMMState.from_position(d.pos, d.R, walk), t, t, at_entry)
         tr.has_origin = at_entry
+        tr.existence = p.birth_entry if at_entry else p.birth_room
         if not warmup:
             tr.closed_region = self.config.closed_region_at(*d.pos)
             tr.has_origin = tr.has_origin or tr.closed_region is not None
         self.next_id += 1
         self._update(tr, d, t, measure=False)
-        tr.expected = 1
         self.tracks.append(tr)
 
     # --------------------------------------------------------------- LD2410C
@@ -383,16 +420,15 @@ class Tracker:
         for tr in self.tracks:
             if tr.status != TENTATIVE:
                 continue
-            if t - tr.last_hit > p.tentative_timeout:
+            if t - tr.last_hit > p.tentative_timeout or tr.existence < p.drop_prob:
                 self._emit("dropped", tr)
                 drop.add(tr.id)
                 continue
-            ratio = tr.hits / max(tr.expected, 1)
             if tr.closed_region:
                 # out of a closed region (balcony, kitchen) only comes who went in before:
                 # likely enough that someone is still in there -> it's them coming back
                 if self.occupancy.best(tr.closed_region, t) >= p.return_min_prob:
-                    if t - tr.first_hit >= p.confirm_time_entry and ratio >= p.confirm_ratio:
+                    if t - tr.first_hit >= p.confirm_time_entry:
                         self.occupancy.came_back(tr.closed_region, t)
                         tr.has_origin = True
                         tr.status = CONFIRMED
@@ -404,14 +440,7 @@ class Tracker:
                 if door is None or np.linalg.norm(tr.position() - np.array(door.geometry.center)) < p.closed_exit_distance \
                         or self.config.closed_region_at(*tr.position()):
                     continue
-                need = 2 * p.confirm_time
-            elif not tr.born_at_entry and self._shadowed(tr, t):
-                # an echo walking along with someone: start the confirmation over
-                tr.first_hit, tr.hits, tr.expected = t, 0, 0
-                continue
-            else:
-                need = p.confirm_time_entry if tr.born_at_entry else p.confirm_time
-            if t - tr.first_hit >= need and ratio >= p.confirm_ratio and self._seen_by_enough(tr):
+            if tr.existence >= p.confirm_prob:
                 lost = self._takeover_candidate(tr, t)
                 if lost is not None:
                     # nobody appears out of nowhere: it's the lost person, who moved unseen
@@ -466,43 +495,10 @@ class Tracker:
                 for s in self.config.sensors if s.enabled and s.placed)
         return out
 
-    def _shadowed(self, tr: Track, t: float) -> bool:
-        """Someone is walking close by. Nobody appears out of nowhere next to a walking person:
-        a second person would have been tracked before (at a door, or as a lost track, which
-        takes over). What does appear there is a multipath echo of the walker."""
-        p = self.config.params
-        pos = tr.position()
-        for other in self.tracks:
-            if other is tr or other.status != CONFIRMED or other.lost(t, p.lost_after):
-                continue
-            vx, vy = other.velocity()
-            if (other.walk_prob > 0.5 and math.hypot(vx, vy) > 0.3
-                    and np.linalg.norm(other.position() - pos) < p.echo_radius):
-                return True
-        return False
-
-    def _seen_by_enough(self, tr: Track) -> bool:
-        """Where two sensors look, a new person must show up in both. A reflection or a static
-        ghost almost always shows up in one only."""
-        x, y = tr.position()
-        # only sensors that are online: one that is unplugged can't confirm anybody
-        certain = {s.id for s in self.config.sensors if s.enabled and s.placed and self._online(s.id)
-                   and self._sees_well(s, x, y)}
-        return len(certain & set(tr.last_hit_by)) >= min(2, len(certain))
-
     def _online(self, sensor_id: str) -> bool:
         """Frames arrive (at least the 5 s heartbeat while nothing is detected)."""
         rt = self.runtime.get(sensor_id)
         return rt is not None and self.now - rt.last_frame < 15
-
-    def _sees_well(self, s: SensorConfig, x: float, y: float) -> bool:
-        """Well inside the field of view: the LD2450 is weak near its edges and its maximum range."""
-        lx, ly = s.to_local(x, y)
-        if ly <= 0 or math.hypot(lx, ly) > s.range - 1.0:
-            return False
-        if abs(math.degrees(math.atan2(lx, ly))) > s.fov / 2 - 15:
-            return False
-        return s.sees(x, y, self.config.wall_segments)
 
     def _takeover_candidate(self, tr: Track, t: float):
         """The nearest lost track that could have walked to tr's position since it was last seen."""

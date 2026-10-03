@@ -137,6 +137,15 @@ class IMM:
         return float(m + math.log(total))
 
     @staticmethod
+    def likelihood(s: IMMState, z: np.ndarray, R: np.ndarray) -> float:
+        """Density of a position measurement under the predicted track (per m^2)."""
+        x, P = s.mean()
+        S = P[:2, :2] + R
+        y = z - x[:2]
+        d2 = float(y @ np.linalg.solve(S, y))
+        return math.exp(-0.5 * d2) / (2 * math.pi * math.sqrt(max(np.linalg.det(S), 1e-12)))
+
+    @staticmethod
     def gate_distance(s: IMMState, z: np.ndarray, R: np.ndarray) -> float:
         """Squared Mahalanobis distance of a position measurement to the combined estimate."""
         x, P = s.mean()

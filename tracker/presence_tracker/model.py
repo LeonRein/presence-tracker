@@ -140,10 +140,17 @@ class TrackerParams:
     split_radius: float = 1.0  # m, a second detection this close to an updated track is the same person (or its reflection)
     # track lifecycle
     confirm_time_entry: float = 1.0  # s of detections needed for a track that starts in an entry zone
-    confirm_time: float = 2.0  # s of detections needed elsewhere ("people don't appear out of nowhere")
-    confirm_ratio: float = 0.5  # share of sensor frames that must contain the new track
+    # existence probability of new tracks (tracker._existence)
+    birth_entry: float = 0.3  # at an entry or a door to a room without a sensor
+    birth_room: float = 0.02  # elsewhere: only if someone came in unseen
+    evidence_time: float = 3.0  # s per sensor that count as one independent observation
+    clutter_density: float = 0.02  # ghosts per m^2 and frame, until learned
+    clutter_floor: float = 0.005  # learned ghost density never below this
+    echo_factor: float = 20.0  # ghost density this many times higher within echo_radius of a walker
+    confirm_prob: float = 0.5  # a new track is a person from this probability on
+    drop_prob: float = 0.003  # and is dropped below this one
     tentative_timeout: float = 0.8  # s without detection until a new track is dropped
-    echo_radius: float = 3.0  # m, no new track this close to a walking person (multipath echoes)
+    echo_radius: float = 3.0  # m, around a walking person: more ghosts (multipath echoes)
     closed_exit_distance: float = 1.5  # m out of a closed room's door, if nobody went in before
     # closed rooms without a sensor, see unobserved.py
     dwell_median: float = 120.0  # s, prior: typical stay in such a room, until visits are learned

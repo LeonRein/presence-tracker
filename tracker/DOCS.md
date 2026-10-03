@@ -9,9 +9,10 @@ betreten wird. Wer wer ist, spielt keine Rolle.
 - Jede Person ist eine **Spur** in Hauskoordinaten (Meter, Achsen der Saugroboter-Karte). Ein
   IMM-Kalman-Filter mit zwei Bewegungsmodellen (gehen / ruhig) glättet die Position und liefert nebenbei,
   ob sich jemand bewegt.
-- **Niemand taucht aus dem Nichts auf und niemand verschwindet einfach.** Neue Personen werden in
-  Eingangszonen (Treppe, Haustür, Balkon) schnell bestätigt, mitten im Raum erst nach etwa 2 s stimmiger
-  Messungen. Eine Person, die der LD2450 nicht mehr sieht (stillsitzend, verdeckt, mehr als 3 Ziele),
+- **Niemand taucht aus dem Nichts auf und niemand verschwindet einfach.** Jede neue Spur hat eine
+  Wahrscheinlichkeit, eine Person zu sein: an Eingängen anfangs hoch, mitten im Raum klein. Messungen erhöhen
+  sie, je zuverlässiger der Sensor dort erkennt und je seltener er dort Geister meldet. Sieht ein Sensor die
+  Stelle gut und meldet nichts, sinkt sie. Ab 50 % ist es eine Person. Eine Person, die der LD2450 nicht mehr sieht (stillsitzend, verdeckt, mehr als 3 Ziele),
   bleibt an ihrem Platz stehen, bis sie durch einen Eingang geht oder der LD2410C dort länger nichts mehr sieht.
 - Der **LD2410C** erzeugt nie selbst Personen. Seine Haltezeit steht auf 0, die App überbrückt kurze Lücken selbst
   (*LD2410C-Haltezeit*). Seine Störungen durch den LD2450 dauern etwa 1 s. Nur längere Präsenz im passenden
