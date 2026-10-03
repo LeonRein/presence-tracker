@@ -11,9 +11,9 @@ Getestet mit ESPHome 2026.9 (`esphome config` und `esphome compile`).
 
 ## Zwei Wege aus dem Sensor
 
-**Native API → Home Assistant**, wie bei jedem ESPHome-Gerät: Anwesenheit, Zielanzahl, Zonen,
-alle Radar-Einstellungen (Zonen, Gates, Timeouts, Multi-Target) und OTA.
-Die Werte sind auf 1/s gedrosselt (ESPHome-Standard), damit der Recorder klein bleibt.
+**Native API → Home Assistant**: nur Radar-Einstellungen (Multi-Target, LD2410C-Schwellen und -Reichweite,
+Neustart) und Diagnose (Status, WLAN, Firmware) sowie OTA. Messwerte gibt es in Home Assistant nicht:
+die gesamte Auswertung macht die Tracker-App ([`../tracker`](../tracker/DOCS.md)), sie legt eigene Entitäten an.
 
 **MQTT → Tracker**: Für das Verfolgen über mehrere Sensoren braucht das Python-Skript die Rohdaten
 jedes Radar-Frames (ca. 11/s). Dafür schickt der Sensor pro Frame eine JSON-Nachricht an den Mosquitto-Broker.
@@ -140,5 +140,3 @@ Das geht nur, wenn das Repo öffentlich ist. Änderungen am Package landen dann 
   In Home Assistant gibt es dafür keine Entitäten mehr.
 - LD2410C-Gates einstellen: Die Energie pro Stufe zeigt die Tracker-App im Tab *Sensoren*. Die Schwellen
   `LD2410 Gx … Threshold` im leeren Raum knapp über das Rauschen legen.
-- Zonen (`Zone 1–3 X1/Y1/X2/Y2`, in mm) sind nur für Automationen direkt in Home Assistant da, der Tracker braucht sie nicht.
-  Zum Einzeichnen helfen die Entitäten `Target 1–3 X/Y` (standardmäßig deaktiviert, 1/s).

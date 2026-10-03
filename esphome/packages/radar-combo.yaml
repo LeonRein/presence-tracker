@@ -4,7 +4,8 @@
 # Wiring as in ../../case/README.md.
 #
 # Two outputs:
-#   - Native API -> Home Assistant: presence, counts, zones and all radar settings.
+#   - Native API -> Home Assistant: radar settings and diagnostics only. All
+#     evaluation happens in the tracker app, which creates its own entities.
 #   - MQTT -> ${mqtt_prefix}/${name}/frame: one JSON frame per radar frame with the
 #     raw target coordinates, for the multi-sensor tracker. Format: ../README.md
 
@@ -183,35 +184,18 @@ binary_sensor:
   - platform: status
     name: Status
 
-  - platform: ld2450
-    ld2450_id: ld2450_radar
-    has_target:
-      name: Presence
-    has_moving_target:
-      name: Moving Target
-    has_still_target:
-      name: Still Target
-
   - platform: ld2410
     ld2410_id: ld2410_radar
-    has_target:
-      name: LD2410 Presence
     has_moving_target:
       id: ld2410_moving
-      name: LD2410 Moving Target
+      internal: true
     has_still_target:
       id: ld2410_still
-      name: LD2410 Still Target
+      internal: true
 
 sensor:
   - platform: ld2450
     ld2450_id: ld2450_radar
-    target_count:
-      name: Target Count
-    still_target_count:
-      name: Still Target Count
-    moving_target_count:
-      name: Moving Target Count
     # Raw target values for the MQTT frame. `filters: []` removes the default
     # 1 s throttle; internal keeps the 10 Hz updates away from Home Assistant.
     target_1:
@@ -229,20 +213,9 @@ sensor:
       y: {id: t3_y, internal: true, filters: []}
       speed: {id: t3_speed, internal: true, filters: []}
       resolution: {id: t3_resolution, internal: true, filters: []}
-    zone_1:
-      target_count:
-        name: Zone 1 Target Count
-    zone_2:
-      target_count:
-        name: Zone 2 Target Count
-    zone_3:
-      target_count:
-        name: Zone 3 Target Count
 
   - platform: ld2410
     ld2410_id: ld2410_radar
-    detection_distance:
-      name: LD2410 Detection Distance
     moving_distance: {id: ld2410_moving_distance, internal: true, filters: []}
     moving_energy: {id: ld2410_moving_energy, internal: true, filters: []}
     still_distance: {id: ld2410_still_distance, internal: true, filters: []}
@@ -259,18 +232,6 @@ sensor:
     g6: {move_energy: {id: g6_move, internal: true, filters: []}, still_energy: {id: g6_still, internal: true, filters: []}}
     g7: {move_energy: {id: g7_move, internal: true, filters: []}, still_energy: {id: g7_still, internal: true, filters: []}}
     g8: {move_energy: {id: g8_move, internal: true, filters: []}, still_energy: {id: g8_still, internal: true, filters: []}}
-
-  # Target positions for Home Assistant (e.g. a plotly card for drawing zones).
-  # Off by default to keep the recorder small; enable them in HA when needed.
-  - {platform: copy, source_id: t1_x, name: Target 1 X, disabled_by_default: true, filters: [throttle: 1s]}
-  - {platform: copy, source_id: t1_y, name: Target 1 Y, disabled_by_default: true, filters: [throttle: 1s]}
-  - {platform: copy, source_id: t2_x, name: Target 2 X, disabled_by_default: true, filters: [throttle: 1s]}
-  - {platform: copy, source_id: t2_y, name: Target 2 Y, disabled_by_default: true, filters: [throttle: 1s]}
-  - {platform: copy, source_id: t3_x, name: Target 3 X, disabled_by_default: true, filters: [throttle: 1s]}
-  - {platform: copy, source_id: t3_y, name: Target 3 Y, disabled_by_default: true, filters: [throttle: 1s]}
-  # LD2410C values for tuning the gate thresholds
-  - {platform: copy, source_id: ld2410_moving_energy, name: LD2410 Moving Energy, disabled_by_default: true, filters: [throttle: 1s]}
-  - {platform: copy, source_id: ld2410_still_energy, name: LD2410 Still Energy, disabled_by_default: true, filters: [throttle: 1s]}
 
   - platform: wifi_signal
     name: WiFi Signal
@@ -319,11 +280,6 @@ switch:
         - switch.turn_off: ld2410_bluetooth
 
 select:
-  - platform: ld2450
-    ld2450_id: ld2450_radar
-    zone_type:
-      name: LD2450 Zone Type
-
   - platform: ld2410
     ld2410_id: ld2410_radar
     distance_resolution:
@@ -348,26 +304,6 @@ button:
       name: LD2410 Query Parameters
 
 number:
-  - platform: ld2450
-    ld2450_id: ld2450_radar
-    presence_timeout:
-      name: LD2450 Presence Timeout
-    zone_1:
-      x1: {name: Zone 1 X1}
-      y1: {name: Zone 1 Y1}
-      x2: {name: Zone 1 X2}
-      y2: {name: Zone 1 Y2}
-    zone_2:
-      x1: {name: Zone 2 X1}
-      y1: {name: Zone 2 Y1}
-      x2: {name: Zone 2 X2}
-      y2: {name: Zone 2 Y2}
-    zone_3:
-      x1: {name: Zone 3 X1}
-      y1: {name: Zone 3 Y1}
-      x2: {name: Zone 3 X2}
-      y2: {name: Zone 3 Y2}
-
   - platform: ld2410
     ld2410_id: ld2410_radar
     # Kept at 0 (see on_boot); the hold time is the tracker app's job
