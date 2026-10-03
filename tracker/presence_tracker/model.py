@@ -128,6 +128,7 @@ class TrackerParams:
     still_jitter: float = 0.08  # m/sqrt(s), position wander of a sitting/standing person
     walk_to_still: float = 0.7  # switching rates, 1/s
     still_to_walk: float = 0.3
+    stale_frames: int = 5  # frames with bit-identical coordinates until an LD2450 target counts as frozen
     wall_margin: float = 0.4  # m, detections farther behind a wall or outside all rooms are reflections
     # association
     gate: float = 13.8  # chi-square, 2 dof, 99.9 %
@@ -138,6 +139,9 @@ class TrackerParams:
     confirm_time: float = 2.0  # s of detections needed elsewhere ("people don't appear out of nowhere")
     confirm_ratio: float = 0.5  # share of sensor frames that must contain the new track
     tentative_timeout: float = 0.8  # s without detection until a new track is dropped
+    echo_radius: float = 3.0  # m, no new track this close to a walking person (multipath echoes)
+    rejoin_time: float = 10.0  # s, someone who left through a door and shows up again is picked up
+    rejoin_radius: float = 2.5  # m, upper bound for picking up a lost track again directly
     takeover_speed: float = 1.5  # m/s, a lost track that could have walked to a new one becomes it
     lost_after: float = 1.5  # s without detection until a track counts as lost (keeps its place)
     coast_time: float = 0.7  # s a lost track keeps moving before it stops
@@ -201,7 +205,7 @@ class Config:
                 sides.append(next((z for z in rooms if z.contains(px, py)), None))
             if any(r is None or not covered[r.id] for r in sides) and any(r is not None and covered[r.id] for r in sides):
                 out.append(ZoneConfig(f"door-{d['id']}", "Tür", kind="entry", shape="circle", center=list(c),
-                                      radius=max(0.7, d.get("width", 0.9) / 2 + 0.2)))
+                                      radius=max(1.2, d.get("width", 0.9) / 2 + 0.5)))
         return out
 
     def _room_covered(self, room, sensors) -> bool:
@@ -221,6 +225,15 @@ class Config:
 
     def zones_of(self, kind: str) -> list:
         return [z for z in self.zones if z.kind == kind]
+
+    def hidden(self, s: SensorConfig, pos, u, margin: float) -> bool:
+        """The radar can't see through the (concrete) walls: a point more than `margin` behind
+        one, or outside all rooms, is a reflection. u: unit vector from the sensor to the point."""
+        rooms = self.zones_of("room")
+        if rooms and not any(z.contains(pos[0], pos[1], margin) for z in rooms):
+            return True
+        back = (float(pos[0] - u[0] * margin), float(pos[1] - u[1] * margin))
+        return not line_of_sight(s.sight_origin(), back, self.wall_segments)
 
     def visible_sensors(self, x: float, y: float, margin: float = 0.0) -> list:
         return [s for s in self.sensors if s.enabled and s.placed and s.sees(x, y, self.wall_segments, margin)]

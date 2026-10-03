@@ -171,3 +171,15 @@ def test_detections_behind_a_wall_are_reflections():
         tracker.step(1.0 + 0.1 * k)
     xs = sorted(round(float(tr.position()[0]), 1) for tr in tracker.confirmed())
     assert all(x < 3.4 for x in xs) and len(xs) >= 1
+
+
+def test_frozen_ld2450_target_is_not_tracked():
+    # the LD2450 keeps reporting the last position bit-identically after the person left
+    config = room_config()
+    tracker = Tracker(config, start=0.0)
+    frozen = {"targets": [{"slot": 1, "x": 300, "y": 2000, "speed": 0}]}
+    for k in range(100):
+        tracker.process_frame("a", 0.1 * k, frozen)
+        tracker.step(0.1 * k)
+    assert all(d.stale for d in tracker.runtime["a"].detections)
+    assert not tracker.confirmed()

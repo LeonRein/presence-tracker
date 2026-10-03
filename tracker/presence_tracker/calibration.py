@@ -27,9 +27,10 @@ MIN_SPEED = 0.05  # m/s, radial speed for a target to count as moving
 MAX_DIST_ERR = 1.0  # m, measured sensor distance vs. drawn distance, for a hypothesis to be considered
 MAX_POS_RESIDUAL = 0.5  # m, a sensor this far from its drawn position after placing gets a warning
 # quality thresholds
-MIN_PAIRS = 100
-MIN_INLIER_RATIO = 0.5
+MIN_INLIERS = 150  # matching pairs for a good result
+MIN_INLIER_RATIO = 0.25  # below this, the pairs are mostly wrong (second person, echoes)
 MIN_SPREAD = 0.5  # m, standard deviation of the inlier points along their narrowest direction
+CAL_WALL_MARGIN = 1.0  # m, points this far behind a wall are echoes even with a heading 20 degrees off
 
 
 def _rot(a: float) -> np.ndarray:
@@ -85,13 +86,16 @@ def ransac(src: np.ndarray, dst: np.ndarray, valid=None, iterations: int = 1000,
 
 
 def verdict(pairs: int, inliers: int, spread: float) -> tuple:
-    """(quality: ok | warn | bad, German reason)."""
-    if pairs < MIN_PAIRS:
-        return "bad", f"Nur {pairs} gemeinsame Messungen, mindestens {MIN_PAIRS} nötig. Länger durch die Überschneidung gehen."
-    ratio = inliers / pairs
+    """(quality: ok | warn | bad, German reason).
+
+    Judged by the number of matching pairs and how far they spread, not by their share: echoes
+    walking along with the person make many wrong pairs, but they don't agree on one solution."""
+    ratio = inliers / max(pairs, 1)
     if ratio < MIN_INLIER_RATIO:
-        return "bad", (f"Nur {100 * ratio:.0f} % der Messungen passen zusammen. Wahrscheinlich war noch jemand im Bereich, "
-                       "oder Reflexionen stören. Allein wiederholen.")
+        return "bad", (f"Nur {100 * ratio:.0f} % der Messungen passen zusammen. Wahrscheinlich war noch jemand im Bereich. "
+                       "Allein wiederholen.")
+    if inliers < MIN_INLIERS:
+        return "bad", f"Nur {inliers} passende Messungen, mindestens {MIN_INLIERS} nötig. Länger durch die Überschneidung gehen."
     if spread < MIN_SPREAD:
         return "warn", "Die Messpunkte liegen fast auf einer Linie. Kreuz und quer gehen, damit die Drehung sicher bestimmt ist."
     return "ok", ""
@@ -113,8 +117,10 @@ class Calibrator:
     def on_frame(self, sensor: SensorConfig, t: float, detections: list):
         if not self.active:
             return
-        # exactly one moving target; people sitting still elsewhere don't matter
-        moving = [d for d in detections if not d.ignored and abs(d.speed) >= MIN_SPEED]
+        # exactly one moving target; people sitting still elsewhere and echoes far behind a wall
+        # don't matter
+        moving = [d for d in detections if not d.ignored and not d.stale and abs(d.speed) >= MIN_SPEED
+                  and not self.config.hidden(sensor, d.pos, d.radial, CAL_WALL_MARGIN)]
         if len(moving) == 1:
             self.series[sensor.id].append((t, *moving[0].local))
 

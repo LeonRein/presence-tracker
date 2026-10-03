@@ -137,7 +137,7 @@ function livePanel(panel, view) {
       <span><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="var(--still)"/></svg>ruhig</span>
       <span><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="var(--lost)"/></svg>verdeckt</span>
       <span><svg width="12" height="12"><circle cx="6" cy="6" r="3" fill="var(--muted)"/></svg>Messpunkt</span>
-      <span><svg width="12" height="12"><circle cx="6" cy="6" r="3.5" fill="none" stroke="var(--muted)" stroke-width="1.5"/></svg>hinter einer Wand (Reflexion)</span>
+      <span><svg width="12" height="12"><circle cx="6" cy="6" r="3.5" fill="none" stroke="var(--muted)" stroke-width="1.5"/></svg>verworfen (hinter einer Wand oder eingefroren)</span>
       <span><svg width="16" height="12"><path d="M1 10 A 9 9 0 0 1 15 10" stroke="var(--muted)" stroke-dasharray="2 3" fill="none" stroke-width="2"/></svg>LD2410C-Abstand</span>
     </div>
     <div class="row" style="margin-top:12px"><button class="btn" id="reset">Spuren neu aufnehmen</button></div>
@@ -590,6 +590,8 @@ const PARAMS = [
     ['confirm_time', 'Bestätigung sonst', 's', 'Mitten im Raum taucht niemand einfach auf: hier braucht es länger.', 0.1],
     ['confirm_ratio', 'Anteil Frames', '', 'Anteil der Frames, in denen die neue Person dabei sein muss.', 0.05],
     ['warmup', 'Anlaufzeit', 's', 'Nach dem Start dürfen Personen überall sofort erkannt werden.', 1],
+    ['echo_radius', 'Kein Auftauchen neben Gehenden', 'm', 'So nah bei jemandem, der gerade geht, entsteht keine neue Person: dort erscheinen Echos (Mehrwege-Reflexionen), die mitlaufen.', 0.1],
+    ['rejoin_radius', 'Wiederaufnahme bis', 'm', 'Taucht eine eben verlorene Person bis zu diesem Abstand wieder auf (so weit sie in der Zeit gehen konnte), wird sie ohne neue Bestätigung weiterverfolgt.', 0.1],
     ['takeover_speed', 'Übernahme durch verdeckte Person', 'm/s', 'Taucht mitten im Raum jemand auf, den eine verdeckte Person mit diesem Tempo erreicht haben könnte, ist es dieselbe.', 0.1],
   ]],
   ['Verdeckte Personen', [
@@ -605,6 +607,7 @@ const PARAMS = [
   ['Zuordnung', [
     ['gate', 'Zuordnungsschwelle (χ²)', '', 'Größer = Messungen werden großzügiger bestehenden Personen zugeordnet.', 0.5],
     ['max_gate_radius', 'Maximaler Zuordnungsradius', 'm', '', 0.05],
+    ['stale_frames', 'Eingefrorene Ziele nach', 'Frames', 'Der LD2450 meldet manchmal ein Ziel noch bis zu 35 s mit exakt gleichen Koordinaten weiter, obwohl niemand mehr da ist. Echte Personen schwanken immer um Millimeter.', 1],
     ['wall_margin', 'Toleranz an Wänden', 'm', 'Messpunkte weiter hinter einer Wand oder außerhalb aller Räume sind Reflexionen und werden verworfen. Die Radare sehen nicht durch die Betonwände.', 0.05],
     ['split_radius', 'Doppelte Ziele zusammenfassen', 'm', 'Der LD2450 meldet eine Person manchmal als zwei Ziele.', 0.05],
     ['merge_distance', 'Spuren verschmelzen unter', 'm', '', 0.05],

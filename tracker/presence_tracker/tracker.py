@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .assignment import assign
-from .geometry import line_of_sight
 from .imm import IMM, STILL, WALK, IMMState
 from .model import Config, SensorConfig
 
@@ -41,6 +40,7 @@ class Detection:
     local: tuple  # raw LD2450 x, y in meters (sensor frame), for calibration
     ignored: bool = False  # inside an interference zone
     hidden: bool = False  # behind a wall or outside all rooms: a reflection, not used for tracking
+    stale: bool = False  # frozen: the LD2450 repeats the exact same coordinates, nobody is there
 
 
 @dataclass
@@ -60,6 +60,7 @@ class Track:
     near_since: dict = field(default_factory=dict)  # other track id -> time they came close
     co_detected: dict = field(default_factory=dict)  # other track id -> last time both in one frame
     zones: set = field(default_factory=set)
+    last_walking: float = -math.inf  # last detection while moving
 
     def position(self) -> np.ndarray:
         return self.state.mu @ self.state.x[:, :2]
@@ -88,6 +89,7 @@ class SensorRuntime:
     move_gates: list | None = None  # LD2410C energy per 0.75 m gate (engineering mode)
     still_gates: list | None = None
     frames: int = 0
+    repeats: dict = field(default_factory=dict)  # slot -> ((x, y) in mm, frames in a row)
 
 
 class SensorClock:
@@ -126,6 +128,7 @@ class Tracker:
         self.now = start or 0.0
         self.unknown_sensors: dict[str, float] = {}
         self.listeners = []  # called with (event, data) for calibration and debugging
+        self.exited: list = []  # tracks that left through an entry recently: (track, time)
 
     # ------------------------------------------------------------------ input
 
@@ -142,13 +145,14 @@ class Tracker:
             self.unknown_sensors[sensor_id] = t
             return
         detections = self._detections(sensor, frame)
+        self._mark_stale(rt, frame, detections)
         rt.detections = detections
         if not sensor.enabled or not sensor.placed:
             return
         self._ld2410(sensor, rt, t, frame.get("ld2410") or {})
         self._predict_all(t)
         self._count_expected(sensor)
-        self._associate(sensor, [d for d in detections if not d.hidden], t)
+        self._associate(sensor, [d for d in detections if not d.hidden and not d.stale], t)
         for listener in self.listeners:
             listener("frame", (sensor, t, detections))
 
@@ -174,15 +178,24 @@ class Tracker:
                                  self._hidden(s, pos, u)))
         return out
 
-    def _hidden(self, s: SensorConfig, pos: np.ndarray, u: np.ndarray) -> bool:
-        """The radar can't see through the (concrete) walls: a point behind one is a reflection.
-        So is a point outside all rooms. wall_margin of tolerance for noise right at a wall."""
+    def _mark_stale(self, rt: SensorRuntime, frame: dict, detections: list):
+        """The LD2450 sometimes keeps reporting a target with bit-identical coordinates for up to
+        ~35 s after the person left. A real person, even sitting still, changes the millimeter
+        values in nearly every frame (99 % of identical runs are at most 2 frames long)."""
         p = self.config.params
-        rooms = self.config.zones_of("room")
-        if rooms and not any(z.contains(pos[0], pos[1], p.wall_margin) for z in rooms):
-            return True
-        back = pos - u * p.wall_margin
-        return not line_of_sight(s.sight_origin(), (float(back[0]), float(back[1])), self.config.wall_segments)
+        repeats = {}
+        by_slot = {d.slot: d for d in detections}
+        for target in frame.get("targets", []):
+            slot, xy = target.get("slot", 0), (target["x"], target["y"])
+            last = rt.repeats.get(slot)
+            n = last[1] + 1 if last and last[0] == xy else 1
+            repeats[slot] = (xy, n)
+            if n >= p.stale_frames and slot in by_slot:
+                by_slot[slot].stale = True
+        rt.repeats = repeats
+
+    def _hidden(self, s: SensorConfig, pos: np.ndarray, u: np.ndarray) -> bool:
+        return self.config.hidden(s, pos, u, self.config.params.wall_margin)
 
     # ------------------------------------------------------------- filtering
 
@@ -242,12 +255,30 @@ class Tracker:
             # LD2450 sometimes splits one body into two targets
             if any(np.linalg.norm(tr.position() - d.pos) < p.split_radius for tr in updated):
                 continue
-            # someone getting up where a lost track sits: same person
+            # a lost person showing up again where they could have walked meanwhile (getting up,
+            # passing a blind spot at the edge of the view): same person, no new confirmation
+            def reach(tr):
+                return min(p.max_gate_radius + p.takeover_speed * (t - tr.last_hit), p.rejoin_radius)
+            # Someone who just "left" through a door counts too: walking along a door at the edge
+            # of the view looks exactly like leaving through it.
             lost = [tr for tr in tracks
                     if tr.status == CONFIRMED and tr not in updated and tr.lost(t, p.lost_after)]
+            lost += [tr for tr, _ in self.exited]
+            lost = [tr for tr in lost if np.linalg.norm(tr.position() - d.pos) <= reach(tr)]
             near = min(lost, key=lambda tr: np.linalg.norm(tr.position() - d.pos), default=None)
-            if near is not None and np.linalg.norm(near.position() - d.pos) < 1.5 * p.max_gate_radius:
-                near.state = IMMState.from_position(d.pos, d.R, walk_prob=0.5)
+            if near is not None:
+                if near not in self.tracks:
+                    self.exited = [(tr, te) for tr, te in self.exited if tr is not near]
+                    self.tracks.append(near)
+                    self._emit("rejoined", near)
+                # velocity from the way it went while unseen
+                v = (d.pos - near.position()) / max(t - near.last_hit, 0.1)
+                speed = float(np.linalg.norm(v))
+                if speed > 2.0:
+                    v *= 2.0 / speed
+                near.state = IMMState.from_position(d.pos, d.R, walk_prob=0.8 if speed > 0.3 else 0.3)
+                near.state.x[:, 2:] = v
+                near.t = t
                 self._update(near, d, t, measure=False)
                 updated.append(near)
                 continue
@@ -265,6 +296,9 @@ class Tracker:
             tr.first_hit = t
         tr.hits += 1
         tr.last_hit = t
+        vx, vy = tr.velocity()
+        if tr.walk_prob > 0.5 and math.hypot(vx, vy) > 0.2:
+            tr.last_walking = t
         tr.last_support = t
         tr.last_hit_by[d.sensor] = t
 
@@ -324,6 +358,10 @@ class Tracker:
                 self._emit("dropped", tr)
                 drop.add(tr.id)
                 continue
+            if not tr.born_at_entry and self._shadowed(tr, t):
+                # an echo walking along with someone: start the confirmation over
+                tr.first_hit, tr.hits, tr.expected = t, 0, 0
+                continue
             need = p.confirm_time_entry if tr.born_at_entry else p.confirm_time
             ratio = tr.hits / max(tr.expected, 1)
             if t - tr.first_hit >= need and ratio >= p.confirm_ratio and self._seen_by_enough(tr):
@@ -346,17 +384,44 @@ class Tracker:
                 reason = self._end_reason(tr, t)
                 if reason:
                     self._emit("ended", (tr, reason))
+                    if reason == "left via entry":
+                        self.exited.append((tr, t))
                     continue
             keep.append(tr)
         self.tracks = keep
+        self.exited = [(tr, te) for tr, te in self.exited if t - te < p.rejoin_time]
         self._merge(t)
+
+    def _shadowed(self, tr: Track, t: float) -> bool:
+        """Someone is walking close by. Nobody appears out of nowhere next to a walking person:
+        a second person would have been tracked before (at a door, or as a lost track, which
+        takes over). What does appear there is a multipath echo of the walker."""
+        p = self.config.params
+        pos = tr.position()
+        for other in self.tracks:
+            if other is tr or other.status != CONFIRMED or other.lost(t, p.lost_after):
+                continue
+            vx, vy = other.velocity()
+            if (other.walk_prob > 0.5 and math.hypot(vx, vy) > 0.3
+                    and np.linalg.norm(other.position() - pos) < p.echo_radius):
+                return True
+        return False
 
     def _seen_by_enough(self, tr: Track) -> bool:
         """Where two sensors look, a new person must show up in both. A reflection or a static
         ghost almost always shows up in one only."""
         x, y = tr.position()
-        visible = {s.id for s in self.config.visible_sensors(x, y, margin=-0.3)}
-        return len(visible & set(tr.last_hit_by)) >= min(2, len(visible))
+        certain = {s.id for s in self.config.sensors if s.enabled and s.placed and self._sees_well(s, x, y)}
+        return len(certain & set(tr.last_hit_by)) >= min(2, len(certain))
+
+    def _sees_well(self, s: SensorConfig, x: float, y: float) -> bool:
+        """Well inside the field of view: the LD2450 is weak near its edges and its maximum range."""
+        lx, ly = s.to_local(x, y)
+        if ly <= 0 or math.hypot(lx, ly) > s.range - 1.0:
+            return False
+        if abs(math.degrees(math.atan2(lx, ly))) > s.fov / 2 - 15:
+            return False
+        return s.sees(x, y, self.config.wall_segments)
 
     def _takeover_candidate(self, tr: Track, t: float):
         """The nearest lost track that could have walked to tr's position since it was last seen."""
@@ -376,7 +441,8 @@ class Tracker:
         x, y = tr.position()
         since = t - tr.last_hit
         if since > p.exit_timeout:
-            if any(z.contains(x, y) for z in self.config.entry_zones):
+            # only someone walking goes out; a person sitting next to a door stays
+            if tr.last_hit - tr.last_walking <= 3.0 and any(z.contains(x, y) for z in self.config.entry_zones):
                 return "left via entry"
             if not self.config.visible_sensors(x, y, margin=-0.2):
                 return "left coverage"
@@ -442,7 +508,7 @@ class Tracker:
                 "online": t - rt.last_frame < 15,
                 "detections": [{"x": round(float(d.pos[0]), 3), "y": round(float(d.pos[1]), 3),
                                 "lx": round(d.local[0], 3), "ly": round(d.local[1], 3),
-                                "speed": round(d.speed, 2), "ignored": d.ignored, "hidden": d.hidden}
+                                "speed": round(d.speed, 2), "ignored": d.ignored, "hidden": d.hidden or d.stale}
                                for d in rt.detections] if t - rt.last_frame < 1.0 else [],
                 "ld2410": {"present": rt.ld_present, "distance": round(rt.ld_distance, 2),
                            "move_gates": rt.move_gates, "still_gates": rt.still_gates},
