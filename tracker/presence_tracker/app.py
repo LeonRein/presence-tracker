@@ -1,6 +1,7 @@
 """The running app: frames in, tracker, Home Assistant entities and the web UI out."""
 
 import asyncio
+import base64
 import json
 import logging
 import pathlib
@@ -242,15 +243,29 @@ class App:
         return ws
 
     async def h_upload(self, request):
-        reader = await request.multipart()
-        field = await reader.next()
-        suffix = pathlib.Path(field.filename or "").suffix.lower()
+        """Image upload: multipart (web UI), or JSON {"filename", "data": base64} or {"url"} (scripts)."""
+        if request.content_type == "application/json":
+            body = await request.json()
+            if body.get("url"):
+                url = body["url"]
+                if not url.startswith("https://"):
+                    return web.json_response({"error": "Nur https-URLs."}, status=400)
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
+                        if r.status != 200:
+                            return web.json_response({"error": f"HTTP {r.status}"}, status=502)
+                        data = await r.content.read(20 * 1024 * 1024)
+                filename = url.rsplit("/", 1)[-1].split("?")[0]
+            else:
+                filename, data = body.get("filename", ""), base64.b64decode(body.get("data", ""))
+        else:
+            field = await (await request.multipart()).next()
+            filename, data = field.filename or "", await field.read()
+        suffix = pathlib.Path(filename).suffix.lower()
         if suffix not in IMAGE_TYPES:
             return web.json_response({"error": "Nur PNG, JPEG, WebP oder SVG."}, status=400)
         name = f"{uuid.uuid4().hex[:12]}{suffix}"
-        with (self.images / name).open("wb") as f:
-            while chunk := await field.read_chunk():
-                f.write(chunk)
+        (self.images / name).write_bytes(data)
         return web.json_response({"name": name, "url": f"images/{name}"})
 
     async def h_calibration(self, request):

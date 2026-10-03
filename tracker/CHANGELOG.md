@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Hintergrundbilder lassen sich auch per JSON hochladen (base64 oder https-URL), für Skripte.
+
 ## 0.1.1
 
 - LD2410C-Haltezeit in der App statt im Radar (Firmware setzt den Timeout auf 0).
