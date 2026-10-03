@@ -242,6 +242,24 @@ function layerEditor(el, view, id) {
   });
 }
 
+// Exact placement from the vacuum's calibration points: robot (0,0), (1000,0), (0,1000) mm -> map pixels
+function fitFromCalibration(layer, cal) {
+  if (!Array.isArray(cal) || cal.length < 2) return false;
+  const o = cal.find(c => c.vacuum.x === 0 && c.vacuum.y === 0)?.map;
+  const ax = cal.find(c => c.vacuum.x === 1000 && c.vacuum.y === 0)?.map;
+  if (!o || !ax) return false;
+  const du = ax.x - o.x, dv = ax.y - o.y;
+  const k = 1 / Math.hypot(du, dv);
+  const r = Math.atan2(dv, du);  // pixel direction of the robot's +x
+  // world of pixel (0,0): (x, y) = -Rot(r) * (o.x k, -o.y k)
+  const a = o.x * k, b = -o.y * k;
+  layer.scale = +k.toPrecision(6);
+  layer.rotation = +(r * 180 / Math.PI).toFixed(3);
+  layer.x = +(-(a * Math.cos(r) - b * Math.sin(r))).toFixed(4);
+  layer.y = +(-(a * Math.sin(r) + b * Math.cos(r))).toFixed(4);
+  return true;
+}
+
 async function importVacuum(view) {
   let cams;
   try { cams = await api('api/ha/cameras'); } catch (e) { toast(e.message, 5000); return; }
@@ -260,7 +278,7 @@ async function importVacuum(view) {
     import('./view.js').then(({ loadSize }) => {
       loadSize(layer.url, () => {
         edit(c => {
-          autoFitImage(layer, map.rooms);
+          if (!fitFromCalibration(layer, map.calibration_points)) autoFitImage(layer, map.rooms);
           c.background.layers.push(layer);
           if (importRooms) {
             for (const r of map.rooms) {

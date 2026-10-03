@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Saugroboter-Karte wird über die Kalibrierpunkte des Roboters exakt eingepasst (statt über die Raumrechtecke).
+
 ## 0.1.2
 
 - Hintergrundbilder lassen sich auch per JSON hochladen (base64 oder https-URL), für Skripte.
