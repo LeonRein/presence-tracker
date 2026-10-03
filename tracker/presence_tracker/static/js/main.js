@@ -4,12 +4,13 @@ import { AlignTool, PlaceSensorTool, SelectTool, WallTool, ZoneTool } from './to
 import { esc, toast } from './util.js';
 import { MapView } from './view.js';
 
+// what can be selected and edited in which tab; everything else is display only
 const SELECTABLE = {
-  live: ['zone', 'sensor'],
+  live: [],
   plan: ['wall', 'layer'],
   sensors: ['sensor'],
   zones: ['zone'],
-  calibration: ['sensor'],
+  calibration: [],
   settings: [],
 };
 
@@ -25,6 +26,7 @@ function makeController() {
   else if (t?.name === 'place') ctl = new PlaceSensorTool(t.id);
   else if (t?.name === 'align') ctl = new AlignTool(t.layer);
   else ctl = new SelectTool(SELECTABLE[state.tab]);
+  state.selectable = SELECTABLE[state.tab];
   ctl.view = view;
   view.controller = ctl;
   view.svg.classList.toggle('tool-draw', !!t);
@@ -39,6 +41,7 @@ function updateHint() {
 
 onChange(what => {
   if (what === 'tool' || what === 'tab') makeController();
+  if (what === 'selection') view.renderOverlay();
   if (what === 'config' && state.showCoverage) refreshCoverage(view);
   else view.render();
   updateHint();

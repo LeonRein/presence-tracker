@@ -78,6 +78,16 @@ export class MapView {
       this.pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);
       if (this.pointers.size === 2) { this.pinch = this._pinchState(); this.pan = null; return; }
       const world = this.eventWorld(ev);
+      // own double-click detection: the native dblclick is unreliable when the handles are
+      // redrawn between the clicks, and touch screens don't send it at all
+      const now = performance.now();
+      const last = this.lastDown;
+      if (ev.button === 0 && last && now - last.t < 350 && Math.hypot(ev.clientX - last.x, ev.clientY - last.y) < 8) {
+        this.lastDown = null;
+        this.controller?.dblclick?.(world, ev);
+        return;
+      }
+      if (ev.button === 0) this.lastDown = { t: now, x: ev.clientX, y: ev.clientY };
       const hit = ev.target.closest?.('[data-kind]');
       const handled = ev.button === 0 && this.controller?.down?.(world, hit, ev);
       if (!handled) this.pan = { x: ev.clientX, y: ev.clientY, cx: this.cx, cy: this.cy, moved: false, hit };
@@ -115,7 +125,7 @@ export class MapView {
     };
     svg.addEventListener('pointerup', up);
     svg.addEventListener('pointercancel', up);
-    svg.addEventListener('dblclick', ev => this.controller?.dblclick?.(this.eventWorld(ev), ev));
+    svg.addEventListener('dblclick', ev => ev.preventDefault());
   }
 
   _pinchState() {
@@ -132,6 +142,7 @@ export class MapView {
     const out = [];
     const editing = ['plan', 'sensors', 'zones', 'calibration'].includes(state.tab);
     const sel = state.selection;
+    const pe = kind => (state.selectable.includes(kind) ? '' : 'pointer-events="none"');
 
     // background images
     for (const l of c.background.layers) {
@@ -141,7 +152,7 @@ export class MapView {
       const m = this._bgMatrix(l);
       out.push(`<image href="${esc(l.url)}" width="${size.w}" height="${size.h}" transform="matrix(${m})"
         opacity="${l.opacity ?? 0.6}" preserveAspectRatio="none" data-kind="layer" data-id="${esc(l.id)}"
-        style="${state.tab === 'plan' ? '' : 'pointer-events:none'}"/>`);
+        ${pe('layer')}/>`);
     }
 
     // blind-spot map
@@ -162,7 +173,7 @@ export class MapView {
       const selected = sel?.kind === 'zone' && sel.id === z.id;
       const fillOpacity = occupied ? 0.28 : (z.kind === 'room' ? 0.05 : 0.12);
       const cls = `zone${selected ? ' selected' : ''}${zs?.approaching && state.tab === 'live' ? ' approaching' : ''}`;
-      const common = `class="${cls}" fill="${kind.color}" fill-opacity="${fillOpacity}" stroke="${kind.color}" data-kind="zone" data-id="${esc(z.id)}"`;
+      const common = `class="${cls}" fill="${kind.color}" fill-opacity="${fillOpacity}" stroke="${kind.color}" data-kind="zone" data-id="${esc(z.id)}" ${pe('zone')}`;
       if (z.shape === 'circle') {
         const [x, y] = this.P(...z.center);
         out.push(`<circle cx="${x}" cy="${y}" r="${z.radius * this.s}" ${common}/>`);
@@ -174,7 +185,10 @@ export class MapView {
     // walls
     for (let i = 0; i < c.walls.length; i++) {
       const selected = sel?.kind === 'wall' && sel.id === i;
-      out.push(`<polyline class="wall${selected ? ' selected' : ''}" points="${this.pts(c.walls[i])}" data-kind="wall" data-id="${i}"/>`);
+      const pts = this.pts(c.walls[i]);
+      out.push(`<polyline class="wall${selected ? ' selected' : ''}" points="${pts}" pointer-events="none"/>`);
+      // wider invisible line to grab it
+      if (state.selectable.includes('wall')) out.push(`<polyline class="wall-hit" points="${pts}" data-kind="wall" data-id="${i}"/>`);
     }
 
     // zone labels on top of walls
@@ -204,7 +218,7 @@ export class MapView {
           fill-opacity="${selected ? 0.12 : 0.04}" stroke="${color}" stroke-opacity="${selected ? 0.9 : 0.35}" pointer-events="none"/>`);
       }
       const hx = x + 14 * Math.cos(rad(s.heading)), hy = y - 14 * Math.sin(rad(s.heading));
-      out.push(`<g data-kind="sensor" data-id="${esc(s.id)}" style="cursor:pointer">
+      out.push(`<g data-kind="sensor" data-id="${esc(s.id)}" ${state.selectable.includes('sensor') ? 'style="cursor:pointer"' : 'pointer-events="none"'}>
         <circle cx="${x}" cy="${y}" r="${selected ? 9 : 7}" fill="${color}" stroke="var(--surface)" stroke-width="2"/>
         <line x1="${x}" y1="${y}" x2="${hx}" y2="${hy}" stroke="${color}" stroke-width="3" stroke-linecap="round"/>
         ${s.enabled ? '' : `<line x1="${x - 6}" y1="${y - 6}" x2="${x + 6}" y2="${y + 6}" stroke="var(--surface)" stroke-width="2"/>`}

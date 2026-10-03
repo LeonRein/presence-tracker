@@ -12,6 +12,7 @@ export const state = {
   tab: 'live',
   selection: null,      // {kind: 'zone'|'wall'|'sensor'|'layer', id}
   tool: null,           // active drawing tool name
+  selectable: [],       // element kinds that can be selected in the current tab
   showCoverage: false,
   showRaw: true,
   calibResult: null,

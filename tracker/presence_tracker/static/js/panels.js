@@ -161,7 +161,7 @@ function planPanel(panel, view) {
       <button class="btn ${drawing ? 'active' : ''}" id="wall">${drawing ? 'Zeichnen beenden' : 'Wand zeichnen'}</button>
       ${sel?.kind === 'wall' ? '<button class="btn danger" id="del-wall">Wand löschen</button>' : ''}
     </div>
-    ${sel?.kind === 'wall' ? `<p class="note">${wallInfo(c.walls[sel.id])} · Punkte ziehen, Doppelklick auf einen Punkt löscht ihn, kleine Punkte fügen einen ein.</p>` : '<p class="note">Wand anklicken zum Bearbeiten. Rückgängig: Strg+Z.</p>'}
+    ${sel?.kind === 'wall' ? `<p class="note">${wallInfo(c.walls[sel.id])} · Punkte oder Kanten ziehen (rastet in 45°-Schritten ein). Doppelklick auf eine Kante fügt einen Punkt ein, auf einen Punkt löscht ihn. Verbundene Wandenden wandern mit.</p>` : '<p class="note">Wand anklicken zum Bearbeiten. Rückgängig: Strg+Z.</p>'}
     <h3>Hintergrund</h3>
     <div class="list" id="layers"></div>
     <div class="row" style="margin-top:8px">
@@ -436,7 +436,7 @@ function zoneDetail(el, z) {
       <label class="field">Fläche<input type="text" value="${area.toFixed(2)} m²" disabled></label>
     </div>
     ${z.kind === 'room' || z.kind === 'area' ? `<div data-live="zoneNow" data-id="${esc(z.id)}"></div>` : ''}
-    <p class="note">Auswählen und dann ziehen verschiebt die Zone. Bei Polygonen: Doppelklick auf einen Eckpunkt löscht ihn, die kleinen Punkte fügen einen ein.</p>
+    <p class="note">Ecken und Seiten ziehen, die Winkel bleiben dabei erhalten. Nochmal anklicken und ziehen verschiebt die ganze Zone. Bei Polygonen: Doppelklick auf eine Kante fügt einen Punkt ein, auf einen Punkt löscht ihn.</p>
     <button class="btn danger" id="del">Zone löschen</button>
   </div>`));
   el.querySelector('#name').onchange = e => panelEdit(c => { c.zones.find(x => x.id === z.id).name = e.target.value; });
