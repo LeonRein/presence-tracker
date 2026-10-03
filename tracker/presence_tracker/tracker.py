@@ -12,7 +12,7 @@ The core rule: people do not appear or vanish out of nowhere.
 The LD2410C (distance only, with regular ghost detections) never creates tracks. Its own hold
 time is set to 0 in the firmware; the hold happens here: gaps up to ld2410_hold are bridged.
 A ghost (interference from the LD2450) lasts about a second, so only presence that lasts
-ld2410_min_presence, at the distance of a lost track, supports the track. Without such support
+the learned energy distributions per gate, at the distance of a lost track, support the track. Without support
 a lost track ends after a while.
 """
 
@@ -24,8 +24,9 @@ import numpy as np
 from .assignment import assign
 from .imm import IMM, STILL, WALK, IMMState
 from .model import Config, SensorConfig
-from .sensormodel import SensorModel
-from .unobserved import Occupancy
+from .sensormodel import GATE, PD_MAX, SensorModel
+from .unobserved import Dwell
+from .whereabouts import ABSENT, DEAD, GONE, HERE, NEAR, Whereabouts
 
 TENTATIVE, CONFIRMED = "tentative", "confirmed"
 _BIG = 1e9
@@ -55,18 +56,19 @@ class Track:
     status: str = TENTATIVE
     first_hit: float = 0.0
     last_hit: float = 0.0
-    last_support: float = 0.0
     hits: int = 0
     existence: float = 0.0  # probability that this new track is a real person (while tentative)
+    where: Whereabouts | None = None  # where the person is while unseen (once confirmed)
     last_hit_by: dict = field(default_factory=dict)
     near_since: dict = field(default_factory=dict)  # other track id -> time they came close
     co_detected: dict = field(default_factory=dict)  # other track id -> last time both in one frame
     zones: set = field(default_factory=set)
     last_walking: float = -math.inf  # last detection while moving
     last_velocity: np.ndarray = field(default_factory=lambda: np.zeros(2))  # at the last detection
-    has_origin: bool = False  # came in through a door/entry, back from a counted room, or was there at the start
-    closed_region: str | None = None  # born in a closed unobserved region (balcony, kitchen) or at its door
-    left_region: str | None = None  # went into this closed region when it ended
+    has_origin: bool = False  # came in through a door/entry, back from a room, or was there at the start
+    portal_region: str | None = None  # born at a door: the region behind it
+    last_evidence: dict = field(default_factory=dict)  # sensor -> last time its frame was evidence while lost
+    rejoin_pos: np.ndarray | None = None  # where a lost track was first measured again
 
     def position(self) -> np.ndarray:
         return self.state.mu @ self.state.x[:, :2]
@@ -76,6 +78,13 @@ class Track:
 
     def lost(self, now: float, lost_after: float) -> bool:
         return now - self.last_hit > lost_after
+
+    def present(self) -> bool:
+        """Most probably inside the observed area (not behind a door, not gone)."""
+        return self.status == CONFIRMED and (self.where is None or self.where.best()[0] in (HERE, NEAR))
+
+    def at_home(self) -> bool:
+        return self.status == CONFIRMED and (self.where is None or self.where.best()[0] not in ABSENT)
 
     @property
     def walk_prob(self) -> float:
@@ -134,9 +143,8 @@ class Tracker:
         self.now = start or 0.0
         self.unknown_sensors: dict[str, float] = {}
         self.listeners = []  # called with (event, data) for calibration and debugging
-        self.exited: list = []  # tracks that left through an entry recently: (track, time)
-        self.occupancy = Occupancy(config.params)  # people in closed rooms without a sensor
-        self.sensor_model = SensorModel(config)  # what each sensor sees and how reliably (learning only)
+        self.dwell = Dwell(config.params)  # how long people stay in rooms without a sensor
+        self.sensor_model = SensorModel(config)  # what each sensor sees and how reliably
         self.last_step: float | None = None
 
     # ------------------------------------------------------------------ input
@@ -159,10 +167,12 @@ class Tracker:
         rt.detections = detections
         if not sensor.enabled or not sensor.placed:
             return
-        self._ld2410(sensor, rt, t, frame.get("ld2410") or {})
+        weight = min(max(frame_gap, 0.0), self.config.params.evidence_time) / self.config.params.evidence_time
         self._predict_all(t)
-        updates = self._associate(sensor, [d for d in detections if not d.hidden and not d.stale], t)
+        updates = self._associate(sensor, [d for d in detections if not d.hidden and not d.stale], t, weight)
         self._existence(sensor, t, frame_gap, updates)
+        self._lost_evidence(sensor, t, weight, {id(tr) for _, tr, _ in updates})
+        self._ld2410(sensor, rt, t, frame.get("ld2410") or {}, weight)
         self.sensor_model.learn(self, sensor, t, detections, [(d, tr) for d, tr, _ in updates])
         for listener in self.listeners:
             listener("frame", (sensor, t, detections))
@@ -268,8 +278,12 @@ class Tracker:
             logit = math.log(tr.existence / (1 - tr.existence)) + weight * math.log(max(ratio, 1e-9))
             tr.existence = min(max(1 / (1 + math.exp(-logit)), 1e-4), 1 - 1e-4)
 
-    def _associate(self, sensor: SensorConfig, detections: list, t: float) -> list:
-        """Returns [(detection, track, likelihood)] for the tracks updated with a measurement."""
+    def _associate(self, sensor: SensorConfig, detections: list, t: float, weight: float) -> list:
+        """Returns [(detection, track, likelihood)] for the tracks updated with a measurement.
+
+        A detection attaches to a track only at its Kalman position (here); the cost is the
+        Mahalanobis distance minus 2 ln of the mass of "here". Someone showing up elsewhere, at a
+        door or nearby, becomes a new track that takes the lost one over once confirmed."""
         p = self.config.params
         if not detections:
             return []
@@ -278,10 +292,19 @@ class Tracker:
         cost = [[_BIG] * (m + n) for _ in range(n)]
         for i, d in enumerate(detections):
             for j, tr in enumerate(tracks):
-                d2 = IMM.gate_distance(tr.state, d.pos, d.R)
+                best = _BIG
+                w_here = tr.where.here() if tr.where is not None else 1.0
+                z = np.array([d.pos[0], d.pos[1], d.speed])
+                R = np.zeros((3, 3))
+                R[:2, :2] = d.R
+                R[2, 2] = p.sigma_speed**2
+                c, d2 = IMM.association_cost(tr.state, z, R, d.radial)
                 if d2 < p.gate:
-                    penalty = 1.0 if tr.status == TENTATIVE else 0.0
-                    cost[i][j] = d2 + penalty
+                    # a small "here" mass is a penalty, not a veto: being measured right at the
+                    # place is strong evidence by itself (the LD2450 drops sitting people for long)
+                    best = c + (1.0 if tr.status == TENTATIVE else 0.0) + min(-2 * math.log(max(w_here, 1e-6)), p.mass_penalty_cap)
+                if best < _BIG:
+                    cost[i][j] = best
             cost[i][m + i] = p.gate  # start a new track (or drop the detection)
         result = assign(cost)
 
@@ -291,10 +314,29 @@ class Tracker:
         for i, j in enumerate(result):
             d = detections[i]
             if j < m and cost[i][j] < _BIG:
-                g = IMM.likelihood(tracks[j].state, d.pos, d.R)  # before the update
-                self._update(tracks[j], d, t)
-                updated.append(tracks[j])
-                pairs.append((d, tracks[j], g))
+                tr = tracks[j]
+                g = IMM.likelihood(tr.state, d.pos, d.R)  # before the update
+                if tr.where is not None and tr.lost(t, p.lost_after):
+                    tr.rejoin_pos = d.pos.copy()
+                    mode = "walking" if tr.last_hit - tr.last_walking <= 1.0 else "still"
+                    self.sensor_model.learn_gap(mode, t - tr.last_hit)
+                    if mode == "still" and float(np.linalg.norm(tr.position() - d.pos)) < 0.6:
+                        # they sat there all along: the LD2410C gate was occupied, whatever it showed
+                        for o in self.config.sensors:
+                            if o.enabled and o.placed and o.sees(d.pos[0], d.pos[1], self.config.wall_segments):
+                                lx, ly = o.to_local(d.pos[0], d.pos[1])
+                                if ly > 0 and abs(math.degrees(math.atan2(lx, ly))) <= p.ld2410_fov / 2:
+                                    gate = int(math.hypot(lx, ly, o.height - p.target_height) / GATE)
+                                    self.sensor_model.learn_ld2410_gap(o.id, gate, tr.last_hit, t)
+                self._update(tr, d, t)
+                if tr.where is not None:
+                    pd = self._pd(sensor, d.pos)
+                    lam = self._clutter(sensor, d.pos)
+                    tr.where.update(HERE, (pd * g + (1 - pd) * lam) / lam, weight)
+                    tr.last_evidence.clear()
+                    self._arrived(tr, t, d.pos)
+                updated.append(tr)
+                pairs.append((d, tr, g))
             else:
                 unassigned.append(d)
 
@@ -309,38 +351,54 @@ class Tracker:
             # LD2450 sometimes splits one body into two targets
             if any(np.linalg.norm(tr.position() - d.pos) < p.split_radius for tr in updated):
                 continue
-            # a lost person showing up again where they could have walked meanwhile (getting up,
-            # passing a blind spot at the edge of the view): same person, no new confirmation
-            def reach(tr):
-                return min(p.max_gate_radius + p.takeover_speed * (t - tr.last_hit), p.rejoin_radius)
-            # Someone who just "left" through a door counts too: walking along a door at the edge
-            # of the view looks exactly like leaving through it.
-            lost = [tr for tr in tracks
-                    if tr.status == CONFIRMED and tr not in updated and tr.lost(t, p.lost_after)]
-            lost += [tr for tr, _ in self.exited]
-            lost = [tr for tr in lost if np.linalg.norm(tr.position() - d.pos) <= reach(tr)]
-            near = min(lost, key=lambda tr: np.linalg.norm(tr.position() - d.pos), default=None)
-            if near is not None:
-                if near not in self.tracks:
-                    self.exited = [(tr, te) for tr, te in self.exited if tr is not near]
-                    if near.left_region:
-                        self.occupancy.undo_last(near.left_region)
-                    near.left_region = None
-                    self.tracks.append(near)
-                    self._emit("rejoined", near)
-                # velocity from the way it went while unseen
-                v = (d.pos - near.position()) / max(t - near.last_hit, 0.1)
-                speed = float(np.linalg.norm(v))
-                if speed > 2.0:
-                    v *= 2.0 / speed
-                near.state = IMMState.from_position(d.pos, d.R, walk_prob=0.8 if speed > 0.3 else 0.3)
-                near.state.x[:, 2:] = v
-                near.t = t
-                self._update(near, d, t, measure=False)
-                updated.append(near)
-                continue
             self._birth(d, t)
         return pairs
+
+    def _arrived(self, tr: Track, t: float, pos: np.ndarray):
+        first = tr.rejoin_pos if tr.rejoin_pos is not None else pos
+
+        def at_door(region):
+            return any(q.region == region and q.contains(first[0], first[1], 0.3) for q in self.config.portals)
+        for rid, duration in tr.where.arrive(t, self.dwell, at_door):
+            if at_door(rid):
+                self._someone_came_out(rid, tr)
+            self._emit("returned", (tr, rid, duration))
+        if tr.where.here() >= 0.5:
+            tr.rejoin_pos = None
+        if tr.where.here() > 0.95:
+            tr.where.reset_here()
+
+    def _reach(self, tr: Track, t: float) -> float:
+        p = self.config.params
+        return p.reach_min + p.unseen_speed * max(t - tr.last_hit, 0.0)
+
+    def _portals_within_reach(self, tr: Track, t: float) -> list:
+        """[(region, prior weight)] of the doors the person could have walked to unseen: closer
+        doors and the one they were walking toward are more likely; a door whose threshold an
+        online sensor watches well, where nobody was seen passing, is unlikely (a pass can
+        still be missed: door_pass_missed)."""
+        p = self.config.params
+        reach = self._reach(tr, t)
+        pos = tr.position()
+        v = tr.last_velocity
+        out = {}
+        for portal in self.config.portals:
+            center = np.array(portal.geometry.center)
+            dist = max(float(np.linalg.norm(center - pos)) - 0.5, 0.0)
+            if dist > reach:
+                continue
+            wt = math.exp(-dist / p.door_scale)
+            if float(np.linalg.norm(v)) > 0.3 and float(np.dot(center - pos, v)) > 0:
+                wt *= p.toward_factor
+            watched = max((self.sensor_model.pd_effective(s.id, *portal.watch) / PD_MAX
+                           for s in self.config.sensors if s.enabled and s.placed and self._online(s.id)), default=0.0)
+            wt *= 1 - watched * (1 - p.door_pass_missed)
+            out[portal.region] = out.get(portal.region, 0.0) + wt
+        return list(out.items())
+
+    def _clutter(self, sensor: SensorConfig, pos: np.ndarray) -> float:
+        p = self.config.params
+        return self.sensor_model.clutter_density(sensor.id, pos[0], pos[1], p.clutter_density, p.clutter_floor)
 
     def _update(self, tr: Track, d: Detection, t: float, measure: bool = True):
         p = self.config.params
@@ -361,60 +419,149 @@ class Tracker:
         tr.last_velocity = np.array([vx, vy])
         if tr.walk_prob > 0.5 and math.hypot(vx, vy) > 0.2:
             tr.last_walking = t
-        tr.last_support = t
         tr.last_hit_by[d.sensor] = t
 
     def _birth(self, d: Detection, t: float):
         p = self.config.params
         warmup = self.start is not None and t - self.start < p.warmup
-        at_entry = warmup or any(z.contains(*d.pos) for z in self.config.entry_zones)
+        # at a door to a room without a sensor only if nobody we know of is in there (otherwise
+        # the association has claimed the detection for them)
+        portal = next((q for q in self.config.portals if q.contains(d.pos[0], d.pos[1])), None)
+        at_entry = warmup or (portal is not None and not portal.closed) \
+            or any(z.contains(d.pos[0], d.pos[1]) for z in self.config.zones_of("entry"))
         walk = 0.7 if abs(d.speed) > 0.15 else 0.4
         tr = Track(self.next_id, IMMState.from_position(d.pos, d.R, walk), t, t, at_entry)
         tr.has_origin = at_entry
         tr.existence = p.birth_entry if at_entry else p.birth_room
-        if not warmup:
-            tr.closed_region = self.config.closed_region_at(*d.pos)
-            tr.has_origin = tr.has_origin or tr.closed_region is not None
+        if portal is not None:
+            tr.portal_region = portal.region
+            # someone we know of is probably behind that door: likely them coming back
+            behind = max((x.where.region(portal.region) for x in self.tracks if x.where is not None), default=0.0)
+            tr.existence = max(tr.existence, min(behind, p.birth_return))
         self.next_id += 1
         self._update(tr, d, t, measure=False)
         self.tracks.append(tr)
 
-    # --------------------------------------------------------------- LD2410C
+    # --------------------------------------------------- evidence while unseen
 
-    def _ld2410(self, s: SensorConfig, rt: SensorRuntime, t: float, ld: dict):
+    def _lost_evidence(self, sensor: SensorConfig, t: float, weight: float, updated: set):
+        """This sensor's frame had no measurement for a lost track. Against "still here": the
+        LD2450 drops people it saw, for a long time too - how often a dropout lasts another dt
+        is the learned re-detection survival, applied where the sensor sees the spot. Against
+        "moved unseen nearby": a walker in the part of the disc the sensor sees would be seen."""
+        p = self.config.params
+        model = self.sensor_model
+        for tr in self.tracks:
+            if tr.where is None or id(tr) in updated or not tr.lost(t, p.lost_after):
+                continue
+            pos = tr.position()
+            if tr.where.here() >= 0.01:
+                see = self._pd(sensor, pos) / PD_MAX
+                if see > 0.02:
+                    # the dropout survival is one fact about the person, not one per sensor: split
+                    # it among the online sensors that see the spot
+                    total = sum(self._pd(o, pos) / PD_MAX for o in self.config.sensors
+                                if o.enabled and o.placed and self._online(o.id))
+                    share = see / max(total, see)
+                    mode = "walking" if tr.last_hit - tr.last_walking <= 1.0 else "still"
+                    tau = t - tr.last_hit
+                    since = max(t - tr.last_evidence.get(sensor.id, t), 0.0)
+                    s_now = model.redetection_survival(mode, tau)
+                    s_before = model.redetection_survival(mode, max(tau - since, 0.0))
+                    tr.last_evidence[sensor.id] = t
+                    if s_before > 0 and since > 0:
+                        tr.where.update(HERE, 1 - (1 - s_now / s_before), share)
+            if tr.where.w[NEAR] >= 0.01:
+                r = min(self._reach(tr, t), p.near_max) * 0.6
+                pts = [pos] + [pos + r * np.array([math.cos(a), math.sin(a)]) for a in np.linspace(0, 2 * math.pi, 6, endpoint=False)]
+                pd = sum(self._pd(sensor, q) for q in pts) / len(pts)
+                if pd > 0.02:
+                    tr.where.update(NEAR, 1 - pd, weight)
+
+    def _ld2410(self, s: SensorConfig, rt: SensorRuntime, t: float, ld: dict, weight: float):
+        """LD2410C: energy per 0.75 m gate. For a lost track at gate g, the energy there is
+        evidence for or against "still here" by the learned energy distributions (with a person
+        in the gate vs. nobody near it), unless someone else explains that gate. Also learns."""
         p = self.config.params
         rt.move_gates = ld.get("move_gates")
         rt.still_gates = ld.get("still_gates")
-        if not (ld.get("moving") or ld.get("still")):
-            rt.ld_present = t - rt.ld_last_present <= p.ld2410_hold
+        present = bool(ld.get("moving") or ld.get("still"))
+        if present:
+            if rt.ld_present_since is None or t - rt.ld_last_present > p.ld2410_hold:
+                rt.ld_present_since = t  # a new episode
+            rt.ld_last_present = t
+            rt.ld_ever_present = True
+            dist_mm = ld.get("still_distance") or ld.get("moving_distance") or 0
+            slant = dist_mm / 1000
+            dh = s.height - p.target_height
+            rt.ld_distance = math.sqrt(max(slant * slant - dh * dh, 0.0))
+        rt.ld_present = present or t - rt.ld_last_present <= p.ld2410_hold
+        if not rt.still_gates or not rt.move_gates:
             return
-        if rt.ld_present_since is None or t - rt.ld_last_present > p.ld2410_hold:
-            rt.ld_present_since = t  # a new episode
-        rt.ld_last_present = t
-        rt.ld_present = True
-        rt.ld_ever_present = True
-        dist_mm = ld.get("still_distance") or ld.get("moving_distance") or 0
-        slant = dist_mm / 1000
-        dh = s.height - p.target_height
-        rt.ld_distance = math.sqrt(max(slant * slant - dh * dh, 0.0))
-        if t - rt.ld_present_since < p.ld2410_min_presence:
-            return
+        energies = [max(a, b) for a, b in zip(rt.move_gates, rt.still_gates)]
+
+        def gate_of(x, y):
+            lx, ly = s.to_local(x, y)
+            if ly <= 0 or abs(math.degrees(math.atan2(lx, ly))) > p.ld2410_fov / 2:
+                return None
+            slant = math.hypot(lx, ly, s.height - p.target_height)
+            return int(slant / GATE)
+
+        # who explains which gate: seen people and this sensor's own detections
+        explained = set()  # the energy spills into the neighbouring gates, two each way
         for tr in self.tracks:
-            if tr.status != CONFIRMED or not tr.lost(t, p.lost_after):
+            if tr.status == CONFIRMED and not tr.lost(t, p.lost_after):
+                g = gate_of(*tr.position())
+                if g is not None:
+                    explained.update(range(g - 2, g + 3))
+        for d in rt.detections:
+            if not d.hidden and not d.stale:
+                g = gate_of(*d.pos)
+                if g is not None:
+                    explained.update(range(g - 2, g + 3))
+        # evidence for lost tracks
+        for tr in self.tracks:
+            if tr.where is None or not tr.lost(t, p.lost_after) or tr.where.here() < 0.01:
                 continue
             x, y = tr.position()
-            if not s.sees(x, y, self.config.wall_segments, margin=0.3):
+            g = gate_of(x, y)
+            if g is None or g >= len(energies) or not s.sees(x, y, self.config.wall_segments, margin=0.3):
                 continue
-            if abs(math.hypot(x - s.x, y - s.y) - rt.ld_distance) < p.ld2410_support_window:
-                tr.last_support = t
+            if g in explained:
+                continue
+            # the exact gate is uncertain (slant range, where on the body the echo comes from)
+            ratio = max(self.sensor_model.ld2410_ratio(s.id, k, energies[k], moving=tr.walk_prob > 0.5)
+                        for k in (g - 1, g, g + 1) if 0 <= k < len(energies))
+            tr.where.update(HERE, ratio, weight)
+        # learning: sure people's gates are occupied (sitting and moving are different
+        # populations); gates nobody is near are empty
+        still, moving = set(), set()
+        for tr in self.tracks:
+            if tr.status != CONFIRMED or tr.lost(t, p.lost_after):
+                continue
+            sure = any(sid != s.id and t - ts < 1.0 for sid, ts in tr.last_hit_by.items()) or (tr.has_origin and t - tr.born > 30)
+            if sure:
+                g = gate_of(*tr.position())
+                if g is not None:
+                    (moving if tr.walk_prob > 0.5 and float(np.linalg.norm(tr.velocity())) > 0.2 else still).add(g)
+        blocked = set(explained)
+        for tr in self.tracks:  # lost people might be anywhere near their last place
+            if tr.where is not None and tr.lost(t, p.lost_after) and tr.where.here() + tr.where.w[NEAR] > 0.05:
+                g = gate_of(*tr.position())
+                if g is not None:
+                    blocked.update(range(g - 2, g + 3))
+        self.sensor_model.learn_ld2410(s.id, t, energies, still, moving, blocked)
 
     # ----------------------------------------------------------- housekeeping
 
     def step(self, t: float):
-        """Confirm, merge and end tracks. Call regularly (a few times per second)."""
+        """Confirm new tracks, move the mass of unseen people, end tracks, merge duplicates.
+        Call regularly (a few times per second)."""
         p = self.config.params
         self.now = max(self.now, t)
         t = self.now
+        dt = t - self.last_step if self.last_step is not None else 0.0
+        self.last_step = t
         # new tracks first, so a lost track they turn out to be is not ended in the same step
         drop = set()
         for tr in self.tracks:
@@ -424,74 +571,62 @@ class Tracker:
                 self._emit("dropped", tr)
                 drop.add(tr.id)
                 continue
-            if tr.closed_region:
-                # out of a closed region (balcony, kitchen) only comes who went in before:
-                # likely enough that someone is still in there -> it's them coming back
-                if self.occupancy.best(tr.closed_region, t) >= p.return_min_prob:
-                    if t - tr.first_hit >= p.confirm_time_entry:
-                        self.occupancy.came_back(tr.closed_region, t)
-                        tr.has_origin = True
-                        tr.status = CONFIRMED
-                        self._emit("came back", (tr, tr.closed_region))
-                    continue
-                # nobody went in (as far as we know, e.g. after a restart): only someone who
-                # really walks out of it, seen for longer, counts. An echo in the glass doesn't.
-                door = self.config.door_of(tr.closed_region)
-                if door is None or np.linalg.norm(tr.position() - np.array(door.geometry.center)) < p.closed_exit_distance \
-                        or self.config.closed_region_at(*tr.position()):
-                    continue
             if tr.existence >= p.confirm_prob:
                 lost = self._takeover_candidate(tr, t)
                 if lost is not None:
                     # nobody appears out of nowhere: it's the lost person, who moved unseen
                     lost.state = tr.state
-                    lost.t, lost.last_hit, lost.last_support = tr.t, tr.last_hit, t
+                    lost.t, lost.last_hit, lost.last_walking = tr.t, tr.last_hit, tr.last_walking
                     lost.last_hit_by.update(tr.last_hit_by)
-                    self._emit("taken over", (lost, tr))
+                    lost.has_origin = True
+                    if tr.portal_region and lost.where.region(tr.portal_region) >= p.takeover_mass:
+                        region = tr.portal_region
+                        self._someone_came_out(region, lost)
+                        duration = lost.where.returned(region, t, self.dwell)
+                        self._emit("returned", (lost, region, duration))
+                    else:
+                        lost.where.reset_here()
+                        self._emit("taken over", (lost, tr))
                     drop.add(tr.id)
                     continue
                 tr.status = CONFIRMED
+                tr.where = Whereabouts(p, existence=tr.existence)
+                if tr.portal_region:
+                    # a new person out of that door: whoever we thought was in there may have
+                    # been this one (an unknown newcomer counts like one more candidate)
+                    self._someone_came_out(tr.portal_region, None, newcomer=1.0)
                 self._emit("confirmed", tr)
         keep = []
+        watched = self._doors_watched(t) if dt > 0 else {}
         for tr in self.tracks:
             if tr.id in drop:
                 continue
-            if tr.status == CONFIRMED and tr.lost(t, p.lost_after):
-                reason = self._end_reason(tr, t)
-                if reason:
-                    self._emit("ended", (tr, reason))
-                    if reason == "left via entry":
-                        self.exited.append((tr, t))
-                    elif reason == "went into a closed room":
-                        self.occupancy.went_in(tr.left_region, t, self._went_in_certainty(tr))
-                        self.exited.append((tr, t))
+            if tr.status == CONFIRMED and tr.lost(t, p.lost_after) and dt > 0:
+                walking = tr.last_hit - tr.last_walking <= 3.0 and t - tr.last_hit <= 10.0
+                tr.where.leak(dt, walking, self._portals_within_reach(tr, t), tr.last_hit)
+                tr.where.end_visits(t, dt, self.dwell, watched)
+                if tr.where.absent() >= p.gone_prob or t - tr.last_hit > p.max_lost_time:
+                    self._emit("ended", (tr, tr.where.best()[0]))
                     continue
             keep.append(tr)
         self.tracks = keep
-        self.exited = [(tr, te) for tr, te in self.exited if t - te < p.rejoin_time]
-        if self.last_step is not None and t > self.last_step:
-            self.occupancy.step(t, t - self.last_step, self._doors_watched(t))
-        self.last_step = t
         self._merge(t)
 
-    def _went_in_certainty(self, tr: Track) -> float:
-        """p0: lost at the door while walking toward it: very likely in; otherwise less so."""
-        door = self.config.door_of(tr.left_region)
-        if door is None:
-            return 0.6
-        if any(z.contains(*tr.position()) for z in self.config.closed_rooms):
-            return 0.9  # lost already behind the door
-        to_door = np.array(door.geometry.center) - tr.position()
-        v = tr.last_velocity
-        toward = float(np.dot(to_door, v)) > 0 or np.linalg.norm(to_door) < 0.3
-        return 0.9 if toward else 0.6
+    def _someone_came_out(self, region: str, who, newcomer: float = 0.0):
+        """One person came out of `region` and is tracked as `who` (or as a new track). Every other
+        track thought to be in there shares the chance that it was them; that share of them now
+        lives on in `who`, i.e. is gone for them."""
+        total = newcomer + sum(o.where.region(region) for o in self.tracks if o.where is not None and o is not who)
+        for o in self.tracks:
+            if o is not who and o.where is not None and o.where.region(region) > 0:
+                o.where.dissolve(region, o.where.region(region) / max(total, 1e-9))
 
     def _doors_watched(self, t: float) -> dict:
-        """Closed region -> some sensor that is online sees (the room side of) its door."""
+        """Region -> some sensor that is online sees (the room side of) its door."""
         out = {}
-        for door in self.config.closed_doors:
-            out[door.region] = out.get(door.region, False) or any(
-                self._online(s.id) and s.sees(*door.watch, self.config.wall_segments)
+        for portal in self.config.portals:
+            out[portal.region] = out.get(portal.region, False) or any(
+                self._online(s.id) and s.sees(*portal.watch, self.config.wall_segments)
                 for s in self.config.sensors if s.enabled and s.placed)
         return out
 
@@ -501,40 +636,24 @@ class Tracker:
         return rt is not None and self.now - rt.last_frame < 15
 
     def _takeover_candidate(self, tr: Track, t: float):
-        """The nearest lost track that could have walked to tr's position since it was last seen."""
+        """The nearest lost track that could have walked to tr's position since it was last seen
+        and most probably is still inside the observed area."""
         p = self.config.params
         pos = tr.position()
+        if tr.portal_region:
+            behind = [o for o in self.tracks if o.where is not None and o.where.region(tr.portal_region) >= p.takeover_mass]
+            if behind:
+                return max(behind, key=lambda o: o.where.region(tr.portal_region))
         best, best_d = None, None
         for other in self.tracks:
-            if other.status != CONFIRMED or not other.lost(t, p.lost_after):
+            if other.where is None or not other.lost(t, p.lost_after):
+                continue
+            if other.where.here() + other.where.w[NEAR] < p.takeover_mass:
                 continue
             d = float(np.linalg.norm(other.position() - pos))
-            if d <= p.max_gate_radius + p.takeover_speed * (tr.first_hit - other.last_hit) and (best is None or d < best_d):
+            if d <= p.reach_min + p.unseen_speed * (tr.first_hit - other.last_hit) and (best is None or d < best_d):
                 best, best_d = other, d
         return best
-
-    def _end_reason(self, tr: Track, t: float) -> str | None:
-        p = self.config.params
-        x, y = tr.position()
-        since = t - tr.last_hit
-        if since > p.exit_timeout:
-            # only someone walking goes out; a person sitting next to a door stays
-            walking = tr.last_hit - tr.last_walking <= 3.0
-            if walking and any(z.contains(x, y) for z in self.config.entry_zones):
-                return "left via entry"
-            region = self.config.closed_region_at(x, y)
-            if walking and region:
-                tr.left_region = region
-                return "went into a closed room"
-            if not self.config.visible_sensors(x, y, margin=-0.2):
-                return "left coverage"
-        if t - tr.last_support > p.max_lost_time:
-            return "no support"
-        covering = [s for s in self.config.visible_sensors(x, y)
-                    if self.runtime.get(s.id) and self.runtime[s.id].ld_ever_present]
-        if covering and t - tr.last_support > p.absence_time:
-            return "no LD2410C support"
-        return None
 
     def _merge(self, t: float):
         """Two tracks for one person: one of them came out of nowhere mid-room (e.g. the walker's
@@ -575,6 +694,10 @@ class Tracker:
     def confirmed(self) -> list:
         return [tr for tr in self.tracks if tr.status == CONFIRMED]
 
+    def present(self) -> list:
+        """Confirmed tracks most probably inside the observed area."""
+        return [tr for tr in self.tracks if tr.present()]
+
     def snapshot(self) -> dict:
         p = self.config.params
         t = self.now
@@ -590,6 +713,8 @@ class Tracker:
                 "lost": tr.lost(t, p.lost_after),
                 "walk": round(tr.walk_prob, 3),
                 "age": round(t - tr.born, 1),
+                "existence": round(tr.existence, 3) if tr.status == TENTATIVE else None,
+                "where": tr.where.to_dict() if tr.where is not None else None,
             })
         sensors = {}
         for sid, rt in self.runtime.items():
@@ -604,8 +729,9 @@ class Tracker:
             }
         regions = {}
         for rid, r in self.config.regions.items():
-            probs = self.occupancy.probs(rid, t)
-            regions[rid] = {"name": r["name"], "open": r["open"], "count": sum(pr >= 0.5 for pr in probs),
+            probs = [tr.where.region(rid) for tr in self.tracks if tr.where is not None and tr.where.region(rid) >= 0.005]
+            regions[rid] = {"name": r["name"], "open": r["open"],
+                            "count": sum(tr.where is not None and tr.where.best()[0] == rid for tr in self.tracks),
                             "probabilities": [round(pr, 3) for pr in probs],
-                            **({} if r["open"] else {"dwell": self.occupancy.stats(rid)})}
+                            "dwell": self.dwell.stats(rid)}
         return {"t": t, "tracks": tracks, "sensors": sensors, "regions": regions}

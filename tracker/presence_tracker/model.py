@@ -139,7 +139,6 @@ class TrackerParams:
     max_gate_radius: float = 1.0  # m, gating radius cap for tracks that were lost for a while
     split_radius: float = 1.0  # m, a second detection this close to an updated track is the same person (or its reflection)
     # track lifecycle
-    confirm_time_entry: float = 1.0  # s of detections needed for a track that starts in an entry zone
     # existence probability of new tracks (tracker._existence)
     birth_entry: float = 0.3  # at an entry or a door to a room without a sensor
     birth_room: float = 0.02  # elsewhere: only if someone came in unseen
@@ -151,25 +150,34 @@ class TrackerParams:
     drop_prob: float = 0.003  # and is dropped below this one
     tentative_timeout: float = 0.8  # s without detection until a new track is dropped
     echo_radius: float = 3.0  # m, around a walking person: more ghosts (multipath echoes)
-    closed_exit_distance: float = 1.5  # m out of a closed room's door, if nobody went in before
     # closed rooms without a sensor, see unobserved.py
     dwell_median: float = 120.0  # s, prior: typical stay in such a room, until visits are learned
     dwell_spread: float = 1.5  # prior: spread of ln(duration), wide: long stays stay possible
     dwell_prior_weight: float = 3.0  # the prior counts like this many visits
     missed_return: float = 0.1  # chance to miss someone coming out while a sensor watches the door
-    return_min_prob: float = 0.15  # someone at the door is a returning person above this probability
-    forget_prob: float = 0.05  # visits below this probability are dropped
-    rejoin_time: float = 10.0  # s, someone who left through a door and shows up again is picked up
-    rejoin_radius: float = 2.5  # m, upper bound for picking up a lost track again directly
-    takeover_speed: float = 1.5  # m/s, a lost track that could have walked to a new one becomes it
-    lost_after: float = 1.5  # s without detection until a track counts as lost (keeps its place)
+    # lost tracks: where they are (whereabouts.py)
+    lost_after: float = 1.5  # s without detection until a track counts as lost
     coast_time: float = 0.7  # s a lost track keeps moving before it stops
-    exit_timeout: float = 3.0  # s until a lost track in an entry zone or outside coverage is removed
-    absence_time: float = 60.0  # s without LD2410C support until a lost track is removed
-    ld2410_support_window: float = 0.8  # m, LD2410C distance this close to a lost track supports it
+    leak_walking: float = 0.5  # 1/s, how fast a lost walker's "still here" mass flows to the doors within reach
+    leak_still: float = 0.0005  # 1/s, the same for someone who sat (got up and left unseen)
+    leak_near: float = 2.0  # 1/s, "moved unseen nearby" is transit: it flows on to the doors within reach fast
+    unseen_speed: float = 1.5  # m/s, how far an unseen person may have walked per second
+    reach_min: float = 1.0  # m, reach right after the loss
+    near_max: float = 2.5  # m, cap for "moved unseen nearby"
+    door_scale: float = 0.7  # m, the prior for a door falls off with its distance like exp(-d / door_scale)
+    toward_factor: float = 3.0  # a door the person was walking toward is this much more likely
+    door_pass_missed: float = 0.2  # chance that a sensor watching a door misses someone passing through it
+    near_weight: float = 0.5  # "moved unseen nearby" vs. one door at zero distance
+    flow_threshold: float = 0.05  # a region hypothesis counts as a visit from this mass on
+    birth_return: float = 0.6  # cap for the prior of a new track at a door with someone probably behind it
+    takeover_mass: float = 0.2  # a confirmed new track takes over a lost one with at least this mass here/near/behind that door
+    gone_prob: float = 0.8  # a track ends when this much of its mass is gone
+    region_forget_time: float = 2400.0  # s, time constant for losing track of someone behind a door
+    mass_penalty_cap: float = 8.0  # chi-square units, at most this much penalty for a small "here" mass in the association
+    max_lost_time: float = 4 * 3600.0  # s, upper bound for a lost track
+    # LD2410C: evidence for or against "still here" (distance only, no direction)
     ld2410_hold: float = 1.5  # s, gaps in the LD2410C presence up to this long are bridged
-    ld2410_min_presence: float = 3.0  # s, shorter LD2410C presence is a ghost (interference, ~1 s)
-    max_lost_time: float = 4 * 3600.0  # s, upper bound for a lost track without any support
+    ld2410_fov: float = 50.0  # degrees, where the LD2410C is trusted to see
     merge_distance: float = 0.5  # m, two tracks this close for merge_time are one person
     merge_time: float = 1.0
 
@@ -210,6 +218,7 @@ class Config:
         Sets self.regions {id: {name, rooms, open}} and self.closed_doors; returns the circles
         around doors into open regions, which work like entries. Derived, not stored."""
         self.regions, self.closed_doors, self.closed_rooms = {}, [], []
+        self.portals = []  # all ways out of the observed area: door circles with .region, .closed
         placed = [s for s in self.sensors if s.enabled and s.placed]
         rooms = self.zones_of("room")
         if not placed or not rooms:
@@ -282,10 +291,22 @@ class Config:
             (nx, ny) = normals[id(d)]
             k = 0.5 if a is inner[0] else -0.5
             zone.watch = (d["x"] + k * nx, d["y"] + k * ny)
-            if region == "outside" or self.regions[region]["open"]:
-                out.append(zone)
-            else:
+            zone.center = (d["x"], d["y"])
+            zone.closed = region != "outside" and not self.regions[region]["open"]
+            self.portals.append(zone)
+            if zone.closed:
                 self.closed_doors.append(zone)
+            else:
+                out.append(zone)
+        # user-drawn entry zones and entry rooms (stairs) in the observed area lead outside
+        for z in self.zones:
+            if z.kind == "entry" or (z.kind == "room" and z.entry and covered.get(z.id)):
+                x0, y0, x1, y1 = z.geometry.bounds()
+                portal = ZoneConfig(f"entry-{z.id}", z.name, kind="entry", shape="circle",
+                                    center=[(x0 + x1) / 2, (y0 + y1) / 2],
+                                    radius=max(0.5 * math.hypot(x1 - x0, y1 - y0) + 0.3, 1.0))
+                portal.region, portal.closed, portal.watch = "outside", False, (portal.center[0], portal.center[1])
+                self.portals.append(portal)
         return out
 
     def _room_covered(self, room, sensors) -> bool:

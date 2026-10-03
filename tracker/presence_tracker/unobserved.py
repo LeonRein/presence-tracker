@@ -1,44 +1,24 @@
-"""People in closed rooms without a sensor (balcony, kitchen with one door).
+"""How long people stay in rooms without a sensor (balcony, kitchen, the hallway with the stairs).
 
-Nobody sees them in there; we only see them go through the door. Instead of a hard counter, every
-visit is a hypothesis whose probability fades with time. Three cases for a visit:
+S(t): share of visits to a region that last longer than t: the learned durations of visits
+that ended with a seen return, plus a wide log-normal prior that counts like a few visits.
+Taken straight from the data, not fitted: fetching something and cooking are different kinds
+of visits, and a single fitted curve would declare the cook gone after a few minutes.
 
-  never went in     the track was just lost at the door             1 - p0
-  still inside      went in and stays longer than t so far          p0 * S(t)
-  came out unseen   went in, came out, and we missed the return     p0 * (1 - S(t)) * m
-
-Given that no return was seen, P(inside) = p0 S / (1 - p0 + p0 (S + (1 - S) m)).
-
-p0: how sure it was that the person went in (walking toward the door or not).
-S(t): share of visits to this room that last longer than t: the learned visit durations (those
-     that ended with a return), plus a wide log-normal prior that counts like a few visits. Taken
-     straight from the data, not fitted: fetching something and cooking are different kinds of
-     visits, and a single fitted curve would declare the cook gone after a few minutes.
-m:   chance to miss a return. Small while a sensor watches the door, 1 while none does (e.g. the
-     sensor went offline): for a visit, m grows with the share of its time the door was unwatched.
+The tracker's whereabouts (whereabouts.py) use the hazard, the share of visits of a given age
+that end in the next dt, to let a "went into that room" hypothesis fade.
 """
 
 import math
-from dataclasses import dataclass
 
 MAX_SAMPLES = 300
 
 
-@dataclass
-class Visit:
-    t_in: float
-    p0: float
-    blind: float = 0.0  # seconds since t_in in which no sensor watched the door
-
-
-class Occupancy:
+class Dwell:
     def __init__(self, params):
         self.p = params
-        self.visits: dict[str, list[Visit]] = {}
         self.dwell: dict[str, list[float]] = {}  # learned visit durations per region, s
         self.changed = False  # dwell has new data (for saving)
-
-    # ------------------------------------------------------------ the model
 
     def survival(self, region: str, dt: float) -> float:
         """Share of visits that last longer than dt."""
@@ -50,50 +30,18 @@ class Occupancy:
         longer = sum(d > dt for d in samples)
         return (p.dwell_prior_weight * prior + longer) / (p.dwell_prior_weight + len(samples))
 
-    def prob(self, region: str, v: Visit, t: float) -> float:
-        dt = max(t - v.t_in, 0.0)
-        s = self.survival(region, dt)
-        m = self.p.missed_return
-        if dt > 0:
-            m += (1 - m) * min(v.blind / dt, 1.0)
-        return v.p0 * s / (1 - v.p0 + v.p0 * (s + (1 - s) * m))
+    def hazard(self, region: str, age: float, dt: float) -> float:
+        """Share of the visits that lasted `age` so far and end within the next dt."""
+        s0 = self.survival(region, age)
+        if s0 <= 1e-9:
+            return 1.0
+        return min(max(1.0 - self.survival(region, age + dt) / s0, 0.0), 1.0)
 
-    def probs(self, region: str, t: float) -> list:
-        return [self.prob(region, v, t) for v in self.visits.get(region, [])]
-
-    def best(self, region: str, t: float) -> float:
-        return max(self.probs(region, t), default=0.0)
-
-    # ------------------------------------------------------------- events
-
-    def went_in(self, region: str, t: float, p0: float):
-        self.visits.setdefault(region, []).append(Visit(t, p0))
-
-    def came_back(self, region: str, t: float):
-        """Someone came out: the most probable visit ends; its duration is learned."""
-        visits = self.visits.get(region)
-        if not visits:
-            return
-        v = max(visits, key=lambda v: self.prob(region, v, t))
-        visits.remove(v)
+    def learn(self, region: str, duration: float):
         samples = self.dwell.setdefault(region, [])
-        samples.append(round(t - v.t_in, 1))
+        samples.append(round(max(duration, 1.0), 1))
         del samples[:-MAX_SAMPLES]
         self.changed = True
-
-    def undo_last(self, region: str):
-        """The track that 'went in' was picked up again right away: it was only lost at the door."""
-        visits = self.visits.get(region)
-        if visits:
-            visits.pop()
-
-    def step(self, t: float, dt: float, watched: dict):
-        """watched: region -> a sensor that is online sees its door. Forgets faded visits."""
-        for region, visits in self.visits.items():
-            if not watched.get(region, True):
-                for v in visits:
-                    v.blind += dt
-            visits[:] = [v for v in visits if self.prob(region, v, t) >= self.p.forget_prob]
 
     # ------------------------------------------------------------- output
 

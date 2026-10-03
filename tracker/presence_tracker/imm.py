@@ -146,6 +146,27 @@ class IMM:
         return math.exp(-0.5 * d2) / (2 * math.pi * math.sqrt(max(np.linalg.det(S), 1e-12)))
 
     @staticmethod
+    def association_cost(s: IMMState, z: np.ndarray, R: np.ndarray, radial: np.ndarray) -> tuple:
+        """(cost, position_d2): cost = -2 ln of the mixture likelihood of a full measurement
+        [x, y, v_radial] over the motion models (up to a constant), position_d2 = the smallest
+        position-only Mahalanobis distance for gating. A still model expects v_radial ~ 0, so a
+        walker's measurement is costly for someone sitting: no speed threshold needed."""
+        H = np.zeros((3, 4))
+        H[0, 0] = H[1, 1] = 1.0
+        H[2, 2:] = radial
+        terms = []
+        d2pos = math.inf
+        for j in range(2):
+            S = H @ s.P[j] @ H.T + R
+            y = z - H @ s.x[j]
+            d2 = float(y @ np.linalg.solve(S, y))
+            terms.append(math.log(max(s.mu[j], 1e-12)) - 0.5 * d2)
+            Sp = s.P[j][:2, :2] + R[:2, :2]
+            d2pos = min(d2pos, float(y[:2] @ np.linalg.solve(Sp, y[:2])))
+        m = max(terms)
+        return -2.0 * (m + math.log(sum(math.exp(v - m) for v in terms))), d2pos
+
+    @staticmethod
     def gate_distance(s: IMMState, z: np.ndarray, R: np.ndarray) -> float:
         """Squared Mahalanobis distance of a position measurement to the combined estimate."""
         x, P = s.mean()

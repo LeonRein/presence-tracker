@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0 (Zweig step3, noch nicht freigegeben)
+
+Dritter Schritt: Eine verdeckte Person ist irgendwo. Ihre Wahrscheinlichkeit verteilt sich auf „noch hier“,
+„ungesehen in der Nähe“, die erreichbaren Türen (Küche, Balkon, Flur, draußen), „weg“ und „war kein Mensch“.
+Messungen, fehlende Messungen (gelernte Aussetzer-Statistik des LD2450), die Energie des LD2410C pro
+Entfernungsstufe (gelernte Verteilungen für Sitzende, Gehende und leer) und die gelernten Aufenthaltsdauern
+verschieben die Verteilung. Wer aus einem Raum zurückkommt, behält seine Nummer. Ersetzt Austragen,
+Übernahme, Wiederaufnahme, das Mitzählen in Räumen ohne Sensor und die festen LD2410C-Werte.
+Zuordnung über die volle Messwahrscheinlichkeit (Position und Geschwindigkeit) der Bewegungsmodelle.
+
+Stand auf den Aufnahmen vom 3.10.: Kalibrierlauf und Esstisch deutlich besser, aber mehr Fehlspuren
+hinter Türen als 0.4.0. Bleibt auf dem Zweig, bis die Kennzahlen mindestens gleichziehen.
+
 ## 0.4.0
 
 Zweiter Schritt zum probabilistischen Tracker: Ob eine neue Spur eine Person ist, entscheidet eine

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from .model import Config
 from .tracker import Track, Tracker
+from .whereabouts import ABSENT, HERE, NEAR
 
 
 @dataclass
@@ -36,14 +37,40 @@ def is_moving(tr: Track, now: float, lost_after: float) -> bool:
 
 
 def evaluate(config: Config, tracker: Tracker) -> dict:
-    """Zone id -> ZoneState for room and area zones, plus "_total" for the whole house."""
+    """Zone id -> ZoneState for room and area zones, plus "_total" for the whole house.
+
+    Every confirmed track is counted at its most probable whereabouts: at its position (rooms
+    and areas there), or in the rooms of the region behind the door it went through. The
+    probability of a zone is 1 - prod(1 - mass) over all tracks' mass in it."""
     p = config.params
     now = tracker.now
     zones = [z for z in config.zones if z.kind in ("room", "area")]
     states = {z.id: ZoneState() for z in zones}
     total = ZoneState()
+    not_in = {z.id: 1.0 for z in zones}  # product of (1 - mass)
     for tr in tracker.confirmed():
+        where = tr.where
+        best = where.best()[0] if where is not None else HERE
+        if best in ABSENT:
+            continue
         x, y = tr.position()
+        here_mass = where.here() + where.w[NEAR] if where is not None else 1.0
+        for z in zones:
+            if z.contains(x, y) and here_mass > 0:
+                not_in[z.id] *= 1 - here_mass
+        if where is not None:
+            for rid, mass in where.regions().items():
+                for room_id in config.regions.get(rid, {}).get("rooms", []):
+                    if room_id in not_in:
+                        not_in[room_id] *= 1 - mass
+        if best not in (HERE, NEAR):
+            total.count += 1
+            total.still += 1
+            rooms = config.regions.get(best, {}).get("rooms", [])
+            if len(rooms) == 1 and rooms[0] in states:
+                states[rooms[0]].count += 1
+                states[rooms[0]].still += 1
+            continue
         moving = is_moving(tr, now, p.lost_after)
         total.count += 1
         total.moving += moving
@@ -71,20 +98,8 @@ def evaluate(config: Config, tracker: Tracker) -> dict:
                     st.approaching = True
                     st.eta = tau if st.eta is None else min(st.eta, tau)
                     break
-    # closed rooms without a sensor (balcony, kitchen): probability that someone went in and is
-    # still there (unobserved.py)
-    for rid, region in config.regions.items():
-        if region["open"]:
-            continue
-        probs = tracker.occupancy.probs(rid, now)
-        p_any = 1 - math.prod(1 - pr for pr in probs)
-        n = max(sum(pr >= 0.5 for pr in probs), 1 if p_any >= 0.5 else 0)
-        total.count += n
-        total.still += n
-        for room_id in region["rooms"]:
-            if room_id in states and len(region["rooms"]) == 1:
-                states[room_id].count += n
-                states[room_id].still += n
-                states[room_id].probability = p_any
+    for zid, q in not_in.items():
+        if q < 1.0:
+            states[zid].probability = 1 - q
     states["_total"] = total
     return states

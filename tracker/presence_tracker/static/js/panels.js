@@ -31,6 +31,15 @@ export function updateLive(panel) {
   }
 }
 
+// "verdeckt" plus where the unseen person most likely is
+function whereText(w) {
+  if (!w) return 'verdeckt';
+  const names = { here: 'hier', near: 'in der Nähe', gone: 'weg', outside: 'draußen' };
+  const regions = state.live?.regions || {};
+  return Object.entries(w).sort((a, b) => b[1] - a[1]).slice(0, 2)
+    .map(([k, v]) => `${names[k] || regions[k]?.name || k} ${Math.round(v * 100)} %`).join(', ');
+}
+
 const LIVE = {
   zones() {
     const live = state.live;
@@ -58,7 +67,7 @@ const LIVE = {
     const tracks = state.live?.tracks || [];
     if (!tracks.length) return '<p class="note">Keine Spuren.</p>';
     return `<table class="data"><tr><th>#</th><th>Status</th><th>x</th><th>y</th><th>v</th><th>Gehen</th><th>Alter</th></tr>${tracks.map(t => `
-      <tr><td>${t.id}</td><td>${t.status === 'tentative' ? 'neu?' : t.lost ? 'verdeckt' : 'aktiv'}</td>
+      <tr><td>${t.id}</td><td>${t.status === 'tentative' ? `neu? ${Math.round((t.existence || 0) * 100)} %` : t.lost ? whereText(t.where) : 'aktiv'}</td>
       <td>${fmt(t.x)}</td><td>${fmt(t.y)}</td><td>${fmt(Math.hypot(t.vx, t.vy), 1)}</td>
       <td>${Math.round(t.walk * 100)} %</td><td>${fmt(t.age, 0)} s</td></tr>`).join('')}</table>`;
   },
@@ -664,24 +673,28 @@ const PARAMS = [
     ['clutter_density', 'Geisterdichte (Annahme)', '1/m² je Frame', 'Bis die Geisterkarte gelernt ist.', 0.005],
     ['echo_factor', 'Echos neben Gehenden', '×', 'So viel häufiger sind Geister im Umkreis einer gehenden Person (Mehrwege-Reflexionen laufen mit).', 1],
     ['echo_radius', 'Umkreis für Echos', 'm', '', 0.1],
-    ['confirm_time_entry', 'Rückkehr aus Raum ohne Sensor nach', 's', 'So lange muss jemand an der Tür gesehen werden, der aus Küche oder Balkon zurückkommt.', 0.1],
     ['warmup', 'Anlaufzeit', 's', 'Nach dem Start dürfen Personen überall sofort erkannt werden.', 1],
-    ['rejoin_radius', 'Wiederaufnahme bis', 'm', 'Taucht eine eben verlorene Person bis zu diesem Abstand wieder auf (so weit sie in der Zeit gehen konnte), wird sie ohne neue Bestätigung weiterverfolgt.', 0.1],
-    ['dwell_median', 'Räume ohne Sensor: typischer Aufenthalt', 's', 'Annahme, bis genug Besuche gelernt sind.', 10],
-    ['dwell_spread', 'Streuung des Aufenthalts', '', 'Streuung von ln(Dauer) der Annahme.', 0.1],
-    ['missed_return', 'Rückkehr übersehen', '', 'Wahrscheinlichkeit, dass jemand unbemerkt herauskommt, solange ein Sensor die Tür sieht.', 0.05],
-    ['return_min_prob', 'Rückkehr ab', '', 'Ab dieser Wahrscheinlichkeit, dass noch jemand drin ist, gilt eine Person an der Tür als zurückkommend.', 0.05],
-    ['takeover_speed', 'Übernahme durch verdeckte Person', 'm/s', 'Taucht mitten im Raum jemand auf, den eine verdeckte Person mit diesem Tempo erreicht haben könnte, ist es dieselbe.', 0.1],
   ]],
   ['Verdeckte Personen', [
     ['lost_after', 'Als verdeckt gelten nach', 's', '', 0.1],
     ['coast_time', 'Weiterlaufen ohne Messung', 's', 'So lange bewegt sich eine verdeckte Person in der vorhergesagten Richtung weiter.', 0.1],
-    ['exit_timeout', 'Verlassen über Eingang nach', 's', 'Verdeckt in einer Eingangszone oder außerhalb aller Sensoren.', 0.5],
-    ['absence_time', 'Ohne LD2410C-Bestätigung nach', 's', 'Verdeckte Person endet, wenn kein LD2410C sie so lange bestätigt.', 5],
-    ['ld2410_hold', 'LD2410C-Haltezeit', 's', 'Lücken in der LD2410C-Präsenz bis zu dieser Länge werden überbrückt. Der Radar selbst hält nicht (Timeout 0).', 0.1],
-    ['ld2410_min_presence', 'LD2410C-Mindestdauer', 's', 'Kürzere Präsenz ist ein Geist (Störung durch den LD2450, etwa 1 s).', 0.5],
-    ['ld2410_support_window', 'LD2410C-Abstandsfenster', 'm', '', 0.05],
-    ['max_lost_time', 'Höchstens verdeckt', 's', 'Wo kein LD2410C hinsieht.', 60],
+    ['leak_walking', 'Abfluss zu Türen, gehend', '1/s', 'Wie schnell die Wahrscheinlichkeit „noch hier“ einer gehend verlorenen Person zu den erreichbaren Türen abfließt.', 0.05],
+    ['leak_still', 'Abfluss zu Türen, sitzend', '1/s', 'Dasselbe für jemanden, der saß.', 0.001],
+    ['leak_near', 'Von „in der Nähe“ zu Türen', '1/s', 'Wie schnell „ungesehen in der Nähe“ zu den erreichbaren Türen weiterfließt.', 0.05],
+    ['ld2410_fov', 'LD2410C-Sichtwinkel', '°', 'Innerhalb dieses Winkels zählt die Energie des LD2410C als Beweis.', 5],
+    ['unseen_speed', 'Tempo ungesehen', 'm/s', 'So weit kann eine ungesehene Person pro Sekunde gekommen sein (Reichweite für Türen und Wiederaufnahme).', 0.1],
+    ['door_scale', 'Nähe zählt', 'm', 'Die Wahrscheinlichkeit einer Tür fällt mit dem Abstand wie exp(−d/Wert).', 0.1],
+    ['toward_factor', 'Richtung zählt', '×', 'Eine Tür, auf die die Person zuging, ist so viel wahrscheinlicher.', 0.5],
+    ['door_pass_missed', 'Türdurchgang übersehen', '', 'Wahrscheinlichkeit, dass ein Sensor, der die Türschwelle sieht, jemanden beim Durchgehen übersieht. Eine gut beobachtete Tür, an der niemand gesehen wurde, ist entsprechend unwahrscheinlich.', 0.05],
+    ['takeover_mass', 'Übernahme ab', '', 'Eine neue, bestätigte Spur übernimmt eine verdeckte, die mit dieser Wahrscheinlichkeit hier, in der Nähe oder hinter dieser Tür ist.', 0.05],
+    ['birth_return', 'Rückkehr-Startwert höchstens', '', 'Startwahrscheinlichkeit einer neuen Spur an einer Tür, hinter der wahrscheinlich jemand ist.', 0.05],
+    ['ld2410_hold', 'LD2410C-Haltezeit', 's', 'Lücken in der LD2410C-Präsenz bis zu dieser Länge werden überbrückt.', 0.1],
+    ['gone_prob', 'Spur endet ab', '', 'Anteil der Wahrscheinlichkeit, der „weg“ sein muss, damit eine Spur endet.', 0.05],
+    ['region_forget_time', 'Hinter Türen vergessen nach', 's', 'Zeitkonstante, mit der eine Person hinter einer Tür ohne Sensor aus dem Blick gerät (übersehene Rückkehr, doppelte Spur).', 60],
+    ['max_lost_time', 'Höchstens verdeckt', 's', '', 60],
+    ['dwell_median', 'Räume ohne Sensor: typischer Aufenthalt', 's', 'Annahme, bis genug Besuche gelernt sind.', 10],
+    ['dwell_spread', 'Streuung des Aufenthalts', '', 'Streuung von ln(Dauer) der Annahme.', 0.1],
+    ['missed_return', 'Rückkehr übersehen', '', 'Wahrscheinlichkeit, dass jemand unbemerkt herauskommt, solange ein Sensor die Tür sieht.', 0.05],
   ]],
   ['Zuordnung', [
     ['gate', 'Zuordnungsschwelle (χ²)', '', 'Größer = Messungen werden großzügiger bestehenden Personen zugeordnet.', 0.5],

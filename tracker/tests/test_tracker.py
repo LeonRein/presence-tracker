@@ -47,7 +47,7 @@ def run(config, people, duration, sensors=None, sample_every=0.5, seed=1):
             tracker.step(t)
             next_step = t + 0.2
         if t >= next_sample:
-            samples.append((t, len(tracker.confirmed()), evaluate(config, tracker)))
+            samples.append((t, len(tracker.present()), evaluate(config, tracker)))
             next_sample = t + sample_every
     return tracker, samples
 
@@ -111,15 +111,17 @@ def test_five_people_with_three_target_limit():
     assert final and min(final) >= 4 and max(final) <= 5
 
 
-def test_track_without_ld2410_support_ends():
-    # a person stands in the room and then "disappears" (e.g. a confirmed false track):
-    # the LD2410C only shows its ghosts, so the lost track ends after absence_time
-    config = room_config(absence_time=20.0)
+def test_track_of_a_vanished_person_fades():
+    # a person stands in the room and then "disappears" (a confirmed false track): both sensors
+    # see the spot well and report nothing, the LD2410C shows only its ghosts: within minutes the
+    # track's mass has flowed to the door and faded
+    config = room_config()
     person = Person(walk(DOOR, (3, 2.5), start=1, pauses={1: 5}))
     end = person.waypoints[-1][0]
-    tracker, samples = run(config, [person], end + 40)
+    tracker, samples = run(config, [person], end + 240)
     assert counts(samples, end - 2, end) == {1}
-    assert counts(samples, end + 30, end + 40) == {0}
+    assert counts(samples, end + 200, end + 240) == {0}
+    assert all(s["_total"].count == 0 for t, n, s in samples if t > end + 200)
 
 
 def test_approaching_zone():
@@ -202,8 +204,8 @@ def balcony_config() -> Config:
     })
 
 
-def run_walls(config, people, duration, **kw):
-    sensors = sim_sensors(config, **kw)
+def run_walls(config, people, duration, sensors=None, **kw):
+    sensors = sensors or sim_sensors(config, **kw)
     tracker = Tracker(config, start=0.0)
     samples = []
     next_sample = 0.0
@@ -211,7 +213,7 @@ def run_walls(config, people, duration, **kw):
         tracker.process_frame(sid, t, frame)
         tracker.step(t)
         if t >= next_sample:
-            samples.append((t, len(tracker.confirmed()), evaluate(config, tracker)))
+            samples.append((t, len(tracker.present()), evaluate(config, tracker)))
             next_sample = t + 0.5
     return tracker, samples
 
@@ -230,21 +232,25 @@ def test_out_to_the_balcony_and_back():
     # nobody visible, but the person is counted on the balcony, and in the house
     assert all(n == 0 and s["_total"].count == 1 for t, n, s in on_balcony)
     assert all(s[next(z for z in config.regions[balcony]["rooms"])].count == 1 for t, n, s in on_balcony)
-    # back inside: tracked again right away, balcony empty
+    # back inside: the same track, right away; balcony empty
     end = person.waypoints[-1][0]
-    assert counts(samples, end - 2, end) == {1}
-    assert not tracker.occupancy.visits.get(balcony)
+    assert counts(samples, end - 1.5, end) == {1}
+    assert len(tracker.confirmed()) == 1 and tracker.confirmed()[0].where.region(balcony) < 0.05
+    assert tracker.dwell.dwell.get(balcony)  # the stay was learned
 
 
 def test_echo_in_the_balcony_door_is_no_person():
     config = balcony_config()
     # someone sits in the room; a static reflection shows up in the glass door the whole time
     sitter = Person([(0, 3.0, 2.5), (90, 3.0, 2.5)])
-    echo = Person([(5, 5.6, 2.0), (90, 5.6, 2.0)])  # in front of the balcony door, like the real ones
-    tracker, samples = run_walls(config, [sitter, echo], 90)
+    # in front of the balcony door, like the real ones: one sensor reports it, the other, which
+    # sees the spot just as well, never does
+    echo = Person([(5, 5.6, 2.0), (90, 5.6, 2.0)])
+    sensors = [SimSensor(config.sensors[0]), SimSensor(config.sensors[1], blind_to=(1,))]
+    tracker, samples = run_walls(config, [sitter, echo], 90, sensors=sensors)
     assert counts(samples, 20, 90) == {1}
     # the echo was measured all along, it just never became a person
-    assert any(tr.status == "tentative" and abs(tr.position()[0] - 5.6) < 0.5 for tr in tracker.tracks)
+    assert any(abs(d.pos[0] - 5.6) < 0.5 for d in tracker.runtime["a"].detections)
 
 
 def test_two_people_never_fuse():

@@ -122,6 +122,13 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
             if p is not None and c.sees(p[0], p[1], walls)]
     moving = still = False
     md = sd = 0
+    gates = [5 + rng.uniform(0, 8) for _ in range(9)]
+    for r_floor in near:
+        slant = math.hypot(r_floor, c.height - 1.0)
+        g = int(slant / 0.75)
+        for k, boost in ((g, 65), (g - 1, 20), (g + 1, 20)):
+            if 0 <= k < 9:
+                gates[k] += boost + rng.uniform(-10, 10)
     if near:
         still = True
         sd = round(min(near) * 1000, -1)
@@ -134,11 +141,14 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
         still = 0.1 <= phase < 1.1
         md = dist if moving else 0
         sd = dist if still else 0
+        if moving:
+            gates[min(int(dist / 1000 / 0.75), 8)] += 40
     s.seq += 1
     return {
         "seq": s.seq,
         "uptime_ms": int(t * 1000),
         "targets": targets,
         "ld2410": {"moving": moving, "still": still, "moving_distance": md, "moving_energy": 50 if moving else 0,
-                   "still_distance": sd, "still_energy": 40 if still else 0},
+                   "still_distance": sd, "still_energy": 40 if still else 0,
+                   "move_gates": [min(round(e), 100) for e in gates], "still_gates": [min(round(e), 100) for e in gates]},
     }

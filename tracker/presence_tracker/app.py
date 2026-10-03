@@ -56,7 +56,7 @@ class App:
         dwell_path = self.data_dir / "dwell.json"
         if dwell_path.exists():
             try:
-                self.tracker.occupancy.dwell = json.loads(dwell_path.read_text())
+                self.tracker.dwell.dwell = json.loads(dwell_path.read_text())
             except ValueError:
                 log.warning("dwell.json unreadable, starting without learned stays")
         self.tracker.sensor_model.load(self.data_dir / "sensormodel.json")
@@ -130,10 +130,10 @@ class App:
                 self.tracker.sensor_model.changed = False
                 self.last_model_save = time.monotonic()
                 self.tracker.sensor_model.save(self.data_dir / "sensormodel.json")
-            if self.tracker.occupancy.changed and not self.replay:
-                self.tracker.occupancy.changed = False
+            if self.tracker.dwell.changed and not self.replay:
+                self.tracker.dwell.changed = False
                 tmp = self.data_dir / "dwell.tmp"
-                tmp.write_text(json.dumps(self.tracker.occupancy.dwell))
+                tmp.write_text(json.dumps(self.tracker.dwell.dwell))
                 tmp.replace(self.data_dir / "dwell.json")
             self.stats["cpu"] += time.process_time() - start
             await self.discovery.states(self.zone_states)
@@ -246,7 +246,7 @@ class App:
         self.config = config
         self.tracker.config = config
         self.tracker.imm.p = config.params
-        self.tracker.occupancy.p = config.params
+        self.tracker.dwell.p = config.params
         self.tracker.sensor_model.config = config
         self.tracker.sensor_model.rebuild()
         self.calibrator.config = config
@@ -326,13 +326,13 @@ class App:
             self.tracker.sensor_model.load_dict(data["sensormodel"])
             self.tracker.sensor_model.save(self.data_dir / "sensormodel.json")
         if "dwell" in data:
-            self.tracker.occupancy.dwell = {k: [float(x) for x in v] for k, v in data["dwell"].items()}
-            self.tracker.occupancy.changed = True
+            self.tracker.dwell.dwell = {k: [float(x) for x in v] for k, v in data["dwell"].items()}
+            self.tracker.dwell.changed = True
         model = self.tracker.sensor_model
         return web.json_response({
             "accuracy": model.accuracy_fit(),
             "learned_cells": {s.id: model.maps(s.id).get("learned_cells") for s in self.config.sensors},
-            "dwell": {k: len(v) for k, v in self.tracker.occupancy.dwell.items()},
+            "dwell": {k: len(v) for k, v in self.tracker.dwell.dwell.items()},
         })
 
     async def h_reset_tracks(self, request):
