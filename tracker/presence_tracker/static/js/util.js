@@ -161,7 +161,8 @@ export function sensorSees(s, x, y, segs) {
   const r = Math.hypot(lx, ly);
   if (ly <= 0 || r > s.range || Math.abs(deg(Math.atan2(lx, ly))) > s.fov / 2) return false;
   const c = Math.cos(rad(s.heading)), sn = Math.sin(rad(s.heading));
-  const from = [s.x + 0.05 * c, s.y + 0.05 * sn];
+  // 20 cm in front of the sensor, like SensorConfig.sight_origin: it hangs on a wall
+  const from = [s.x + 0.2 * c, s.y + 0.2 * sn];
   for (const [a, b] of segs) if (segmentsCross(from, [x, y], a, b)) return false;
   return true;
 }

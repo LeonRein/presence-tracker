@@ -6,11 +6,11 @@ pair with the walker, and a single still spot says nothing about rotation. For t
 target of one is interpolated to the frame times of the other, giving pairs of the same point
 seen by both.
 
-One sensor is the anchor (its pose stays as placed); the others get position, heading and the
-x direction (mirror) from a 2D rigid fit (Kabsch) with RANSAC against the already solved
-sensors, then a few rounds of refinement with all pairs. The fit stays near the pose the user
-drew (MAX_SHIFT, MAX_TURN): with wrong pairs (two people, reflections), an unconstrained RANSAC
-happily finds a consensus meters away. Each result gets a quality verdict.
+Positions are easy to draw on the map, headings are not. So no sensor is taken as given: the
+sensors' poses relative to each other come from the pairs alone (2D rigid fits with RANSAC,
+Kabsch), and this rigid constellation is then placed onto the drawn positions. Only hypotheses
+whose sensor distances roughly match the drawing are considered (wrong pairs from a second
+person or reflections otherwise produce a consensus meters away). Each result gets a verdict.
 """
 
 import math
@@ -24,8 +24,8 @@ from .model import Config, SensorConfig
 MAX_GAP = 0.25  # s, interpolate only between frames this close
 INLIER = 0.35  # m
 MIN_SPEED = 0.05  # m/s, radial speed for a target to count as moving
-MAX_SHIFT = 1.5  # m from the drawn position
-MAX_TURN = 45.0  # degrees from the drawn heading
+MAX_DIST_ERR = 1.0  # m, measured sensor distance vs. drawn distance, for a hypothesis to be considered
+MAX_POS_RESIDUAL = 0.5  # m, a sensor this far from its drawn position after placing gets a warning
 # quality thresholds
 MIN_PAIRS = 100
 MIN_INLIER_RATIO = 0.5
@@ -159,13 +159,19 @@ class Calibrator:
             out_b.append((lx, ly))
         return np.array(out_a).reshape(-1, 2), np.array(out_b).reshape(-1, 2)
 
-    def solve(self, anchor: str, min_pairs: int = 30) -> dict:
-        """Proposed poses for all sensors that overlap (directly or via others) with the anchor."""
-        sensors = [s.id for s in self.config.sensors if s.id in self.series]
-        if anchor not in sensors:
-            return {"error": "Der Anker-Sensor hat keine Messungen von einer Person in Bewegung."}
-        a = self.config.sensor_by_id[anchor]
-        pose = {anchor: _pose_matrix(a) + (a.mirror,)}
+    def solve(self, min_pairs: int = 30) -> dict:
+        """New poses for all sensors that overlap (directly or via others).
+
+        1. Constellation: the sensors relative to each other, purely from the pairs. The most
+           connected sensor is the root of an arbitrary frame; nobody's drawn heading is trusted.
+        2. Placement: the rigid constellation is rotated and moved onto the drawn positions
+           (least squares). The headings follow from that.
+        3. A mirrored constellation fits the positions just as well; the floor plan decides:
+           the walked points have to be inside the rooms.
+        """
+        sensors = [s.id for s in self.config.sensors if s.id in self.series and s.placed and s.enabled]
+        if len(sensors) < 2:
+            return {"error": "Mindestens zwei platzierte Sensoren brauchen Messungen einer Person in Bewegung."}
         pair_cache = {}
 
         def pairs(x, y):
@@ -173,75 +179,132 @@ class Calibrator:
                 pair_cache[(x, y)] = self._pairs(x, y)
             return pair_cache[(x, y)]
 
-        def near_drawn(sid):
+        def drawn(sid):
             s = self.config.sensor_by_id[sid]
+            return np.array([s.x, s.y])
 
-            def valid(angle, t):
-                turn = (_heading(angle) - s.heading + 180) % 360 - 180
-                return math.hypot(t[0] - s.x, t[1] - s.y) <= MAX_SHIFT and abs(turn) <= MAX_TURN
-            return valid
+        def constellation(root, root_mirror):
+            pose = {root: (np.zeros(2), np.eye(2), root_mirror)}  # position, rotation, mirror
+            stats = {}
 
-        def fit(sid, solved):
-            """Fit sensor sid against the solved sensors; tries both x directions."""
-            best = None
-            for mirror in (False, True):
-                src, dst = [], []
-                for other in solved:
-                    ra, rb = pairs(other, sid)
-                    if len(ra) == 0:
+            def plausible(sid, solved):
+                # the measured distance to every solved sensor must roughly match the drawing
+                want = {o: np.linalg.norm(drawn(sid) - drawn(o)) for o in solved}
+
+                def valid(angle, t):
+                    return all(abs(np.linalg.norm(t - pose[o][0]) - want[o]) <= MAX_DIST_ERR for o in solved)
+                return valid
+
+            def fit(sid, solved):
+                best = None
+                for mirror in (False, True):
+                    src, dst = [], []
+                    for other in solved:
+                        ra, rb = pairs(other, sid)
+                        if len(ra) == 0:
+                            continue
+                        p, R, other_mirror = pose[other]
+                        dst.append(self._ground(other, ra, other_mirror) @ R.T + p)
+                        src.append(self._ground(sid, rb, mirror))
+                    if not src:
+                        return None
+                    src, dst = np.concatenate(src), np.concatenate(dst)
+                    if len(src) < min_pairs:
+                        return None
+                    result = ransac(src, dst, valid=plausible(sid, solved))
+                    if result is None:
                         continue
-                    p, R, other_mirror = pose[other]
-                    dst.append(self._ground(other, ra, other_mirror) @ R.T + p)
-                    src.append(self._ground(sid, rb, mirror))
-                if not src:
-                    return None
-                src, dst = np.concatenate(src), np.concatenate(dst)
-                if len(src) < min_pairs:
-                    return None
-                result = ransac(src, dst, valid=near_drawn(sid))
-                if result is None:
-                    continue
-                angle, t, inliers, rms, spread = result
-                score = (inliers.sum(), -rms)
-                if best is None or score > best[0]:
-                    best = (score, angle, t, mirror, {"inliers": int(inliers.sum()), "pairs": len(src),
-                                                      "rms": rms, "spread": spread})
-            return best
+                    angle, t, inliers, rms, spread = result
+                    score = (inliers.sum(), -rms)
+                    if best is None or score > best[0]:
+                        best = (score, angle, t, mirror, {"inliers": int(inliers.sum()), "pairs": len(src),
+                                                          "rms": rms, "spread": spread})
+                return best
 
-        pending = [s for s in sensors if s != anchor]
-        results = {}
-        while pending:
-            fits = [(sid, fit(sid, list(pose))) for sid in pending]
-            fits = [(sid, f) for sid, f in fits if f is not None]
-            if not fits:
-                break
-            sid, (_, angle, t, mirror, stats) = max(fits, key=lambda item: item[1][0])
-            pose[sid] = (t, _rot(angle), mirror)
-            results[sid] = stats
-            pending.remove(sid)
-
-        # refinement: re-fit every non-anchor sensor against all others
-        for _ in range(3):
-            for sid in list(results):
-                f = fit(sid, [o for o in pose if o != sid])
-                if f is None:
-                    continue
-                _, angle, t, mirror, stats = f
+            pending = [s for s in sensors if s != root]
+            while pending:
+                fits = [(sid, fit(sid, list(pose))) for sid in pending]
+                fits = [(sid, f) for sid, f in fits if f is not None]
+                if not fits:
+                    break
+                sid, (_, angle, t, mirror, st) = max(fits, key=lambda item: item[1][0])
                 pose[sid] = (t, _rot(angle), mirror)
-                results[sid] = stats
+                stats[sid] = st
+                pending.remove(sid)
+            for _ in range(3):  # refinement against all others
+                for sid in list(stats):
+                    f = fit(sid, [o for o in pose if o != sid])
+                    if f is not None:
+                        _, angle, t, mirror, st = f
+                        pose[sid] = (t, _rot(angle), mirror)
+                        stats[sid] = st
+            # the root shares the quality of its best connection
+            if stats:
+                stats[root] = max(stats.values(), key=lambda st: st["inliers"])
+            return pose, stats, pending
+
+        def connections(sid):
+            return sum(len(pairs(min(sid, o), max(sid, o))[0]) for o in sensors if o != sid)
+
+        root = max(sensors, key=connections)
+        best = None
+        for root_mirror in (False, True):
+            pose, stats, pending = constellation(root, root_mirror)
+            solved = list(pose)
+            if len(solved) < 2:
+                continue
+            # rotate and move the constellation onto the drawn positions (no scaling, no mirroring)
+            phi, tau = kabsch(np.array([pose[s][0] for s in solved]), np.array([drawn(s) for s in solved]))
+            Rp = _rot(phi)
+            world = {s: (Rp @ pose[s][0] + tau, Rp @ pose[s][1], pose[s][2]) for s in solved}
+            inside = self._inside_share(world)
+            turn = sum(abs(self._turn(s, world[s][1])) for s in solved)
+            key = (round(inside, 2), -turn)
+            if best is None or key > best[0]:
+                best = (key, world, stats, pending, inside)
+        if best is None:
+            return {"error": "Kein Sensorpaar hat genug gemeinsame Messungen, oder die gemessenen Abstände "
+                             "passen nicht zur Zeichnung (mehr als 1 m daneben)."}
+        _, world, stats, pending, inside = best
 
         out = {}
-        for sid, stats in results.items():
-            p, R, mirror = pose[sid]
-            heading = _heading(math.atan2(R[1, 0], R[0, 0]))
+        for sid, (p, R, mirror) in world.items():
             current = self.config.sensor_by_id[sid]
-            quality, reason = verdict(stats["pairs"], stats["inliers"], stats["spread"])
+            st = stats[sid]
+            quality, reason = verdict(st["pairs"], st["inliers"], st["spread"])
+            residual = float(np.linalg.norm(p - drawn(sid)))
+            if quality == "ok" and residual > MAX_POS_RESIDUAL:
+                quality, reason = "warn", (f"Liegt nach der Messung {100 * residual:.0f} cm neben der eingezeichneten "
+                                           "Position. Sind die Positionen richtig eingezeichnet?")
             out[sid] = {
-                "x": round(float(p[0]), 3), "y": round(float(p[1]), 3), "heading": round(heading, 1),
-                "mirror": bool(mirror),
-                "shift": round(math.hypot(p[0] - current.x, p[1] - current.y), 3),
-                "turn": round((heading - current.heading + 180) % 360 - 180, 1),
+                "x": round(float(p[0]), 3), "y": round(float(p[1]), 3),
+                "heading": round(_heading(math.atan2(R[1, 0], R[0, 0])), 1), "mirror": bool(mirror),
+                "shift": round(residual, 3), "turn": round(self._turn(sid, R), 1),
                 "quality": quality, "reason": reason,
-                **{k: (round(v, 3) if isinstance(v, float) else v) for k, v in stats.items()},
+                **{k: (round(v, 3) if isinstance(v, float) else v) for k, v in st.items()},
             }
-        return {"anchor": anchor, "sensors": out, "unsolved": pending}
+        ids = list(world)
+        distances = [{"a": a, "b": b, "measured": round(float(np.linalg.norm(world[a][0] - world[b][0])), 2),
+                      "drawn": round(float(np.linalg.norm(drawn(a) - drawn(b))), 2)}
+                     for i, a in enumerate(ids) for b in ids[i + 1:]
+                     if len(pairs(min(a, b), max(a, b))[0])]
+        return {"sensors": out, "unsolved": pending, "inside": round(inside, 3), "distances": distances}
+
+    def _turn(self, sid: str, R: np.ndarray) -> float:
+        heading = _heading(math.atan2(R[1, 0], R[0, 0]))
+        return (heading - self.config.sensor_by_id[sid].heading + 180) % 360 - 180
+
+    def _inside_share(self, world: dict) -> float:
+        """Share of the walked points inside the rooms, with these poses. 0.5 without rooms."""
+        rooms = self.config.zones_of("room")
+        if not rooms:
+            return 0.5
+        inside = total = 0
+        for sid, (p, R, mirror) in world.items():
+            raw = np.array([pt[1:] for pt in self.series[sid]])
+            if not len(raw):
+                continue
+            for x, y in self._ground(sid, raw[:: max(1, len(raw) // 300)], mirror) @ R.T + p:
+                total += 1
+                inside += any(z.contains(x, y, 0.3) for z in rooms)
+        return inside / total if total else 0.5

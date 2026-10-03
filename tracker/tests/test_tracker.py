@@ -147,3 +147,27 @@ def test_sensor_transform_roundtrip(mirror):
     wx, wy, ground, slant = s.to_world(0.5, 3.0, 1.5)
     lx, ly = s.to_local(wx, wy)
     assert lx == pytest.approx(0.5) and ly == pytest.approx(3.0)
+
+
+def test_detections_behind_a_wall_are_reflections():
+    # concrete wall at x = 3 (door opening y 4.2-5.0); the sensor at the origin looks along +x
+    config = Config(
+        sensors=[SensorConfig("a", x=0.0, y=2.0, heading=0, placed=True)],
+        walls=[{"points": [[3.0, 0.0], [3.0, 5.0]], "kind": "wall"}],
+        doors=[{"id": "d", "x": 3.0, "y": 4.6, "width": 0.8}],
+        params=TrackerParams(warmup=0),
+    )
+    tracker = Tracker(config, start=0.0)
+    frame = {"targets": [
+        {"x": 0, "y": 4500, "speed": 0},  # 1.5 m behind the wall
+        {"x": 0, "y": 3200, "speed": 0},  # 0.2 m behind it: noise at the wall, kept
+        {"x": 0, "y": 2000, "speed": 0},  # in front of it
+    ]}
+    tracker.process_frame("a", 1.0, frame)
+    hidden = [d.hidden for d in tracker.runtime["a"].detections]
+    assert hidden == [True, False, False]
+    for k in range(40):
+        tracker.process_frame("a", 1.0 + 0.1 * k, frame)
+        tracker.step(1.0 + 0.1 * k)
+    xs = sorted(round(float(tr.position()[0]), 1) for tr in tracker.confirmed())
+    assert all(x < 3.4 for x in xs) and len(xs) >= 1

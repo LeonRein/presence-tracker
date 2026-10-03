@@ -8,9 +8,11 @@ import math
 import pathlib
 from dataclasses import asdict, dataclass, field, fields
 
-from .floorplan import sight_segments, sync_rooms
-from .geometry import Shape, line_of_sight
+from .floorplan import sight_segments, sync_rooms, wall_pieces
+from .geometry import Shape, distance_to_segment, line_of_sight
 
+
+SIGHT_OFFSET = 0.2  # m, see SensorConfig.sight_origin
 
 @dataclass
 class SensorConfig:
@@ -75,10 +77,14 @@ class SensorConfig:
             return False
         return abs(math.degrees(math.atan2(lx, ly))) <= self.fov / 2 + math.degrees(margin / max(r, 0.3))
 
+    def sight_origin(self) -> tuple:
+        """Where sight lines start: 20 cm in front of the sensor. It hangs on a wall (often in a
+        corner), and a few centimeters of drawing or calibration error would otherwise put it
+        behind that wall, blind for everything."""
+        return (self.x + SIGHT_OFFSET * self._cos, self.y + SIGHT_OFFSET * self._sin)
+
     def sees(self, wx: float, wy: float, walls: list, margin: float = 0.0) -> bool:
-        # start the sight line just in front of the sensor, so the wall it hangs on doesn't count
-        start = (self.x + 0.05 * self._cos, self.y + 0.05 * self._sin)
-        return self.in_fov(wx, wy, margin) and line_of_sight(start, (wx, wy), walls)
+        return self.in_fov(wx, wy, margin) and line_of_sight(self.sight_origin(), (wx, wy), walls)
 
 
 @dataclass
@@ -122,16 +128,17 @@ class TrackerParams:
     still_jitter: float = 0.08  # m/sqrt(s), position wander of a sitting/standing person
     walk_to_still: float = 0.7  # switching rates, 1/s
     still_to_walk: float = 0.3
-    outside_margin: float = 0.4  # m, detections farther outside all rooms are reflections and dropped
+    wall_margin: float = 0.4  # m, detections farther behind a wall or outside all rooms are reflections
     # association
     gate: float = 13.8  # chi-square, 2 dof, 99.9 %
     max_gate_radius: float = 1.0  # m, gating radius cap for tracks that were lost for a while
-    split_radius: float = 0.7  # m, a second detection this close to an updated track is the same person
+    split_radius: float = 1.0  # m, a second detection this close to an updated track is the same person (or its reflection)
     # track lifecycle
-    confirm_time_entry: float = 0.4  # s of detections needed for a track that starts in an entry zone
+    confirm_time_entry: float = 1.0  # s of detections needed for a track that starts in an entry zone
     confirm_time: float = 2.0  # s of detections needed elsewhere ("people don't appear out of nowhere")
     confirm_ratio: float = 0.5  # share of sensor frames that must contain the new track
     tentative_timeout: float = 0.8  # s without detection until a new track is dropped
+    takeover_speed: float = 1.5  # m/s, a lost track that could have walked to a new one becomes it
     lost_after: float = 1.5  # s without detection until a track counts as lost (keeps its place)
     coast_time: float = 0.7  # s a lost track keeps moving before it stops
     exit_timeout: float = 3.0  # s until a lost track in an entry zone or outside coverage is removed
@@ -167,7 +174,50 @@ class Config:
             s._update()
         self.wall_segments = sight_segments(self.walls, self.doors)
         self.sensor_by_id = {s.id: s for s in self.sensors}
-        self.entry_zones = [z for z in self.zones if z.kind == "entry" or (z.kind == "room" and z.entry)]
+        self.exit_doors = self._exit_doors()
+        self.entry_zones = [z for z in self.zones if z.kind == "entry" or (z.kind == "room" and z.entry)] + self.exit_doors
+
+    def _exit_doors(self) -> list:
+        """Doors into a room that no sensor covers (or to the outside) work like entries: people
+        appear and leave there. Circles around those doors, derived, not stored."""
+        placed = [s for s in self.sensors if s.enabled and s.placed]
+        rooms = self.zones_of("room")
+        if not placed or not rooms:
+            return []
+        covered = {z.id: self._room_covered(z, placed) for z in rooms}
+        pieces = [p for p in wall_pieces(self.walls) if p[2] == "wall"]
+        out = []
+        for d in self.doors:
+            c = (d["x"], d["y"])
+            piece = min(pieces, key=lambda p: distance_to_segment(c[0], c[1], p[0], p[1]), default=None)
+            if piece is None:
+                continue
+            (ax, ay), (bx, by), _ = piece
+            length = math.hypot(bx - ax, by - ay)
+            nx, ny = -(by - ay) / length, (bx - ax) / length
+            sides = []
+            for k in (0.4, -0.4):
+                px, py = c[0] + k * nx, c[1] + k * ny
+                sides.append(next((z for z in rooms if z.contains(px, py)), None))
+            if any(r is None or not covered[r.id] for r in sides) and any(r is not None and covered[r.id] for r in sides):
+                out.append(ZoneConfig(f"door-{d['id']}", "Tür", kind="entry", shape="circle", center=list(c),
+                                      radius=max(0.7, d.get("width", 0.9) / 2 + 0.2)))
+        return out
+
+    def _room_covered(self, room, sensors) -> bool:
+        """A sensor sees at least 30 % of the room."""
+        x0, y0, x1, y1 = room.geometry.bounds()
+        n = seen = 0
+        y = y0 + 0.2
+        while y < y1:
+            x = x0 + 0.2
+            while x < x1:
+                if room.contains(x, y):
+                    n += 1
+                    seen += any(s.sees(x, y, self.wall_segments) for s in sensors)
+                x += 0.4
+            y += 0.4
+        return n > 0 and seen / n >= 0.3
 
     def zones_of(self, kind: str) -> list:
         return [z for z in self.zones if z.kind == kind]

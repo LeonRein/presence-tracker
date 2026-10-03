@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .assignment import assign
+from .geometry import line_of_sight
 from .imm import IMM, STILL, WALK, IMMState
 from .model import Config, SensorConfig
 
@@ -39,7 +40,7 @@ class Detection:
     speed: float  # radial speed on the floor, m/s, negative = approaching
     local: tuple  # raw LD2450 x, y in meters (sensor frame), for calibration
     ignored: bool = False  # inside an interference zone
-    outside: bool = False  # outside all rooms: a reflection behind a wall, not used for tracking
+    hidden: bool = False  # behind a wall or outside all rooms: a reflection, not used for tracking
 
 
 @dataclass
@@ -147,7 +148,7 @@ class Tracker:
         self._ld2410(sensor, rt, t, frame.get("ld2410") or {})
         self._predict_all(t)
         self._count_expected(sensor)
-        self._associate(sensor, [d for d in detections if not d.outside], t)
+        self._associate(sensor, [d for d in detections if not d.hidden], t)
         for listener in self.listeners:
             listener("frame", (sensor, t, detections))
 
@@ -169,10 +170,19 @@ class Tracker:
             speed = target.get("speed", 0) / 1000 * (slant / ground if ground > 0 else 1)
             pos = np.array([wx, wy])
             ignored = any(z.contains(wx, wy) for z in self.config.zones_of("ignore"))
-            rooms = self.config.zones_of("room")
-            outside = bool(rooms) and not any(z.contains(wx, wy, p.outside_margin) for z in rooms)
-            out.append(Detection(s.id, target.get("slot", 0), pos, R, u, speed, (lx, ly), ignored, outside))
+            out.append(Detection(s.id, target.get("slot", 0), pos, R, u, speed, (lx, ly), ignored,
+                                 self._hidden(s, pos, u)))
         return out
+
+    def _hidden(self, s: SensorConfig, pos: np.ndarray, u: np.ndarray) -> bool:
+        """The radar can't see through the (concrete) walls: a point behind one is a reflection.
+        So is a point outside all rooms. wall_margin of tolerance for noise right at a wall."""
+        p = self.config.params
+        rooms = self.config.zones_of("room")
+        if rooms and not any(z.contains(pos[0], pos[1], p.wall_margin) for z in rooms):
+            return True
+        back = pos - u * p.wall_margin
+        return not line_of_sight(s.sight_origin(), (float(back[0]), float(back[1])), self.config.wall_segments)
 
     # ------------------------------------------------------------- filtering
 
@@ -305,18 +315,34 @@ class Tracker:
         p = self.config.params
         self.now = max(self.now, t)
         t = self.now
+        # new tracks first, so a lost track they turn out to be is not ended in the same step
+        drop = set()
+        for tr in self.tracks:
+            if tr.status != TENTATIVE:
+                continue
+            if t - tr.last_hit > p.tentative_timeout:
+                self._emit("dropped", tr)
+                drop.add(tr.id)
+                continue
+            need = p.confirm_time_entry if tr.born_at_entry else p.confirm_time
+            ratio = tr.hits / max(tr.expected, 1)
+            if t - tr.first_hit >= need and ratio >= p.confirm_ratio and self._seen_by_enough(tr):
+                lost = self._takeover_candidate(tr, t)
+                if lost is not None:
+                    # nobody appears out of nowhere: it's the lost person, who moved unseen
+                    lost.state = tr.state
+                    lost.t, lost.last_hit, lost.last_support = tr.t, tr.last_hit, t
+                    lost.last_hit_by.update(tr.last_hit_by)
+                    self._emit("taken over", (lost, tr))
+                    drop.add(tr.id)
+                    continue
+                tr.status = CONFIRMED
+                self._emit("confirmed", tr)
         keep = []
         for tr in self.tracks:
-            if tr.status == TENTATIVE:
-                if t - tr.last_hit > p.tentative_timeout:
-                    self._emit("dropped", tr)
-                    continue
-                need = p.confirm_time_entry if tr.born_at_entry else p.confirm_time
-                ratio = tr.hits / max(tr.expected, 1)
-                if t - tr.first_hit >= need and ratio >= p.confirm_ratio:
-                    tr.status = CONFIRMED
-                    self._emit("confirmed", tr)
-            elif tr.lost(t, p.lost_after):
+            if tr.id in drop:
+                continue
+            if tr.status == CONFIRMED and tr.lost(t, p.lost_after):
                 reason = self._end_reason(tr, t)
                 if reason:
                     self._emit("ended", (tr, reason))
@@ -324,6 +350,26 @@ class Tracker:
             keep.append(tr)
         self.tracks = keep
         self._merge(t)
+
+    def _seen_by_enough(self, tr: Track) -> bool:
+        """Where two sensors look, a new person must show up in both. A reflection or a static
+        ghost almost always shows up in one only."""
+        x, y = tr.position()
+        visible = {s.id for s in self.config.visible_sensors(x, y, margin=-0.3)}
+        return len(visible & set(tr.last_hit_by)) >= min(2, len(visible))
+
+    def _takeover_candidate(self, tr: Track, t: float):
+        """The nearest lost track that could have walked to tr's position since it was last seen."""
+        p = self.config.params
+        pos = tr.position()
+        best, best_d = None, None
+        for other in self.tracks:
+            if other.status != CONFIRMED or not other.lost(t, p.lost_after):
+                continue
+            d = float(np.linalg.norm(other.position() - pos))
+            if d <= p.max_gate_radius + p.takeover_speed * (tr.first_hit - other.last_hit) and (best is None or d < best_d):
+                best, best_d = other, d
+        return best
 
     def _end_reason(self, tr: Track, t: float) -> str | None:
         p = self.config.params
@@ -396,7 +442,7 @@ class Tracker:
                 "online": t - rt.last_frame < 15,
                 "detections": [{"x": round(float(d.pos[0]), 3), "y": round(float(d.pos[1]), 3),
                                 "lx": round(d.local[0], 3), "ly": round(d.local[1], 3),
-                                "speed": round(d.speed, 2), "ignored": d.ignored, "outside": d.outside}
+                                "speed": round(d.speed, 2), "ignored": d.ignored, "hidden": d.hidden}
                                for d in rt.detections] if t - rt.last_frame < 1.0 else [],
                 "ld2410": {"present": rt.ld_present, "distance": round(rt.ld_distance, 2),
                            "move_gates": rt.move_gates, "still_gates": rt.still_gates},

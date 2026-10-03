@@ -16,6 +16,8 @@ betreten wird. Wer wer ist, spielt keine Rolle.
 - Der **LD2410C** erzeugt nie selbst Personen. Seine Haltezeit steht auf 0, die App überbrückt kurze Lücken selbst
   (*LD2410C-Haltezeit*). Seine Störungen durch den LD2450 dauern etwa 1 s. Nur längere Präsenz im passenden
   Abstand bestätigt eine verdeckte Person. Die Energie pro Entfernungsstufe steht im Tab *Sensoren*.
+- **Wände**: Die Radare sehen nicht durch die Betonwände. Ein Messpunkt hinter einer Wand oder außerhalb aller
+  Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*).
 - **Mehrere Sensoren**: Messungen aller Sensoren gehen in dieselben Spuren. Sieht ein Sensor dieselbe Person
   wie ein anderer, wird sie nicht doppelt gezählt.
 
@@ -41,7 +43,8 @@ betreten wird. Wer wer ist, spielt keine Rolle.
 4. **Sensoren** (Tab *Sensoren*): jeden Sensor platzieren, Blickrichtung drehen, Montagehöhe eintragen.
    *Tote Winkel zeigen* färbt Stellen, die kein Sensor sieht, rot.
 5. **Kalibrierung** (Tab *Kalibrierung*): allein 2–3 Minuten durch die Überschneidungen der Sensoren gehen.
-   Die App berechnet Position, Drehung und x-Richtung jedes Sensors relativ zum Anker-Sensor.
+   Aus den Messungen ergibt sich, wie die Sensoren zueinander stehen (Abstand, Drehung, x-Richtung). Diese
+   starre Anordnung wird auf die eingezeichneten Positionen gelegt; die Blickrichtungen müssen nur grob stimmen.
 
 Rückgängig mit Strg+Z, Wiederholen mit Strg+Y. Alles wird automatisch gespeichert (`/data/tracker.json`).
 

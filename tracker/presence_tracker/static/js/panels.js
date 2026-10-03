@@ -7,7 +7,6 @@ import { loadSize } from './view.js';
 
 let skipRender = false;
 let zoneKind = 'area';
-let calibAnchor = null;
 
 // edits from panel inputs: don't rebuild the panel under the user's cursor
 function panelEdit(fn, opts) {
@@ -138,7 +137,7 @@ function livePanel(panel, view) {
       <span><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="var(--still)"/></svg>ruhig</span>
       <span><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="var(--lost)"/></svg>verdeckt</span>
       <span><svg width="12" height="12"><circle cx="6" cy="6" r="3" fill="var(--muted)"/></svg>Messpunkt</span>
-      <span><svg width="12" height="12"><circle cx="6" cy="6" r="3.5" fill="none" stroke="var(--muted)" stroke-width="1.5"/></svg>außerhalb (Reflexion)</span>
+      <span><svg width="12" height="12"><circle cx="6" cy="6" r="3.5" fill="none" stroke="var(--muted)" stroke-width="1.5"/></svg>hinter einer Wand (Reflexion)</span>
       <span><svg width="16" height="12"><path d="M1 10 A 9 9 0 0 1 15 10" stroke="var(--muted)" stroke-dasharray="2 3" fill="none" stroke-width="2"/></svg>LD2410C-Abstand</span>
     </div>
     <div class="row" style="margin-top:12px"><button class="btn" id="reset">Spuren neu aufnehmen</button></div>
@@ -496,18 +495,16 @@ function zoneDetail(el, z) {
 function calibrationPanel(panel, view) {
   const c = state.config;
   const placed = c.sensors.filter(s => s.placed && s.enabled);
-  calibAnchor = placed.some(s => s.id === calibAnchor) ? calibAnchor : placed[0]?.id;
   const active = !!state.live?.calibration;
   const result = state.calibResult;
   panel.append(h(`<div>
     <h2>Kalibrierung</h2>
     <ol class="steps">
-      <li>Sensoren grob auf der Karte platzieren und ausrichten.</li>
-      <li>Den Sensor wählen, dessen Lage am sichersten stimmt (Anker). Er bleibt, wie er ist.</li>
+      <li>Sensoren möglichst genau an ihrer Position einzeichnen. Die Blickrichtung muss nur grob stimmen.</li>
       <li>Alle anderen verlassen die Räume der beteiligten Sensoren. Aufnahme starten und <b>allein</b> 2–3 Minuten in normalem Tempo durch alle Bereiche gehen, die zwei Sensoren gleichzeitig sehen: kreuz und quer, auch nah an den Rändern. Nur Messungen in Bewegung zählen, Stehenbleiben bringt nichts.</li>
       <li>Berechnen, Ergebnis prüfen und übernehmen.</li>
     </ol>
-    <label class="field">Anker<select id="anchor">${placed.map(s => `<option value="${esc(s.id)}" ${s.id === calibAnchor ? 'selected' : ''}>${esc(s.name || s.id)}</option>`).join('')}</select></label>
+    <p class="note">Aus den Messungen ergibt sich, wie die Sensoren zueinander stehen. Diese Anordnung wird dann so gedreht und verschoben, dass sie möglichst genau auf den eingezeichneten Positionen liegt. Daraus folgen die Blickrichtungen.</p>
     <div class="row" style="margin-top:10px">
       <button class="btn ${active ? '' : 'primary'}" id="toggle" ${placed.length < 2 ? 'disabled' : ''}>${active ? 'Aufnahme stoppen' : 'Aufnahme starten'}</button>
       <button class="btn ${active ? 'primary' : ''}" id="solve" ${placed.length < 2 ? 'disabled' : ''}>Berechnen</button>
@@ -518,7 +515,6 @@ function calibrationPanel(panel, view) {
     <h3>Sichtprüfung</h3>
     <p class="note">Die Messpunkte aller Sensoren werden auf der Karte gezeigt. Sieht ein Bereich zwei Sensoren, müssen die Punkte einer Person übereinanderliegen und mitlaufen.</p>
   </div>`));
-  panel.querySelector('#anchor').onchange = e => { calibAnchor = e.target.value; };
   panel.querySelector('#toggle').onclick = async () => {
     await api('api/calibration/' + (active ? 'stop' : 'start'), { method: 'POST' });
     if (!active) state.calibResult = null;
@@ -527,7 +523,7 @@ function calibrationPanel(panel, view) {
   };
   panel.querySelector('#solve').onclick = async () => {
     try {
-      state.calibResult = await api('api/calibration/solve', { method: 'POST', body: JSON.stringify({ anchor: calibAnchor }) });
+      state.calibResult = await api('api/calibration/solve', { method: 'POST', body: '{}' });
       emit('tab');
     } catch (e) { toast(e.message, 5000); }
   };
@@ -536,33 +532,40 @@ function calibrationPanel(panel, view) {
 
 function calibrationResult(el, r) {
   if (r.error) { el.innerHTML = `<p class="note" style="color:var(--bad)">${esc(r.error)}</p>`; return; }
-  const rows = Object.entries(r.sensors).map(([id, s]) => {
+  const label = { ok: 'gut', warn: 'unsicher', bad: 'unbrauchbar' };
+  const entries = Object.entries(r.sensors);
+  const rows = entries.map(([id, s]) => {
     const cur = sensorById(id);
-    const label = { ok: 'gut', warn: 'unsicher', bad: 'unbrauchbar' }[s.quality];
-    return `<tr><td><label class="check"><input type="checkbox" data-id="${esc(id)}" ${s.quality === 'bad' ? '' : 'checked'}>${esc(cur?.name || id)}</label></td>
+    return `<tr><td>${esc(cur?.name || id)}</td>
       <td>${fmt(s.shift * 100, 0)} cm</td><td>${s.turn > 0 ? '+' : ''}${fmt(s.turn, 1)}°</td>
       <td>${s.mirror !== cur?.mirror ? '<b>ändern</b>' : '–'}</td>
-      <td>${fmt(s.rms * 100, 0)} cm</td><td>${Math.round(100 * s.inliers / s.pairs)} % von ${s.pairs}</td>
-      <td><span class="badge ${s.quality}">${label}</span></td></tr>
-      ${s.reason ? `<tr><td colspan="7" class="note">${esc(s.reason)}</td></tr>` : ''}`;
+      <td><span class="badge ${s.quality}">${label[s.quality]}</span></td></tr>
+      ${s.reason ? `<tr><td colspan="5" class="note">${esc(s.reason)}</td></tr>` : ''}`;
   }).join('');
+  const name = id => esc(sensorById(id)?.name || id);
+  const dists = (r.distances || []).map(d => {
+    const off = Math.abs(d.measured - d.drawn);
+    return `<tr><td>${name(d.a)} ↔ ${name(d.b)}</td><td>${fmt(d.measured)} m</td><td>${fmt(d.drawn)} m</td>
+      <td style="color:${off > 0.5 ? 'var(--bad)' : off > 0.25 ? 'var(--warn)' : 'inherit'}">${fmt(off * 100, 0)} cm</td></tr>`;
+  }).join('');
+  const s0 = entries[0]?.[1];
+  const bad = entries.some(([, s]) => s.quality === 'bad');
   el.append(h(`<div class="card" style="margin-top:12px">
-    <b>Ergebnis</b> <span class="note">(Anker: ${esc(sensorById(r.anchor)?.name || r.anchor)})</span>
-    <table class="data" style="margin-top:8px"><tr><th>Sensor</th><th>Versatz</th><th>Drehung</th><th>Spiegel</th><th>Fehler</th><th>passend</th><th></th></tr>${rows || '<tr><td colspan="7">nichts berechnet</td></tr>'}</table>
-    ${r.unsolved.length ? `<p class="note">Keine passende Lösung für ${r.unsolved.map(id => esc(sensorById(id)?.name || id)).join(', ')}: zu wenig gemeinsame Messungen in Bewegung, oder der Sensor ist mehr als 1,5 m bzw. 45° falsch eingezeichnet.</p>` : ''}
-    <p class="note">Fehler: mittlere Abweichung zwischen den Sensoren nach der Korrektur, unter 15 cm ist gut. Passend: Anteil der Messungen, die nach der Korrektur übereinstimmen.</p>
-    ${rows ? '<button class="btn primary" id="apply">Übernehmen</button>' : ''}
+    <b>Ergebnis</b>
+    <table class="data" style="margin-top:8px"><tr><th>Sensor</th><th>Versatz</th><th>Drehung</th><th>Spiegel</th><th></th></tr>${rows || '<tr><td colspan="5">nichts berechnet</td></tr>'}</table>
+    ${dists ? `<h3>Abstand der Sensoren</h3><table class="data"><tr><th></th><th>gemessen</th><th>eingezeichnet</th><th>Differenz</th></tr>${dists}</table>` : ''}
+    ${s0 ? `<p class="note">${Math.round(100 * s0.inliers / s0.pairs)} % von ${s0.pairs} gemeinsamen Messungen passen zusammen, mittlere Abweichung ${fmt(s0.rms * 100, 0)} cm. ${Math.round(100 * r.inside)} % des Laufs liegen in den Räumen.</p>` : ''}
+    ${r.unsolved.length ? `<p class="note">Ohne Ergebnis: ${r.unsolved.map(name).join(', ')}. Zu wenig gemeinsame Messungen in Bewegung, oder der gemessene Abstand weicht mehr als 1 m von der Zeichnung ab.</p>` : ''}
+    ${rows ? `<button class="btn primary" id="apply" ${bad ? 'disabled' : ''}>Übernehmen</button>` : ''}
   </div>`));
   el.querySelector('#apply')?.addEventListener('click', () => {
-    const ids = [...el.querySelectorAll('input[data-id]:checked')].map(i => i.dataset.id);
     edit(c => {
-      for (const id of ids) {
-        const s = c.sensors.find(s => s.id === id);
-        Object.assign(s, { x: r.sensors[id].x, y: r.sensors[id].y, heading: r.sensors[id].heading, mirror: r.sensors[id].mirror });
+      for (const [id, s] of entries) {
+        Object.assign(c.sensors.find(x => x.id === id), { x: s.x, y: s.y, heading: s.heading, mirror: s.mirror });
       }
     });
     state.calibResult = null;
-    toast(`${ids.length} Sensor(en) übernommen`);
+    toast(`${entries.length} Sensoren übernommen`);
     emit('tab');
   });
 }
@@ -587,6 +590,7 @@ const PARAMS = [
     ['confirm_time', 'Bestätigung sonst', 's', 'Mitten im Raum taucht niemand einfach auf: hier braucht es länger.', 0.1],
     ['confirm_ratio', 'Anteil Frames', '', 'Anteil der Frames, in denen die neue Person dabei sein muss.', 0.05],
     ['warmup', 'Anlaufzeit', 's', 'Nach dem Start dürfen Personen überall sofort erkannt werden.', 1],
+    ['takeover_speed', 'Übernahme durch verdeckte Person', 'm/s', 'Taucht mitten im Raum jemand auf, den eine verdeckte Person mit diesem Tempo erreicht haben könnte, ist es dieselbe.', 0.1],
   ]],
   ['Verdeckte Personen', [
     ['lost_after', 'Als verdeckt gelten nach', 's', '', 0.1],
@@ -601,7 +605,7 @@ const PARAMS = [
   ['Zuordnung', [
     ['gate', 'Zuordnungsschwelle (χ²)', '', 'Größer = Messungen werden großzügiger bestehenden Personen zugeordnet.', 0.5],
     ['max_gate_radius', 'Maximaler Zuordnungsradius', 'm', '', 0.05],
-    ['outside_margin', 'Toleranz außerhalb der Räume', 'm', 'Messpunkte weiter außerhalb aller Räume sind Reflexionen (z. B. an Fenstern) und werden verworfen.', 0.05],
+    ['wall_margin', 'Toleranz an Wänden', 'm', 'Messpunkte weiter hinter einer Wand oder außerhalb aller Räume sind Reflexionen und werden verworfen. Die Radare sehen nicht durch die Betonwände.', 0.05],
     ['split_radius', 'Doppelte Ziele zusammenfassen', 'm', 'Der LD2450 meldet eine Person manchmal als zwei Ziele.', 0.05],
     ['merge_distance', 'Spuren verschmelzen unter', 'm', '', 0.05],
     ['merge_time', 'Verschmelzen nach', 's', '', 0.1],

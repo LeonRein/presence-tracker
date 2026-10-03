@@ -276,8 +276,7 @@ class App:
         elif action == "stop":
             self.calibrator.stop()
         elif action == "solve":
-            body = await request.json()
-            return web.json_response(self.calibrator.solve(body["anchor"]))
+            return web.json_response(self.calibrator.solve())
         else:
             raise web.HTTPNotFound()
         return web.json_response(self.calibrator.status())

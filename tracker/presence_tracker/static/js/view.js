@@ -306,7 +306,7 @@ export class MapView {
         }
         for (const d of sv.detections || []) {
           const [x, y] = this.P(d.x, d.y);
-          out.push(d.outside
+          out.push(d.hidden
             ? `<circle cx="${x}" cy="${y}" r="4" fill="none" stroke="var(--muted)" stroke-width="1.5"/>`
             : d.ignored
             ? `<path d="M${x - 4},${y - 4}L${x + 4},${y + 4}M${x - 4},${y + 4}L${x + 4},${y - 4}" stroke="${color}" stroke-width="2"/>`
