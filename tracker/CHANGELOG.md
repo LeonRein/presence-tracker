@@ -26,9 +26,10 @@ Dritter Schritt: Verdeckte Personen sind irgendwo, und alle Regeln dafür sind W
 - Ersetzt: Austragen, Übernahme- und Wiederaufnahme-Fenster, Verschmelzen, Mitzählen in Räumen ohne Sensor,
   feste LD2410C-Werte, maximale Verdeckungszeit.
 
-Gemessen: auf zwei simulierten Abenden mit bekannter Wahrheit (Sensorstatistik an die Aufnahmen angepasst)
-stimmt die Personenzahl im Raum in 88–95 % der Sekunden (0.4.0: 48–51 %), Wohnzimmer/Esszimmer belegt zu
-98–99 % richtig (0.4.0: 80–88 %). Auf den Aufnahmen vom 3.10. (14,7 h) etwa gleichauf mit 0.4.0: mehr als zwei
+Gemessen: auf simulierten Abenden mit bekannter Wahrheit (Sensorstatistik an die Aufnahmen angepasst)
+stimmt die Personenzahl im Raum in 88–95 % der Sekunden (0.4.0: 48–51 %), auf zwei weiteren, nie zum
+Abstimmen benutzten Abenden in 82–87 % (0.4.0: 50–58 %). Wohnzimmer/Esszimmer belegt zu 98–100 % richtig
+(0.4.0: 76–94 %). Auf den Aufnahmen vom 3.10. (14,7 h) etwa gleichauf mit 0.4.0: mehr als zwei
 Personen 0,7 % / 0,1 % (bis 21 Uhr / danach; 0.4.0: 0,5 % / 0,0 %), zwei getrennt Gesehene als zwei gezählt
 82 % / 94 % (0.4.0: 83 % / 78 %), nachts leer 100 %, „gesehen, aber niemand gezählt“ 2,0 min (0.4.0: 1,0 min).
 
