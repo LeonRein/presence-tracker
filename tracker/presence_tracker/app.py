@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import faulthandler
 import json
 import math
 import logging
@@ -25,6 +26,7 @@ from .zones import evaluate
 
 log = logging.getLogger(__name__)
 STATIC = (pathlib.Path(__file__).parent / "static").resolve()
+BLOCKED_DUMP = 15.0  # s the event loop may be busy before the watchdog logs where it is
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}
 
 
@@ -118,6 +120,9 @@ class App:
     async def housekeeping(self):
         last_push = 0.0
         while True:
+            # watchdog: if nothing comes back here for BLOCKED_DUMP s, the stack of every thread goes
+            # to the log - where the app hangs (each call replaces the previous timer)
+            faulthandler.dump_traceback_later(BLOCKED_DUMP)
             await asyncio.sleep(0.1)
             if self.tracker.start is None:
                 continue

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.3
+
+- Räume ohne Sensor, die zusammen einen Bereich bilden (Flur, Bad, Schlafzimmer, Arbeitszimmer, Treppe),
+  bekommen keine eigene Personenzahl mehr, nur die Wahrscheinlichkeit „jemand ist in diesem Bereich“ (wie
+  in 0.5.0). Küche und Balkon sind je ein Bereich für sich und zählen weiter.
+- Wächter: Hängt die App länger als 15 s, schreibt sie ins Protokoll, an welcher Stelle (am 4.10. hing
+  sie nach dem Verschieben eines Sensors; lokal ließ sich das nicht nachstellen).
+
 ## 0.6.2
 
 - Start ohne Wissen: Die Beobachtung beginnt beim Start. Bisher galt jeder mögliche Ort als „schon
