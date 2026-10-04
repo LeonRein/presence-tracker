@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.4
+
+- Geister nach Messung: In den leeren Räumen nachts gibt es kaum welche (0,4 pro Stunde), neben
+  Sitzenden keine. Echos entstehen, solange jemand geht. Die angenommene Geisterdichte war um
+  Größenordnungen zu hoch und ist jetzt gemessen.
+- Geister mit Lebensdauer: Ein Echo, das 1–2 s an derselben Stelle steht, ist ein Geist und kein
+  wiederholter Beweis für eine Person (Phantom-Person nach dem Kalibrierlauf am 4.10.).
+- Gehende im Blickfeld werden nach etwa 0,7 s wieder gefunden (gemessen), nicht erst nach vielen
+  Sekunden. Wer geht, kann nicht unbemerkt durch einen gut gesehenen Raum laufen.
+- Der LD2410C zählt je Entfernungsstufe erst als Beleg, wenn dort genug gelernt ist. Nach dem
+  Umhängen bestätigte die angenommene Verteilung sonst eine Person an einer Stelle, an der nie jemand war.
+
+Testdurchlauf: 91 % (12 Läufe, 84–96 %).
+
 ## 0.6.3
 
 - Räume ohne Sensor, die zusammen einen Bereich bilden (Flur, Bad, Schlafzimmer, Arbeitszimmer, Treppe),

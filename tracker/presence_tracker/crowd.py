@@ -31,6 +31,7 @@ from .world import OBSERVED, World
 SPEED_SPREAD = 4.0  # m/s: ghosts' radial speeds spread over about +-2 m/s
 FRAME = 0.089  # s, LD2450 frame period (measured)
 DROP_RATE = {STILL: 1 / 70, WALK: 1 / 300}  # 1/s: dropouts begin (measured on the recordings)
+WALK_GAP = 0.7  # s, mean dropout of a walker in view (measured 0.3-1.2 s)
 PD_CELL = 0.1  # m, cache of the detection probability per sensor
 # ghosts per m^2 and frame, until learned: measured 0.4 short ghosts per hour in the empty rooms at
 # night (5 h), none next to people sitting; while somebody walks about 4 per minute and sensor
@@ -39,21 +40,36 @@ CLUTTER_PRIOR = 1e-4
 CLUTTER_FLOOR = 1e-5
 ECHO_DENSITY = 3e-3  # per m^2 and frame per walker (a reflection can show up anywhere in view)
 ECHO_RADIUS = 8.0  # m
+GHOST_LIFE = 1.5  # s, mean (measured: night ghosts 1.5 s, echoes about 1 s)
+GHOST_SHOWS = 0.85  # P(a ghost that is still there shows up in a frame)
+GHOST_SPREAD = 0.15  # m: a ghost stays at its spot, wobbling about this much
+GHOST_SPEED = 0.2  # m/s, radial speeds a ghost that stays shows
+GHOST_MIN = 0.02  # ghosts less probable than this are forgotten
+GHOST_BORN = 0.5  # a ghost is kept from a detection that is more probably a new ghost than not
+MAX_GHOSTS = 3  # per sensor
 FROZEN_RADIUS = 1.0  # m around a frozen target where the sensor's silence says nothing
 FROZEN_MAX = 35.0  # s: the longest a person's target stays frozen (measured)
 MOUNT_RADIUS = 0.3  # m around a sensor: targets there come from its mount, not from people
 BODY = 0.3  # m: two people's centers are never closer
 LEARN_DELAY = 3.0  # s: a stop / start is learned this long after it happened
+LD_LEARNED = (100, 300)  # frames with a person in a gate / empty before the gate is used as evidence
 LD_CORR = 3.0  # s: LD2410C gate energies with a person stay correlated about this long (measured 2.5-4 s)
 SEEN_WELL = 0.8  # visibility from which stops and starts are learned
 
 
+def _ghost_survival(age: float) -> float:
+    """Share of ghosts still there after `age` s (measured: most about 1-1.5 s)."""
+    return math.exp(-age / GHOST_LIFE)
+
+
 def _survival(mode: int, tau: np.ndarray) -> np.ndarray:
-    """Share of dropouts lasting longer than tau (measured table, log-linear, 1/tau tail).
-    Open (MODEL.md 3.3): the walking table's long gaps are probably people who left the view; a
-    short gap for walkers (about 0.7 s, as measured for walkers in view) measured worse on the
-    test run, so something else still leans on it."""
-    table = np.array(GAP_PRIOR["walking" if mode == WALK else "still"])
+    """Share of dropouts lasting longer than tau. Standing / sitting: the measured table (long,
+    heavy tail: the LD2450 loses still people for minutes). Walking: a walker in view is found
+    again within about a second (measured 0.3-1.2 s); the table's long walking gaps were people
+    who had left the view."""
+    if mode == WALK:
+        return np.exp(-np.maximum(tau, 0.0) / WALK_GAP)
+    table = np.array(GAP_PRIOR["still"])
     taus = np.array(GAP_TAUS)
     t = np.maximum(tau, taus[0])
     out = np.exp(np.interp(np.log(t), np.log(taus), np.log(table)))
@@ -95,6 +111,7 @@ class Crowd:
         self.listeners = []
         self._pd_cache = {}
         self._ld_used = {}  # sensor -> time the LD2410C energies last weighed the clouds
+        self._ghosts = {}  # sensor -> [{"pos", "alive", "born", "last"}]
         self.reset_people(people)
 
     def reset_people(self, people=None):
@@ -240,8 +257,20 @@ class Crowd:
             A = (w[idx] * (1 - m)) @ r if m_det else np.zeros(0)
             per.append((idx, m, miss_full, r, M, A))
 
-        # which detection is whose: all assignments, each person <= 1 detection, the rest ghosts
+        # ghosts this sensor has been showing (MODEL.md 3.4): one that lasts shows up again where it
+        # was, without speed, and never where a body is
+        ghosts = self._ghosts_now(s.id, t)
         explain = [(pp[5], pp[4]) for pp in per]  # (A per detection, M) of everybody who may explain one
+        for g in ghosts:
+            A = np.zeros(m_det)
+            for j, d in enumerate(dets):
+                C = d.R + np.eye(2) * GHOST_SPREAD**2
+                dz = d.pos - g["pos"]
+                dens = math.exp(-0.5 * float(dz @ np.linalg.solve(C, dz))) / (2 * math.pi * math.sqrt(np.linalg.det(C)))
+                spd = math.exp(-0.5 * (d.speed / GHOST_SPEED) ** 2) / (math.sqrt(2 * math.pi) * GHOST_SPEED)
+                A[j] = g["alive"] * GHOST_SHOWS * dens * spd / lam[j]
+            free = 1 - self._body_near(g["pos"])
+            explain.append((A * free, 1 - g["alive"] * GHOST_SHOWS * free))
         n_p = len(self.people)
         n_e = len(explain)
         beta_all = np.zeros((n_e, m_det + 1))
@@ -260,6 +289,8 @@ class Crowd:
             return
         beta_all /= total
         beta = beta_all[:n_p]
+        new = (1 - beta_all[:, 1:].sum(axis=0)) * np.array([1 - self._body_near(d.pos) for d in dets]) if m_det else np.zeros(0)
+        self._ghosts_update(s.id, t, dets, ghosts, beta_all[n_p:], new)
 
         gaps_ended = []
         for k, person in enumerate(self.people):
@@ -356,6 +387,47 @@ class Crowd:
             out += (w[:, None] * (d < ECHO_RADIUS)).sum(axis=0)
         return out
 
+    def _body_near(self, pos) -> float:
+        """P(at least one person stands within BODY of pos)."""
+        free = 1.0
+        for person in self.people:
+            c = person.cloud
+            obs = np.flatnonzero(c.place == OBSERVED)
+            if len(obs):
+                near = np.hypot(*(c.pos[obs] - pos).T) < BODY
+                free *= 1 - float(c.weights()[obs][near].sum())
+        return 1 - free
+
+    def _ghosts_now(self, sid: str, t: float) -> list:
+        """This sensor's ghosts, each still there by the lifetime distribution (MODEL.md 3.4)."""
+        out = []
+        for g in self._ghosts.get(sid, []):
+            a0, a1 = g["last"] - g["born"], t - g["born"]
+            g["alive"] *= _ghost_survival(a1) / max(_ghost_survival(a0), 1e-12)
+            g["last"] = t
+            if g["alive"] >= GHOST_MIN:
+                out.append(g)
+        self._ghosts[sid] = out
+        return out
+
+    def _ghosts_update(self, sid: str, t: float, dets, ghosts, beta_g, new):
+        """After a frame: each ghost still there as likely as the frame says (it stays at its
+        spot); where a detection is more probably a new ghost than anything else, one is kept."""
+        for k, g in enumerate(ghosts):
+            took = beta_g[k, 1:]
+            stays = g["alive"] * (1 - GHOST_SHOWS) / max(1 - g["alive"] * GHOST_SHOWS, 1e-12)
+            g["alive"] = float(took.sum() + beta_g[k, 0] * stays)
+        for j, d in enumerate(dets):
+            if new[j] < GHOST_BORN:
+                continue
+            near = [g for g in ghosts if float(np.linalg.norm(g["pos"] - d.pos)) < 2 * GHOST_SPREAD]
+            if near:
+                near[0]["alive"] = max(near[0]["alive"], float(new[j]))
+                continue
+            ghosts.append({"pos": d.pos.copy(), "alive": float(new[j]), "born": t, "last": t})
+        ghosts.sort(key=lambda g: -g["alive"])
+        self._ghosts[sid] = [g for g in ghosts[:MAX_GHOSTS] if g["alive"] >= GHOST_MIN]
+
     def _gates(self, s, pos: np.ndarray, fov: float) -> np.ndarray:
         """LD2410C gate (0.75 m slant distance step) of the points (n, 2) for the radar in sensor
         s's case; -1 outside the cone of `fov` degrees."""
@@ -376,9 +448,16 @@ class Crowd:
         door: 1. One observation per LD_CORR (the device smooths the energies)."""
         p, sm = self.p, self.sensor_model
         n_g = len(energies)
+        if s.id not in sm.ld_occ:
+            return
         ratio = {}
         for moving in (False, True):
-            single = np.array([sm.ld2410_ratio(s.id, k, energies[k], moving=moving) for k in range(n_g)])
+            # only what was learned: a gate counts once it has seen enough with a person in it and
+            # empty (after a reset - a moved sensor - an assumed distribution made people up)
+            occ = (sm.ld_move if moving else sm.ld_occ)[s.id].sum(axis=1)
+            emp = sm.ld_emp[s.id].sum(axis=1)
+            single = np.array([sm.ld2410_ratio(s.id, k, energies[k], moving=moving)
+                               if occ[k] >= LD_LEARNED[0] and emp[k] >= LD_LEARNED[1] else 1.0 for k in range(n_g)])
             padded = np.concatenate([[single[0]], single, [single[-1]]])
             ratio[moving] = 0.25 * padded[:-2] + 0.5 * padded[1:-1] + 0.25 * padded[2:]
         # each person's probability of being in each gate of the wider beam (energy reaches it)

@@ -101,11 +101,10 @@ Wahrscheinlichkeit je Feld, Sensor und Modus (steht / geht):
   Wer aufsteht und geht, müsste wieder normal sichtbar sein. Umgesetzt (τ ab dem letzten Wechsel zu
   „geht“) hat das auf dem Drehbuch-Durchlauf deutlich verschlechtert (89 % → 71–73 %). Das Zusammenspiel
   ist noch nicht verstanden.
-  *Ebenso offen:* Die gemessene Tabelle für Gehende hat lange Lücken (20 % über 20 s). Das waren
-  wahrscheinlich Leute, die das Blickfeld verlassen hatten, denn Gehende im Blickfeld werden nach
-  0,3–1,2 s wieder gefunden. Mit dieser kurzen Lücke maß der Drehbuch-Durchlauf aber schlechter
-  (92 % → 90 %). Vermutlich verdeckt die lange Lücke einen anderen Fehler, etwa eine überschätzte
-  Erkennung in Türrahmen. Fehlmessungen hängen zusammen, und genau
+  Gehende im Blickfeld werden nach 0,3–1,2 s wieder gefunden (gemessen). Die langen Lücken der Tabelle
+  für Gehende waren Leute, die das Blickfeld verlassen hatten. Seit der gemessenen Geisterdichte (3.4)
+  misst die kurze Lücke auch nicht mehr schlechter (92,3 % gegenüber 92,2 %). Die alte Tabelle hatte die
+  viel zu hohe Geisterdichte ausgeglichen. Fehlmessungen hängen zusammen, und genau
   das bildet `U` ab. Unabhängig gerechnet wären 3 s ohne Treffer bei 90 % Erkennung 0,1³⁰, also
   „unmöglich“.
 
@@ -133,11 +132,13 @@ die dann versteckt bleibt.*
 - Umgesetzt in 0.6.4: Grunddichte 1e-4 je m² und Frame (vorher 0,02, also um Größenordnungen zu hoch)
   plus 3e-3 je m² und Frame je gehender Person, irgendwo im Blickfeld.
 
-*Geister als Objekte mit Lebensdauer* habe ich gebaut und wieder herausgenommen. Ein still Sitzender
-und ein feststehender Geist sind für den LD2450 gleich. Das Modell erklärte dann Sitzende als „Person im
-Aussetzer plus Geist an derselben Stelle“, und der Drehbuch-Durchlauf fiel auf 80–89 %, auch mit der Regel
-„kein Geist, wo ein Körper ist“. Bei der gemessenen, sehr seltenen Geisterdichte lohnt sich das Objekt
-nicht mehr.
+*Geister als Objekte mit Lebensdauer* (umgesetzt in 0.6.4): Jede Messung kann von einer Person, einem
+bestehenden Geist des Sensors oder einem neuen Geist kommen. Ein Geist steht still (keine
+Radialgeschwindigkeit), lebt im Mittel 1,5 s (gemessen) und ist nie dort, wo wahrscheinlich ein Körper
+steht. Ein Echo aus 17 Messungen in 1,5 s an derselben Stelle zählt damit als *ein* Geist, nicht als 17
+Beweise für eine Person. Mit der früheren, viel zu hohen Geisterdichte erklärte das Modell Sitzende als
+„Person im Aussetzer plus Geist“ (80–89 %). Mit der gemessenen Dichte steht der Drehbuch-Durchlauf bei
+91 %, und die Phantom-Person nach dem Kalibrierlauf am 4.10. um 18:07 verschwindet.
 
 ## 4. Messmodell (wie ein Frame entsteht)
 
@@ -178,6 +179,9 @@ Gegeben der Zustand:
   als besetzt gelernt, sonst würden verdeckte Sitzende als „leer“ gelernt.
 - Umgesetzt in 0.6.1. Auf dem Drehbuch-Durchlauf brachte das mit vorher gelernten Verteilungen
   88 % → 93 % und weniger Ausreißer.
+- Eine Entfernungsstufe zählt erst als Beleg, wenn für sie genug gelernt ist: 100 Frames mit Person
+  und 300 leer. Nach dem Umhängen hatte die angenommene Verteilung während eines Kalibrierlaufs eine
+  Person an einer Stelle bestätigt, an der nie jemand war (4.10., 18:07).
 - Störungen durch den LD2450 im selben Gehäuse (etwa alle 7 s) sind ein eigener, **gelernter**
   Geisteranteil der LD2410C-Energie.
 
