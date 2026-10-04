@@ -33,6 +33,8 @@ FRAME = 0.089  # s, LD2450 frame period (measured)
 DROP_RATE = {STILL: 1 / 70, WALK: 1 / 300}  # 1/s: dropouts begin (measured on the recordings)
 PD_CELL = 0.1  # m, cache of the detection probability per sensor
 FROZEN_RADIUS = 1.0  # m around a frozen target where the sensor's silence says nothing
+FROZEN_MAX = 35.0  # s: the longest a person's target stays frozen (measured)
+MOUNT_RADIUS = 0.3  # m around a sensor: targets there come from its mount, not from people
 BODY = 0.3  # m: two people's centers are never closer
 LEARN_DELAY = 3.0  # s: a stop / start is learned this long after it happened
 LD_CORR = 3.0  # s: LD2410C gate energies with a person stay correlated about this long (measured 2.5-4 s)
@@ -172,6 +174,11 @@ class Crowd:
             listener("frame", (sensor, t, detections))
         if not sensor.enabled or not sensor.placed:
             return
+        # right at the sensor: a reflection of its mount - a person there would be far outside its
+        # vertical field of view (it hangs at about 1.5 m and looks ahead)
+        for d in detections:
+            if math.hypot(d.pos[0] - sensor.x, d.pos[1] - sensor.y) < MOUNT_RADIUS:
+                d.hidden = True
         dets = [d for d in detections if not d.hidden and not d.stale and not d.ignored]
         # seen through an open door into a place without a sensor: somebody there, where the model
         # keeps people without a position - not somebody in the observed area
@@ -179,7 +186,11 @@ class Crowd:
             inside = self.world.place_of(np.array([d.pos for d in dets])) == OBSERVED
             dets = [d for d, ok in zip(dets, inside) if ok]
         self.step(t, np.array([d.pos for d in dets]).reshape(-1, 2))
-        frozen = np.array([d.pos for d in detections if d.stale and not d.hidden]).reshape(-1, 2)
+        # frozen targets: a person sitting still makes the LD2450 repeat itself for up to FROZEN_MAX
+        # (measured); longer it is something of its own (a reflection at the mount), not a person
+        frames = {slot: n for slot, (_, n) in rt.repeats.items()}
+        frozen = np.array([d.pos for d in detections if d.stale and not d.hidden
+                           and frames.get(d.slot, 0) * FRAME <= FROZEN_MAX]).reshape(-1, 2)
         self._update(sensor, t, dets, gap, full=len(detections) >= 3, frozen=frozen)
         if energies:
             self._ld_learn(sensor, t, energies, dets)

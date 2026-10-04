@@ -143,6 +143,11 @@ Gegeben der Zustand:
 **Vorverarbeitung**, keine Wahrscheinlichkeit, sondern Datenreinigung:
 - Bit-identisch wiederholte Ziele (Sensor friert ein) werden verworfen. **Gemessen:** echte Ziele ändern sich in jedem Frame.
 - Ziele hinter Wänden oder außerhalb aller Räume werden verworfen. Dort kann keine Person sein, es sind Spiegelungen.
+- Ziele näher als 0,3 m am Sensor werden verworfen. Der Sensor hängt in etwa 1,5 m Höhe und strahlt nach
+  vorn. Eine Person so nah läge weit außerhalb seines senkrechten Blickwinkels, das Ziel kommt von der
+  Montage (gesehen am umgehängten Wohnzimmer-Sensor, 4.10.).
+- Eingefrorene Ziele sagen bis 35 s nichts über ihre Stelle (gemessen: eine still sitzende Person friert
+  höchstens so lange ein). Länger eingefroren ist kein Mensch, und Fehlmessungen zählen dort wieder.
 - Ziele in einem Bereich ohne Sensor (durch eine offene Tür gesehen, z. B. jemand im Flur) werden nicht
   als Person im beobachteten Bereich gedeutet. Dort führt das Modell Personen ohne Ort. Später können
   sie als Hinweis „jemand ist in diesem Bereich“ dienen.

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.2
+
+- Start ohne Wissen: Die Beobachtung beginnt beim Start. Bisher galt jeder mögliche Ort als „schon
+  lange ungesehen“, und eine Person konnte nach einem Neustart unbemerkt mitten im Raum hängen bleiben.
+- Eingefrorene Ziele des LD2450 sagen nur bis 35 s nichts über ihre Stelle (so lange friert eine sitzende
+  Person höchstens ein, gemessen). Länger eingefroren ist kein Mensch.
+- Ziele näher als 0,3 m am Sensor werden verworfen: Dort kann der Sensor in 1,5 m Höhe keine Person
+  sehen, sie kommen von der Montage.
+
+Testdurchlauf: 92 % (12 Läufe), wie 0.6.1.
+
 ## 0.6.1
 
 - Der LD2410C fließt ein: Alle 3 s (seine gemessene Korrelationszeit) gewichtet die Energie in der

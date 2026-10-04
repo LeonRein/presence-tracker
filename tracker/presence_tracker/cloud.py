@@ -73,7 +73,7 @@ class Cloud:
         if regions:
             c.place[behind] = np.array(regions)[rng.integers(0, len(regions), int(behind.sum()))]
         c.since[:] = t
-        c.last_hit[:] = t - 60.0  # unseen for a while
+        c.last_hit[:] = t  # watched from now on: not being seen counts from the start
         c.anchor[:] = c.pos
         return c
 
