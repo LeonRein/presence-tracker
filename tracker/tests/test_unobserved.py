@@ -36,12 +36,12 @@ def test_a_walker_lost_at_an_unwatched_door_went_through_it():
     p = params()
     w = Whereabouts(p, existence=0.99)
     # walking straight at the kitchen door (prior 0.9), nobody would have seen it (unseen 1.0)
-    w.lost()
+    w.lost(p.duplicate_prior)
     w.go(0.0, 0.95, [("kueche", 0.9, 1.0)])
     assert w.region("kueche") > 0.8 and w.t_in["kueche"] == 0.0
     # the same walk past a sensor that sees the way well: mostly refuted, they stayed
     w = Whereabouts(p, existence=0.99)
-    w.lost()
+    w.lost(p.duplicate_prior)
     w.go(0.0, 0.95, [("kueche", 0.9, 0.05)])
     assert w.region("kueche") < 0.3 and w.room() > w.region("kueche")
 
@@ -49,7 +49,7 @@ def test_a_walker_lost_at_an_unwatched_door_went_through_it():
 def test_someone_sitting_does_not_drift_to_the_doors():
     p = params()
     w = Whereabouts(p, existence=0.99)
-    w.lost()
+    w.lost(p.duplicate_prior)
     t = 0.0
     while t < 600:  # ten minutes, doors well in view of a sensor
         rate = p.getup_share / (t + p.getup_time)

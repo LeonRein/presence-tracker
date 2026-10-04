@@ -12,19 +12,32 @@ betreten wird. Wer wer ist, spielt keine Rolle.
 - **Niemand taucht aus dem Nichts auf und niemand verschwindet einfach.** Jede neue Spur hat eine
   Wahrscheinlichkeit, eine Person zu sein: an Eingängen anfangs hoch, mitten im Raum klein. Messungen erhöhen
   sie, je zuverlässiger der Sensor dort erkennt und je seltener er dort Geister meldet. Sieht ein Sensor die
-  Stelle gut und meldet nichts, sinkt sie. Ab 50 % ist es eine Person. Eine Person, die der LD2450 nicht mehr sieht (stillsitzend, verdeckt, mehr als 3 Ziele),
-  bleibt an ihrem Platz stehen, bis sie durch einen Eingang geht oder der LD2410C dort länger nichts mehr sieht.
+  Stelle gut und meldet nichts, sinkt sie. Ab 50 % ist es eine Person.
+- **Verdeckte Personen sind irgendwo.** Sieht der LD2450 jemanden nicht mehr (stillsitzend, verdeckt, zu dicht
+  neben jemand anderem), verteilt sich die Wahrscheinlichkeit auf: noch im Raum (am Kalman-Ort), hinter einer
+  der Türen (Küche, Balkon, Flur-Bereich mit Schlafzimmer und Haustür) oder „war keine eigene Person“ (Geist
+  oder doppelte Spur). Zu einer Tür kommt man nur, indem man hingeht: wer beim Verlust auf eine Tür zuging,
+  oder wer aufsteht (gemessene Rate, je länger jemand sitzt, desto seltener), und nur zu dem Teil, den kein
+  Sensor auf dem Weg gesehen hätte. Beweise: die gemessene Aussetzer-Statistik des LD2450 (still Sitzende
+  verliert er oft minutenlang), die Energie des LD2410C in der Entfernung der Person, die gelernten
+  Aufenthaltsdauern hinter den Türen. Wer zurückkommt, behält seine Nummer.
+- **Wie viele hier wohnen** (*Bewohner*, *Besuch*) fließt in die Ausgabe ein: Mehr Spuren als Bewohner sind
+  wahrscheinlich doppelte Spuren, außer sie werden klar gemessen.
+- **Zwei Personen dicht nebeneinander** (Sofa) macht der LD2450 meist zu einem Ziel (gemessene Trennschärfe:
+  unter 0,5 m fast nie zwei Ziele, ab 1 m zu 80 %). Das fehlende zweite Ziel spricht dann weder gegen die
+  zweite Person noch für eine doppelte Spur.
 - Der **LD2410C** erzeugt nie selbst Personen. Seine Haltezeit steht auf 0, die App überbrückt kurze Lücken selbst
-  (*LD2410C-Haltezeit*). Seine Störungen durch den LD2450 dauern etwa 1 s. Nur längere Präsenz im passenden
-  Abstand bestätigt eine verdeckte Person. Die Energie pro Entfernungsstufe steht im Tab *Sensoren*.
+  (*LD2410C-Haltezeit*). Gelernt wird, welche Energie pro Entfernungsstufe eine sitzende, eine gehende und keine
+  Person ergibt; wer im Strahl ist, erklärt die Energie in seiner Entfernung. Die Energie pro Entfernungsstufe
+  steht im Tab *Sensoren*.
 - **Wände**: Die Radare sehen nicht durch die Betonwände. Ein Messpunkt hinter einer Wand oder außerhalb aller
   Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*).
 - **Räume ohne Sensor**: Zusammenhängende Räume ohne Sensor bilden einen unbeobachteten Bereich. Enthält er
   einen Eingang (Treppenhaus), ist er *offen*: An seinen Türen kommen und gehen Personen wie an einem Eingang.
-  Sonst ist er *geschlossen* (Balkon, Küche mit nur einer Tür): Die App zählt, wer hineingeht, und nur so viele
-  können wieder herauskommen. Ein Spiegelbild in der Balkontür wird so nie zur Person, und für den Balkon
-  und die Küche gibt es trotzdem „besetzt“ und die Personenzahl. Was ein Sensor durch die Tür in einem
-  geschlossenen Raum sieht, wird verworfen.
+  Sonst ist er *geschlossen* (Balkon, Küche mit nur einer Tür): Wer herauskommt, muss vorher hineingegangen
+  sein. Ein Spiegelbild in der Balkontür wird so nie zur Person, und für den Balkon und die Küche gibt es
+  trotzdem „besetzt“ und die Personenzahl. Was ein Sensor durch die Tür in einem geschlossenen Raum sieht,
+  wird verworfen.
 - **Mehrere Sensoren**: Messungen aller Sensoren gehen in dieselben Spuren. Sieht ein Sensor dieselbe Person
   wie ein anderer, wird sie nicht doppelt gezählt.
 

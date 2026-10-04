@@ -179,11 +179,12 @@ class Whereabouts:
             self.w[DEAD] += moved
             self.normalize()
 
-    def lost(self):
-        """Just lost: even a track measured for long may be the second one of a person."""
-        if self.w[DEAD] < self.p.duplicate_prior:
-            self.w[ROOM] -= self.p.duplicate_prior - self.w[DEAD]
-            self.w[DEAD] = self.p.duplicate_prior
+    def lost(self, duplicate: float):
+        """Just lost: being measured says nothing about being someone's second track; that
+        probability (duplicate, from the pair evidence) comes back into "never a person"."""
+        if self.w[DEAD] < duplicate:
+            self.w[ROOM] -= duplicate - self.w[DEAD]
+            self.w[DEAD] = duplicate
 
     def collapse(self):
         """Seen again for sure: everything but "never a person" collapses onto the room (being

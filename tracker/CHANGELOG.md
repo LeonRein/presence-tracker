@@ -1,17 +1,39 @@
 # Changelog
 
-## 0.5.0 (Zweig step3, noch nicht freigegeben)
+## 0.5.0
 
-Dritter Schritt: Eine verdeckte Person ist irgendwo. Ihre Wahrscheinlichkeit verteilt sich auf „noch hier“,
-„ungesehen in der Nähe“, die erreichbaren Türen (Küche, Balkon, Flur, draußen), „weg“ und „war kein Mensch“.
-Messungen, fehlende Messungen (gelernte Aussetzer-Statistik des LD2450), die Energie des LD2410C pro
-Entfernungsstufe (gelernte Verteilungen für Sitzende, Gehende und leer) und die gelernten Aufenthaltsdauern
-verschieben die Verteilung. Wer aus einem Raum zurückkommt, behält seine Nummer. Ersetzt Austragen,
-Übernahme, Wiederaufnahme, das Mitzählen in Räumen ohne Sensor und die festen LD2410C-Werte.
-Zuordnung über die volle Messwahrscheinlichkeit (Position und Geschwindigkeit) der Bewegungsmodelle.
+Dritter Schritt: Verdeckte Personen sind irgendwo, und alle Regeln dafür sind Wahrscheinlichkeiten.
 
-Stand auf den Aufnahmen vom 3.10.: Kalibrierlauf und Esstisch deutlich besser, aber mehr Fehlspuren
-hinter Türen als 0.4.0. Bleibt auf dem Zweig, bis die Kennzahlen mindestens gleichziehen.
+- Eine verdeckte Person ist im Raum (am Kalman-Ort), hinter einer der Türen (Küche, Balkon, Flur-Bereich mit
+  Schlafzimmer und Haustür) oder war keine eigene Person (Geist, doppelte Spur). Kein „weg“: Menschen
+  verschwinden nicht.
+- Zu einer Tür kommt man nur zu Fuß: wer beim Verlust auf sie zuging (Richtung aus dem Kalman-Filter, ein
+  laufender Aussetzer dauert mit der gemessenen Statistik gehender Personen an), oder wer aufsteht (Rate aus
+  790 gemessenen Sitzphasen, sinkt mit der Sitzdauer), jeweils nur zu dem Teil, den kein Sensor auf dem Weg
+  gesehen hätte.
+- Beweise im Raum: gelernte Aussetzer-Statistik des LD2450 (inklusive Wiedererkennung durch eine neue Spur),
+  LD2410C-Energie mit getrennten Verteilungen für Sitzende, Gehende und leer (rückwirkend gelernt, wenn ein
+  Sitzender wieder erkannt wird), als Mischung über die unsichere Entfernungsstufe; wer im Strahl ist,
+  erklärt die Energie in seiner Entfernung.
+- Doppelte Spuren: statt der Verschmelzungsregel ein Beweis aus der gemessenen Trennschärfe des LD2450 (zwei
+  Personen dicht nebeneinander geben meist ein Ziel, eine Person fast nie zwei). Dicht neben jemandem
+  Gemessenem ist ein fehlendes eigenes Ziel kein Beweis gegen eine sitzende Person.
+- Wer eine neue Spur ist, entscheidet die Wahrscheinlichkeit: eine bekannte Person (Kalman-Ort und Zeit seit
+  dem Verlust, oder hinter der Tür, an der die Spur entsteht) gegen jemand Neues. Rückkehrer behalten ihre
+  Nummer, ihre Aufenthaltsdauer wird gelernt.
+- Die Ausgabe gewichtet jede Spur mit der Zahl der Bewohner (*Bewohner*, *Besuch*).
+- Zuordnung über die volle Messwahrscheinlichkeit (Position und Radialgeschwindigkeit) der Bewegungsmodelle.
+- Ersetzt: Austragen, Übernahme- und Wiederaufnahme-Fenster, Verschmelzen, Mitzählen in Räumen ohne Sensor,
+  feste LD2410C-Werte, maximale Verdeckungszeit.
+
+Gemessen: auf zwei simulierten Abenden mit bekannter Wahrheit (Sensorstatistik an die Aufnahmen angepasst)
+stimmt die Personenzahl im Raum in 88–95 % der Sekunden (0.4.0: 48–51 %), Wohnzimmer/Esszimmer belegt zu
+98–99 % richtig (0.4.0: 80–88 %). Auf den Aufnahmen vom 3.10. (14,7 h) etwa gleichauf mit 0.4.0: mehr als zwei
+Personen 0,7 % / 0,1 % (bis 21 Uhr / danach; 0.4.0: 0,5 % / 0,0 %), zwei getrennt Gesehene als zwei gezählt
+82 % / 94 % (0.4.0: 83 % / 78 %), nachts leer 100 %, „gesehen, aber niemand gezählt“ 2,0 min (0.4.0: 1,0 min).
+
+Experimentell, nicht in der App benutzt: `pf.py`, ein Partikelfilter über die Bewohner (keine Spuren). Auf
+den simulierten Abenden derzeit schlechter (69–75 %).
 
 ## 0.4.0
 

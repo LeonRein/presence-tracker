@@ -30,7 +30,6 @@ TENTATIVE, CONFIRMED = "tentative", "confirmed"
 _BIG = 1e9
 MAX_TARGETS = 3  # the LD2450 reports at most this many targets per frame
 DOOR_HALF_WIDTH = 0.45  # m
-TURN = 0.35  # rad, a walker's heading changes this much on the way (people steer toward doors)
 PATH_STEP = 0.25  # m, sampling of the way to a door
 
 
@@ -425,6 +424,11 @@ class Tracker:
         portals = list(self.config.portals)
         if not portals:
             return []
+        # carried past the door by the motion model: already in there
+        inside = next((rid for rid, r in self.config.regions.items()
+                       if any(z.contains(pos[0], pos[1]) for z in self.config.zones if z.id in r["rooms"])), None)
+        if heading and inside is not None:
+            return [(inside, 1.0, 1.0)]
         if not heading:
             return [(q.region, 1 / (len(portals) + 1), self._unseen_way(pos, q)) for q in portals]
         v = tr.walk_velocity
@@ -444,7 +448,7 @@ class Tracker:
         perp = np.array([-u[1], u[0]])
         x, P = tr.state.mean()
         var_v = float(perp @ P[2:, 2:] @ perp)
-        sigma_theta = math.sqrt(var_v / speed**2 + TURN**2)
+        sigma_theta = math.sqrt(var_v / speed**2 + self.config.params.walk_turn**2)
         sigma_pos2 = float(perp @ P[:2, :2] @ perp)
         out = []
         for q in portals:
@@ -542,8 +546,13 @@ class Tracker:
                     s_now = model.redetection_survival(mode, tau)
                     s_before = model.redetection_survival(mode, max(tau - since, 0.0))
                     tr.last_evidence[sensor.id] = t
+                    # right next to someone this sensor measures now, the LD2450 makes one target
+                    # of two people (learned resolution): then no target of our own says nothing
+                    near = [float(np.linalg.norm(o.position() - pos)) for o in self.tracks
+                            if id(o) in updated and o is not tr and o.status == CONFIRMED]
+                    masked = 1 - model.resolution(min(near)) if near else 0.0
                     if s_before > 0 and since > 0:
-                        tr.where.update(ROOM, s_now / s_before, share)
+                        tr.where.update(ROOM, masked + (1 - masked) * s_now / s_before, share)
 
     def _pair_evidence(self, sensor: SensorConfig, t: float, weight: float, updated: set):
         """Two measured tracks close together: two people, or one person with a second track?
@@ -557,7 +566,10 @@ class Tracker:
         model = self.sensor_model
         if len(self.runtime[sensor.id].detections) >= MAX_TARGETS:
             return
-        tracks = [tr for tr in self.tracks if tr.where is not None and not tr.lost(t, p.lost_after)
+        # lost ones too: next to someone measured, "masked by them" and "their double" are the
+        # two explanations of the missing target, weighed by the same resolution
+        tracks = [tr for tr in self.tracks if tr.where is not None
+                  and (not tr.lost(t, p.lost_after) or tr.where.room() >= 0.05)
                   and self._pd(sensor, tr.position()) / PD_MAX > 0.5]
         for i, a in enumerate(tracks):
             for b in tracks[i + 1:]:
@@ -571,7 +583,9 @@ class Tracker:
                     model.learn_pair(d, n == 2)
                 ratio = SPLIT_RATE / r if n == 2 else (1 - SPLIT_RATE) / (1 - r)
                 younger = b if b.born > a.born else a
-                younger.where.update(DEAD, ratio, weight)
+                # merged targets of people keeping still stay merged: one observation per
+                # pair_evidence_time, not per frame
+                younger.where.update(DEAD, ratio, weight * p.evidence_time / p.pair_evidence_time)
 
     def _ld2410(self, s: SensorConfig, rt: SensorRuntime, t: float, ld: dict, weight: float):
         """LD2410C: energy per 0.75 m gate. For a lost track at gate g, the energy there is
@@ -714,7 +728,7 @@ class Tracker:
                 if not tr.loss_handled:
                     # just lost: a walker may have been on the way through a door
                     tr.loss_handled = True
-                    tr.where.lost()
+                    tr.where.lost(p.duplicate_prior)
                     share = tr.last_walk
                     pos = tr.position()
                     if any(q.contains(pos[0], pos[1]) for q in self.config.portals):

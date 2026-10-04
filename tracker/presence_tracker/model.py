@@ -165,8 +165,10 @@ class TrackerParams:
     getup_share: float = 0.46
     getup_time: float = 90.0  # s
     walk_speed: float = 1.0  # m/s, typical walking speed: time spent in view on the way to a door
+    walk_turn: float = 0.6  # rad, how much a walker's heading changes on the way (paths bend toward doors)
     walk_memory: float = 1.0  # s, a walk counts this long after the IMM saw it (people slow down at a door)
     doorway_walk: float = 0.9  # lost in a doorway: went through with this probability (nobody stays there)
+    pair_evidence_time: float = 10.0  # s per independent observation of "one target or two" for two tracks
     duplicate_prior: float = 0.05  # chance that a well measured track is a second one of a person
     unseen_diffusion: float = 0.02  # m^2/s, how far someone unseen may have shifted (variance per second)
     newcomer_density: float = 0.001  # per m^2: someone we didn't know of shows up mid-room
