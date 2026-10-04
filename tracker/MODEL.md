@@ -175,6 +175,26 @@ Gegeben der Zustand:
   (jedes Partikel merkt sich je Sensor seinen letzten Fehler, nur der Rest zählt) machte Personen
   gegenüber Geistern zu stark: Phantome in leeren Räumen, Drehbuch 74 %. Verworfen; die Geister
   müssten dasselbe Gedächtnis bekommen.
+- **Zwei nah beieinander, ein Ziel (offen).** Wer weniger als 1 m neben jemand anderem steht, bekommt
+  oft kein eigenes Ziel (Auflösung `res(d)`, oben). Das Modell rechnet das derzeit nicht ein: Jede
+  Person wird unabhängig erkannt oder nicht. Zwei Versuche wurden wieder entfernt:
+  - 0.6.5: das Fehlen eines eigenen Ziels neben jemand anderem kostete nichts. Messen die beiden
+    Sensoren dieselbe Person an verschiedenen Stellen (am Esstisch 0,5 m auseinander), erklärte
+    „zwei Personen, jeder Sensor sieht eine“ jeden Frame besser als „eine Person, beide 25 cm
+    daneben“: nach einem Neustart zwei Personen am Tisch (5.10.). Die richtige Rechnung bräuchte
+    den Ort des gemeinsamen Ziels (zwischen beiden) und den festen Versatz der Sensoren.
+  - ein gemeinsames Paar-Ziel in der Zuordnung (das Ziel zieht beide Wolken mit): eine unsichtbare
+    zweite Person direkt neben einer sichtbaren war fast kostenlos (B „folgte“ A aus dem Flur),
+    Drehbuch 69–73 %, doppelte Rechenzeit.
+  Ohne die Auflösung bleibt beim gemeinsamen Gehen (Drehbuch-Schritt 8) manchmal eine Person zurück.
+- Radialgeschwindigkeit: `N(Projektion der Geschwindigkeit, σ_v)` mit σ_v = 0,25 m/s. **Gemessen**
+  (4.10.) ist mehr: 0,40 m/s beim Gehen, 0,12 m/s im Stehen. Noch nicht übernommen.
+- **Offen: Der Fehler bleibt eine Weile.** Der LD2450 glättet intern. **Gemessen:** Von Frame zu Frame
+  (0,09 s) korrelieren Ortsfehler mit 0,98 und Geschwindigkeitsfehler mit 0,91, nach 0,7 s kaum noch.
+  Das Modell zählt jeden Frame als unabhängig und überschätzt so einzelne Messungen. Ein erster Versuch
+  (jedes Partikel merkt sich je Sensor seinen letzten Fehler, nur der Rest zählt) machte Personen
+  gegenüber Geistern zu stark: Phantome in leeren Räumen, Drehbuch 74 %. Verworfen; die Geister
+  müssten dasselbe Gedächtnis bekommen.
 - **Zwei nah beieinander, ein Ziel.** Wer weniger als 1 m neben jemand anderem steht, bekommt oft kein
   eigenes Ziel (Auflösung `res(d)`, oben). Diese Wahrscheinlichkeit, aus den Wolken der anderen
   berechnet, zählt zum „nicht gesehen“ dazu, nur im beobachteten Bereich. Ohne sie galt „läuft

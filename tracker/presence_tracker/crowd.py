@@ -50,8 +50,6 @@ HELD_FRAMES = 5  # the same nonzero speed this often in a row: the sensor holds 
 FROZEN_RADIUS = 1.0  # m around a frozen target where the sensor's silence says nothing
 FROZEN_MAX = 35.0  # s: the longest a person's target stays frozen (measured)
 MOUNT_RADIUS = 0.3  # m around a sensor: targets there come from its mount, not from people
-MERGE_CELL = 0.25  # m, raster of the others' clouds for the LD2450's resolution
-MERGE_REACH = 1.0  # m: farther apart the LD2450 resolves two people as well as any (measured)
 BODY = 0.3  # m: two people's centers are never closer
 LD_LEARNED = (100, 300)  # frames with a person in a gate / empty before the gate is used as evidence
 LD_CORR = 3.0  # s: LD2410C gate energies with a person stay correlated about this long (measured 2.5-4 s)
@@ -245,19 +243,14 @@ class Crowd:
         walkers = self._walking_near(np.array([d.pos for d in dets]).reshape(-1, 2))
         lam = np.array([(self.sensor_model.clutter_density(s.id, d.pos[0], d.pos[1], CLUTTER_PRIOR, CLUTTER_FLOOR)
                          + ECHO_DENSITY * walkers[j]) / SPEED_SPREAD for j, d in enumerate(dets)])
-        merged = self._merged() if len(self.people) > 1 else None
         per = []  # per person: (observed particle indices, m, g (n_obs, m_det) / lambda, M, A (m_det,))
         tau_before = []  # per person and observed particle: unseen by this sensor before this frame
-        for k_person, person in enumerate(self.people):
+        for person in self.people:
             c = person.cloud
             w = c.weights()
             idx = np.flatnonzero(c.place != self.world.outside)
             tau_before.append(t - c.last_hit[idx, self.sidx[s.id]])
             m = self._miss(s.id, c, idx, t, gap) if len(idx) else np.zeros(0)
-            # next to somebody else one often gets no target of one's own (MODEL.md 4.1)
-            if len(idx) and merged is not None:
-                mg = merged[k_person][idx]  # 0 outside the observed area
-                m = mg + (1 - mg) * m
             if frozen is not None and len(frozen) and len(idx):
                 # the sensor repeats a target bit-identically: it is stuck there and says nothing new
                 # about that spot (mostly the person is still there, measured)
@@ -395,43 +388,6 @@ class Crowd:
                 if kk != k:
                     free *= np.clip(1 - near[i, j], 1e-6, 1)
             person.cloud.logw[obs] += np.log(free)
-
-    def _merged(self) -> list:
-        """Per person and particle: P(the LD2450 gives this person no target of their own because
-        somebody else is close, MODEL.md 4.1), from the others' clouds and the measured resolution
-        relative to people far apart. Only in the observed area: behind a wall nobody shares a
-        target with somebody in view."""
-        w0, cell, reach = self.world, MERGE_CELL, int(math.ceil(MERGE_REACH / MERGE_CELL))
-        far = self.sensor_model.resolution(10.0)  # far apart
-        kernel = {}
-        for di in range(-reach, reach + 1):
-            for dj in range(-reach, reach + 1):
-                share = 1 - min(self.sensor_model.resolution(math.hypot(di, dj) * cell) / far, 1.0)
-                if share > 0:
-                    kernel[(di, dj)] = share
-        nx, ny = int(w0.nx * 0.1 / cell) + 1, int(w0.ny * 0.1 / cell) + 1
-        grids, cells = [], []
-        for person in self.people:
-            c = person.cloud
-            loc = np.flatnonzero(c.place == OBSERVED)
-            i = np.clip(((c.pos[loc, 0] - w0.x0) / cell).astype(int), 0, nx - 1)
-            j = np.clip(((c.pos[loc, 1] - w0.y0) / cell).astype(int), 0, ny - 1)
-            g = np.zeros((nx + 2 * reach, ny + 2 * reach))
-            np.add.at(g, (i + reach, j + reach), c.weights()[loc])
-            grids.append(g)
-            cells.append((loc, i + reach, j + reach))
-        out = [np.zeros(p.cloud.n) for p in self.people]
-        for k in range(len(self.people)):
-            loc, i, j = cells[k]
-            alone = np.ones(len(loc))
-            for kk, g in enumerate(grids):
-                if kk != k:
-                    near = np.zeros(len(loc))
-                    for (di, dj), share in kernel.items():
-                        near += share * g[i + di, j + dj]
-                    alone *= 1 - np.minimum(near, 1.0)
-            out[k][loc] = 1 - alone
-        return out
 
     def _walking_near(self, pos: np.ndarray) -> np.ndarray:
         """Per point: expected number of people walking within ECHO_RADIUS (their echoes)."""

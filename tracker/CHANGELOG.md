@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.9
+
+- Zwei Personen am Esstisch, obwohl nur eine dort saß (nach dem Zurücksetzen am 5.10.): Die beiden
+  Sensoren messen dieselbe Person am Tisch 0,5 m auseinander. Seit 0.6.5 durfte eine zweite Person
+  neben der ersten ohne eigenes Ziel bleiben („zwei Nahe ergeben ein Ziel“), und so erklärte „jeder
+  Sensor sieht eine andere Person“ die Messungen besser als „eine Person“. Diese Regel ist wieder
+  entfernt; jede Person wird unabhängig erkannt. Beim gemeinsamen Gehen kann dafür wieder eine Person
+  zurückbleiben (Drehbuch-Schritt 8).
+
+Testdurchlauf: 95,6 % (12 Läufe, 92–97 %), ein Viertel weniger Rechenzeit.
+
 ## 0.6.8
 
 - „bewegt“ und „ruhig“ zählen nur Personen in Sicht. Wer hinter einer Tür ist (Flur, Küche), von dem
