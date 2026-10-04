@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.6
+
+- Fehler seit 0.6.2: Nach einem Neustart zählte die Uhr „nicht gesehen“ der unbekannten Personen ab
+  1970. Sie galten vom ersten Frame an als „seit Jahrzehnten ungesehen“ und konnten unbemerkt im gut
+  beobachteten Raum stehen. So hing nach dem Update auf 0.6.5 eine zweite Person im Wohnzimmer, obwohl
+  niemand dort war. Die Uhren beginnen jetzt mit dem ersten Frame.
+
+Testdurchlauf: 94,8 % (12 Läufe, 83–97 %).
+
 ## 0.6.5
 
 - Auch in Räumen ohne Sensor hat eine Person einen Ort. Sieht ein Sensor jemanden durch die offene

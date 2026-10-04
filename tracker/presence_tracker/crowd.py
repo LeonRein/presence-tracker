@@ -181,7 +181,14 @@ class Crowd:
 
     def process_frame(self, sensor_id: str, t: float, frame: dict):
         if self.start is None:
+            # the clocks of the start state count from the first frame, not from 1970: otherwise
+            # everybody is "unseen for decades" and may stay unseen anywhere for free
             self.start = t
+            for person in self.people:
+                c = person.cloud
+                c.since[:] = t
+                c.entered[:] = t
+                c.last_hit[:] = t
         self.now = max(self.now, t)
         sensor = self.config.sensor_by_id.get(sensor_id)
         rt = self.runtime.setdefault(sensor_id, SensorRuntime())
