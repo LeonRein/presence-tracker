@@ -46,8 +46,6 @@ class Cloud:
         self.mode = np.full(n, STILL, dtype=np.int8)
         self.since = np.zeros(n)  # time the particle entered its mode
         self.entered = np.zeros(n)  # time it entered its place (the stays behind doors count from it)
-        self.anchor = np.zeros((n, 2))  # where the last mode change happened (for learning)
-        self.counted = np.ones(n, dtype=bool)  # that mode change was learned already
         self.last_hit = np.zeros((n, n_sensors))  # time of the last detection per sensor
         self.logw = np.full(n, -math.log(n))
 
@@ -59,7 +57,6 @@ class Cloud:
         c.place[:] = place
         if world is not None and place != world.outside:
             c.pos = world.sample(place, n, rng)
-            c.anchor[:] = c.pos
         c.since[:] = t
         c.entered[:] = t
         c.last_hit[:] = t
@@ -82,7 +79,6 @@ class Cloud:
         c.since[:] = t
         c.entered[:] = t
         c.last_hit[:] = t  # watched from now on: not being seen counts from the start
-        c.anchor[:] = c.pos
         return c
 
     # -------------------------------------------------------------- weights
@@ -109,13 +105,13 @@ class Cloud:
         w = self.weights()
         u = (self.rng.random() + np.arange(self.n)) / self.n
         idx = np.minimum(np.searchsorted(np.cumsum(w), u), self.n - 1)
-        for name in ("place", "pos", "vel", "mode", "since", "entered", "last_hit", "anchor", "counted"):
+        for name in ("place", "pos", "vel", "mode", "since", "entered", "last_hit"):
             setattr(self, name, getattr(self, name)[idx].copy())
         self.logw[:] = -math.log(self.n)
 
     # ---------------------------------------------------------------- motion
 
-    def predict(self, t: float, dt: float, world, dwell, m: Motion = Motion, targets=None, habits=None):
+    def predict(self, t: float, dt: float, world, dwell, m: Motion = Motion, targets=None):
         """targets: positions (k, 2) of the current measurements; they only steer which rare moves
         are tried (getting up toward them), the weights stay exact."""
         if dt <= 0:
@@ -161,18 +157,14 @@ class Cloud:
         # less likely)
         obs = self.place != world.outside
         k = np.flatnonzero(obs & (self.mode == WALK))
-        stop_rate = m.stop_rate * (habits.factor("stop", self.pos[k]) if habits is not None else 1.0)
+        stop_rate = m.stop_rate
         stops = k[rng.random(len(k)) < 1 - np.exp(-stop_rate * dt)]
         self.mode[stops] = STILL
         self.vel[stops] = 0.0
         self.since[stops] = t
-        self.anchor[stops] = self.pos[stops]
-        self.counted[stops] = False
         k = np.flatnonzero(obs & (self.mode == STILL))
         if len(k):
             rate = m.go_share / (np.maximum(t - self.since[k], 0.0) + m.go_time)
-            if habits is not None:
-                rate = rate * habits.factor("go", self.pos[k])
             p0 = 1 - np.exp(-rate * dt)
             # tried more often (and toward the measurements) where a measurement is near: a person
             # getting up would otherwise rarely have a particle starting the right way
@@ -208,8 +200,6 @@ class Cloud:
             self.vel[starts] = np.stack([np.cos(angle), np.sin(angle)], axis=1) * speed[:, None]
             self.mode[starts] = WALK
             self.since[starts] = t
-            self.anchor[starts] = self.pos[starts]
-            self.counted[starts] = False
 
         # into the house and out of it: from outside into a place with a way in (or in at an entry
         # of the observed area) at the arrival rate - rare, so tried more often and the weights
@@ -245,7 +235,6 @@ class Cloud:
                 self.since[ke] = t
                 self.entered[ke] = t
                 self.last_hit[ke] = t
-                self.counted[ke] = True
         if world.open_places:
             k = np.flatnonzero(np.isin(self.place, world.open_places))
             out = k[rng.random(len(k)) < 1 - math.exp(-m.leave_rate * dt)]
@@ -280,7 +269,6 @@ class Cloud:
             self.mode[ko] = WALK
             self.since[ko] = t
             self.entered[ko] = t
-            self.counted[ko] = True
             self.last_hit[ko] = t  # just came in: seen like anybody walking in view
 
     # --------------------------------------------------------------- summary

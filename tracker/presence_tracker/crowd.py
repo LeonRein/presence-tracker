@@ -22,7 +22,6 @@ import math
 import numpy as np
 
 from .cloud import STILL, WALK, Cloud, Motion
-from .habits import Habits
 from .sensormodel import GAP_FLOOR, GAP_PRIOR, GAP_TAUS, GATE, PD_MAX, SensorModel, cell_of
 from .tracker import SensorClock, SensorRuntime, Tracker  # noqa: F401 (SensorClock re-exported)
 from .unobserved import Dwell
@@ -54,10 +53,8 @@ MOUNT_RADIUS = 0.3  # m around a sensor: targets there come from its mount, not 
 MERGE_CELL = 0.25  # m, raster of the others' clouds for the LD2450's resolution
 MERGE_REACH = 1.0  # m: farther apart the LD2450 resolves two people as well as any (measured)
 BODY = 0.3  # m: two people's centers are never closer
-LEARN_DELAY = 3.0  # s: a stop / start is learned this long after it happened
 LD_LEARNED = (100, 300)  # frames with a person in a gate / empty before the gate is used as evidence
 LD_CORR = 3.0  # s: LD2410C gate energies with a person stay correlated about this long (measured 2.5-4 s)
-SEEN_WELL = 0.8  # visibility from which stops and starts are learned
 
 
 def _ghost_survival(age: float) -> float:
@@ -89,17 +86,13 @@ class Person:
 
 class Crowd:
     def __init__(self, config, start: float | None = None, n: int = 800, seed: int = 1, people=None,
-                 sensor_model: SensorModel | None = None, learn_behaviour: bool = False):
+                 sensor_model: SensorModel | None = None):
         """people: place names where the people are at the start, or "anywhere" (default: the
-        configured number of residents, anywhere - until the arrivals of MODEL.md 3.2 are built).
-        learn_behaviour: learn where people stop, start and drop out (off: measurement errors
-        would be learned as behaviour and strengthened)."""
+        configured number of residents, anywhere - until the arrivals of MODEL.md 3.2 are built)."""
         self.config = config
         self.p = config.params
         self.world = World(config)
         self.sensor_model = sensor_model or SensorModel(config)
-        self.habits = Habits()
-        self.learn_behaviour = learn_behaviour
         self.dwell = Dwell(self.p, [rid for rid, r in config.regions.items() if r["open"]])
         self.motion = Motion()
         self.rng = np.random.default_rng(seed)
@@ -168,7 +161,7 @@ class Crowd:
             k = cloud.mode[idx] == mode
             if not k.any():
                 continue
-            rate = DROP_RATE[mode] * (self.habits.factor("drop", pos[k]) if mode == STILL else 1.0)
+            rate = DROP_RATE[mode]
             c = np.minimum(rate * FRAME / np.maximum(pd[k], 1e-3), 1.0)
             q = 1 - pd[k]
 
@@ -367,11 +360,10 @@ class Crowd:
             return
         self.last_step = t
         for person in self.people:
-            person.cloud.predict(t, dt, self.world, self.dwell, self.motion, targets, self.habits)
+            person.cloud.predict(t, dt, self.world, self.dwell, self.motion, targets)
         self._bodies()
         for person in self.people:
             person.cloud.normalize()
-        self._learn_moves(t, dt)
 
     def _bodies(self):
         """Two bodies don't stand in one place (MODEL.md 3.1): a particle of one person is only
@@ -621,9 +613,8 @@ class Crowd:
 
     def _learn_frame(self, s, t, dets, beta, gap, tau_before, gaps_ended):
         """MODEL.md 7, per frame: detection probability, ghosts, where sitters drop out."""
-        sm, hb = self.sensor_model, self.habits
+        sm = self.sensor_model
         sm._decay(t)
-        hb.decay(t)
         sid = s.id
         if sid not in sm.prior:
             return
@@ -650,15 +641,6 @@ class Crowd:
                     sm.trials[sid][i, j] += 1
                     sm.hits[sid][i, j] += float(beta[k, 1:].sum())
                     sm.changed = True
-            # where sitters drop out: long gaps that ended here, against the prior rate's
-            # expectation in the time they were seen regularly
-            if self.learn_behaviour and len(idx) and (mean is None or alone(k)):
-                still = c.mode[idx] == STILL
-                seen = still & (tau_before[k] < GAP_FLOOR)
-                hb.add("drop", c.pos[idx[seen]], expected=w[idx[seen]] * gap * DROP_RATE[STILL])
-                gi, _ = gaps_ended[k]
-                if len(gi):
-                    hb.add("drop", c.pos[gi], events=w[gi])
 
         # ghosts: where another online sensor sees well and reports nothing, nobody near
         for other in self.sensors:
@@ -685,59 +667,16 @@ class Crowd:
             sm.changed = True
             break
 
-    def _visibility(self, pos: np.ndarray) -> np.ndarray:
-        """How well the online sensors see the points (1 - P(all miss a frame))."""
-        hidden = np.ones(len(pos))
-        for sid in self.sensors:
-            if self._online(sid):
-                hidden *= 1 - self._pd(sid, pos) / PD_MAX
-        return 1 - hidden
-
-    def _learn_moves(self, t: float, dt: float):
-        """MODEL.md 7, per step: where people stop and where they start walking. A mode change
-        counts a few seconds later, with the weight the particle has then; expected: what the
-        prior rates would have produced in the same weighted time. Only where the sensors see
-        well: elsewhere stopping and walking on look alike, and learning there would only
-        strengthen whatever the model already assumes."""
-        if not self.learn_behaviour:
-            return
-        m, hb = self.motion, self.habits
-        stop_kept = (m.go_time / (LEARN_DELAY + m.go_time)) ** m.go_share  # a stop that lasts LEARN_DELAY
-        go_kept = math.exp(-m.stop_rate * LEARN_DELAY)  # a start that lasts LEARN_DELAY
-        for person in self.people:
-            c = person.cloud
-            w = c.weights()
-            obs = c.place == OBSERVED
-            if obs.any():
-                seen = np.zeros(c.n, dtype=bool)
-                k = np.flatnonzero(obs)
-                seen[k] = self._visibility(c.pos[k]) >= SEEN_WELL
-                obs = obs & seen
-            walk = np.flatnonzero(obs & (c.mode == WALK))
-            still = np.flatnonzero(obs & (c.mode == STILL))
-            hb.add("stop", c.pos[walk], expected=w[walk] * dt * m.stop_rate * stop_kept)
-            rate = m.go_share / (np.maximum(t - c.since[still], 0.0) + m.go_time)
-            hb.add("go", c.pos[still], expected=w[still] * dt * rate * go_kept)
-            due = np.flatnonzero((c.place == OBSERVED) & ~c.counted & (t - c.since >= LEARN_DELAY))
-            if len(due):
-                c.counted[due] = True
-                due = due[self._visibility(c.anchor[due]) >= SEEN_WELL]
-                stops = due[c.mode[due] == STILL]
-                starts = due[c.mode[due] == WALK]
-                hb.add("stop", c.anchor[stops], events=w[stops])
-                hb.add("go", c.anchor[starts], events=w[starts])
-
     def _online(self, sid: str) -> bool:
         rt = self.runtime.get(sid)
         return rt is not None and self.now - rt.last_frame < 15
 
     def learned(self) -> dict:
-        return {"sensor_model": self.sensor_model.to_dict(), "habits": self.habits.to_dict(),
+        return {"sensor_model": self.sensor_model.to_dict(),
                 "dwell": self.dwell.dwell}
 
     def load_learned(self, data: dict):
         self.sensor_model.load_dict(data.get("sensor_model", {}))
-        self.habits.load_dict(data.get("habits", {}))
         self.dwell.dwell = {k: list(v) for k, v in data.get("dwell", {}).items()}
         self._pd_cache.clear()
 

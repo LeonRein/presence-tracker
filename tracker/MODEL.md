@@ -53,14 +53,18 @@ Personen sind anonym. Nummern in der Oberfläche sind nur Beschriftung und nicht
 - **Gehen:** fast konstante Geschwindigkeit mit zufälligen Richtungs- und Tempoänderungen.
   Rauschstärke **gemessen** auf den Aufnahmen.
 - **Stehen / Sitzen:** Ort fast fest, kleines Wackeln. **Gemessen.**
-- **Wechsel gehen → stehen:** Rate `λ_stop(x)` je Ort. Wo Menschen oft stehen bleiben (Sofa, Tisch,
-  Küchenzeile), ist sie hoch, mitten im Durchgang niedrig. **Gelernt** je 50-cm-Feld aus der
-  Aufenthaltskarte. Prior: gleichmäßig.
-- **Wechsel stehen → gehen:** Rate `λ_go(x, d)`, abhängig vom Ort und davon, wie lange jemand schon
-  sitzt (lange Sitzende stehen seltener auf). Je Ort **gelernt** (Sofa: lange Sitzdauern, mitten im
-  Raum: kurze). Prior: die heute gemessene Sitzdauerverteilung.
-  *Damit ist „jemand steht eine halbe Stunde an einer Stelle, an der nie jemand sitzt“ unwahrscheinlich,
-  ganz ohne Sonderregel.*
+- **Wechsel gehen → stehen:** Rate `λ_stop` = 0,5 /s, überall gleich.
+- **Wechsel stehen → gehen:** Rate `λ_go(d) = 0,58 / (d + 5,6 s)`, abhängig davon, wie lange jemand
+  schon steht oder sitzt (lange Sitzende stehen seltener auf). Gemessen an den Sitzdauern.
+- **Kein Lernen je Ort.** Geplant war, beide Raten und die Aussetzer je 50-cm-Feld zu lernen (Sofa:
+  lange Sitzdauern, Durchgang: kurze). Das Modell würde dabei aber eigene Messfehler als Verhalten
+  lernen und verstärken (auf den Daten bestätigt, 4.10.). Das Lernen war aus, die Raster sind
+  seit 0.6.7 entfernt.
+- **Warum „geht / steht“ ein eigener Zustand ist und nicht aus der Geschwindigkeit folgt:** Er trägt
+  die Sichtbarkeit. Ein Sitzender fällt beim LD2450 oft lange aus, ein Gehender nur kurz (3.3). Im
+  Drehbuch mit der Aussetzer-Statistik der Sitzenden auch für Gehende: 84,6 % statt 94,4 %
+  (8 Läufe). Die Dauer im Zustand (Aufstehrate abhängig von der Sitzdauer) war im Drehbuch dagegen
+  nicht nachweisbar nützlich (konstante Rate: 95,2 %); die Sitzzeiten dort sind aber nur 1–3 min.
 - **Wände:** Orte außerhalb des freien Raums haben Wahrscheinlichkeit 0.
 - **Körper:** Zwei Personen stehen nicht im selben Fleck. Abstandsverteilung zweier Personen
   **gelernt** aus sicheren Paaren. Prior: unter 0,4 m selten.
