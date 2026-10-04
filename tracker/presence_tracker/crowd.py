@@ -604,13 +604,17 @@ class Crowd:
         from .zones import ZoneState
         p = self.p
         states = {}
+        region_of = {room: rid for rid, r in self.config.regions.items() for room in r["rooms"]}
         for zid, probs in self.zone_probabilities().items():
             dist = np.array([1.0])
             for q in probs:  # count distribution
                 dist = np.convolve(dist, [1 - q, q])
             st = ZoneState()
-            st.count = int(np.argmax(dist))
-            st.probability = 1 - float(dist[0])
+            rid = region_of.get(zid)
+            # a room without a sensor that shares its region with other rooms: the model only knows
+            # "somewhere in the region" - the probability of that, but no count of its own
+            st.count = int(np.argmax(dist)) if rid is None or len(self.config.regions[rid]["rooms"]) == 1 else 0
+            st.probability = 1 - float(dist[0]) if rid is not None else None
             states[zid] = st
         total = ZoneState()
         zones = [z for z in self.config.zones if z.kind in ("room", "area")]
