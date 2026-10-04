@@ -124,6 +124,21 @@ Je Sensor:
 *Ein Geist, der 5 s an derselben Stelle steht, ist damit erklärbar. Dafür muss keine Person entstehen,
 die dann versteckt bleibt.*
 
+*Gemessen (4.10.):*
+- In den leeren Räumen nachts (1–6 Uhr) meldet der Esszimmer-Sensor 0,4 Geister pro Stunde, je
+  etwa 1,5 s lang. Der Wohnzimmer-Sensor meldet gar nichts.
+- Neben sitzenden Personen gab es im Drehbuch keine Geister.
+- Geister entstehen also fast nur als Echos von Gehenden. Die Simulation, die an die Aufnahmen
+  angepasst ist, rechnet mit etwa 4 kurzen Geistern pro Minute, solange jemand läuft.
+- Umgesetzt in 0.6.4: Grunddichte 1e-4 je m² und Frame (vorher 0,02, also um Größenordnungen zu hoch)
+  plus 3e-3 je m² und Frame je gehender Person, irgendwo im Blickfeld.
+
+*Geister als Objekte mit Lebensdauer* habe ich gebaut und wieder herausgenommen. Ein still Sitzender
+und ein feststehender Geist sind für den LD2450 gleich. Das Modell erklärte dann Sitzende als „Person im
+Aussetzer plus Geist an derselben Stelle“, und der Drehbuch-Durchlauf fiel auf 80–89 %, auch mit der Regel
+„kein Geist, wo ein Körper ist“. Bei der gemessenen, sehr seltenen Geisterdichte lohnt sich das Objekt
+nicht mehr.
+
 ## 4. Messmodell (wie ein Frame entsteht)
 
 ### 4.1 LD2450 (bis zu 3 Ziele je Frame)

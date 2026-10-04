@@ -32,6 +32,13 @@ SPEED_SPREAD = 4.0  # m/s: ghosts' radial speeds spread over about +-2 m/s
 FRAME = 0.089  # s, LD2450 frame period (measured)
 DROP_RATE = {STILL: 1 / 70, WALK: 1 / 300}  # 1/s: dropouts begin (measured on the recordings)
 PD_CELL = 0.1  # m, cache of the detection probability per sensor
+# ghosts per m^2 and frame, until learned: measured 0.4 short ghosts per hour in the empty rooms at
+# night (5 h), none next to people sitting; while somebody walks about 4 per minute and sensor
+# (each ~1 s, simulation calibrated to the recordings) within a few meters of the walker
+CLUTTER_PRIOR = 1e-4
+CLUTTER_FLOOR = 1e-5
+ECHO_DENSITY = 3e-3  # per m^2 and frame per walker (a reflection can show up anywhere in view)
+ECHO_RADIUS = 8.0  # m
 FROZEN_RADIUS = 1.0  # m around a frozen target where the sensor's silence says nothing
 FROZEN_MAX = 35.0  # s: the longest a person's target stays frozen (measured)
 MOUNT_RADIUS = 0.3  # m around a sensor: targets there come from its mount, not from people
@@ -201,8 +208,10 @@ class Crowd:
     def _update(self, s, t, dets, gap, full, frozen=None):
         p = self.p
         m_det = len(dets)
-        lam = np.array([self.sensor_model.clutter_density(s.id, d.pos[0], d.pos[1], p.clutter_density, p.clutter_floor)
-                        / SPEED_SPREAD for d in dets])
+        # ghost density (MODEL.md 3.4): measured almost none in an empty room, echoes near walkers
+        walkers = self._walking_near(np.array([d.pos for d in dets]).reshape(-1, 2))
+        lam = np.array([(self.sensor_model.clutter_density(s.id, d.pos[0], d.pos[1], CLUTTER_PRIOR, CLUTTER_FLOOR)
+                         + ECHO_DENSITY * walkers[j]) / SPEED_SPREAD for j, d in enumerate(dets)])
         per = []  # per person: (observed particle indices, m, g (n_obs, m_det) / lambda, M, A (m_det,))
         tau_before = []  # per person and observed particle: unseen by this sensor before this frame
         for person in self.people:
@@ -232,22 +241,25 @@ class Crowd:
             per.append((idx, m, miss_full, r, M, A))
 
         # which detection is whose: all assignments, each person <= 1 detection, the rest ghosts
+        explain = [(pp[5], pp[4]) for pp in per]  # (A per detection, M) of everybody who may explain one
         n_p = len(self.people)
-        beta = np.zeros((n_p, m_det + 1))
+        n_e = len(explain)
+        beta_all = np.zeros((n_e, m_det + 1))
         total = 0.0
-        for a in itertools.product(*[range(-1, m_det)] * n_p):
+        for a in itertools.product(*[range(-1, m_det)] * n_e):
             used = [j for j in a if j >= 0]
             if len(used) != len(set(used)):
                 continue
             pr = 1.0
             for k, j in enumerate(a):
-                pr *= per[k][5][j] if j >= 0 else per[k][4]
+                pr *= explain[k][0][j] if j >= 0 else explain[k][1]
             total += pr
             for k, j in enumerate(a):
-                beta[k, j + 1 if j >= 0 else 0] += pr
+                beta_all[k, j + 1 if j >= 0 else 0] += pr
         if total <= 0:
             return
-        beta /= total
+        beta_all /= total
+        beta = beta_all[:n_p]
 
         gaps_ended = []
         for k, person in enumerate(self.people):
@@ -330,6 +342,19 @@ class Crowd:
                 if kk != k:
                     free *= np.clip(1 - near[i, j], 1e-6, 1)
             person.cloud.logw[obs] += np.log(free)
+
+    def _walking_near(self, pos: np.ndarray) -> np.ndarray:
+        """Per point: expected number of people walking within ECHO_RADIUS (their echoes)."""
+        out = np.zeros(len(pos))
+        for person in self.people:
+            c = person.cloud
+            k = np.flatnonzero((c.place == OBSERVED) & (c.mode == WALK))
+            if not len(k) or not len(pos):
+                continue
+            w = c.weights()[k]
+            d = np.hypot(c.pos[k][:, None, 0] - pos[None, :, 0], c.pos[k][:, None, 1] - pos[None, :, 1])
+            out += (w[:, None] * (d < ECHO_RADIUS)).sum(axis=0)
+        return out
 
     def _gates(self, s, pos: np.ndarray, fov: float) -> np.ndarray:
         """LD2410C gate (0.75 m slant distance step) of the points (n, 2) for the radar in sensor
