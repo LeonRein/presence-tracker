@@ -819,7 +819,12 @@ class Tracker:
         home = sum(o.real if o.real is not None else 1.0 for o in self.tracks if o.where is not None)
         extra = max(home + 1 - p.residents, 0.0)
         newcomer = (door_density if portal is not None and not portal.closed else p.newcomer_density) * p.guest_prob**extra
-        best, best_place, best_score = None, None, newcomer
+        # or nobody at all: a ghost that made it past the existence threshold. Its density
+        # relative to a person's follows from the existence probability itself (prior odds of a
+        # person here x the evidence): newcomer_density x (1 - e) / e
+        e = min(max(tr.existence, 1e-6), 1 - 1e-6)
+        ghost = p.newcomer_density * (1 - e) / e
+        best, best_place, best_score = None, None, max(newcomer, ghost)
         for o in self.tracks:
             if o.where is None or o is tr or tr.id in o.co_detected or o.id in tr.co_detected:
                 continue
