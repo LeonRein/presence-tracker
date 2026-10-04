@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.8
+
+- „bewegt“ und „ruhig“ zählen nur Personen in Sicht. Wer hinter einer Tür ist (Flur, Küche), von dem
+  weiß die App nicht, ob er sich bewegt; er zählte bisher als „ruhig“. Die Zusammenfassung heißt jetzt
+  „… Personen im Haus“ und nennt die Personen außer Sicht.
+
 ## 0.6.7
 
 Aufgeräumt nach Weglass-Tests auf dem Drehbuch (je ein Teil aus, 8 Läufe, mit und ohne vorab

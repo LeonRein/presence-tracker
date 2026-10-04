@@ -688,7 +688,8 @@ class Crowd:
 
     def zone_states(self) -> dict:
         """Per zone: the most probable number of people (people independent), P(somebody is
-        there); moving / still and "about to be entered" from where each person is drawn."""
+        there); moving / still and "about to be entered" from where each person is drawn - only
+        for people in view: behind a door nobody knows whether they move."""
         from .zones import ZoneState
         p = self.p
         states = {}
@@ -728,6 +729,7 @@ class Crowd:
                     st.count += 1
                 if z.contains(x, y):
                     st.moving += moving
+                    st.still += not moving
                 elif moving and math.hypot(vx, vy) >= p.approach_min_speed:
                     steps = max(1, int(p.lead_time / 0.1))
                     for k in range(1, steps + 1):
@@ -736,11 +738,9 @@ class Crowd:
                             st.approaching = True
                             st.eta = tau if st.eta is None else min(st.eta, tau)
                             break
-        for st in states.values():
+        for st in (*states.values(), total):
             st.moving = min(st.moving, st.count)
-            st.still = st.count - st.moving
-        total.moving = min(total.moving, total.count)
-        total.still = total.count - total.moving
+            st.still = min(st.still, st.count - st.moving)
         states["_total"] = total
         return states
 

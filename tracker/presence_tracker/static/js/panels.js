@@ -61,7 +61,8 @@ const LIVE = {
   total() {
     const t = state.live?.zones?._total;
     if (!t) return '–';
-    return `<b style="font-size:28px">${t.count}</b> <span class="note">${t.count === 1 ? 'Person' : 'Personen'} · ${t.moving} bewegt · ${t.still} ruhig</span>`;
+    const unseen = t.count - t.moving - t.still;
+    return `<b style="font-size:28px">${t.count}</b> <span class="note">${t.count === 1 ? 'Person' : 'Personen'} im Haus · ${t.moving} bewegt · ${t.still} ruhig${unseen > 0 ? ` · ${unseen} außer Sicht` : ''}</span>`;
   },
   tracks() {
     const tracks = state.live?.tracks || [];
