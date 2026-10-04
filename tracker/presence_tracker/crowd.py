@@ -47,9 +47,12 @@ GHOST_SPEED = 0.2  # m/s, radial speeds a ghost that stays shows
 GHOST_MIN = 0.02  # ghosts less probable than this are forgotten
 GHOST_BORN = 0.5  # a ghost is kept from a detection that is more probably a new ghost than not
 MAX_GHOSTS = 3  # per sensor
+HELD_FRAMES = 5  # the same nonzero speed this often in a row: the sensor holds a lost target
 FROZEN_RADIUS = 1.0  # m around a frozen target where the sensor's silence says nothing
 FROZEN_MAX = 35.0  # s: the longest a person's target stays frozen (measured)
 MOUNT_RADIUS = 0.3  # m around a sensor: targets there come from its mount, not from people
+MERGE_CELL = 0.25  # m, raster of the others' clouds for the LD2450's resolution
+MERGE_REACH = 1.0  # m: farther apart the LD2450 resolves two people as well as any (measured)
 BODY = 0.3  # m: two people's centers are never closer
 LEARN_DELAY = 3.0  # s: a stop / start is learned this long after it happened
 LD_LEARNED = (100, 300)  # frames with a person in a gate / empty before the gate is used as evidence
@@ -110,6 +113,7 @@ class Crowd:
         self.last_step = None
         self.listeners = []
         self._pd_cache = {}
+        self._held = {}  # sensor -> slot -> (raw speed, frames in a row)
         self._ld_used = {}  # sensor -> time the LD2410C energies last weighed the clouds
         self._ghosts = {}  # sensor -> [{"pos", "alive", "born", "last"}]
         self.reset_people(people)
@@ -120,7 +124,7 @@ class Crowd:
         if people is None:
             people = ["anywhere"] * max(int(self.p.residents), 1)
         self.people = [Person(k + 1, Cloud.anywhere(self.n, len(self.sensors), self.rng, self.world, self.now) if place == "anywhere"
-                              else Cloud.at_place(self.n, len(self.sensors), self.rng, self.world.index[place], self.now))
+                              else Cloud.at_place(self.n, len(self.sensors), self.rng, self.world.index[place], self.now, self.world))
                        for k, place in enumerate(people)]
 
     def reconfigure(self, config):
@@ -148,7 +152,7 @@ class Crowd:
             grid = np.zeros((w.nx, w.ny))
             for i in range(w.nx):
                 for j in range(w.ny):
-                    if w.labels[i, j] == OBSERVED:
+                    if w.labels[i, j] >= 0:
                         grid[i, j] = min(self.sensor_model.pd_effective(sid, w.x0 + (i + 0.5) * 0.1, w.y0 + (j + 0.5) * 0.1), PD_MAX)
             self._pd_cache[sid] = (grid, self.now)
         i, j = self.world.cell_of(pos)
@@ -191,6 +195,20 @@ class Crowd:
         for d in detections:
             d.pos = d.pos + self.sensor_model.correction(sensor_id, d.pos)
         self.helper._mark_stale(rt, frame, detections)
+        # a target the LD2450 lost it keeps reporting for about a second, with the same speed
+        # frame after frame (measured: at 70 % of the targets' ends, elsewhere in 2.5 %): a
+        # prediction of its own, no measurement
+        held = self._held.setdefault(sensor_id, {})
+        speeds = {tg.get("slot", 0): tg.get("speed", 0) for tg in frame.get("targets", [])}
+        for slot in list(held):
+            if slot not in speeds:
+                del held[slot]
+        for slot, v in speeds.items():
+            last = held.get(slot)
+            held[slot] = (v, last[1] + 1 if last and last[0] == v and v != 0 else 1)
+        for d in detections:
+            if held.get(d.slot, (0, 0))[1] >= HELD_FRAMES:
+                d.stale = True
         rt.detections = detections
         self._ld_runtime(sensor, rt, t, frame.get("ld2410") or {})
         energies = [max(a, b) for a, b in zip(rt.move_gates, rt.still_gates)] if rt.move_gates and rt.still_gates else None
@@ -204,10 +222,10 @@ class Crowd:
             if math.hypot(d.pos[0] - sensor.x, d.pos[1] - sensor.y) < MOUNT_RADIUS:
                 d.hidden = True
         dets = [d for d in detections if not d.hidden and not d.stale and not d.ignored]
-        # seen through an open door into a place without a sensor: somebody there, where the model
-        # keeps people without a position - not somebody in the observed area
+        # outside the plan's rooms (in a wall, beyond the outer wall): not a person. Seen through an
+        # open door into a place without a sensor: somebody there, like anywhere else
         if dets:
-            inside = self.world.place_of(np.array([d.pos for d in dets])) == OBSERVED
+            inside = self.world.place_of(np.array([d.pos for d in dets])) >= 0
             dets = [d for d, ok in zip(dets, inside) if ok]
         self.step(t, np.array([d.pos for d in dets]).reshape(-1, 2))
         # frozen targets: a person sitting still makes the LD2450 repeat itself for up to FROZEN_MAX
@@ -229,20 +247,27 @@ class Crowd:
         walkers = self._walking_near(np.array([d.pos for d in dets]).reshape(-1, 2))
         lam = np.array([(self.sensor_model.clutter_density(s.id, d.pos[0], d.pos[1], CLUTTER_PRIOR, CLUTTER_FLOOR)
                          + ECHO_DENSITY * walkers[j]) / SPEED_SPREAD for j, d in enumerate(dets)])
+        merged = self._merged() if len(self.people) > 1 else None
         per = []  # per person: (observed particle indices, m, g (n_obs, m_det) / lambda, M, A (m_det,))
         tau_before = []  # per person and observed particle: unseen by this sensor before this frame
-        for person in self.people:
+        for k_person, person in enumerate(self.people):
             c = person.cloud
             w = c.weights()
-            idx = np.flatnonzero(c.place == OBSERVED)
+            idx = np.flatnonzero(c.place != self.world.outside)
             tau_before.append(t - c.last_hit[idx, self.sidx[s.id]])
             m = self._miss(s.id, c, idx, t, gap) if len(idx) else np.zeros(0)
+            # next to somebody else one often gets no target of one's own (MODEL.md 4.1)
+            if len(idx) and merged is not None:
+                mg = merged[k_person][idx]  # 0 outside the observed area
+                m = mg + (1 - mg) * m
             if frozen is not None and len(frozen) and len(idx):
                 # the sensor repeats a target bit-identically: it is stuck there and says nothing new
                 # about that spot (mostly the person is still there, measured)
                 d = c.pos[idx][:, None, :] - frozen[None, :, :]
                 stuck = (np.hypot(d[..., 0], d[..., 1]) < FROZEN_RADIUS).any(axis=1)
                 m[stuck] = 1.0
+                # and no news is not "unseen": the clock of not being seen starts when it ends
+                c.last_hit[idx[stuck], self.sidx[s.id]] = t
             r = np.zeros((len(idx), m_det))
             for j, d in enumerate(dets):
                 dz = c.pos[idx] - d.pos
@@ -253,7 +278,7 @@ class Crowd:
                 gspd = np.exp(-0.5 * ((d.speed - vr) / p.sigma_speed) ** 2) / (math.sqrt(2 * math.pi) * p.sigma_speed)
                 r[:, j] = gpos * gspd / lam[j]
             miss_full = np.ones_like(m) if full else m
-            M = float(w[idx] @ miss_full) + float(w.sum() - w[idx].sum())  # behind doors: never detected
+            M = float(w[idx] @ miss_full) + float(w.sum() - w[idx].sum())  # out of the house: never detected
             A = (w[idx] * (1 - m)) @ r if m_det else np.zeros(0)
             per.append((idx, m, miss_full, r, M, A))
 
@@ -296,7 +321,7 @@ class Crowd:
         for k, person in enumerate(self.people):
             c = person.cloud
             idx, m, miss_full, r, M, A = per[k]
-            factor = np.full(c.n, beta[k, 0] / max(M, 1e-300))  # behind doors: only "not detected"
+            factor = np.full(c.n, beta[k, 0] / max(M, 1e-300))  # out of the house: only "not detected"
             ended = (np.zeros(0, dtype=int), np.zeros(0))
             if len(idx):
                 hit = np.zeros(len(idx))
@@ -351,7 +376,7 @@ class Crowd:
         cells, dens = [], []
         for person in self.people:
             c = person.cloud
-            obs = np.flatnonzero(c.place == OBSERVED)
+            obs = np.flatnonzero(c.place != self.world.outside)
             i = np.clip(((c.pos[obs, 0] - w0.x0) / BODY).astype(int), 0, nx - 1)
             j = np.clip(((c.pos[obs, 1] - w0.y0) / BODY).astype(int), 0, ny - 1)
             grid = np.zeros((nx + 2, ny + 2))
@@ -374,12 +399,49 @@ class Crowd:
                     free *= np.clip(1 - near[i, j], 1e-6, 1)
             person.cloud.logw[obs] += np.log(free)
 
+    def _merged(self) -> list:
+        """Per person and particle: P(the LD2450 gives this person no target of their own because
+        somebody else is close, MODEL.md 4.1), from the others' clouds and the measured resolution
+        relative to people far apart. Only in the observed area: behind a wall nobody shares a
+        target with somebody in view."""
+        w0, cell, reach = self.world, MERGE_CELL, int(math.ceil(MERGE_REACH / MERGE_CELL))
+        far = self.sensor_model.resolution(10.0)  # far apart
+        kernel = {}
+        for di in range(-reach, reach + 1):
+            for dj in range(-reach, reach + 1):
+                share = 1 - min(self.sensor_model.resolution(math.hypot(di, dj) * cell) / far, 1.0)
+                if share > 0:
+                    kernel[(di, dj)] = share
+        nx, ny = int(w0.nx * 0.1 / cell) + 1, int(w0.ny * 0.1 / cell) + 1
+        grids, cells = [], []
+        for person in self.people:
+            c = person.cloud
+            loc = np.flatnonzero(c.place == OBSERVED)
+            i = np.clip(((c.pos[loc, 0] - w0.x0) / cell).astype(int), 0, nx - 1)
+            j = np.clip(((c.pos[loc, 1] - w0.y0) / cell).astype(int), 0, ny - 1)
+            g = np.zeros((nx + 2 * reach, ny + 2 * reach))
+            np.add.at(g, (i + reach, j + reach), c.weights()[loc])
+            grids.append(g)
+            cells.append((loc, i + reach, j + reach))
+        out = [np.zeros(p.cloud.n) for p in self.people]
+        for k in range(len(self.people)):
+            loc, i, j = cells[k]
+            alone = np.ones(len(loc))
+            for kk, g in enumerate(grids):
+                if kk != k:
+                    near = np.zeros(len(loc))
+                    for (di, dj), share in kernel.items():
+                        near += share * g[i + di, j + dj]
+                    alone *= 1 - np.minimum(near, 1.0)
+            out[k][loc] = 1 - alone
+        return out
+
     def _walking_near(self, pos: np.ndarray) -> np.ndarray:
         """Per point: expected number of people walking within ECHO_RADIUS (their echoes)."""
         out = np.zeros(len(pos))
         for person in self.people:
             c = person.cloud
-            k = np.flatnonzero((c.place == OBSERVED) & (c.mode == WALK))
+            k = np.flatnonzero((c.place != self.world.outside) & (c.mode == WALK))
             if not len(k) or not len(pos):
                 continue
             w = c.weights()[k]
@@ -392,7 +454,7 @@ class Crowd:
         free = 1.0
         for person in self.people:
             c = person.cloud
-            obs = np.flatnonzero(c.place == OBSERVED)
+            obs = np.flatnonzero(c.place != self.world.outside)
             if len(obs):
                 near = np.hypot(*(c.pos[obs] - pos).T) < BODY
                 free *= 1 - float(c.weights()[obs][near].sum())
@@ -464,7 +526,7 @@ class Crowd:
         occ = []
         for person in self.people:
             c = person.cloud
-            obs = np.flatnonzero(c.place == OBSERVED)
+            obs = np.flatnonzero(c.place != self.world.outside)
             g = self._gates(s, c.pos[obs], p.ld2410_beam)
             q = np.zeros(n_g + 4)
             ok = (g >= 0) & (g < n_g)
@@ -473,7 +535,7 @@ class Crowd:
             occ.append(np.minimum(near, 1.0))
         for k, person in enumerate(self.people):
             c = person.cloud
-            obs = np.flatnonzero(c.place == OBSERVED)
+            obs = np.flatnonzero(c.place != self.world.outside)
             if not len(obs):
                 continue
             g = self._gates(s, c.pos[obs], p.ld2410_fov)
@@ -501,7 +563,7 @@ class Crowd:
         for person in self.people:
             mean, mass, spread = self._sure(person)
             c = person.cloud
-            obs = np.flatnonzero(c.place == OBSERVED)
+            obs = np.flatnonzero(c.place != self.world.outside)
             if len(obs):
                 w = c.weights()[obs]
                 g = self._gates(s, c.pos[obs], p.ld2410_beam)
@@ -569,7 +631,7 @@ class Crowd:
             mean, mass, spread = sure[k]
             c = person.cloud
             w = c.weights()
-            idx = np.flatnonzero(c.place == OBSERVED)
+            idx = np.flatnonzero(c.place != self.world.outside)
             # detection probability: a person surely there, seen by another sensor within a second,
             # nobody close by, not in a long dropout of this sensor
             if mean is not None and mass > 0.9 and spread < 0.4 and alone(k):

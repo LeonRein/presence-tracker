@@ -43,6 +43,8 @@ class World:
                 if z is not None:
                     rid = region_of_room.get(z.id)
                     self.labels[i, j] = OBSERVED if rid is None else self.index[rid]
+        # area per place (m^2): a person in a place without a sensor is somewhere in it
+        self.area = np.bincount(self.labels[self.labels >= 0].ravel(), minlength=len(self.places)) * CELL * CELL
         # walls a person can't cross (door gaps cut out, like for the radar's sight)
         segs = [(a[0], a[1], b[0], b[1]) for a, b in config.wall_segments]
         self.walls = np.array(segs, dtype=float).reshape(-1, 4)
@@ -61,6 +63,12 @@ class World:
         i = np.clip(np.floor((xy[:, 0] - self.x0) / CELL).astype(int), 0, self.nx - 1)
         j = np.clip(np.floor((xy[:, 1] - self.y0) / CELL).astype(int), 0, self.ny - 1)
         return i, j
+
+    def sample(self, place: int, n: int, rng) -> np.ndarray:
+        """n points evenly in the place (n, 2)."""
+        ii, jj = np.nonzero(self.labels == place)
+        k = rng.integers(0, len(ii), n)
+        return np.stack([self.x0 + (ii[k] + rng.random(n)) * CELL, self.y0 + (jj[k] + rng.random(n)) * CELL], axis=1)
 
     def zone_mask(self, zone) -> np.ndarray:
         """Raster of the cells whose centers are in the zone (cached)."""

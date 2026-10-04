@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.5
+
+- Auch in Räumen ohne Sensor hat eine Person einen Ort. Sieht ein Sensor jemanden durch die offene
+  Küchentür, ist das eine Messung wie jede andere, und wer aus der Küche herausgeht, läuft heraus.
+  Bisher galt „vor der Küchentür stehen geblieben“ (Küchentest 4.10., 18:23).
+- Verliert der LD2450 ein Ziel, meldet er es noch gut eine Sekunde weiter, mit immer derselben
+  Geschwindigkeit (gemessen bei 70 % aller Zielenden). Solche gehaltenen Ziele zählen nicht mehr als
+  Messung; der Wohnzimmer-Sensor hielt einen vor der Küchentür fest, als die Person schon drin war.
+- Solange ein eingefrorenes Ziel nichts sagt, läuft dort auch die Uhr „nicht gesehen“ nicht. Bisher
+  galt jemand nach 35 s an einem eingefrorenen Ziel als im langen Aussetzer und konnte danach unbemerkt
+  vor der Balkontür stehen bleiben.
+- Zwei Personen dicht nebeneinander geben dem LD2450 oft nur ein Ziel (gemessen). Wer neben jemandem
+  hergeht, ohne eigenes Ziel, ist deshalb kein Widerspruch mehr; vorher blieb beim gemeinsamen Gehen
+  oft eine Person auf dem Sofa zurück.
+
+Testdurchlauf: 95,6 % (12 Läufe, 92–97,5 %; 0.6.4: 90,5 %). Der Küchenschritt klappt in allen Läufen
+(0.6.4: in 4 von 12).
+
 ## 0.6.4
 
 - Geister nach Messung: In den leeren Räumen nachts gibt es kaum welche (0,4 pro Stunde), neben

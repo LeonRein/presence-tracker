@@ -19,7 +19,8 @@ Was hier nicht steht, gibt es im Tracker nicht.
 4. **Frames sind gegeben den Zustand unabhängig.** Dass aufeinanderfolgende Frames nicht unabhängig
    *aussehen*, hat Ursachen: Wer an einer Stelle nicht gesehen wird, wird dort meist länger nicht
    gesehen (Verdeckung, Sitzhaltung), Geister leben eine Weile, Messfehler sind teils systematisch
-   (Versatz). Diese Ursachen werden modelliert. Eine pauschale Dämpfung (bisher `evidence_time`) gibt es nicht mehr.
+   (Versatz), und der LD2450 glättet intern, sodass sein Fehler eine knappe Sekunde lang bleibt (4.1,
+   noch nicht modelliert). Diese Ursachen werden modelliert. Eine pauschale Dämpfung (bisher `evidence_time`) gibt es nicht mehr.
 5. **Gelernt wird aus der ganzen Wahrscheinlichkeitsverteilung**, gewichtet mit ihrer
    Wahrscheinlichkeit (EM-Prinzip). Nicht nur aus der wahrscheinlichsten Hypothese, und nicht erst
    ab einer Sicherheitsschwelle. Jede gelernte Größe hat einen Startwert (Prior) mit einem Gewicht in
@@ -31,11 +32,16 @@ Was hier nicht steht, gibt es im Tracker nicht.
 Bereiche ohne Sensor *R₁…Rₖ* (Küche, Balkon, Flur-Bereich, …) und *draußen*; Türen *q* verbinden
 genau zwei davon. Draußen ist nur über bestimmte Türen erreichbar (bei uns über den Flur-Bereich).
 
+Auch in einem Bereich ohne Sensor hat eine Person einen Ort. Kein Sensor sieht ihn, außer durch eine
+offene Tür. Bis 0.6.4 hatte sie dort keinen Ort: Sah der Esszimmer-Sensor jemanden 1 m hinter der
+Küchentür, konnte das keine Hypothese erklären, und „blieb vor der Tür stehen“ gewann (Küchentest 4.10.,
+18:23).
+
 **Zustand zur Zeit t:**
 
 | Teil | Inhalt |
 |---|---|
-| Personen | beliebig viele; je Person: wo (ein Ort im beobachteten Bereich mit Geschwindigkeit und Modus geht / steht, oder einer der Bereiche *Rₖ* mit der Zeit seit dem Betreten), und seit wann sie von welchem Sensor nicht mehr gesehen wurde |
+| Personen | beliebig viele; je Person: wo (ein Ort mit Geschwindigkeit und Modus geht / steht, im beobachteten Bereich oder in einem der Bereiche *Rₖ*, dort mit der Zeit seit dem Betreten, oder draußen), und seit wann sie von welchem Sensor nicht mehr gesehen wurde |
 | Geister | je Sensor beliebig viele, je Geist Ort und Alter |
 
 Personen sind anonym. Nummern in der Oberfläche sind nur Beschriftung und nicht Teil des Modells
@@ -61,7 +67,8 @@ Personen sind anonym. Nummern in der Oberfläche sind nur Beschriftung und nicht
 
 ### 3.2 Türen
 - Wer sich durch eine Tür bewegt, ist danach im Bereich dahinter. Das ist eine Folge der Bewegung,
-  kein eigenes Ereignis.
+  kein eigenes Ereignis, und gilt in beide Richtungen: Wer in der Küche durch die offene Tür gesehen
+  wird und herausgeht, läuft heraus.
 - Wer in einem Bereich *Rₖ* ist, kommt mit der Ausfallrate `h_k(Alter)` an einer seiner Türen wieder
   heraus, gehend, in den Raum hinein. `h_k` stammt aus den **gelernten** Aufenthaltsdauern je Bereich.
   Prior heute: geschlossene Bereiche (Küche, Balkon) Median 2 min, offener Flur-Bereich 30 min. Später
@@ -152,7 +159,22 @@ Gegeben der Zustand:
   Messungen einer Person durch zwei Sensoren (nur der Unterschied ist beobachtbar, halbe-halbe).
   Streuung `R_s` nach Entfernung **gelernt**. Ein langsam wandernder Fehleranteil (Zeitkonstante
   etwa 30 s) ist Teil des Personenzustands je Sensor.
-- Radialgeschwindigkeit: `N(Projektion der Geschwindigkeit, σ_v)`, **gemessen**.
+- Radialgeschwindigkeit: `N(Projektion der Geschwindigkeit, σ_v)` mit σ_v = 0,25 m/s. **Gemessen**
+  (4.10.) ist mehr: 0,40 m/s beim Gehen, 0,12 m/s im Stehen. Noch nicht übernommen.
+- **Offen: Der Fehler bleibt eine Weile.** Der LD2450 glättet intern. **Gemessen:** Von Frame zu Frame
+  (0,09 s) korrelieren Ortsfehler mit 0,98 und Geschwindigkeitsfehler mit 0,91, nach 0,7 s kaum noch.
+  Das Modell zählt jeden Frame als unabhängig und überschätzt so einzelne Messungen. Ein erster Versuch
+  (jedes Partikel merkt sich je Sensor seinen letzten Fehler, nur der Rest zählt) machte Personen
+  gegenüber Geistern zu stark: Phantome in leeren Räumen, Drehbuch 74 %. Verworfen; die Geister
+  müssten dasselbe Gedächtnis bekommen.
+- **Zwei nah beieinander, ein Ziel.** Wer weniger als 1 m neben jemand anderem steht, bekommt oft kein
+  eigenes Ziel (Auflösung `res(d)`, oben). Diese Wahrscheinlichkeit, aus den Wolken der anderen
+  berechnet, zählt zum „nicht gesehen“ dazu, nur im beobachteten Bereich. Ohne sie galt „läuft
+  ungesehen neben dem anderen her“ als sehr teuer, und im Drehbuch-Schritt 8 (beide gehen nebeneinander
+  zum Tisch) blieb oft eine Person auf dem Sofa zurück. Ein gemeinsames Paar-Ziel in der Zuordnung
+  (das Ziel zieht beide Wolken mit) wurde ausprobiert und verworfen: Es macht eine unsichtbare zweite
+  Person direkt neben einer sichtbaren fast kostenlos (B „folgte“ A aus dem Flur), Drehbuch 69–73 %,
+  doppelte Rechenzeit.
 - Jeder lebende Geist erzeugt ein Ziel an seinem Ort.
 - Mehr als 3 Ziele: der Sensor meldet 3 davon. Ein voller Frame sagt also nichts über die Fehlenden.
 
@@ -162,11 +184,21 @@ Gegeben der Zustand:
 - Ziele näher als 0,3 m am Sensor werden verworfen. Der Sensor hängt in etwa 1,5 m Höhe und strahlt nach
   vorn. Eine Person so nah läge weit außerhalb seines senkrechten Blickwinkels, das Ziel kommt von der
   Montage (gesehen am umgehängten Wohnzimmer-Sensor, 4.10.).
+- **Gehaltene Ziele.** Verliert der LD2450 ein Ziel, meldet er es noch gut eine Sekunde weiter, mit
+  Frame für Frame derselben Geschwindigkeit und kaum wanderndem Ort. **Gemessen:** bei 70 % aller
+  Zielenden 12–16 Frames dieselbe Geschwindigkeit (ungleich 0), mitten in einer Spur 8 Frames oder mehr
+  nur in 2,5 % (5 Frames oder mehr: 6 %). Ab 5 gleichen Frames gilt ein Ziel als gehalten und wird wie
+  ein eingefrorenes behandelt.
+  So stand der Wohnzimmer-Sensor 1,5 s lang auf +0,24 m/s vor der Küchentür, während die Person schon
+  in der Küche war.
 - Eingefrorene Ziele sagen bis 35 s nichts über ihre Stelle (gemessen: eine still sitzende Person friert
   höchstens so lange ein). Länger eingefroren ist kein Mensch, und Fehlmessungen zählen dort wieder.
-- Ziele in einem Bereich ohne Sensor (durch eine offene Tür gesehen, z. B. jemand im Flur) werden nicht
-  als Person im beobachteten Bereich gedeutet. Dort führt das Modell Personen ohne Ort. Später können
-  sie als Hinweis „jemand ist in diesem Bereich“ dienen.
+  Solange es nichts sagt, läuft auch die Uhr „nicht gesehen“ an dieser Stelle nicht: Sie beginnt erst,
+  wenn das Einfrieren endet. Bis 0.6.4 lief sie weiter. Wer 35 s an einem eingefrorenen Ziel stand, galt
+  danach schon als im langen Aussetzer, und dass ihn zwei Sensoren mit 95 % Trefferwahrscheinlichkeit
+  nicht sahen, kostete fast nichts (Drehbuch-Schritt 5: „steht vor der Balkontür“).
+- Ziele in einem Bereich ohne Sensor (durch eine offene Tür gesehen, z. B. jemand in der Küche) sind
+  Messungen wie alle anderen: Personen haben auch dort einen Ort (Abschnitt 2).
 
 ### 4.2 LD2410C (Energie je Entfernungsstufe)
 - Energie je Stufe gegeben „leer“, „jemand sitzt in dieser Stufe“ oder „jemand geht in dieser Stufe“:
@@ -193,9 +225,9 @@ näherungsweise, aber es fügt **nichts hinzu**, was nicht im Modell steht.
 **Je Person eine Partikelwolke, das Raster als Feld-Speicher (wie FLIP):**
 - Jede Person ist eine Wolke aus etwa 500–1000 gewichteten Partikeln. Ein Partikel ist eine mögliche
   Lage der Person:
-  - entweder ein Ort im beobachteten Bereich mit Geschwindigkeit, Modus (geht / steht), Zeit im
-    Modus und Zeit seit dem letzten Treffer je Sensor,
-  - oder „in Küche / Balkon / Flur-Bereich / draußen“ mit der Zeit seit dem Betreten.
+  - ein Ort mit Geschwindigkeit, Modus (geht / steht), Zeit im Modus und Zeit seit dem letzten Treffer
+    je Sensor; in Küche / Balkon / Flur-Bereich zusätzlich die Zeit seit dem Betreten,
+  - oder „draußen“ mit der Zeit seit dem Verlassen.
 
   Die Wolke *ist* die Superposition. Sitzende sind Partikel mit Geschwindigkeit null.
 - Ein Kalman-Filter wird nicht gebraucht. Er ist der Sonderfall des Bayes-Filters für eine einzelne

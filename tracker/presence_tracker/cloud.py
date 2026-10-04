@@ -44,7 +44,8 @@ class Cloud:
         self.pos = np.zeros((n, 2))
         self.vel = np.zeros((n, 2))
         self.mode = np.full(n, STILL, dtype=np.int8)
-        self.since = np.zeros(n)  # time the particle entered its mode (observed) or its place (else)
+        self.since = np.zeros(n)  # time the particle entered its mode
+        self.entered = np.zeros(n)  # time it entered its place (the stays behind doors count from it)
         self.anchor = np.zeros((n, 2))  # where the last mode change happened (for learning)
         self.counted = np.ones(n, dtype=bool)  # that mode change was learned already
         self.last_hit = np.zeros((n, n_sensors))  # time of the last detection per sensor
@@ -53,10 +54,14 @@ class Cloud:
     # ------------------------------------------------------------------ setup
 
     @classmethod
-    def at_place(cls, n, n_sensors, rng, place: int, t: float) -> "Cloud":
+    def at_place(cls, n, n_sensors, rng, place: int, t: float, world=None) -> "Cloud":
         c = cls(n, n_sensors, rng)
         c.place[:] = place
+        if world is not None and place != world.outside:
+            c.pos = world.sample(place, n, rng)
+            c.anchor[:] = c.pos
         c.since[:] = t
+        c.entered[:] = t
         c.last_hit[:] = t
         return c
 
@@ -65,14 +70,17 @@ class Cloud:
         """Nothing known (start without a saved state): a third standing anywhere in the observed
         area, a third behind the doors, a third not in the house."""
         c = cls(n, n_sensors, rng)
-        ii, jj = np.nonzero(world.labels == OBSERVED)
         regions = [i for i in range(1, len(world.places))]
-        k = rng.integers(0, len(ii), n)
-        c.pos = np.stack([world.x0 + (ii[k] + rng.random(n)) * 0.1, world.y0 + (jj[k] + rng.random(n)) * 0.1], axis=1)
+        c.pos = world.sample(OBSERVED, n, rng)
         behind = rng.random(n) < 2 / 3 if regions else np.zeros(n, dtype=bool)
         if regions:
             c.place[behind] = np.array(regions)[rng.integers(0, len(regions), int(behind.sum()))]
+            for pl in np.unique(c.place[behind]):
+                k = np.flatnonzero(c.place == pl)
+                if pl != world.outside:
+                    c.pos[k] = world.sample(int(pl), len(k), rng)
         c.since[:] = t
+        c.entered[:] = t
         c.last_hit[:] = t  # watched from now on: not being seen counts from the start
         c.anchor[:] = c.pos
         return c
@@ -101,7 +109,7 @@ class Cloud:
         w = self.weights()
         u = (self.rng.random() + np.arange(self.n)) / self.n
         idx = np.minimum(np.searchsorted(np.cumsum(w), u), self.n - 1)
-        for name in ("place", "pos", "vel", "mode", "since", "last_hit", "anchor", "counted"):
+        for name in ("place", "pos", "vel", "mode", "since", "entered", "last_hit", "anchor", "counted"):
             setattr(self, name, getattr(self, name)[idx].copy())
         self.logw[:] = -math.log(self.n)
 
@@ -113,7 +121,8 @@ class Cloud:
         if dt <= 0:
             return
         rng = self.rng
-        obs = self.place == OBSERVED
+        # everybody in the house has a position, also where no sensor sees (MODEL.md 2)
+        obs = self.place != world.outside
         walk = obs & (self.mode == WALK)
         still = obs & (self.mode == STILL)
 
@@ -135,20 +144,22 @@ class Cloud:
             walking = self.mode[moved] == WALK
             blocked[walking] = world.crosses_wall(self.pos[moved[walking]], new[moved[walking]])
             target = world.place_of(new[moved])
-            ok = ~blocked & (target >= 0)
+            # through a door into another place: walking (a sway doesn't change rooms). Out of a
+            # place without a sensor also unseen when its stay ends (below)
+            own = self.place[moved]
+            ok = ~blocked & (target >= 0) & ((target == own) | walking)
             go = moved[ok]
             self.pos[go] = new[go]
-            # through a door into a place without a sensor
-            through = go[target[ok] != OBSERVED]
-            self.place[through] = target[ok][target[ok] != OBSERVED]
-            self.since[through] = t
+            through = go[target[ok] != own[ok]]
+            self.place[through] = target[ok][target[ok] != own[ok]]
+            self.entered[through] = t
             # into a wall: stopped there
             stop = moved[~ok]
             self.vel[stop] = 0.0
 
         # mode changes: walkers stop, standing people start walking (the longer they stand, the
         # less likely)
-        obs = self.place == OBSERVED
+        obs = self.place != world.outside
         k = np.flatnonzero(obs & (self.mode == WALK))
         stop_rate = m.stop_rate * (habits.factor("stop", self.pos[k]) if habits is not None else 1.0)
         stops = k[rng.random(len(k)) < 1 - np.exp(-stop_rate * dt)]
@@ -218,6 +229,12 @@ class Cloud:
             into = which < len(ways)
             self.place[kg[into]] = np.array(ways, dtype=np.int16)[which[into]] if ways else 0
             self.since[kg[into]] = t
+            self.entered[kg[into]] = t
+            for pl in np.unique(self.place[kg[into]]):
+                ki = kg[into][self.place[kg[into]] == pl]
+                self.pos[ki] = world.sample(int(pl), len(ki), rng)
+                self.mode[ki] = STILL
+                self.vel[ki] = 0.0
             ke = kg[~into]
             if len(ke):
                 e = which[~into] - len(ways)
@@ -226,13 +243,14 @@ class Cloud:
                 self.place[ke] = OBSERVED
                 self.mode[ke] = WALK
                 self.since[ke] = t
+                self.entered[ke] = t
                 self.last_hit[ke] = t
                 self.counted[ke] = True
         if world.open_places:
             k = np.flatnonzero(np.isin(self.place, world.open_places))
             out = k[rng.random(len(k)) < 1 - math.exp(-m.leave_rate * dt)]
             self.place[out] = world.outside
-            self.since[out] = t
+            self.entered[out] = t
 
         # behind a door: the visit ends by the learned stays, coming out at a door of that place.
         # Rare per step, so tried more often than it happens and the weights corrected (exact).
@@ -245,7 +263,7 @@ class Cloud:
             k = np.flatnonzero(self.place == place)
             region = world.places[int(place)]
             # by whole seconds of the visit: the stays are learned in seconds anyway
-            ages = np.maximum(np.round(t - self.since[k]), 0.0)
+            ages = np.maximum(np.round(t - self.entered[k]), 0.0)
             uniq, inv = np.unique(ages, return_inverse=True)
             hz = np.array([dwell.hazard(region, a, dt) for a in uniq])[inv]
             q = np.maximum(hz, m.exit_proposal)
@@ -261,6 +279,7 @@ class Cloud:
             self.place[ko] = OBSERVED
             self.mode[ko] = WALK
             self.since[ko] = t
+            self.entered[ko] = t
             self.counted[ko] = True
             self.last_hit[ko] = t  # just came in: seen like anybody walking in view
 
