@@ -251,11 +251,11 @@ class Tracker:
     def _pd(self, sensor: SensorConfig, pos: np.ndarray) -> float:
         """Detection probability at pos, with the same tolerance at walls as the reflection filter:
         someone sitting against a wall may be measured a few centimeters behind it."""
-        pd = self.sensor_model.pd_effective(sensor.id, *pos)
+        pd = self.sensor_model.pd(sensor.id, *pos)
         if pd <= 0:
             u = pos - np.array([sensor.x, sensor.y])
             back = pos - u / max(float(np.linalg.norm(u)), 1e-6) * self.config.params.wall_margin
-            pd = self.sensor_model.pd_effective(sensor.id, *back)
+            pd = self.sensor_model.pd(sensor.id, *back)
         return pd
 
     def _existence(self, sensor: SensorConfig, t: float, frame_gap: float, updates: list):

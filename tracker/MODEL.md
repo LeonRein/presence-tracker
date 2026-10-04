@@ -18,8 +18,7 @@ Was hier nicht steht, gibt es im Tracker nicht.
    Ankunftsrate an der Wohnungstür, keine Regel. In einem öffentlichen Gebäude ist dieselbe Rate hoch.
 4. **Frames sind gegeben den Zustand unabhängig.** Dass aufeinanderfolgende Frames nicht unabhängig
    *aussehen*, hat Ursachen: Wer an einer Stelle nicht gesehen wird, wird dort meist länger nicht
-   gesehen (Verdeckung, Sitzhaltung), Geister leben eine Weile, Messfehler sind teils systematisch
-   (Versatz), und der LD2450 glättet intern, sodass sein Fehler eine knappe Sekunde lang bleibt (4.1,
+   gesehen (Verdeckung, Sitzhaltung), Geister leben eine Weile, und der LD2450 glättet intern, sodass sein Fehler eine knappe Sekunde lang bleibt (4.1,
    noch nicht modelliert). Diese Ursachen werden modelliert. Eine pauschale Dämpfung (bisher `evidence_time`) gibt es nicht mehr.
 5. **Gelernt wird aus der ganzen Wahrscheinlichkeitsverteilung**, gewichtet mit ihrer
    Wahrscheinlichkeit (EM-Prinzip). Nicht nur aus der wahrscheinlichsten Hypothese, und nicht erst
@@ -96,16 +95,18 @@ Personen sind anonym. Nummern in der Oberfläche sind nur Beschriftung und nicht
   auf 59–87 %.
 
 ### 3.3 Nicht gesehen werden
-Es gibt keinen eigenen Zustand „ausgesetzt“ und keine Schwelle „verloren“. Es gibt eine **gelernte**
-Wahrscheinlichkeit je Feld, Sensor und Modus (steht / geht):
+Es gibt keinen eigenen Zustand „ausgesetzt“ und keine Schwelle „verloren“. Es gibt eine
+**gemessene** Wahrscheinlichkeit je Sensor und Modus (steht / geht), über die Erkennungswahrscheinlichkeit
+des Orts (4.1) auch je Ort:
 
 > `U_s(x, τ)` = P(eine Person, die an x bleibt, wird von Sensor s τ Sekunden lang nicht detektiert)
 
 - Für kleine τ ist das die gewöhnliche Fehlquote eines Frames (1 − Erkennungswahrscheinlichkeit).
   Für große τ zeigt sie, wie lange Verdeckungen an dieser Stelle dauern: Sofalehne lange, Raummitte
   praktisch nie.
-- **Gelernt** aus sicheren Personen: wie lange sie an jeder Stelle ohne Treffer blieben. Ausgeklammert
-  werden Zeiten, in denen jemand anders daneben das Ziel bekommen haben kann. Prior: aus den Aufnahmen.
+- **Gemessen** auf den Aufnahmen: wie lange sichere Personen ohne Treffer blieben (Stehende: langer
+  Schwanz bis Minuten; Gehende: im Mittel 0,7 s). Je Ort gelernt wird das nicht: Wie beim Verhalten
+  (3.1) würde das Modell eigene Fehler als „hier fällt man oft aus“ lernen.
 - Kein Treffer im Frame gewichtet „die Person ist an x“ mit `U_s(x, τ+Δt) / U_s(x, τ)`. τ ist die Zeit
   seit dem letzten Treffer dieser Person bei diesem Sensor.
   *Offen:* Eigentlich gehört ein langer Aussetzer zu einer Haltung an einem Ort, nicht zur Person.
@@ -159,10 +160,13 @@ Gegeben der Zustand:
   ist `1 − U_s(x, τ+Δt) / U_s(x, τ)`.
 - Zwei Personen im Abstand d erzeugen mit Wahrscheinlichkeit `res(d)` zwei Ziele, sonst
   eines dazwischen. `res(d)` **gemessen** (0 % unter 0,25 m, 41 % bei 0,75–1 m, rund 75 % ab 1 m), **gelernt**.
-- Messort: `z ~ N(x + b_s(x), R_s(x))`. Versatz `b_s` je Sensor und Feld **gelernt** aus gleichzeitigen
-  Messungen einer Person durch zwei Sensoren (nur der Unterschied ist beobachtbar, halbe-halbe).
-  Streuung `R_s` nach Entfernung **gelernt**. Ein langsam wandernder Fehleranteil (Zeitkonstante
-  etwa 30 s) ist Teil des Personenzustands je Sensor.
+- Erkennungswahrscheinlichkeit je Ort und Sensor aus der Geometrie: Sichtfeld, Reichweite (weich
+  auslaufend), Wände. Bis 0.6.6 wurde sie zusätzlich je 25-cm-Feld gelernt; im Drehbuch brachte das
+  nichts (94,7 % ohne gegen 94,4 % mit, mit vorab gelernten Daten 95,4 % gegen 95,1 %), entfernt.
+- Messort: `z ~ N(x, R_s(r))`, Streuung nach Entfernung r. Die beiden Sensoren messen dieselbe
+  sitzende Person am Sofa bis 0,5 m auseinander. Ein je 50-cm-Feld gelernter Versatz (halbe-halbe auf
+  die Sensoren) wurde ausprobiert (0.6.7): Das Drehbuch zählte damit öfter zu viele Personen (Median
+  95 s gegen 78 s), also nicht übernommen.
 - Radialgeschwindigkeit: `N(Projektion der Geschwindigkeit, σ_v)` mit σ_v = 0,25 m/s. **Gemessen**
   (4.10.) ist mehr: 0,40 m/s beim Gehen, 0,12 m/s im Stehen. Noch nicht übernommen.
 - **Offen: Der Fehler bleibt eine Weile.** Der LD2450 glättet intern. **Gemessen:** Von Frame zu Frame
@@ -291,13 +295,13 @@ Es entsteht keine neue Spur.
 Alle Größen aus 3 und 4 mit „gelernt“ werden aus den Wolken geschätzt, gewichtet mit ihrer Wahrscheinlichkeit:
 erwartete Zählungen (wie oft war hier jemand sichtbar, wie oft gab es ein Ziel, wie lange dauerten
 Aussetzer, wo entstanden Geister, …), gemischt mit dem Prior. Wird ein Sensor umgehängt, vergisst er
-alles, was von seinem Ort abhängt (Erkennung, Geister, Versatz, Aussetzerorte).
+alles, was von seinem Ort abhängt (Geister, LD2410C).
 
 ## 8. Was aus dem bisherigen Code wegfällt
 
 | bisher | ersetzt durch |
 |---|---|
-| `evidence_time`-Dämpfung | Nicht-gesehen-Dauer `U` (3.3), Geisterlebensdauer (3.4), Versatz (4.1) |
+| `evidence_time`-Dämpfung | Nicht-gesehen-Dauer `U` (3.3), Geisterlebensdauer (3.4) |
 | `lost_after`, `coast_time`, „verloren“-Status, Aussetzer-Beginn | `U` (3.3) |
 | Erklärungsarten track / getup / out / jump / any | Übergänge aus 3, ein Messmodell |
 | Gast-Platz, `residents`, `guests` | Ankunftsrate `α` (3.2) |

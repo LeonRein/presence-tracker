@@ -1,13 +1,11 @@
 """What each sensor can see, how reliably, and where it sees ghosts.
 
-Three maps per sensor on a fixed grid (CELL m, anchored at ORIGIN so stored data stays valid
+Two maps per sensor on a fixed grid (CELL m, anchored at ORIGIN so stored data stays valid
 when rooms are edited):
 
   prior P_D   detection probability from the geometry: 0 behind walls and in closed rooms
               without a sensor, falling toward the edge of the field of view and the maximum
               range
-  learned P_D how often the sensor actually reports a person that is there for sure (seen by
-              another sensor at the same moment, or tracked with an origin for a while)
   clutter     how often the sensor reports a target where nobody is: only counted where another
               online sensor sees the spot well, reports nothing there, and no known person is
               near. Never from the tracker's own verdicts: someone who always sits where only
@@ -18,7 +16,8 @@ person at the same time; how long the LD2450 drops a person it saw (re-detection
 walking/still); and for the LD2410C, per sensor and 0.75 m gate, the energy it shows with a
 person in that gate versus with nobody near it.
 
-The tracker uses pd_effective and clutter_density for the existence probability of new tracks.
+The detection probability is the geometry's alone: learning where a sensor actually reports people
+was measured not to help (Drehbuch 4.10., with and without learned data) and was removed in 0.6.7.
 Counts fade with a half-life of HALF_LIFE, so the maps follow changes (furniture, a moved sensor).
 """
 
@@ -54,12 +53,6 @@ GAP_PRIOR = {
 }
 GAP_PRIOR_WEIGHT = 200  # the prior counts like this many observed gaps
 GAP_FLOOR = 1.5  # s: dropouts are counted from here (the tracker's lost_after)
-OFFSET_CELL = 0.5  # m, grid of the learned systematic errors of the sensors
-OFFSET_PRIOR_N = 10  # measurement pairs: a place's systematic error is believed after about this many
-
-
-def _offset_cell(pos) -> str:
-    return f"{math.floor(float(pos[0]) / OFFSET_CELL)},{math.floor(float(pos[1]) / OFFSET_CELL)}"
 
 
 def _prior_survival(mode: str, tau: float) -> float:
@@ -103,13 +96,10 @@ def cell_center(i: int, j: int) -> tuple:
 class SensorModel:
     def __init__(self, config):
         self.config = config
-        self.trials = {}  # sensor -> SIZE x SIZE array (fading counts)
-        self.hits = {}
-        self.exposure = {}
+        self.exposure = {}  # sensor -> SIZE x SIZE array (fading counts)
         self.clutter = {}
         self.accuracy = []  # [range_a, range_b, offset] of simultaneous detections of one person
         self.gaps = {"still": [], "walking": []}  # learned LD2450 dropout durations of people who stayed
-        self.offsets = {}  # sensor -> "i,j" (OFFSET_CELL grid) -> [sum dx, sum dy, n]: its systematic error there
         self.pairs = [[0.0, 0.0] for _ in RES_EDGES]  # per distance bin: [both detected, one detected] frames
         self.ld_occ = {}  # sensor -> GATES x BINS counts of LD2410C energy with a person sitting in the gate
         self.ld_move = {}  # ... with a person moving in the gate (a different population: higher)
@@ -140,7 +130,7 @@ class SensorModel:
                     for j in range(j0, j1 + 1):
                         grid[i, j] = self.prior_pd(s, *cell_center(i, j))
             self.prior[s.id] = grid
-            for store in (self.trials, self.hits, self.exposure, self.clutter):
+            for store in (self.exposure, self.clutter):
                 store.setdefault(s.id, np.zeros((SIZE, SIZE), dtype=np.float32))
             for store in (self.ld_occ, self.ld_move, self.ld_emp):
                 store.setdefault(s.id, np.zeros((GATES, BINS), dtype=np.float32))
@@ -176,17 +166,6 @@ class SensorModel:
         s = self.config.sensor_by_id.get(sensor_id)
         return self.prior_pd(s, x, y) if s is not None and s.placed and s.enabled else 0.0
 
-    def pd_effective(self, sensor_id: str, x: float, y: float, weight: float = 20.0) -> float:
-        """Detection probability: the learned rate, pulled toward the prior while few trials exist
-        (the prior counts like `weight` trials). 0 where the geometry says the sensor can't see."""
-        prior = self.pd(sensor_id, x, y)
-        if prior <= 0:
-            return 0.0
-        i, j = cell_of(x, y)
-        trials = float(self.trials[sensor_id][i, j]) if sensor_id in self.trials else 0.0
-        hits = float(self.hits[sensor_id][i, j]) if sensor_id in self.hits else 0.0
-        return (hits + weight * prior) / (trials + weight)
-
     def clutter_density(self, sensor_id: str, x: float, y: float, prior: float, floor: float,
                         weight: float = 2000.0) -> float:
         """Ghost targets per m^2 and frame of this sensor here: the learned rate, pulled toward the
@@ -206,23 +185,7 @@ class SensorModel:
         sid = sensor.id
         if sid not in self.prior:
             return
-        updated = {id(tr) for _, tr in updates}
         confirmed = [tr for tr in tracker.confirmed()]
-
-        # P_D: people who are there for sure, independently of this sensor
-        for tr in confirmed:
-            if tr.lost(t, tracker.config.params.lost_after):
-                continue
-            others = any(s != sid and t - ts < 1.0 for s, ts in tr.last_hit_by.items())
-            if not (others or (tr.has_origin and t - tr.born > SURE_AGE)):
-                continue
-            x, y = tr.position()
-            if self.pd(sid, x, y) < 0.05:
-                continue
-            i, j = cell_of(x, y)
-            self.trials[sid][i, j] += 1
-            if id(tr) in updated:
-                self.hits[sid][i, j] += 1
 
         # clutter: spots another online sensor sees well and reports nothing, nobody known near
         for other in tracker.config.sensors:
@@ -267,11 +230,10 @@ class SensorModel:
 
     def forget(self, sensor_id: str):
         """The sensor was moved: drop what was learned about it (detection, ghosts, LD2410C)."""
-        for store in (self.trials, self.hits, self.exposure, self.clutter, self.ld_occ, self.ld_move, self.ld_emp):
+        for store in (self.exposure, self.clutter, self.ld_occ, self.ld_move, self.ld_emp):
             if sensor_id in store:
                 store[sensor_id][:] = 0
         self.ld_history.pop(sensor_id, None)
-        self.offsets.clear()  # only differences between sensors are learned
         self.changed = True
 
     def learn_gap(self, mode: str, duration: float):
@@ -280,38 +242,6 @@ class SensorModel:
             self.gaps[mode].append(round(duration, 2))
             del self.gaps[mode][:-MAX_GAPS]
             self.changed = True
-
-    def learn_offset(self, sid_a: str, pos_a, sid_b: str, pos_b):
-        """One person (sure, alone, still) measured by two sensors at the same moment: their
-        systematic difference there, half to each (only the difference is observable)."""
-        d = np.asarray(pos_a, dtype=float) - np.asarray(pos_b, dtype=float)
-        cell = _offset_cell((np.asarray(pos_a) + np.asarray(pos_b)) / 2)
-        for sid, sign in ((sid_a, 0.5), (sid_b, -0.5)):
-            acc = self.offsets.setdefault(sid, {}).setdefault(cell, [0.0, 0.0, 0.0])
-            acc[0] += sign * d[0]
-            acc[1] += sign * d[1]
-            acc[2] += 1
-        self.changed = True
-
-    def correction(self, sid: str, pos) -> np.ndarray:
-        """What to add to a measurement of this sensor here: minus its learned systematic error
-        (the place and its neighbours, shrunk toward none while little was seen)."""
-        cells = self.offsets.get(sid)
-        if not cells:
-            return np.zeros(2)
-        i, j = math.floor(float(pos[0]) / OFFSET_CELL), math.floor(float(pos[1]) / OFFSET_CELL)
-        sx = sy = n = 0.0
-        for di in (-1, 0, 1):
-            for dj in (-1, 0, 1):
-                acc = cells.get(f"{i + di},{j + dj}")
-                if acc:
-                    wt = 1.0 if di == dj == 0 else 0.25
-                    sx += wt * acc[0]
-                    sy += wt * acc[1]
-                    n += wt * acc[2]
-        if n <= 0:
-            return np.zeros(2)
-        return -np.array([sx, sy]) / (n + OFFSET_PRIOR_N)
 
     def learn_pair(self, distance: float, both: bool):
         """Two people (sure ones) at this distance in view of a sensor, at least one detected."""
@@ -394,7 +324,7 @@ class SensorModel:
         if t - self.last_decay < 600:
             return
         f = 0.5 ** ((t - self.last_decay) / HALF_LIFE)
-        for store in (self.trials, self.hits, self.exposure, self.clutter, self.ld_occ, self.ld_move, self.ld_emp):
+        for store in (self.exposure, self.clutter, self.ld_occ, self.ld_move, self.ld_emp):
             for grid in store.values():
                 grid *= f
         self.last_decay = t
@@ -419,26 +349,23 @@ class SensorModel:
         return {"base": round(best[1], 3), "slope": round(best[2], 3), "samples": len(self.accuracy)}
 
     def maps(self, sensor_id: str) -> dict:
-        """The three maps over the house, for the UI. None where too little was learned."""
+        """The maps over the house, for the UI. None where too little was learned."""
         if sensor_id not in self.prior:
             return {}
         i0, j0, i1, j1 = self.box
         sl = (slice(i0, i1), slice(j0, j1))
-        trials, hits = self.trials[sensor_id][sl], self.hits[sensor_id][sl]
         exposure, clutter = self.exposure[sensor_id][sl], self.clutter[sensor_id][sl]
 
         def grid(values, valid):
             return [[round(float(v), 3) if ok else None for v, ok in zip(row, oks)] for row, oks in zip(values, valid)]
-        learned = np.where(trials > 0, hits / np.maximum(trials, 1e-9), 0)
         rate = np.where(exposure > 0, clutter / np.maximum(exposure, 1e-9), 0)
         x0, y0 = cell_center(i0, j0)
         return {
             "cell": CELL, "x0": x0 - CELL / 2, "y0": y0 - CELL / 2, "cols": i1 - i0, "rows": j1 - j0,
             # [column][row], row 0 = lowest y
-            "prior": grid(self.prior[sensor_id][sl], np.ones_like(trials, dtype=bool)),
-            "learned": grid(learned, trials >= 20),
+            "prior": grid(self.prior[sensor_id][sl], np.ones_like(exposure, dtype=bool)),
             "clutter": grid(rate, exposure >= 200),
-            "learned_cells": int((trials >= 20).sum()), "clutter_cells": int((exposure >= 200).sum()),
+            "clutter_cells": int((exposure >= 200).sum()),
         }
 
     # --------------------------------------------------------- persistence
@@ -447,15 +374,15 @@ class SensorModel:
         def sparse(store):
             return {sid: {f"{i},{j}": round(float(g[i, j]), 2) for i, j in zip(*np.nonzero(g > 0.01))}
                     for sid, g in store.items()}
-        return {"trials": sparse(self.trials), "hits": sparse(self.hits), "exposure": sparse(self.exposure),
+        return {"exposure": sparse(self.exposure),
                 "clutter": sparse(self.clutter), "accuracy": self.accuracy, "last_decay": self.last_decay,
-                "gaps": self.gaps, "offsets": {sid: {k: [round(v, 3) for v in acc] for k, acc in cells.items()} for sid, cells in self.offsets.items()}, "pairs": self.pairs, "ld_occ": {k: v.round(2).tolist() for k, v in self.ld_occ.items()},
+                "gaps": self.gaps, "pairs": self.pairs, "ld_occ": {k: v.round(2).tolist() for k, v in self.ld_occ.items()},
                 "ld_move": {k: v.round(2).tolist() for k, v in self.ld_move.items()},
                 "ld_emp": {k: v.round(2).tolist() for k, v in self.ld_emp.items()}}
 
     def load_dict(self, data: dict):
         """Replace everything learned (e.g. learned offline from recordings and imported)."""
-        for name in ("trials", "hits", "exposure", "clutter"):
+        for name in ("exposure", "clutter"):
             store = getattr(self, name)
             for grid in store.values():
                 grid[:] = 0
@@ -467,7 +394,6 @@ class SensorModel:
                         grid[i, j] = v
         self.accuracy = [tuple(a) for a in data.get("accuracy", [])][-MAX_ACCURACY_SAMPLES:]
         self.gaps = {k: list(data.get("gaps", {}).get(k, []))[-MAX_GAPS:] for k in ("still", "walking")}
-        self.offsets = {sid: {k: [float(v) for v in acc] for k, acc in cells.items()} for sid, cells in data.get("offsets", {}).items()}
         pairs = data.get("pairs")
         self.pairs = [list(map(float, x)) for x in pairs] if pairs and len(pairs) == len(RES_EDGES) else [[0.0, 0.0] for _ in RES_EDGES]
         for name in ("ld_occ", "ld_move", "ld_emp"):

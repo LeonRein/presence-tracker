@@ -314,7 +314,7 @@ class App:
         return web.json_response(self.calibrator.status())
 
     async def h_sensormodel(self, request):
-        """Detection probability (assumed and learned) and ghost map of one sensor, and the learned
+        """Detection probability (from the geometry) and ghost map of one sensor, and the learned
         measurement error next to the one the tracker uses."""
         model = self.tracker.sensor_model
         p = self.config.params
@@ -338,7 +338,6 @@ class App:
         model = self.tracker.sensor_model
         return web.json_response({
             "accuracy": model.accuracy_fit(),
-            "learned_cells": {s.id: model.maps(s.id).get("learned_cells") for s in self.config.sensors},
             "dwell": {k: len(v) for k, v in self.tracker.dwell.dwell.items()},
         })
 

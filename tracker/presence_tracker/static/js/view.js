@@ -160,7 +160,7 @@ export class MapView {
     }
 
     // blind-spot map
-    // learned / assumed map of one sensor (detection probability or ghosts)
+    // map of one sensor (detection probability from the geometry, or learned ghosts)
     if (state.sensorMap && this.sensorMapImage) {
       const sm = this.sensorMapImage;
       const [sx, sy] = this.P(sm.x0, sm.y1);

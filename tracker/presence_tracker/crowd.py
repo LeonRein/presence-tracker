@@ -146,7 +146,7 @@ class Crowd:
             for i in range(w.nx):
                 for j in range(w.ny):
                     if w.labels[i, j] >= 0:
-                        grid[i, j] = min(self.sensor_model.pd_effective(sid, w.x0 + (i + 0.5) * 0.1, w.y0 + (j + 0.5) * 0.1), PD_MAX)
+                        grid[i, j] = min(self.sensor_model.pd(sid, w.x0 + (i + 0.5) * 0.1, w.y0 + (j + 0.5) * 0.1), PD_MAX)
             self._pd_cache[sid] = (grid, self.now)
         i, j = self.world.cell_of(pos)
         return grid[i, j]
@@ -192,8 +192,6 @@ class Crowd:
         if sensor is None:
             return
         detections = self.helper._detections(sensor, frame)
-        for d in detections:
-            d.pos = d.pos + self.sensor_model.correction(sensor_id, d.pos)
         self.helper._mark_stale(rt, frame, detections)
         # a target the LD2450 lost it keeps reporting for about a second, with the same speed
         # frame after frame (measured: at 70 % of the targets' ends, elsewhere in 2.5 %): a
@@ -612,35 +610,13 @@ class Crowd:
         return mean, mass, spread
 
     def _learn_frame(self, s, t, dets, beta, gap, tau_before, gaps_ended):
-        """MODEL.md 7, per frame: detection probability, ghosts, where sitters drop out."""
+        """MODEL.md 7, per frame: where the sensors see ghosts."""
         sm = self.sensor_model
         sm._decay(t)
         sid = s.id
         if sid not in sm.prior:
             return
         sure = [self._sure(person) for person in self.people]
-        means = [mn for mn, mass, sp in sure if mn is not None and mass > 0.3]
-
-        def alone(k):
-            mn = sure[k][0]
-            return all(float(np.linalg.norm(mn - other)) > 1.0 for kk, other in enumerate(means) if other is not mn)
-
-        for k, person in enumerate(self.people):
-            mean, mass, spread = sure[k]
-            c = person.cloud
-            w = c.weights()
-            idx = np.flatnonzero(c.place != self.world.outside)
-            # detection probability: a person surely there, seen by another sensor within a second,
-            # nobody close by, not in a long dropout of this sensor
-            if mean is not None and mass > 0.9 and spread < 0.4 and alone(k):
-                others = [o for o in self.sensors if o != sid and self._online(o)]
-                seen = any(float(w[idx] @ (t - c.last_hit[idx, self.sidx[o]] < 1.0)) / mass > 0.8 for o in others)
-                regular = float(w[idx] @ (tau_before[k] < GAP_FLOOR)) / mass > 0.8
-                i, j = cell_of(*mean)
-                if seen and regular and sm.pd(sid, *mean) >= 0.05:
-                    sm.trials[sid][i, j] += 1
-                    sm.hits[sid][i, j] += float(beta[k, 1:].sum())
-                    sm.changed = True
 
         # ghosts: where another online sensor sees well and reports nothing, nobody near
         for other in self.sensors:

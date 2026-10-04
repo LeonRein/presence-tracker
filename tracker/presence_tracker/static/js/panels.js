@@ -407,8 +407,8 @@ function sensorDetail(el, s) {
     <label class="check"><input type="checkbox" data-k="mirror" ${s.mirror ? 'checked' : ''}> x-Achse gespiegelt</label>
     <h3>Was der Sensor gelernt hat</h3>
     <p class="note">Nur zum Anschauen: blendet eine Karte über den Grundriss ein. Das ändert nichts am Tracking.</p>
-    <label class="field">Karte einblenden<select id="smap">${[['', 'keine'], ['prior', 'Erkennung: Annahme aus der Geometrie'],
-      ['learned', 'Erkennung: im Betrieb gelernt'], ['clutter', 'Geister: im Betrieb gelernt']].map(([k, l]) =>
+    <label class="field">Karte einblenden<select id="smap">${[['', 'keine'], ['prior', 'Erkennung: aus der Geometrie'],
+      ['clutter', 'Geister: im Betrieb gelernt']].map(([k, l]) =>
       `<option value="${k}" ${(state.sensorMap?.sensor === s.id ? state.sensorMap.layer : '') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <div id="smap-info" class="note"></div>
     <p class="note">Prüfen: Vor dem Sensor nach rechts gehen (vom Sensor aus gesehen). Der Punkt auf der Karte muss mitgehen, sonst Haken setzen. Die Kalibrierung erkennt das auch selbst.</p>
@@ -478,7 +478,6 @@ async function showSensorMap(info, sensorId) {
   view.render();
   info.innerHTML = {
     prior: 'Aus der Geometrie: 0 hinter Wänden, fällt zum Rand des Sichtfelds und zur Reichweite hin ab. Rot = selten, grün = fast immer erkannt.',
-    learned: `Wie oft der Sensor eine sicher vorhandene Person dort tatsächlich gemeldet hat (${m.learned_cells} Felder mit genug Daten).`,
     clutter: `Wo der Sensor Ziele meldet, obwohl ein anderer Sensor die Stelle gut sieht und dort niemand ist (${m.clutter_cells} Felder prüfbar). Je röter, desto öfter.`,
   }[sel.layer] + '<br>' + accText;
 }

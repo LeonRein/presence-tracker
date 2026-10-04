@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.7
+
+Aufgeräumt nach Weglass-Tests auf dem Drehbuch (je ein Teil aus, 8 Läufe, mit und ohne vorab
+gelernte Daten):
+- Die je Ort gelernte Erkennungswahrscheinlichkeit ist entfernt, auch ihre Karte in der Oberfläche.
+  Sie brachte nichts; die Annahme aus der Geometrie reicht.
+- Ein je Ort gelernter Versatz zwischen den Sensoren wurde ausprobiert und nicht übernommen: Damit
+  zählte die App öfter zu viele Personen.
+- Die Verhaltensraster (Anhalten, Aufstehen, Aussetzer je Ort) sind entfernt. Sie wurden weder gelernt
+  noch geladen und wirkten nicht.
+- Geblieben, weil messbar nötig: Körperabstand, Geister-Objekte, LD2410C, „geht / steht“ als eigener
+  Zustand (ohne ihn 84,6 % statt 94,4 %).
+
+Testdurchlauf: 94,9 % (12 Läufe, 92–97 %), etwas weniger Rechenzeit.
+
 ## 0.6.6
 
 - Fehler seit 0.6.2: Nach einem Neustart zählte die Uhr „nicht gesehen“ der unbekannten Personen ab

@@ -290,8 +290,8 @@ def test_a_moved_sensor_forgets_what_was_learned():
     from presence_tracker.sensormodel import SensorModel
     config = room_config()
     sm = SensorModel(config)
-    sm.trials["a"][10, 10] = 5
+    sm.exposure["a"][10, 10] = 5
     sm.clutter["a"][10, 10] = 3
-    sm.trials["b"][10, 10] = 7
+    sm.exposure["b"][10, 10] = 7
     sm.forget("a")
-    assert sm.trials["a"].sum() == 0 and sm.clutter["a"].sum() == 0 and sm.trials["b"][10, 10] == 7
+    assert sm.exposure["a"].sum() == 0 and sm.clutter["a"].sum() == 0 and sm.exposure["b"][10, 10] == 7
