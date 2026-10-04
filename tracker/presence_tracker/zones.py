@@ -42,6 +42,8 @@ def evaluate(config: Config, tracker: Tracker) -> dict:
     Every confirmed track is counted at its most probable whereabouts: at its position (rooms
     and areas there), or in the rooms of the region behind the door it went through. The
     probability of a zone is 1 - prod(1 - mass) over all tracks' mass in it."""
+    if hasattr(tracker, "zone_states"):  # the particle model (crowd.py) counts from its clouds itself
+        return tracker.zone_states()
     p = config.params
     now = tracker.now
     zones = [z for z in config.zones if z.kind in ("room", "area")]

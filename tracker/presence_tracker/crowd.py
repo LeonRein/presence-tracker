@@ -1,0 +1,598 @@
+"""The people in the house, each as a particle cloud (MODEL.md): motion between frames, the
+measurement model per frame, the outputs.
+
+Per sensor frame, every person's particles are weighted by how well the person there explains
+the frame (MODEL.md 4.1 and 3.3):
+
+  hit by detection j:  (1 - m) * g_j / lambda_j     g_j: density of the measurement (position,
+                                                     radial speed); lambda_j: ghost density there
+  no hit:              m = U(x, tau + dt) / U(x, tau)
+                       U(x, tau) = P(someone who stays at x is not detected for tau seconds)
+                             = (1 - c) (1 - P_D(x))^(tau / frame) + c S(tau)
+                       (independent misses of single frames, plus long dropouts: rate r per
+                       second of being seen, durations S; c = min(r frame / P_D, 1))
+
+Which detection belongs to whom is summed over all assignments (each person at most one
+detection, each detection at most one person, the rest are ghosts), as in JPDA.
+"""
+
+import itertools
+import math
+
+import numpy as np
+
+from .cloud import STILL, WALK, Cloud, Motion
+from .habits import Habits
+from .sensormodel import GAP_FLOOR, GAP_PRIOR, GAP_TAUS, PD_MAX, SensorModel, cell_of
+from .tracker import SensorClock, SensorRuntime, Tracker  # noqa: F401 (SensorClock re-exported)
+from .unobserved import Dwell
+from .world import OBSERVED, World
+
+SPEED_SPREAD = 4.0  # m/s: ghosts' radial speeds spread over about +-2 m/s
+FRAME = 0.089  # s, LD2450 frame period (measured)
+DROP_RATE = {STILL: 1 / 70, WALK: 1 / 300}  # 1/s: long dropouts begin (measured on the recordings)
+PD_CELL = 0.1  # m, cache of the detection probability per sensor
+FROZEN_RADIUS = 1.0  # m around a frozen target where the sensor's silence says nothing
+BODY = 0.3  # m: two people's centers are never closer
+LEARN_DELAY = 3.0  # s: a stop / start is learned this long after it happened
+SEEN_WELL = 0.8  # visibility from which stops and starts are learned
+
+
+def _survival(mode: int, tau: np.ndarray) -> np.ndarray:
+    """Share of long dropouts lasting longer than tau (prior table, log-linear, 1/tau tail)."""
+    table = np.array(GAP_PRIOR["walking" if mode == WALK else "still"])
+    taus = np.array(GAP_TAUS)
+    t = np.maximum(tau, taus[0])
+    out = np.exp(np.interp(np.log(t), np.log(taus), np.log(table)))
+    tail = t > taus[-1]
+    out[tail] = table[-1] * taus[-1] / t[tail]
+    return out
+
+
+class Person:
+    def __init__(self, pid: int, cloud: Cloud):
+        self.pid = pid
+        self.cloud = cloud
+
+
+class Crowd:
+    def __init__(self, config, start: float | None = None, n: int = 800, seed: int = 1, people=None,
+                 sensor_model: SensorModel | None = None, learn_behaviour: bool = False):
+        """people: place names where the people are at the start, or "anywhere" (default: the
+        configured number of residents, anywhere - until the arrivals of MODEL.md 3.2 are built).
+        learn_behaviour: learn where people stop, start and drop out (off: measurement errors
+        would be learned as behaviour and strengthened)."""
+        self.config = config
+        self.p = config.params
+        self.world = World(config)
+        self.sensor_model = sensor_model or SensorModel(config)
+        self.habits = Habits()
+        self.learn_behaviour = learn_behaviour
+        self.dwell = Dwell(self.p, [rid for rid, r in config.regions.items() if r["open"]])
+        self.motion = Motion()
+        self.rng = np.random.default_rng(seed)
+        self.n = n
+        self.sensors = [s.id for s in config.sensors]
+        self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
+        self.helper = Tracker(config)  # measurement preprocessing (detections, frozen targets)
+        self.runtime = {}
+        self.now = start or 0.0
+        self.start = start
+        self.last_step = None
+        self.listeners = []
+        self._pd_cache = {}
+        self.reset_people(people)
+
+    def reset_people(self, people=None):
+        """Start over: nothing known about where anybody is."""
+        if people is None:
+            people = ["anywhere"] * max(int(self.p.residents), 1)
+        self.people = [Person(k + 1, Cloud.anywhere(self.n, len(self.sensors), self.rng, self.world, self.now) if place == "anywhere"
+                              else Cloud.at_place(self.n, len(self.sensors), self.rng, self.world.index[place], self.now))
+                       for k, place in enumerate(people)]
+
+    def reconfigure(self, config):
+        """The floor plan or a sensor changed: the geometry is rebuilt, where people are starts over."""
+        self.config = config
+        self.p = config.params
+        self.world = World(config)
+        self.sensor_model.config = config
+        self.sensor_model.rebuild()
+        self.dwell.p = config.params
+        self.sensors = [s.id for s in config.sensors]
+        self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
+        self.helper = Tracker(config)
+        self._pd_cache.clear()
+        self.reset_people()
+
+    # ---------------------------------------------------------------- fields
+
+    def _pd(self, sid: str, pos: np.ndarray) -> np.ndarray:
+        """Detection probability per frame of sensor sid at the points (n, 2), from a raster of
+        the world's cells (rebuilt once a minute: learning is slow)."""
+        grid, built = self._pd_cache.get(sid, (None, -math.inf))
+        if grid is None or self.now - built > 60:
+            w = self.world
+            grid = np.zeros((w.nx, w.ny))
+            for i in range(w.nx):
+                for j in range(w.ny):
+                    if w.labels[i, j] == OBSERVED:
+                        grid[i, j] = min(self.sensor_model.pd_effective(sid, w.x0 + (i + 0.5) * 0.1, w.y0 + (j + 0.5) * 0.1), PD_MAX)
+            self._pd_cache[sid] = (grid, self.now)
+        i, j = self.world.cell_of(pos)
+        return grid[i, j]
+
+    def _miss(self, sid: str, cloud: Cloud, idx: np.ndarray, t: float, gap: float) -> np.ndarray:
+        """m per particle (observed ones, idx): P(no detection now | unseen since last_hit)."""
+        pos = cloud.pos[idx]
+        pd = self._pd(sid, pos)
+        tau = np.maximum(t - gap - cloud.last_hit[idx, self.sidx[sid]], 0.0)
+        out = np.empty(len(idx))
+        for mode in (STILL, WALK):
+            k = cloud.mode[idx] == mode
+            if not k.any():
+                continue
+            rate = DROP_RATE[mode] * (self.habits.factor("drop", pos[k]) if mode == STILL else 1.0)
+            c = np.minimum(rate * FRAME / np.maximum(pd[k], 1e-3), 1.0)
+            q = 1 - pd[k]
+
+            def unseen(tt):
+                return (1 - c) * q ** (tt / FRAME) + c * _survival(mode, tt)
+            out[k] = unseen(tau[k] + gap) / np.maximum(unseen(tau[k]), 1e-300)
+        return np.clip(out, 0.0, 1.0)
+
+    # ------------------------------------------------------------ the frames
+
+    def process_frame(self, sensor_id: str, t: float, frame: dict):
+        if self.start is None:
+            self.start = t
+        self.now = max(self.now, t)
+        sensor = self.config.sensor_by_id.get(sensor_id)
+        rt = self.runtime.setdefault(sensor_id, SensorRuntime())
+        gap = min(max(t - rt.last_frame, 1e-3), 1.0)
+        rt.last_frame = t
+        rt.frame = frame
+        rt.frames += 1
+        if sensor is None:
+            return
+        detections = self.helper._detections(sensor, frame)
+        for d in detections:
+            d.pos = d.pos + self.sensor_model.correction(sensor_id, d.pos)
+        self.helper._mark_stale(rt, frame, detections)
+        rt.detections = detections
+        self._ld_runtime(sensor, rt, t, frame.get("ld2410") or {})
+        for listener in self.listeners:
+            listener("frame", (sensor, t, detections))
+        if not sensor.enabled or not sensor.placed:
+            return
+        dets = [d for d in detections if not d.hidden and not d.stale and not d.ignored]
+        # seen through an open door into a place without a sensor: somebody there, where the model
+        # keeps people without a position - not somebody in the observed area
+        if dets:
+            inside = self.world.place_of(np.array([d.pos for d in dets])) == OBSERVED
+            dets = [d for d, ok in zip(dets, inside) if ok]
+        self.step(t, np.array([d.pos for d in dets]).reshape(-1, 2))
+        frozen = np.array([d.pos for d in detections if d.stale and not d.hidden]).reshape(-1, 2)
+        self._update(sensor, t, dets, gap, full=len(detections) >= 3, frozen=frozen)
+
+    def _update(self, s, t, dets, gap, full, frozen=None):
+        p = self.p
+        m_det = len(dets)
+        lam = np.array([self.sensor_model.clutter_density(s.id, d.pos[0], d.pos[1], p.clutter_density, p.clutter_floor)
+                        / SPEED_SPREAD for d in dets])
+        per = []  # per person: (observed particle indices, m, g (n_obs, m_det) / lambda, M, A (m_det,))
+        tau_before = []  # per person and observed particle: unseen by this sensor before this frame
+        for person in self.people:
+            c = person.cloud
+            w = c.weights()
+            idx = np.flatnonzero(c.place == OBSERVED)
+            tau_before.append(t - c.last_hit[idx, self.sidx[s.id]])
+            m = self._miss(s.id, c, idx, t, gap) if len(idx) else np.zeros(0)
+            if frozen is not None and len(frozen) and len(idx):
+                # the sensor repeats a target bit-identically: it is stuck there and says nothing new
+                # about that spot (mostly the person is still there, measured)
+                d = c.pos[idx][:, None, :] - frozen[None, :, :]
+                stuck = (np.hypot(d[..., 0], d[..., 1]) < FROZEN_RADIUS).any(axis=1)
+                m[stuck] = 1.0
+            r = np.zeros((len(idx), m_det))
+            for j, d in enumerate(dets):
+                dz = c.pos[idx] - d.pos
+                Rinv = np.linalg.inv(d.R)
+                q = np.einsum("ni,ij,nj->n", dz, Rinv, dz)
+                gpos = np.exp(-0.5 * q) / (2 * math.pi * math.sqrt(np.linalg.det(d.R)))
+                vr = c.vel[idx] @ d.radial
+                gspd = np.exp(-0.5 * ((d.speed - vr) / p.sigma_speed) ** 2) / (math.sqrt(2 * math.pi) * p.sigma_speed)
+                r[:, j] = gpos * gspd / lam[j]
+            miss_full = np.ones_like(m) if full else m
+            M = float(w[idx] @ miss_full) + float(w.sum() - w[idx].sum())  # behind doors: never detected
+            A = (w[idx] * (1 - m)) @ r if m_det else np.zeros(0)
+            per.append((idx, m, miss_full, r, M, A))
+
+        # which detection is whose: all assignments, each person <= 1 detection, the rest ghosts
+        n_p = len(self.people)
+        beta = np.zeros((n_p, m_det + 1))
+        total = 0.0
+        for a in itertools.product(*[range(-1, m_det)] * n_p):
+            used = [j for j in a if j >= 0]
+            if len(used) != len(set(used)):
+                continue
+            pr = 1.0
+            for k, j in enumerate(a):
+                pr *= per[k][5][j] if j >= 0 else per[k][4]
+            total += pr
+            for k, j in enumerate(a):
+                beta[k, j + 1 if j >= 0 else 0] += pr
+        if total <= 0:
+            return
+        beta /= total
+
+        gaps_ended = []
+        for k, person in enumerate(self.people):
+            c = person.cloud
+            idx, m, miss_full, r, M, A = per[k]
+            factor = np.full(c.n, beta[k, 0] / max(M, 1e-300))  # behind doors: only "not detected"
+            ended = (np.zeros(0, dtype=int), np.zeros(0))
+            if len(idx):
+                hit = np.zeros(len(idx))
+                for j in range(m_det):
+                    if A[j] > 0:
+                        hit += beta[k, j + 1] * (1 - m) * r[:, j] / A[j]
+                f_obs = beta[k, 0] * miss_full / max(M, 1e-300) + hit
+                factor[idx] = f_obs
+                # which particles were hit: drawn by their share of "hit" in the factor
+                got = self.rng.random(len(idx)) < hit / np.maximum(f_obs, 1e-300)
+                c.last_hit[idx[got], self.sidx[s.id]] = t
+                long_gap = got & (tau_before[k] > GAP_FLOOR) & (c.mode[idx] == STILL)
+                ended = (idx[long_gap], tau_before[k][long_gap])
+            c.logw += np.log(np.maximum(factor, 1e-300))
+            c.normalize()
+            gaps_ended.append(ended)
+        self._learn_frame(s, t, dets, beta, gap, tau_before, gaps_ended)
+        for person in self.people:
+            person.cloud.resample()
+
+    def step(self, t: float, targets=None):
+        if self.last_step is None:
+            self.last_step = t
+            return
+        dt = t - self.last_step
+        if dt < 0.05:
+            return
+        self.last_step = t
+        for person in self.people:
+            person.cloud.predict(t, dt, self.world, self.dwell, self.motion, targets, self.habits)
+        self._bodies()
+        for person in self.people:
+            person.cloud.normalize()
+        self._learn_moves(t, dt)
+
+    def _bodies(self):
+        """Two bodies don't stand in one place (MODEL.md 3.1): a particle of one person is only
+        as possible as the others are not within BODY of it."""
+        if len(self.people) < 2:
+            return
+        w0 = self.world
+        nx, ny = int(w0.nx * 0.1 / BODY) + 2, int(w0.ny * 0.1 / BODY) + 2
+        cells, dens = [], []
+        for person in self.people:
+            c = person.cloud
+            obs = np.flatnonzero(c.place == OBSERVED)
+            i = np.clip(((c.pos[obs, 0] - w0.x0) / BODY).astype(int), 0, nx - 1)
+            j = np.clip(((c.pos[obs, 1] - w0.y0) / BODY).astype(int), 0, ny - 1)
+            grid = np.zeros((nx + 2, ny + 2))
+            np.add.at(grid, (i + 1, j + 1), c.weights()[obs])
+            # the probability within about BODY: the own cell and a quarter of the eight around it
+            near = grid.copy()
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    if di or dj:
+                        near[1:-1, 1:-1] += 0.25 * grid[1 + di:nx + 1 + di, 1 + dj:ny + 1 + dj]
+            cells.append((obs, i + 1, j + 1))
+            dens.append(near)
+        for k, person in enumerate(self.people):
+            obs, i, j = cells[k]
+            if not len(obs):
+                continue
+            free = np.ones(len(obs))
+            for kk, near in enumerate(dens):
+                if kk != k:
+                    free *= np.clip(1 - near[i, j], 1e-6, 1)
+            person.cloud.logw[obs] += np.log(free)
+
+    def _ld_runtime(self, s, rt, t, ld):
+        """LD2410C: kept for the display only (MODEL.md 4.2 is not built yet)."""
+        p = self.p
+        rt.move_gates = ld.get("move_gates")
+        rt.still_gates = ld.get("still_gates")
+        present = bool(ld.get("moving") or ld.get("still"))
+        if present:
+            rt.ld_last_present = t
+            slant = (ld.get("still_distance") or ld.get("moving_distance") or 0) / 1000
+            dh = s.height - p.target_height
+            rt.ld_distance = math.sqrt(max(slant * slant - dh * dh, 0.0))
+        rt.ld_present = present or t - rt.ld_last_present <= p.ld2410_hold
+
+    # -------------------------------------------------------------- learning
+
+    def _sure(self, person):
+        """(mean position, observed mass, spread) of a person in the observed area."""
+        c = person.cloud
+        w = c.weights()
+        obs = c.place == OBSERVED
+        mass = float(w[obs].sum())
+        if mass <= 0:
+            return None, 0.0, math.inf
+        mean = w[obs] @ c.pos[obs] / mass
+        spread = math.sqrt(float(w[obs] @ ((c.pos[obs] - mean) ** 2).sum(axis=1)) / mass)
+        return mean, mass, spread
+
+    def _learn_frame(self, s, t, dets, beta, gap, tau_before, gaps_ended):
+        """MODEL.md 7, per frame: detection probability, ghosts, where sitters drop out."""
+        sm, hb = self.sensor_model, self.habits
+        sm._decay(t)
+        hb.decay(t)
+        sid = s.id
+        if sid not in sm.prior:
+            return
+        sure = [self._sure(person) for person in self.people]
+        means = [mn for mn, mass, sp in sure if mn is not None and mass > 0.3]
+
+        def alone(k):
+            mn = sure[k][0]
+            return all(float(np.linalg.norm(mn - other)) > 1.0 for kk, other in enumerate(means) if other is not mn)
+
+        for k, person in enumerate(self.people):
+            mean, mass, spread = sure[k]
+            c = person.cloud
+            w = c.weights()
+            idx = np.flatnonzero(c.place == OBSERVED)
+            # detection probability: a person surely there, seen by another sensor within a second,
+            # nobody close by, not in a long dropout of this sensor
+            if mean is not None and mass > 0.9 and spread < 0.4 and alone(k):
+                others = [o for o in self.sensors if o != sid and self._online(o)]
+                seen = any(float(w[idx] @ (t - c.last_hit[idx, self.sidx[o]] < 1.0)) / mass > 0.8 for o in others)
+                regular = float(w[idx] @ (tau_before[k] < GAP_FLOOR)) / mass > 0.8
+                i, j = cell_of(*mean)
+                if seen and regular and sm.pd(sid, *mean) >= 0.05:
+                    sm.trials[sid][i, j] += 1
+                    sm.hits[sid][i, j] += float(beta[k, 1:].sum())
+                    sm.changed = True
+            # where sitters drop out: long gaps that ended here, against the prior rate's
+            # expectation in the time they were seen regularly
+            if self.learn_behaviour and len(idx) and (mean is None or alone(k)):
+                still = c.mode[idx] == STILL
+                seen = still & (tau_before[k] < GAP_FLOOR)
+                hb.add("drop", c.pos[idx[seen]], expected=w[idx[seen]] * gap * DROP_RATE[STILL])
+                gi, _ = gaps_ended[k]
+                if len(gi):
+                    hb.add("drop", c.pos[gi], events=w[gi])
+
+        # ghosts: where another online sensor sees well and reports nothing, nobody near
+        for other in self.sensors:
+            if other == sid or other not in sm.prior or not self._online(other):
+                continue
+            ort = self.runtime.get(other)
+            if ort is None or t - ort.last_frame > 0.3:
+                continue
+            mask = (sm.prior[other] >= 0.8) & (sm.prior[sid] > 0.05)
+            if not mask.any():
+                continue
+            mask = mask.copy()
+            k = int(1.0 / 0.25)
+            blocked = [mn for mn, mass, sp in sure if mn is not None and mass > 0.3] + \
+                [d.pos for d in ort.detections if not d.hidden]
+            for x, y in blocked:
+                i, j = cell_of(x, y)
+                mask[max(i - k, 0):i + k + 1, max(j - k, 0):j + k + 1] = False
+            sm.exposure[sid] += mask
+            for d in dets:
+                i, j = cell_of(*d.pos)
+                if mask[i, j]:
+                    sm.clutter[sid][i, j] += 1
+            sm.changed = True
+            break
+
+    def _visibility(self, pos: np.ndarray) -> np.ndarray:
+        """How well the online sensors see the points (1 - P(all miss a frame))."""
+        hidden = np.ones(len(pos))
+        for sid in self.sensors:
+            if self._online(sid):
+                hidden *= 1 - self._pd(sid, pos) / PD_MAX
+        return 1 - hidden
+
+    def _learn_moves(self, t: float, dt: float):
+        """MODEL.md 7, per step: where people stop and where they start walking. A mode change
+        counts a few seconds later, with the weight the particle has then; expected: what the
+        prior rates would have produced in the same weighted time. Only where the sensors see
+        well: elsewhere stopping and walking on look alike, and learning there would only
+        strengthen whatever the model already assumes."""
+        if not self.learn_behaviour:
+            return
+        m, hb = self.motion, self.habits
+        stop_kept = (m.go_time / (LEARN_DELAY + m.go_time)) ** m.go_share  # a stop that lasts LEARN_DELAY
+        go_kept = math.exp(-m.stop_rate * LEARN_DELAY)  # a start that lasts LEARN_DELAY
+        for person in self.people:
+            c = person.cloud
+            w = c.weights()
+            obs = c.place == OBSERVED
+            if obs.any():
+                seen = np.zeros(c.n, dtype=bool)
+                k = np.flatnonzero(obs)
+                seen[k] = self._visibility(c.pos[k]) >= SEEN_WELL
+                obs = obs & seen
+            walk = np.flatnonzero(obs & (c.mode == WALK))
+            still = np.flatnonzero(obs & (c.mode == STILL))
+            hb.add("stop", c.pos[walk], expected=w[walk] * dt * m.stop_rate * stop_kept)
+            rate = m.go_share / (np.maximum(t - c.since[still], 0.0) + m.go_time)
+            hb.add("go", c.pos[still], expected=w[still] * dt * rate * go_kept)
+            due = np.flatnonzero((c.place == OBSERVED) & ~c.counted & (t - c.since >= LEARN_DELAY))
+            if len(due):
+                c.counted[due] = True
+                due = due[self._visibility(c.anchor[due]) >= SEEN_WELL]
+                stops = due[c.mode[due] == STILL]
+                starts = due[c.mode[due] == WALK]
+                hb.add("stop", c.anchor[stops], events=w[stops])
+                hb.add("go", c.anchor[starts], events=w[starts])
+
+    def _online(self, sid: str) -> bool:
+        rt = self.runtime.get(sid)
+        return rt is not None and self.now - rt.last_frame < 15
+
+    def learned(self) -> dict:
+        return {"sensor_model": self.sensor_model.to_dict(), "habits": self.habits.to_dict(),
+                "dwell": self.dwell.dwell}
+
+    def load_learned(self, data: dict):
+        self.sensor_model.load_dict(data.get("sensor_model", {}))
+        self.habits.load_dict(data.get("habits", {}))
+        self.dwell.dwell = {k: list(v) for k, v in data.get("dwell", {}).items()}
+        self._pd_cache.clear()
+
+    # --------------------------------------------------------------- outputs
+
+    def place_probabilities(self) -> dict:
+        """pid -> {place name: probability}."""
+        out = {}
+        for person in self.people:
+            pr = person.cloud.place_probabilities(len(self.world.places))
+            out[person.pid] = {name: float(pr[i]) for i, name in enumerate(self.world.places) if pr[i] > 0}
+        return out
+
+    def zone_probabilities(self) -> dict:
+        """zone id -> [P(person k is there)] for room zones (observed ones by particle position)."""
+        region_of = {room: rid for rid, r in self.config.regions.items() for room in r["rooms"]}
+        out = {}
+        for z in self.config.zones_of("room"):
+            probs = []
+            for person in self.people:
+                c = person.cloud
+                w = c.weights()
+                rid = region_of.get(z.id)
+                if rid is not None:
+                    probs.append(float(w[c.place == self.world.index[rid]].sum()))
+                else:
+                    obs = np.flatnonzero(c.place == OBSERVED)
+                    i, j = self.world.cell_of(c.pos[obs])
+                    inside = self.world.zone_mask(z)[i, j]
+                    probs.append(float(w[obs][inside].sum()))
+            out[z.id] = probs
+        return out
+
+    def zone_states(self) -> dict:
+        """Per zone: the most probable number of people (people independent), P(somebody is
+        there); moving / still and "about to be entered" from where each person is drawn."""
+        from .zones import ZoneState
+        p = self.p
+        states = {}
+        for zid, probs in self.zone_probabilities().items():
+            dist = np.array([1.0])
+            for q in probs:  # count distribution
+                dist = np.convolve(dist, [1 - q, q])
+            st = ZoneState()
+            st.count = int(np.argmax(dist))
+            st.probability = 1 - float(dist[0])
+            states[zid] = st
+        total = ZoneState()
+        zones = [z for z in self.config.zones if z.kind in ("room", "area")]
+        for z in zones:
+            states.setdefault(z.id, ZoneState())
+        for person in self.people:
+            d = self._display(person)
+            pr = d["places"]
+            if pr.get("outside", 0.0) < 0.5:
+                total.count += 1
+            if d["x"] is None:
+                total.still += pr.get("outside", 0.0) < 0.5
+                continue
+            x, y, vx, vy = d["x"], d["y"], d["vx"], d["vy"]
+            moving = not d["lost"] and d["walk"] > 0.5 and math.hypot(vx, vy) > 0.15
+            total.moving += moving
+            total.still += not moving
+            for z in zones:
+                st = states[z.id]
+                if z.kind == "area" and z.contains(x, y):
+                    st.count += 1
+                if z.contains(x, y):
+                    st.moving += moving
+                elif moving and math.hypot(vx, vy) >= p.approach_min_speed:
+                    steps = max(1, int(p.lead_time / 0.1))
+                    for k in range(1, steps + 1):
+                        tau = p.lead_time * k / steps
+                        if z.contains(x + vx * tau, y + vy * tau):
+                            st.approaching = True
+                            st.eta = tau if st.eta is None else min(st.eta, tau)
+                            break
+        for st in states.values():
+            st.moving = min(st.moving, st.count)
+            st.still = st.count - st.moving
+        states["_total"] = total
+        return states
+
+    def present(self) -> list:
+        """People most probably in the observed area."""
+        return [person for person in self.people
+                if person.cloud.place_probabilities(len(self.world.places))[OBSERVED] > 0.5]
+
+    def _display(self, person) -> dict:
+        """Where to draw a person: the most probable place; in the observed area the densest
+        0.2 m cell (the mean of a split cloud could lie between two possibilities)."""
+        c = person.cloud
+        w = c.weights()
+        pr = c.place_probabilities(len(self.world.places))
+        best = int(np.argmax(pr))
+        out = {"id": person.pid, "places": {self.world.places[i]: round(float(v), 3) for i, v in enumerate(pr) if v >= 0.005}}
+        obs = np.flatnonzero(c.place == OBSERVED)
+        last = float(w @ c.last_hit.max(axis=1)) if len(w) else -math.inf
+        out["lost"] = self.now - last > 1.5
+        if best != OBSERVED or not len(obs):
+            out.update({"x": None, "y": None, "vx": 0.0, "vy": 0.0, "sigma": 0.0, "walk": 0.0})
+            return out
+        grid, x0, y0, cell = c.heat(self.world)
+        i, j = np.unravel_index(int(np.argmax(grid)), grid.shape)
+        centre = np.array([x0 + (i + 0.5) * cell, y0 + (j + 0.5) * cell])
+        near = obs[np.hypot(*(c.pos[obs] - centre).T) < 0.5]
+        near = near if len(near) else obs
+        wn = w[near] / w[near].sum()
+        pos = wn @ c.pos[near]
+        vel = wn @ c.vel[near]
+        sigma = math.sqrt(float(wn @ ((c.pos[near] - pos) ** 2).sum(axis=1)))
+        out.update({"x": round(float(pos[0]), 3), "y": round(float(pos[1]), 3), "vx": round(float(vel[0]), 3),
+                    "vy": round(float(vel[1]), 3), "sigma": round(sigma, 3),
+                    "walk": round(float(wn @ (c.mode[near] == WALK)), 3)})
+        return out
+
+    def snapshot(self) -> dict:
+        """For the web UI: people (as "tracks", drawn at their most probable place), their clouds
+        as heat maps (MODEL.md 6), the sensors' raw data, the places without a sensor."""
+        t = self.now
+        tracks, clouds = [], []
+        for person in self.people:
+            d = self._display(person)
+            tracks.append({**d, "status": "confirmed", "age": round(t - (self.start or t), 1),
+                           "where": d["places"] if d["x"] is None or d["lost"] else None,
+                           "existence": None, "real": None})
+            grid, x0, y0, cell = person.cloud.heat(self.world)
+            ii, jj = np.nonzero(grid > 0.002)
+            clouds.append({"id": person.pid, "cell": cell,
+                           "cells": [[round(x0 + i * cell, 2), round(y0 + j * cell, 2), round(float(grid[i, j]), 3)]
+                                     for i, j in zip(ii, jj)]})
+        sensors = {}
+        for sid, rt in self.runtime.items():
+            sensors[sid] = {
+                "online": t - rt.last_frame < 15,
+                "detections": [{"x": round(float(d.pos[0]), 3), "y": round(float(d.pos[1]), 3),
+                                "lx": round(d.local[0], 3), "ly": round(d.local[1], 3),
+                                "speed": round(d.speed, 2), "ignored": d.ignored, "hidden": d.hidden or d.stale}
+                               for d in rt.detections] if t - rt.last_frame < 1.0 else [],
+                "ld2410": {"present": rt.ld_present, "distance": round(rt.ld_distance, 2),
+                           "move_gates": rt.move_gates, "still_gates": rt.still_gates},
+            }
+        regions = {}
+        for rid, r in self.config.regions.items():
+            k = self.world.index.get(rid)
+            probs = [float(person.cloud.place_probabilities(len(self.world.places))[k]) for person in self.people] if k is not None else []
+            regions[rid] = {"name": r["name"], "open": r["open"],
+                            "count": sum(pr >= 0.5 for pr in probs),
+                            "probabilities": [round(pr, 3) for pr in probs if pr >= 0.005],
+                            "dwell": self.dwell.stats(rid)}
+        return {"t": t, "tracks": tracks, "clouds": clouds, "sensors": sensors, "regions": regions}

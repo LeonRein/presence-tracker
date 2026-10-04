@@ -1,0 +1,237 @@
+# Das Wahrscheinlichkeitsmodell des Presence Trackers
+
+Entwurf zur Durchsicht, noch nicht umgesetzt. Dieses Dokument ist die Spezifikation: Der Code wertet
+genau dieses Modell aus und enthält keine eigenen Fallunterscheidungen. Jede Wahrscheinlichkeit
+steht hier mit Formel und Herkunft (**gemessen** auf Aufnahmen, **gelernt** im Betrieb, **angenommen**).
+Was hier nicht steht, gibt es im Tracker nicht.
+
+## 1. Grundsätze
+
+1. **Ein generatives Modell.** Es beschreibt, wie die Welt (Personen, Geister) sich bewegt und wie die
+   Sensoren daraus ihre Frames erzeugen. Der Tracker rechnet daraus rückwärts, welche Welt die Frames am
+   besten erklärt (Bayes). Es gibt keine Regeln der Art „nach 1,5 s gilt jemand als verloren“.
+2. **Personen entstehen und verschwinden nicht.** Die Zahl der Personen ist Teil des Zustands und nicht
+   festgelegt. Sie ändert sich im beobachteten Bereich nur dadurch, dass jemand durch eine Tür geht.
+   Eine Messung mitten im Raum kann also nur von einer Person kommen, die vorher durch eine Tür kam
+   und auf dem Weg dorthin hätte gesehen werden müssen, oder von einem Geist.
+3. **Keine festen Haushaltsgrößen.** Dass bei uns selten eine dritte Person kommt, ist eine gelernte
+   Ankunftsrate an der Wohnungstür, keine Regel. In einem öffentlichen Gebäude ist dieselbe Rate hoch.
+4. **Frames sind gegeben den Zustand unabhängig.** Dass aufeinanderfolgende Frames nicht unabhängig
+   *aussehen*, hat Ursachen: Wer an einer Stelle nicht gesehen wird, wird dort meist länger nicht
+   gesehen (Verdeckung, Sitzhaltung), Geister leben eine Weile, Messfehler sind teils systematisch
+   (Versatz). Diese Ursachen werden modelliert. Eine pauschale Dämpfung (bisher `evidence_time`) gibt es nicht mehr.
+5. **Gelernt wird aus der ganzen Wahrscheinlichkeitsverteilung**, gewichtet mit ihrer
+   Wahrscheinlichkeit (EM-Prinzip). Nicht nur aus der wahrscheinlichsten Hypothese, und nicht erst
+   ab einer Sicherheitsschwelle. Jede gelernte Größe hat einen Startwert (Prior) mit einem Gewicht in
+   „so viel wie N Beobachtungen“.
+
+## 2. Die Welt (Zustand)
+
+**Geometrie** (aus der Konfiguration): beobachteter Bereich *A* (Räume mit Sensoren) mit Wänden;
+Bereiche ohne Sensor *R₁…Rₖ* (Küche, Balkon, Flur-Bereich, …) und *draußen*; Türen *q* verbinden
+genau zwei davon. Draußen ist nur über bestimmte Türen erreichbar (bei uns über den Flur-Bereich).
+
+**Zustand zur Zeit t:**
+
+| Teil | Inhalt |
+|---|---|
+| Personen | beliebig viele; je Person: wo (ein Ort im beobachteten Bereich mit Geschwindigkeit und Modus geht / steht, oder einer der Bereiche *Rₖ* mit der Zeit seit dem Betreten), und seit wann sie von welchem Sensor nicht mehr gesehen wurde |
+| Geister | je Sensor beliebig viele, je Geist Ort und Alter |
+
+Personen sind anonym. Nummern in der Oberfläche sind nur Beschriftung und nicht Teil des Modells
+(Abschnitt 6).
+
+## 3. Dynamik (was zwischen zwei Zeitpunkten passiert)
+
+### 3.1 Bewegung im beobachteten Bereich
+- **Gehen:** fast konstante Geschwindigkeit mit zufälligen Richtungs- und Tempoänderungen.
+  Rauschstärke **gemessen** auf den Aufnahmen.
+- **Stehen / Sitzen:** Ort fast fest, kleines Wackeln. **Gemessen.**
+- **Wechsel gehen → stehen:** Rate `λ_stop(x)` je Ort. Wo Menschen oft stehen bleiben (Sofa, Tisch,
+  Küchenzeile), ist sie hoch, mitten im Durchgang niedrig. **Gelernt** je 50-cm-Feld aus der
+  Aufenthaltskarte. Prior: gleichmäßig.
+- **Wechsel stehen → gehen:** Rate `λ_go(x, d)`, abhängig vom Ort und davon, wie lange jemand schon
+  sitzt (lange Sitzende stehen seltener auf). Je Ort **gelernt** (Sofa: lange Sitzdauern, mitten im
+  Raum: kurze). Prior: die heute gemessene Sitzdauerverteilung.
+  *Damit ist „jemand steht eine halbe Stunde an einer Stelle, an der nie jemand sitzt“ unwahrscheinlich,
+  ganz ohne Sonderregel.*
+- **Wände:** Orte außerhalb des freien Raums haben Wahrscheinlichkeit 0.
+- **Körper:** Zwei Personen stehen nicht im selben Fleck. Abstandsverteilung zweier Personen
+  **gelernt** aus sicheren Paaren. Prior: unter 0,4 m selten.
+
+### 3.2 Türen
+- Wer sich durch eine Tür bewegt, ist danach im Bereich dahinter. Das ist eine Folge der Bewegung,
+  kein eigenes Ereignis.
+- Wer in einem Bereich *Rₖ* ist, kommt mit der Ausfallrate `h_k(Alter)` an einer seiner Türen wieder
+  heraus, gehend, in den Raum hinein. `h_k` stammt aus den **gelernten** Aufenthaltsdauern je Bereich.
+  Prior heute: geschlossene Bereiche (Küche, Balkon) Median 2 min, offener Flur-Bereich 30 min. Später
+  je Tageszeit (nachts Schlafzimmer).
+- **Diese Schätzung ist ungenau, und das Modell weiß das.** Verwendet wird nicht eine gelernte Kurve,
+  sondern die Vorhersage über alle zu den bisherigen Besuchen passenden Kurven (Bayes-Prädiktive):
+  - Bei wenigen Besuchen ist sie breit.
+  - Sie hat immer einen schweren Schwanz: Je länger jemand schon dort ist, desto langsamer sinkt die
+    Chance, dass er gleich herauskommt. Wer deutlich länger bleibt als üblich, bleibt plausibel.
+- Die Dauer zählt ohnehin nur so weit, wie die Tür unbeobachtet ist. Wer herauskommt, geht durch die
+  Tür und wird dort normalerweise gesehen. Solange das nicht passiert, ist „noch drin“ die beste
+  Erklärung, gleich wie lange es dauert.
+- **Draußen** hat keine feste Bevölkerung. Ankunftsrate `α` an jeder Tür nach draußen, **gelernt**
+  (Prior: 1 Person pro Tag). Wer im Flur-Bereich ist, kann über diese Tür auch nach draußen gehen.
+
+### 3.3 Nicht gesehen werden
+Es gibt keinen eigenen Zustand „ausgesetzt“ und keine Schwelle „verloren“. Es gibt eine **gelernte**
+Wahrscheinlichkeit je Feld, Sensor und Modus (steht / geht):
+
+> `U_s(x, τ)` = P(eine Person, die an x bleibt, wird von Sensor s τ Sekunden lang nicht detektiert)
+
+- Für kleine τ ist das die gewöhnliche Fehlquote eines Frames (1 − Erkennungswahrscheinlichkeit).
+  Für große τ zeigt sie, wie lange Verdeckungen an dieser Stelle dauern: Sofalehne lange, Raummitte
+  praktisch nie.
+- **Gelernt** aus sicheren Personen: wie lange sie an jeder Stelle ohne Treffer blieben. Ausgeklammert
+  werden Zeiten, in denen jemand anders daneben das Ziel bekommen haben kann. Prior: aus den Aufnahmen.
+- Kein Treffer im Frame gewichtet „die Person ist an x“ mit `U_s(x, τ+Δt) / U_s(x, τ)`. τ ist die Zeit
+  seit dem letzten Treffer dieser Person bei diesem Sensor.
+  *Offen:* Eigentlich gehört ein langer Aussetzer zu einer Haltung an einem Ort, nicht zur Person.
+  Wer aufsteht und geht, müsste wieder normal sichtbar sein. Umgesetzt (τ ab dem letzten Wechsel zu
+  „geht“) hat das auf dem Drehbuch-Durchlauf deutlich verschlechtert (89 % → 71–73 %). Das Zusammenspiel
+  ist noch nicht verstanden. Fehlmessungen hängen zusammen, und genau
+  das bildet `U` ab. Unabhängig gerechnet wären 3 s ohne Treffer bei 90 % Erkennung 0,1³⁰, also
+  „unmöglich“.
+
+Daraus folgt ohne Sonderregel: An einer schlecht sichtbaren Stelle, ohne gesehenes Weggehen, ist „noch
+dort“ die wahrscheinlichste Möglichkeit. An einer gut sichtbaren Stelle verliert sie schnell, und die
+Wahrscheinlichkeit verteilt sich auf die Wege, die ungesehen möglich waren, und die Türen dahinter.
+
+### 3.4 Geister
+Je Sensor:
+- **Entstehen:** Poisson-Rate je Ort `β_s(x)`, **gelernt** als Geisterkarte. Zusätzlich mehr Geister in
+  der Nähe von Gehenden (Mehrwegeechos), Faktor **gelernt**.
+- **Lebensdauer:** **gelernte** Verteilung, die meisten unter 1 s, manche viele Sekunden an derselben
+  Stelle. Wo der Nutzer Störzonen zeichnet (Ventilator, Vorhang), ist `β` dort hoch.
+- Ein Geist bleibt an seinem Ort (kleines Wackeln) und ist nur für seinen Sensor da.
+
+*Ein Geist, der 5 s an derselben Stelle steht, ist damit erklärbar. Dafür muss keine Person entstehen,
+die dann versteckt bleibt.*
+
+## 4. Messmodell (wie ein Frame entsteht)
+
+### 4.1 LD2450 (bis zu 3 Ziele je Frame)
+Gegeben der Zustand:
+- Jede Person erzeugt ein Ziel oder nicht, wie in 3.3 beschrieben: die Wahrscheinlichkeit eines Treffers
+  ist `1 − U_s(x, τ+Δt) / U_s(x, τ)`.
+- Zwei Personen im Abstand d erzeugen mit Wahrscheinlichkeit `res(d)` zwei Ziele, sonst
+  eines dazwischen. `res(d)` **gemessen** (0 % unter 0,25 m, 41 % bei 0,75–1 m, rund 75 % ab 1 m), **gelernt**.
+- Messort: `z ~ N(x + b_s(x), R_s(x))`. Versatz `b_s` je Sensor und Feld **gelernt** aus gleichzeitigen
+  Messungen einer Person durch zwei Sensoren (nur der Unterschied ist beobachtbar, halbe-halbe).
+  Streuung `R_s` nach Entfernung **gelernt**. Ein langsam wandernder Fehleranteil (Zeitkonstante
+  etwa 30 s) ist Teil des Personenzustands je Sensor.
+- Radialgeschwindigkeit: `N(Projektion der Geschwindigkeit, σ_v)`, **gemessen**.
+- Jeder lebende Geist erzeugt ein Ziel an seinem Ort.
+- Mehr als 3 Ziele: der Sensor meldet 3 davon. Ein voller Frame sagt also nichts über die Fehlenden.
+
+**Vorverarbeitung**, keine Wahrscheinlichkeit, sondern Datenreinigung:
+- Bit-identisch wiederholte Ziele (Sensor friert ein) werden verworfen. **Gemessen:** echte Ziele ändern sich in jedem Frame.
+- Ziele hinter Wänden oder außerhalb aller Räume werden verworfen. Dort kann keine Person sein, es sind Spiegelungen.
+- Ziele in einem Bereich ohne Sensor (durch eine offene Tür gesehen, z. B. jemand im Flur) werden nicht
+  als Person im beobachteten Bereich gedeutet. Dort führt das Modell Personen ohne Ort. Später können
+  sie als Hinweis „jemand ist in diesem Bereich“ dienen.
+
+### 4.2 LD2410C (Energie je Entfernungsstufe)
+- Energie je Stufe gegeben „leer“, „jemand sitzt in dieser Stufe“ oder „jemand geht in dieser Stufe“:
+  **gelernte** Histogramme. Mehrere Personen in einer Stufe: die stärkere zählt.
+- Die Energien sind vom Gerät geglättet. Verwendet wird deshalb ein Wert je **gemessener**
+  Korrelationszeit, nicht jeder Frame. Das ist eine Aussage über das Gerät, keine Dämpfung.
+- Störungen durch den LD2450 im selben Gehäuse (etwa alle 7 s) sind ein eigener, **gelernter**
+  Geisteranteil der LD2410C-Energie.
+
+## 5. Inferenz
+
+Gesucht ist die Verteilung über den Zustand gegeben alle Frames. Das Verfahren berechnet sie
+näherungsweise, aber es fügt **nichts hinzu**, was nicht im Modell steht.
+
+**Je Person eine Partikelwolke, das Raster als Feld-Speicher (wie FLIP):**
+- Jede Person ist eine Wolke aus etwa 500–1000 gewichteten Partikeln. Ein Partikel ist eine mögliche
+  Lage der Person:
+  - entweder ein Ort im beobachteten Bereich mit Geschwindigkeit, Modus (geht / steht), Zeit im
+    Modus und Zeit seit dem letzten Treffer je Sensor,
+  - oder „in Küche / Balkon / Flur-Bereich / draußen“ mit der Zeit seit dem Betreten.
+
+  Die Wolke *ist* die Superposition. Sitzende sind Partikel mit Geschwindigkeit null.
+- Ein Kalman-Filter wird nicht gebraucht. Er ist der Sonderfall des Bayes-Filters für eine einzelne
+  Glockenkurve, und genau die gibt es hier oft nicht: „Balkon oder an der Tür“ sind zwei Berge, Wände
+  schneiden ab, tote Winkel verformen.
+- **Zwischen Frames** bewegt sich jedes Partikel nach 3.1:
+  - Wände halten es auf.
+  - Durch eine Tür kommt es in den Bereich dahinter.
+  - Aus einem Bereich kommt es nach 3.2 wieder heraus.
+- **Jeder Frame** multipliziert jedes Partikelgewicht mit „wie gut erklärt die Person an dieser Stelle
+  diesen Frame“: Treffer nach 4.1, kein Treffer nach 3.3. Danach wird normiert. Wenn wenige Partikel
+  fast alles Gewicht tragen, wird neu gezogen (Resampling).
+- **Seltene Übergänge** werden öfter ausprobiert, als sie vorkommen, und das Gewicht wird exakt
+  korrigiert (Importance Sampling). Ein Beispiel ist „kommt jetzt aus dem Flur“, sonst ist es zu selten,
+  um überhaupt ein Partikel an die Tür zu bringen. Das ändert nur die Rechengenauigkeit, nicht das Modell.
+- **Das Raster** (etwa 20 cm) speichert die gelernten Größen je Feld (3.1, 3.3, 3.4, 4.1). Es nimmt
+  außerdem die Summe der Partikelgewichte je Feld auf: für die Wärmekarte und die Zonenwerte.
+- **Was daraus von selbst folgt:**
+  - Ungesehene Wege: Partikel, die durch gut gesehene Felder müssten, verlieren dort ihr Gewicht.
+  - Die Rückkehr aus einem Bereich ist dieselbe Person.
+  - Die Wärmekarte jeder Person zeigt, warum das Modell etwas glaubt.
+
+**Mehrere Personen:** Die Wolken werden getrennt gerechnet. Was Personen verbindet, steckt in der
+Zuordnung je Frame:
+- Welches Ziel kommt von wem, welches von einem Geist oder einem neuen Geist, welches von einer
+  gerade hereinkommenden Person. Alle Zuordnungen werden mit ihrer Wahrscheinlichkeit aufsummiert,
+  wie beim JPDA-Verfahren.
+- Wer verdeckt wen (4.1, Auflösung), und zwei Körper nicht am selben Fleck (3.1).
+
+Das ist eine Näherung: Gemeinsame Abhängigkeiten über mehrere Frames hinweg gehen verloren. Ob sie reicht,
+zeigen die Drehbuch-Schritte 7 bis 9.
+
+**Anzahl der Personen:** Neue Personen entstehen nur in den Bereichsfeldern „draußen“ mit der Rate `α`
+und kommen von dort durch die Türen. Eine Person, deren Wolke fast ganz „draußen“ liegt, ist weg.
+Es gibt sie im Modell nicht mehr, bis wieder jemand hereinkommt.
+
+**Rechenaufwand:** 500–1000 Partikel je Person, mit numpy je Frame wenige Millisekunden. Die
+Partikelzahl ist eine Einstellung der Näherung, kein Modellparameter. Zeigt sich, dass die Wolke einen
+Gehenden zu unruhig verfolgt, kann jedes Partikel eine kleine Glocke für die Geschwindigkeit tragen
+(Rao-Blackwell). Das wäre eine Rechenverbesserung, kein zweites Modell.
+
+**Superposition**, Beispiel: A geht zur Balkontür und wird nicht mehr gesehen. Dann liegen etwa 95 % von
+As Partikeln auf dem Balkon und 5 % an der Tür. Sieht der Sensor die Tür gut und meldet nichts,
+schwinden die 5 %. Kommt jemand durch die Balkontür herein, erklären As Balkon-Partikel das, und es ist A.
+Es entsteht keine neue Spur.
+
+## 6. Ausgaben
+- Je Zone: Verteilung der Personenzahl (wahrscheinlichster Wert, P(mindestens 1)), P(jemand bewegt
+  sich), P(gleich betreten). Alles direkt aus den Wolken summiert.
+- Für die Anzeige: jede Person an ihrem wahrscheinlichsten Ort. Ist das ein Bereich ohne Sensor (z. B.
+  Balkon), wird sie dort angezeigt und nicht als Punkt an der Tür. Eine Person, deren Ort unsicher
+  ist, wird blass und mit ihren Möglichkeiten angezeigt. Es gibt keine liegengebliebenen Spuren, weil
+  es keine Spuren gibt, nur Personen. Nummern werden über die Zeit durch Zuordnung zur vorherigen
+  Anzeige stabil gehalten. Das ist reine Beschriftung.
+
+## 7. Lernen
+Alle Größen aus 3 und 4 mit „gelernt“ werden aus den Wolken geschätzt, gewichtet mit ihrer Wahrscheinlichkeit:
+erwartete Zählungen (wie oft war hier jemand sichtbar, wie oft gab es ein Ziel, wie lange dauerten
+Aussetzer, wo entstanden Geister, …), gemischt mit dem Prior. Wird ein Sensor umgehängt, vergisst er
+alles, was von seinem Ort abhängt (Erkennung, Geister, Versatz, Aussetzerorte).
+
+## 8. Was aus dem bisherigen Code wegfällt
+
+| bisher | ersetzt durch |
+|---|---|
+| `evidence_time`-Dämpfung | Nicht-gesehen-Dauer `U` (3.3), Geisterlebensdauer (3.4), Versatz (4.1) |
+| `lost_after`, `coast_time`, „verloren“-Status, Aussetzer-Beginn | `U` (3.3) |
+| Erklärungsarten track / getup / out / jump / any | Übergänge aus 3, ein Messmodell |
+| Gast-Platz, `residents`, `guests` | Ankunftsrate `α` (3.2) |
+| Aufteilung beim Verlust, `doorway_walk`, Sammelanteile `spawn_share` | Tür = Bewegung (3.2) |
+| `getup_share`, `getup_time`, `getup_spread` | `λ_go(x, d)` (3.1) |
+| Hypothesen, Zusammenlegen, `max_hypotheses`, `hypothesis_floor`, Kalman/IMM | Partikelwolke je Person + Zuordnung je Frame (5) |
+| LD-Regel „schon von jemand anderem erklärt“, Körperabstoßung im LD-Teil | Messmodell 4.2, Körperabstand 3.1 |
+| Dijkstra-Karten | entfallen: ungesehene Wege folgen aus der Wolke (5) |
+
+## 9. Prüfung
+1. **Je Wahrscheinlichkeit ein Test** gegen eine Handrechnung (z. B. ein Frame, eine Person, ein Ziel:
+   die Gewichte von „Person“ und „Geist“ stimmen auf drei Stellen mit der Formel überein).
+2. **Kleine Szenen** (eine Person geht rein und setzt sich, zwei kreuzen sich, ein Geist steht 10 s).
+3. **Das Drehbuch** (`TESTDREHBUCH.md`) mit echten Aufnahmen und notierten Zeiten. Das ist das
+   Freigabekriterium. Die simulierten Abende dienen nur zum Entwickeln.

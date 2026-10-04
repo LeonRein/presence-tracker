@@ -34,7 +34,7 @@ export function updateLive(panel) {
 // "verdeckt" plus where the unseen person most likely is
 function whereText(w) {
   if (!w) return 'verdeckt';
-  const names = { room: 'im Raum', dead: 'keine eigene Person' };
+  const names = { room: 'im Raum', observed: 'im Raum', dead: 'keine eigene Person', outside: 'draußen' };
   const regions = state.live?.regions || {};
   return Object.entries(w).sort((a, b) => b[1] - a[1]).slice(0, 2)
     .map(([k, v]) => `${names[k] || regions[k]?.name || k} ${Math.round(v * 100)} %`).join(', ');
@@ -67,7 +67,7 @@ const LIVE = {
     const tracks = state.live?.tracks || [];
     if (!tracks.length) return '<p class="note">Keine Spuren.</p>';
     return `<table class="data"><tr><th>#</th><th>Status</th><th>x</th><th>y</th><th>v</th><th>Gehen</th><th>Alter</th></tr>${tracks.map(t => `
-      <tr><td>${t.id}</td><td>${t.status === 'tentative' ? `neu? ${Math.round((t.existence || 0) * 100)} %` : t.lost ? whereText(t.where) : 'aktiv'}</td>
+      <tr><td>${t.id}</td><td>${t.status === 'tentative' ? `neu? ${Math.round((t.existence || 0) * 100)} %` : t.where ? whereText(t.where) : 'aktiv'}</td>
       <td>${fmt(t.x)}</td><td>${fmt(t.y)}</td><td>${fmt(Math.hypot(t.vx, t.vy), 1)}</td>
       <td>${Math.round(t.walk * 100)} %</td><td>${fmt(t.age, 0)} s</td></tr>`).join('')}</table>`;
   },
@@ -676,7 +676,7 @@ const PARAMS = [
     ['warmup', 'Anlaufzeit', 's', 'Nach dem Start dürfen Personen überall sofort erkannt werden.', 1],
   ]],
   ['Personen', [
-    ['residents', 'Bewohner', '', 'So viele Personen wohnen hier. Mehr Spuren als das sind wahrscheinlich doppelte Spuren oder Geister, außer sie werden klar gemessen.', 1],
+    ['residents', 'Bewohner', '', 'So viele Personen verfolgt das Modell. Ankünfte von draußen (Gäste) sind noch nicht gebaut.', 1],
     ['guest_prob', 'Besuch', '', 'Annahme, wie wahrscheinlich jede weitere Person (Besuch) ist.', 0.01],
   ]],
   ['Verdeckte Personen', [

@@ -284,3 +284,14 @@ def test_person_seen_by_both_sensors_confirms_quickly():
     tracker, samples = run(config, [person], 20, sim_sensors(config), sample_every=0.1)
     first = next(t for t, n, _ in samples if n)
     assert first < 2.5
+
+
+def test_a_moved_sensor_forgets_what_was_learned():
+    from presence_tracker.sensormodel import SensorModel
+    config = room_config()
+    sm = SensorModel(config)
+    sm.trials["a"][10, 10] = 5
+    sm.clutter["a"][10, 10] = 3
+    sm.trials["b"][10, 10] = 7
+    sm.forget("a")
+    assert sm.trials["a"].sum() == 0 and sm.clutter["a"].sum() == 0 and sm.trials["b"][10, 10] == 7

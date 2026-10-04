@@ -6,40 +6,34 @@ betreten wird. Wer wer ist, spielt keine Rolle.
 
 ## Wie es funktioniert
 
-- Jede Person ist eine **Spur** in Hauskoordinaten (Meter, Achsen der Saugroboter-Karte). Ein
-  IMM-Kalman-Filter mit zwei Bewegungsmodellen (gehen / ruhig) glättet die Position und liefert nebenbei,
-  ob sich jemand bewegt.
-- **Niemand taucht aus dem Nichts auf und niemand verschwindet einfach.** Jede neue Spur hat eine
-  Wahrscheinlichkeit, eine Person zu sein: an Eingängen anfangs hoch, mitten im Raum klein. Messungen erhöhen
-  sie, je zuverlässiger der Sensor dort erkennt und je seltener er dort Geister meldet. Sieht ein Sensor die
-  Stelle gut und meldet nichts, sinkt sie. Ab 50 % ist es eine Person.
-- **Verdeckte Personen sind irgendwo.** Sieht der LD2450 jemanden nicht mehr (stillsitzend, verdeckt, zu dicht
-  neben jemand anderem), verteilt sich die Wahrscheinlichkeit auf: noch im Raum (am Kalman-Ort), hinter einer
-  der Türen (Küche, Balkon, Flur-Bereich mit Schlafzimmer und Haustür) oder „war keine eigene Person“ (Geist
-  oder doppelte Spur). Zu einer Tür kommt man nur, indem man hingeht: wer beim Verlust auf eine Tür zuging,
-  oder wer aufsteht (gemessene Rate, je länger jemand sitzt, desto seltener), und nur zu dem Teil, den kein
-  Sensor auf dem Weg gesehen hätte. Beweise: die gemessene Aussetzer-Statistik des LD2450 (still Sitzende
-  verliert er oft minutenlang), die Energie des LD2410C in der Entfernung der Person, die gelernten
-  Aufenthaltsdauern hinter den Türen. Wer zurückkommt, behält seine Nummer.
-- **Wie viele hier wohnen** (*Bewohner*, *Besuch*) fließt in die Ausgabe ein: Mehr Spuren als Bewohner sind
-  wahrscheinlich doppelte Spuren, außer sie werden klar gemessen.
-- **Zwei Personen dicht nebeneinander** (Sofa) macht der LD2450 meist zu einem Ziel (gemessene Trennschärfe:
-  unter 0,5 m fast nie zwei Ziele, ab 1 m zu 80 %). Das fehlende zweite Ziel spricht dann weder gegen die
-  zweite Person noch für eine doppelte Spur.
-- Der **LD2410C** erzeugt nie selbst Personen. Seine Haltezeit steht auf 0, die App überbrückt kurze Lücken selbst
-  (*LD2410C-Haltezeit*). Gelernt wird, welche Energie pro Entfernungsstufe eine sitzende, eine gehende und keine
-  Person ergibt; wer im Strahl ist, erklärt die Energie in seiner Entfernung. Die Energie pro Entfernungsstufe
-  steht im Tab *Sensoren*.
+Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht in [MODEL.md](MODEL.md).
+
+- **Jede Person ist eine Wolke möglicher Aufenthaltsorte** (Partikel), keine einzelne Spur. Ein Teil der
+  Wolke kann im Raum sitzen, ein anderer auf dem Balkon sein: Das ist die *Superposition*. Jede Messung
+  gewichtet die Möglichkeiten neu. Die Karte im Tab *Live* zeigt die Wolke jeder Person als Wärmekarte,
+  den Punkt am wahrscheinlichsten Ort.
+- **Niemand taucht aus dem Nichts auf und niemand verschwindet einfach.** Personen kommen und gehen nur
+  durch Türen. Eine Messung mitten im Raum, zu der niemand von einer Tür hätte kommen können, ohne gesehen
+  zu werden, ist ein Geist.
+- **Wer durch eine Tür geht, ist dahinter** (Küche, Balkon, Flur-Bereich mit Schlafzimmer und Treppe) und
+  wird dort angezeigt, nicht als Punkt an der Tür. Wer herauskommt, ist dieselbe Person mit derselben
+  Nummer. Wie lange Besuche hinter einer Tür üblicherweise dauern, wird gelernt. Die Schätzung bleibt breit,
+  wer länger bleibt, bleibt plausibel.
+- **Nicht gesehen werden**: Still Sitzende verliert der LD2450 oft lange, an manchen Stellen (Sofalehne) mehr
+  als an anderen. Die Wahrscheinlichkeit, unbemerkt am selben Ort zu bleiben, kommt aus der Erkennung je
+  Stelle und der gemessenen Dauer solcher Aussetzer. Wer an einer gut sichtbaren Stelle länger nicht
+  gesehen wird, ist wahrscheinlich gegangen; an einer schlecht sichtbaren Stelle ist er wahrscheinlich
+  noch da. Friert der LD2450 ein (bit-identische Werte), sagt das nichts über die Stelle.
+- **Zwei Körper stehen nicht am selben Fleck.** Zwei Personen dicht nebeneinander (Sofa) bleiben zwei.
+- **Gelernt** werden je Sensor die Erkennungswahrscheinlichkeit (nur wenn ein zweiter Sensor die Person
+  gleichzeitig sieht) und die Geisterdichte (nur wo ein zweiter Sensor gut hinsieht und nichts meldet).
+  Verhalten (wo man stehen bleibt, losgeht) wird bewusst nicht gelernt: Messlücken würden sonst als
+  Verhalten gedeutet und verstärkt.
 - **Wände**: Die Radare sehen nicht durch die Betonwände. Ein Messpunkt hinter einer Wand oder außerhalb aller
-  Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*).
-- **Räume ohne Sensor**: Zusammenhängende Räume ohne Sensor bilden einen unbeobachteten Bereich. Enthält er
-  einen Eingang (Treppenhaus), ist er *offen*: An seinen Türen kommen und gehen Personen wie an einem Eingang.
-  Sonst ist er *geschlossen* (Balkon, Küche mit nur einer Tür): Wer herauskommt, muss vorher hineingegangen
-  sein. Ein Spiegelbild in der Balkontür wird so nie zur Person, und für den Balkon und die Küche gibt es
-  trotzdem „besetzt“ und die Personenzahl. Was ein Sensor durch die Tür in einem geschlossenen Raum sieht,
-  wird verworfen.
-- **Mehrere Sensoren**: Messungen aller Sensoren gehen in dieselben Spuren. Sieht ein Sensor dieselbe Person
-  wie ein anderer, wird sie nicht doppelt gezählt.
+  Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*). Was ein Sensor durch eine offene Tür in
+  einem Raum ohne Sensor sieht (z. B. jemand im Flur), wird nicht als Person im beobachteten Raum gedeutet.
+- **Noch nicht gebaut**: Ankünfte von draußen (die Zahl der verfolgten Personen ist vorerst *Bewohner*), die
+  LD2410C-Energie als Beweis (sie wird nur angezeigt), der gelernte Versatz zwischen den Sensoren.
 
 ## Einrichten
 
@@ -91,7 +85,7 @@ Dazu `presence_haus_*` für das ganze Haus. Mit *wird betreten* kann das Licht s
 
 | Option | Bedeutung |
 |---|---|
-| `log_level` | `debug` zeigt jede neue und beendete Spur mit Grund |
+| `log_level` | Ausführlichkeit des Protokolls |
 | `topic_prefix` | MQTT-Präfix der Sensoren (`mqtt_prefix` in ESPHome), Standard `presence` |
 
 ## Entwicklung

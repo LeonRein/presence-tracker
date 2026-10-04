@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import math
 import logging
 import pathlib
 import re
@@ -17,8 +18,9 @@ from aiohttp import web
 from . import ha
 from .calibration import Calibrator
 from .model import Config
+from .crowd import Crowd
 from .sources import Clock, ReplayClock, mqtt_source, replay_source
-from .tracker import SensorClock, Tracker
+from .tracker import SensorClock
 from .zones import evaluate
 
 log = logging.getLogger(__name__)
@@ -51,7 +53,7 @@ class App:
         self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
 
     def _reset_tracker(self):
-        self.tracker = Tracker(self.config)
+        self.tracker = Crowd(self.config)
         # learned stays in rooms without a sensor survive restarts
         dwell_path = self.data_dir / "dwell.json"
         if dwell_path.exists():
@@ -69,10 +71,6 @@ class App:
     def _on_tracker_event(self, event, data):
         if event == "frame":
             self.calibrator.on_frame(*data)
-        elif event in ("confirmed", "ended", "merged"):
-            tr = data[0] if isinstance(data, tuple) else data
-            reason = f" ({data[1]})" if isinstance(data, tuple) else ""
-            log.debug("track %d %s%s", tr.id, event, reason)
 
     # ------------------------------------------------------------------ input
 
@@ -243,12 +241,16 @@ class App:
             config = Config.from_dict(data)
         except (TypeError, ValueError, KeyError) as e:
             return web.json_response({"error": str(e)}, status=400)
+        # a sensor that was moved (re-hung, recalibrated) sees the house differently: what was
+        # learned about it no longer holds
+        moved = [s.id for s in config.sensors if (old := self.config.sensor_by_id.get(s.id)) is not None
+                 and (math.hypot(s.x - old.x, s.y - old.y) > 0.05 or abs((s.heading - old.heading + 180) % 360 - 180) > 2
+                      or abs(s.height - old.height) > 0.05 or s.mirror != old.mirror)]
         self.config = config
-        self.tracker.config = config
-        self.tracker.imm.p = config.params
-        self.tracker.dwell.p = config.params
-        self.tracker.sensor_model.config = config
-        self.tracker.sensor_model.rebuild()
+        self.tracker.reconfigure(config)
+        for sid in moved:
+            self.tracker.sensor_model.forget(sid)
+            log.info("sensor %s moved: its learned detection, ghost and LD2410C statistics start over", sid)
         self.calibrator.config = config
         config.save(self.config_path)
         if self.client is not None:
@@ -336,8 +338,7 @@ class App:
         })
 
     async def h_reset_tracks(self, request):
-        self.tracker.tracks.clear()
-        self.tracker.start = self.tracker.now  # warmup again: everyone present gets picked up
+        self.tracker.reset_people()  # nothing known about where anybody is: the data decides again
         return web.json_response({"ok": True})
 
     # -------------------------------------------------- Home Assistant (Dobby)

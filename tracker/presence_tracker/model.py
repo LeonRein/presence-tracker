@@ -173,7 +173,7 @@ class TrackerParams:
     unseen_diffusion: float = 0.02  # m^2/s, how far someone unseen may have shifted (variance per second)
     newcomer_density: float = 0.001  # per m^2: someone we didn't know of shows up mid-room
     end_prob: float = 0.9  # a track ends when it most probably never was a person of its own
-    residents: int = 2  # people who live here
+    residents: int = 2  # people who live here (the particle model tracks this many until arrivals are built)
     # experimental particle filter over the residents (pf.py)
     pf_getup_share: float = 0.58  # still -> walking hazard share / (s + time): fitted to 790 still
     pf_getup_time: float = 5.6  # episodes of 2026-10-03 (median 13 s, 90 % 194 s)

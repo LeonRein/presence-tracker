@@ -323,10 +323,19 @@ export class MapView {
         }
       }
     }
+    // where each person may be: the superposition of their particles, per 20 cm cell
+    for (const cl of live.clouds || []) {
+      const top = Math.max(...cl.cells.map(c => c[2]), 1e-9);
+      const size = cl.cell * this.s;
+      for (const [cx, cy, w] of cl.cells) {
+        const [x, y] = this.P(cx, cy + cl.cell);
+        out.push(`<rect x="${x}" y="${y}" width="${size}" height="${size}" fill="${personColor(cl.id)}" fill-opacity="${(0.08 + 0.5 * w / top).toFixed(2)}"/>`);
+      }
+    }
     // trails
     const now = live.t;
     for (const tr of live.tracks || []) {
-      if (tr.status !== 'confirmed') continue;
+      if (tr.status !== 'confirmed' || tr.x == null) continue;
       const trail = this.trails.get(tr.id) || [];
       if (!trail.length || trail[trail.length - 1][2] < now - 0.05) trail.push([tr.x, tr.y, now]);
       while (trail.length && trail[0][2] < now - 6) trail.shift();
@@ -338,6 +347,7 @@ export class MapView {
       if (trail.length > 1) out.push(`<polyline points="${this.pts(trail)}" fill="none" stroke="var(--moving)" stroke-opacity="0.35" stroke-width="2"/>`);
     }
     for (const tr of live.tracks || []) {
+      if (tr.x == null) continue; // behind a door: shown with the room, not as a point
       const [x, y] = this.P(tr.x, tr.y);
       if (tr.status !== 'confirmed') {
         out.push(`<circle cx="${x}" cy="${y}" r="8" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="2 3"/>`);
@@ -357,6 +367,9 @@ export class MapView {
     this.gDyn.innerHTML = out.join('');
   }
 }
+
+const PERSON_COLORS = ['#2f6fde', '#d9822b', '#2e9d5a', '#a855c7', '#c2413b', '#0f8f9c'];
+function personColor(id) { return PERSON_COLORS[(id - 1) % PERSON_COLORS.length]; }
 
 export function bgToWorld(l, u, v) {
   const r = rad(l.rotation || 0), k = l.scale;
