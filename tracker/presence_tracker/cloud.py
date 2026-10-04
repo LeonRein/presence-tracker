@@ -30,6 +30,10 @@ class Motion:
     start_proposal = 0.02  # per step: share of the standing particles near a measurement tried as starting to walk
     start_near = 2.0  # m: "near"
     start_kappa = 4.0  # concentration of the tried directions around the measurements
+    # into and out of the house (the residents: out for hours, then back through a way in)
+    arrive_rate = 1 / (4 * 3600)  # 1/s per way in: somebody out of the house comes back
+    arrive_proposal = 0.005  # per step: share of the particles outside tried as coming in
+    leave_rate = 1 / (2 * 3600)  # 1/s: somebody in a place with a way out (stairs) leaves the house
 
 
 class Cloud:
@@ -58,14 +62,14 @@ class Cloud:
 
     @classmethod
     def anywhere(cls, n, n_sensors, rng, world, t: float) -> "Cloud":
-        """Nothing known (start without a saved state): half standing anywhere in the observed
-        area, half behind the doors."""
+        """Nothing known (start without a saved state): a third standing anywhere in the observed
+        area, a third behind the doors, a third not in the house."""
         c = cls(n, n_sensors, rng)
         ii, jj = np.nonzero(world.labels == OBSERVED)
-        regions = [i for i in range(1, len(world.places) - 1)]
+        regions = [i for i in range(1, len(world.places))]
         k = rng.integers(0, len(ii), n)
         c.pos = np.stack([world.x0 + (ii[k] + rng.random(n)) * 0.1, world.y0 + (jj[k] + rng.random(n)) * 0.1], axis=1)
-        behind = rng.random(n) < 0.5 if regions else np.zeros(n, dtype=bool)
+        behind = rng.random(n) < 2 / 3 if regions else np.zeros(n, dtype=bool)
         if regions:
             c.place[behind] = np.array(regions)[rng.integers(0, len(regions), int(behind.sum()))]
         c.since[:] = t
@@ -195,6 +199,40 @@ class Cloud:
             self.since[starts] = t
             self.anchor[starts] = self.pos[starts]
             self.counted[starts] = False
+
+        # into the house and out of it: from outside into a place with a way in (or in at an entry
+        # of the observed area) at the arrival rate - rare, so tried more often and the weights
+        # corrected (exact); from such a place out at the leaving rate
+        k = np.flatnonzero(self.place == world.outside)
+        ways = list(world.open_places)
+        entries = world.portals_of(world.outside)
+        n_ways = len(ways) + len(entries)
+        if len(k) and n_ways:
+            p0 = 1 - math.exp(-m.arrive_rate * n_ways * dt)
+            q = max(p0, m.arrive_proposal)
+            go = rng.random(len(k)) < q
+            self.logw[k[go]] += math.log(p0 / q)
+            self.logw[k[~go]] += math.log((1 - p0) / (1 - q))
+            kg = k[go]
+            which = rng.integers(0, n_ways, len(kg))
+            into = which < len(ways)
+            self.place[kg[into]] = np.array(ways, dtype=np.int16)[which[into]] if ways else 0
+            self.since[kg[into]] = t
+            ke = kg[~into]
+            if len(ke):
+                e = which[~into] - len(ways)
+                self.pos[ke] = np.array([entries[i][0] for i in e]) + rng.normal(0, 0.15, (len(ke), 2))
+                self.vel[ke] = np.array([entries[i][1] for i in e]) * m.exit_speed
+                self.place[ke] = OBSERVED
+                self.mode[ke] = WALK
+                self.since[ke] = t
+                self.last_hit[ke] = t
+                self.counted[ke] = True
+        if world.open_places:
+            k = np.flatnonzero(np.isin(self.place, world.open_places))
+            out = k[rng.random(len(k)) < 1 - math.exp(-m.leave_rate * dt)]
+            self.place[out] = world.outside
+            self.since[out] = t
 
         # behind a door: the visit ends by the learned stays, coming out at a door of that place.
         # Rare per step, so tried more often than it happens and the weights corrected (exact).

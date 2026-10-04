@@ -76,6 +76,13 @@ Personen sind anonym. Nummern in der Oberfläche sind nur Beschriftung und nicht
   Erklärung, gleich wie lange es dauert.
 - **Draußen** hat keine feste Bevölkerung. Ankunftsrate `α` an jeder Tür nach draußen, **gelernt**
   (Prior: 1 Person pro Tag). Wer im Flur-Bereich ist, kann über diese Tür auch nach draußen gehen.
+- *Stand 0.6.1:* Gebaut ist nur der Teil für die Bewohner. Jede Person kann auch draußen sein, verlässt
+  das Haus aus dem Flur-Bereich (im Mittel nach 2 h dort) und kommt wieder (im Mittel nach 4 h).
+  **Unbekannte Neuankömmlinge** sind ausprobiert, aber noch nicht drin. Im jetzigen Rechenverfahren wird
+  aus jeder Fehlzuordnung an einer Tür sofort eine dauerhafte zusätzliche Person: Ein paar Sekunden
+  ähnlicher Messungen zählen wie viele unabhängige Beweise und überwinden jede kleine Ankunftsrate. Das
+  braucht zuerst die Geister mit Lebensdauer (3.4). Auf dem Drehbuch-Durchlauf fiel das Ergebnis damit
+  auf 59–87 %.
 
 ### 3.3 Nicht gesehen werden
 Es gibt keinen eigenen Zustand „ausgesetzt“ und keine Schwelle „verloren“. Es gibt eine **gelernte**
@@ -93,7 +100,12 @@ Wahrscheinlichkeit je Feld, Sensor und Modus (steht / geht):
   *Offen:* Eigentlich gehört ein langer Aussetzer zu einer Haltung an einem Ort, nicht zur Person.
   Wer aufsteht und geht, müsste wieder normal sichtbar sein. Umgesetzt (τ ab dem letzten Wechsel zu
   „geht“) hat das auf dem Drehbuch-Durchlauf deutlich verschlechtert (89 % → 71–73 %). Das Zusammenspiel
-  ist noch nicht verstanden. Fehlmessungen hängen zusammen, und genau
+  ist noch nicht verstanden.
+  *Ebenso offen:* Die gemessene Tabelle für Gehende hat lange Lücken (20 % über 20 s). Das waren
+  wahrscheinlich Leute, die das Blickfeld verlassen hatten, denn Gehende im Blickfeld werden nach
+  0,3–1,2 s wieder gefunden. Mit dieser kurzen Lücke maß der Drehbuch-Durchlauf aber schlechter
+  (92 % → 90 %). Vermutlich verdeckt die lange Lücke einen anderen Fehler, etwa eine überschätzte
+  Erkennung in Türrahmen. Fehlmessungen hängen zusammen, und genau
   das bildet `U` ab. Unabhängig gerechnet wären 3 s ohne Treffer bei 90 % Erkennung 0,1³⁰, also
   „unmöglich“.
 
@@ -139,7 +151,13 @@ Gegeben der Zustand:
 - Energie je Stufe gegeben „leer“, „jemand sitzt in dieser Stufe“ oder „jemand geht in dieser Stufe“:
   **gelernte** Histogramme. Mehrere Personen in einer Stufe: die stärkere zählt.
 - Die Energien sind vom Gerät geglättet. Verwendet wird deshalb ein Wert je **gemessener**
-  Korrelationszeit, nicht jeder Frame. Das ist eine Aussage über das Gerät, keine Dämpfung.
+  Korrelationszeit (mit einer Person in der Stufe 2,5–4 s, also alle 3 s), nicht jeder Frame. Das ist
+  eine Aussage über das Gerät, keine Dämpfung.
+- Gelernt nur von sicher gesehenen Personen (LD2450 als unabhängiger Beleg). Wer nach einem langen
+  Aussetzer am selben Ort wieder gefunden wird, saß dort: Seine Stufe wird für diese Zeit rückwirkend
+  als besetzt gelernt, sonst würden verdeckte Sitzende als „leer“ gelernt.
+- Umgesetzt in 0.6.1. Auf dem Drehbuch-Durchlauf brachte das mit vorher gelernten Verteilungen
+  88 % → 93 % und weniger Ausreißer.
 - Störungen durch den LD2450 im selben Gehäuse (etwa alle 7 s) sind ein eigener, **gelernter**
   Geisteranteil der LD2410C-Energie.
 

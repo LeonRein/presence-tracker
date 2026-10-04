@@ -676,7 +676,7 @@ const PARAMS = [
     ['warmup', 'Anlaufzeit', 's', 'Nach dem Start dürfen Personen überall sofort erkannt werden.', 1],
   ]],
   ['Personen', [
-    ['residents', 'Bewohner', '', 'So viele Personen verfolgt das Modell. Ankünfte von draußen (Gäste) sind noch nicht gebaut.', 1],
+    ['residents', 'Bewohner', '', 'So viele Personen verfolgt das Modell; jede kann auch außer Haus sein. Unbekannte Neuankömmlinge (Gäste) sind noch nicht gebaut.', 1],
     ['guest_prob', 'Besuch', '', 'Annahme, wie wahrscheinlich jede weitere Person (Besuch) ist.', 0.01],
   ]],
   ['Verdeckte Personen', [

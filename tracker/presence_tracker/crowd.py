@@ -23,23 +23,27 @@ import numpy as np
 
 from .cloud import STILL, WALK, Cloud, Motion
 from .habits import Habits
-from .sensormodel import GAP_FLOOR, GAP_PRIOR, GAP_TAUS, PD_MAX, SensorModel, cell_of
+from .sensormodel import GAP_FLOOR, GAP_PRIOR, GAP_TAUS, GATE, PD_MAX, SensorModel, cell_of
 from .tracker import SensorClock, SensorRuntime, Tracker  # noqa: F401 (SensorClock re-exported)
 from .unobserved import Dwell
 from .world import OBSERVED, World
 
 SPEED_SPREAD = 4.0  # m/s: ghosts' radial speeds spread over about +-2 m/s
 FRAME = 0.089  # s, LD2450 frame period (measured)
-DROP_RATE = {STILL: 1 / 70, WALK: 1 / 300}  # 1/s: long dropouts begin (measured on the recordings)
+DROP_RATE = {STILL: 1 / 70, WALK: 1 / 300}  # 1/s: dropouts begin (measured on the recordings)
 PD_CELL = 0.1  # m, cache of the detection probability per sensor
 FROZEN_RADIUS = 1.0  # m around a frozen target where the sensor's silence says nothing
 BODY = 0.3  # m: two people's centers are never closer
 LEARN_DELAY = 3.0  # s: a stop / start is learned this long after it happened
+LD_CORR = 3.0  # s: LD2410C gate energies with a person stay correlated about this long (measured 2.5-4 s)
 SEEN_WELL = 0.8  # visibility from which stops and starts are learned
 
 
 def _survival(mode: int, tau: np.ndarray) -> np.ndarray:
-    """Share of long dropouts lasting longer than tau (prior table, log-linear, 1/tau tail)."""
+    """Share of dropouts lasting longer than tau (measured table, log-linear, 1/tau tail).
+    Open (MODEL.md 3.3): the walking table's long gaps are probably people who left the view; a
+    short gap for walkers (about 0.7 s, as measured for walkers in view) measured worse on the
+    test run, so something else still leans on it."""
     table = np.array(GAP_PRIOR["walking" if mode == WALK else "still"])
     taus = np.array(GAP_TAUS)
     t = np.maximum(tau, taus[0])
@@ -81,10 +85,12 @@ class Crowd:
         self.last_step = None
         self.listeners = []
         self._pd_cache = {}
+        self._ld_used = {}  # sensor -> time the LD2410C energies last weighed the clouds
         self.reset_people(people)
 
     def reset_people(self, people=None):
-        """Start over: nothing known about where anybody is."""
+        """Start over: nothing known about where anybody is. The residents, each anywhere - also
+        out of the house. (Somebody unknown coming in is not built yet: see MODEL.md 3.2.)"""
         if people is None:
             people = ["anywhere"] * max(int(self.p.residents), 1)
         self.people = [Person(k + 1, Cloud.anywhere(self.n, len(self.sensors), self.rng, self.world, self.now) if place == "anywhere"
@@ -161,6 +167,7 @@ class Crowd:
         self.helper._mark_stale(rt, frame, detections)
         rt.detections = detections
         self._ld_runtime(sensor, rt, t, frame.get("ld2410") or {})
+        energies = [max(a, b) for a, b in zip(rt.move_gates, rt.still_gates)] if rt.move_gates and rt.still_gates else None
         for listener in self.listeners:
             listener("frame", (sensor, t, detections))
         if not sensor.enabled or not sensor.placed:
@@ -174,6 +181,11 @@ class Crowd:
         self.step(t, np.array([d.pos for d in dets]).reshape(-1, 2))
         frozen = np.array([d.pos for d in detections if d.stale and not d.hidden]).reshape(-1, 2)
         self._update(sensor, t, dets, gap, full=len(detections) >= 3, frozen=frozen)
+        if energies:
+            self._ld_learn(sensor, t, energies, dets)
+            if t - self._ld_used.get(sensor.id, -math.inf) >= LD_CORR:
+                self._ld_used[sensor.id] = t
+                self._ld_weigh(sensor, t, energies)
 
     def _update(self, s, t, dets, gap, full, frozen=None):
         p = self.p
@@ -248,6 +260,15 @@ class Crowd:
             c.normalize()
             gaps_ended.append(ended)
         self._learn_frame(s, t, dets, beta, gap, tau_before, gaps_ended)
+        for k, person in enumerate(self.people):
+            gi, taus = gaps_ended[k]
+            w = person.cloud.weights()
+            if len(gi) and float(w[gi].sum()) > 0.5:
+                # found again where they sat: the LD2410C gate was occupied all the time
+                pos = w[gi] @ person.cloud.pos[gi] / w[gi].sum()
+                g = int(self._gates(s, pos[None, :], self.p.ld2410_fov)[0])
+                if g >= 0:
+                    self.sensor_model.learn_ld2410_gap(s.id, g, t - float(np.median(taus)), t)
         for person in self.people:
             person.cloud.resample()
 
@@ -299,8 +320,96 @@ class Crowd:
                     free *= np.clip(1 - near[i, j], 1e-6, 1)
             person.cloud.logw[obs] += np.log(free)
 
+    def _gates(self, s, pos: np.ndarray, fov: float) -> np.ndarray:
+        """LD2410C gate (0.75 m slant distance step) of the points (n, 2) for the radar in sensor
+        s's case; -1 outside the cone of `fov` degrees."""
+        dx, dy = pos[:, 0] - s.x, pos[:, 1] - s.y
+        ly = dx * s._cos + dy * s._sin
+        gx = dx * s._sin - dy * s._cos
+        lx = -gx if s.mirror else gx
+        slant = np.sqrt(lx * lx + ly * ly + (s.height - self.p.target_height) ** 2)
+        g = np.floor(slant / GATE).astype(int)
+        inside = (ly > 0) & (np.degrees(np.abs(np.arctan2(lx, np.maximum(ly, 1e-9)))) <= fov / 2)
+        return np.where(inside, g, -1)
+
+    def _ld_weigh(self, s, t, energies):
+        """MODEL.md 4.2: the energy in a particle's gate with a person there vs. with nobody
+        (learned, a mixture over the neighbouring gates: the exact slant distance is uncertain).
+        Energy where another person probably is explains itself: with q that probability, the
+        factor is q + (1 - q) ratio. Particles out of the trusted cone, behind walls or behind a
+        door: 1. One observation per LD_CORR (the device smooths the energies)."""
+        p, sm = self.p, self.sensor_model
+        n_g = len(energies)
+        ratio = {}
+        for moving in (False, True):
+            single = np.array([sm.ld2410_ratio(s.id, k, energies[k], moving=moving) for k in range(n_g)])
+            padded = np.concatenate([[single[0]], single, [single[-1]]])
+            ratio[moving] = 0.25 * padded[:-2] + 0.5 * padded[1:-1] + 0.25 * padded[2:]
+        # each person's probability of being in each gate of the wider beam (energy reaches it)
+        occ = []
+        for person in self.people:
+            c = person.cloud
+            obs = np.flatnonzero(c.place == OBSERVED)
+            g = self._gates(s, c.pos[obs], p.ld2410_beam)
+            q = np.zeros(n_g + 4)
+            ok = (g >= 0) & (g < n_g)
+            np.add.at(q, g[ok] + 2, c.weights()[obs][ok])
+            near = np.array([q[k:k + 5].sum() for k in range(n_g)])  # within two gates
+            occ.append(np.minimum(near, 1.0))
+        for k, person in enumerate(self.people):
+            c = person.cloud
+            obs = np.flatnonzero(c.place == OBSERVED)
+            if not len(obs):
+                continue
+            g = self._gates(s, c.pos[obs], p.ld2410_fov)
+            seen = (g >= 0) & (g < n_g) & (self._pd(s.id, c.pos[obs]) > 0.05)
+            if not seen.any():
+                continue
+            others = np.zeros(n_g)
+            for kk, q in enumerate(occ):
+                if kk != k:
+                    others = 1 - (1 - others) * (1 - q)
+            idx = obs[seen]
+            gg = g[seen]
+            walking = c.mode[idx] == WALK
+            r = np.where(walking, ratio[True][gg], ratio[False][gg])
+            factor = others[gg] + (1 - others[gg]) * r
+            c.logw[idx] += np.log(np.maximum(factor, 1e-6))
+            c.normalize()
+
+    def _ld_learn(self, s, t, energies, dets):
+        """The energy distributions per gate: with a sure person sitting / walking in it, and
+        with nobody within two gates (people anywhere probable, and this sensor's own targets,
+        block their gates). Independent evidence: the people are sure from the LD2450."""
+        p = self.p
+        still, moving, blocked = set(), set(), set()
+        for person in self.people:
+            mean, mass, spread = self._sure(person)
+            c = person.cloud
+            obs = np.flatnonzero(c.place == OBSERVED)
+            if len(obs):
+                w = c.weights()[obs]
+                g = self._gates(s, c.pos[obs], p.ld2410_beam)
+                for gate in np.unique(g[(g >= 0) & (w > 0.01)]):
+                    blocked.update(range(gate - 2, gate + 3))
+            if mean is None or mass < 0.9 or spread > 0.4:
+                continue
+            w = c.weights()
+            recent = float(w[obs] @ (t - c.last_hit[obs].max(axis=1) < 1.0)) / mass
+            if recent < 0.8:
+                continue
+            g = int(self._gates(s, mean[None, :], p.ld2410_fov)[0])
+            if g >= 0:
+                walk = float(w[obs] @ (c.mode[obs] == WALK)) / mass
+                (moving if walk > 0.5 else still).add(g)
+        for d in dets:
+            g = int(self._gates(s, d.pos[None, :], p.ld2410_beam)[0])
+            if g >= 0:
+                blocked.update(range(g - 2, g + 3))
+        self.sensor_model.learn_ld2410(s.id, t, energies, still, moving, blocked)
+
     def _ld_runtime(self, s, rt, t, ld):
-        """LD2410C: kept for the display only (MODEL.md 4.2 is not built yet)."""
+        """LD2410C state for the display (presence with the app's own hold time)."""
         p = self.p
         rt.move_gates = ld.get("move_gates")
         rt.still_gates = ld.get("still_gates")
@@ -496,13 +605,15 @@ class Crowd:
         zones = [z for z in self.config.zones if z.kind in ("room", "area")]
         for z in zones:
             states.setdefault(z.id, ZoneState())
+        # in the house: the most probable number
+        home = np.array([1.0])
+        for person in self.people:
+            p_in = 1 - float(person.cloud.place_probabilities(len(self.world.places))[self.world.outside])
+            home = np.convolve(home, [1 - p_in, p_in])
+        total.count = int(np.argmax(home))
         for person in self.people:
             d = self._display(person)
-            pr = d["places"]
-            if pr.get("outside", 0.0) < 0.5:
-                total.count += 1
             if d["x"] is None:
-                total.still += pr.get("outside", 0.0) < 0.5
                 continue
             x, y, vx, vy = d["x"], d["y"], d["vx"], d["vy"]
             moving = not d["lost"] and d["walk"] > 0.5 and math.hypot(vx, vy) > 0.15
@@ -525,6 +636,8 @@ class Crowd:
         for st in states.values():
             st.moving = min(st.moving, st.count)
             st.still = st.count - st.moving
+        total.moving = min(total.moving, total.count)
+        total.still = total.count - total.moving
         states["_total"] = total
         return states
 

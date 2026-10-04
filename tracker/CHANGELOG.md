@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.1
+
+- Der LD2410C fließt ein: Alle 3 s (seine gemessene Korrelationszeit) gewichtet die Energie in der
+  Entfernungsstufe jede mögliche Lage einer Person, gegen die gelernte Energie ohne Person. Die
+  Verteilungen lernt die App von sicher gesehenen Personen; wer nach einem langen Aussetzer am selben Ort
+  wieder gefunden wird, zählt rückwirkend als dort sitzend.
+- Jede Person kann außer Haus sein: Aus dem Flur-Bereich mit der Treppe verlässt man das Haus und kommt
+  wieder. Wer nicht da ist, wird nicht mehr irgendwo im Raum angezeigt.
+- Reichweite: Hinter der eingestellten Reichweite fällt die angenommene Erkennung weich ab statt auf 0.
+
+Testdurchlauf (wie 0.6.0, 12 Läufe, mit vorher gelernten Sensorkarten): richtige Personenzahl 92 % im
+Mittel (0.6.0: 88–89 %). Unbekannte Neuankömmlinge sind noch nicht drin (MODEL.md 3.2).
+
 ## 0.6.0
 
 Neues Modell: Jede Person ist eine Partikelwolke, keine Spur mehr (MODEL.md). Kein Kalman-Filter, keine

@@ -21,6 +21,8 @@ class World:
         self.places = ["observed"] + self.regions + ["outside"]
         self.outside = len(self.places) - 1
         self.index = {name: i for i, name in enumerate(self.places)}
+        # places people can come in to from outside and leave to it (an entry, a stairwell)
+        self.open_places = [self.index[rid] for rid, r in config.regions.items() if r["open"]]
         rooms = config.zones_of("room")
         region_of_room = {r: rid for rid, reg in config.regions.items() for r in reg["rooms"]}
         if rooms:
