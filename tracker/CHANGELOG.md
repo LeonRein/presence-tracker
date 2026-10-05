@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.14
+
+- Übersicht: „Räume mit Sensor“ und „Räume ohne Sensor“ folgen dem Grundriss. Bisher fehlten die Räume
+  ohne Sensor mit Ausgang (Flur, Schlafzimmer, Bad, Arbeitszimmer, Treppe), und Küche und Balkon
+  standen doppelt da. Räume ohne Sensor, die über Türen zusammenhängen, stehen als eine Gruppe da
+  (gekennzeichnet „Ausgang“, wenn man dort das Haus verlassen kann); auf der Karte zeigen sie keine
+  eigene Zahl mehr, denn das Modell weiß nur „irgendwo in der Gruppe“.
+
 ## 0.6.13
 
 - Keine zweite Person mehr, die mit einer echten „mitläuft“: Jeder Sensor sieht eine Person ein Stück

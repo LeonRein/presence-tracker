@@ -232,13 +232,15 @@ export class MapView {
       }
     }
 
-    // zone labels on top of walls
+    // zone labels on top of walls. A room without a sensor that shares its group with others has no
+    // count of its own: the model only knows "somewhere in the group"
+    const grouped = new Set(Object.values(state.live?.regions || {}).filter(r => (r.rooms || []).length > 1).flatMap(r => r.rooms));
     for (const z of c.zones) {
       if (z.kind === 'room' || state.tab !== 'live' || this.s > 25) {
         const kind = zoneStyle(z);
         const zs = zoneStates[z.id];
         const [x, y] = this.P(...(z.anchor || zoneCenter(z)));
-        const count = state.tab === 'live' && zs ? ` · ${zs.count}` : '';
+        const count = state.tab === 'live' && zs && !grouped.has(z.id) ? ` · ${zs.count}` : '';
         out.push(`<text class="zone-label" x="${x}" y="${y}" text-anchor="middle" fill="${kind.color}" pointer-events="none">${esc(z.name)}${count}</text>`);
       }
     }

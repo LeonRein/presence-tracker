@@ -41,10 +41,13 @@ function whereText(w) {
 }
 
 const LIVE = {
+  // the rooms and areas the sensors see; the rest are regions without a sensor (derived from the
+  // plan on the server: rooms no sensor covers, grouped by the doors between them)
   zones() {
     const live = state.live;
-    const zones = state.config.zones.filter(z => z.kind === 'room' || z.kind === 'area');
-    if (!zones.length) return '<p class="note">Noch keine Räume oder Bereiche. Im Tab „Zonen“ einzeichnen.</p>';
+    const unseen = new Set(Object.values(live?.regions || {}).flatMap(r => r.rooms || []));
+    const zones = state.config.zones.filter(z => (z.kind === 'room' || z.kind === 'area') && !unseen.has(z.id));
+    if (!zones.length) return '<p class="note">Noch keine Räume oder Bereiche mit Sensor. Im Tab „Zonen“ einzeichnen, Sensoren platzieren.</p>';
     return zones.map(z => {
       const st = live?.zones?.[z.id];
       const color = ZONE_KINDS[z.kind].color;
@@ -53,7 +56,6 @@ const LIVE = {
         st.moving ? `<span class="badge ok">${st.moving} bewegt</span>` : '',
         st.still ? `<span class="badge">${st.still} ruhig</span>` : '',
         st.approaching ? `<span class="badge warn">gleich${st.eta != null ? ` (${st.eta.toFixed(1)} s)` : ''}</span>` : '',
-        st.probability != null && st.probability > 0 ? `<span class="badge" title="Wahrscheinlichkeit, dass noch jemand drin ist (Raum ohne Sensor)">${Math.round(st.probability * 100)} %</span>` : '',
       ].join('') : '';
       return `<div class="item"><span class="swatch" style="background:${color}"></span><span class="grow">${esc(z.name)}</span>${badges}</div>`;
     }).join('');
@@ -87,12 +89,14 @@ const LIVE = {
     }).join('') || '<p class="note">Noch keine Daten von Sensoren.</p>';
   },
   unobserved() {
-    const regions = Object.values(state.live?.regions || {}).filter(r => !r.open);
-    if (!regions.length) return '<p class="note">Keine geschlossenen Räume ohne Sensor.</p>';
-    const fmtS = s => s >= 90 ? `${Math.round(s / 60)} min` : `${s} s`;
-    return regions.map(r => `<div class="item" style="flex-wrap:wrap"><span class="grow">${esc(r.name)}</span>
-      ${r.probabilities.length ? r.probabilities.map(p => `<span class="badge ${p >= 0.5 ? 'on' : ''}">${Math.round(p * 100)} %</span>`).join('') : '<span class="badge">leer</span>'}
-      <div class="meta" style="flex-basis:100%">Aufenthalt typisch ${fmtS(r.dwell.median)}, 90 % unter ${fmtS(r.dwell.p90)}${r.dwell.visits ? ` (aus ${r.dwell.visits} Besuchen)` : ' (Annahme, noch nichts gelernt)'}</div></div>`).join('');
+    const regions = Object.values(state.live?.regions || {});
+    if (!regions.length) return '<p class="note">Alle Räume haben einen Sensor.</p>';
+    const fmtS = s => s >= 5400 ? `${Math.round(s / 3600)} h` : s >= 90 ? `${Math.round(s / 60)} min` : `${s} s`;
+    const names = Object.fromEntries(state.config.zones.map(z => [z.id, z.name]));
+    return regions.map(r => `<div class="item" style="flex-wrap:wrap"><span class="grow" style="white-space:normal">${(r.rooms || []).map(id => esc(names[id] || id)).join(', ') || esc(r.name)}</span>
+      ${r.open ? '<span class="badge" title="Von hier aus kann man das Haus verlassen (Treppe, Eingang)">Ausgang</span>' : ''}
+      ${r.probabilities.length ? r.probabilities.map(p => `<span class="badge ${p >= 0.5 ? 'on' : ''}" title="Wahrscheinlichkeit, dass diese Person hier ist">${Math.round(p * 100)} %</span>`).join('') : '<span class="badge">leer</span>'}
+      <div class="meta" style="flex-basis:100%;white-space:normal">${(r.rooms || []).length > 1 ? 'Ohne Sensor über Türen verbunden, deshalb zusammen. ' : ''}Aufenthalt typisch ${fmtS(r.dwell.median)}, 90 % unter ${fmtS(r.dwell.p90)}${r.dwell.visits ? ` (aus ${r.dwell.visits} Besuchen)` : ' (Annahme, noch nichts gelernt)'}</div></div>`).join('');
   },
   load() {
     const l = state.live?.load;
@@ -147,9 +151,9 @@ function gateBars(ld) {
 function livePanel(panel, view) {
   panel.append(h(`<div>
     <div class="card" data-live="total"></div>
-    <h3>Räume und Bereiche</h3><div class="list" data-live="zones"></div>
+    <h3>Räume mit Sensor</h3><div class="list" data-live="zones"></div>
     <h3>Räume ohne Sensor</h3><div class="list" data-live="unobserved"></div>
-    <p class="note">Wer hineingeht, wird gezählt. Die Wahrscheinlichkeit, dass noch jemand drin ist, sinkt mit der Zeit, je nachdem, wie lange Besuche dort üblicherweise dauern.</p>
+    <p class="note">Aus dem Grundriss: Räume, die kein Sensor überwiegend sieht, über Türen zu Gruppen verbunden. Wer hineingeht, ist dort. Die Wahrscheinlichkeit, dass jemand noch drin ist, sinkt mit der Zeit, je nachdem, wie lange Besuche dort üblicherweise dauern. Die Prozente sind je Person.</p>
     <h3>Sensoren</h3><div class="list" data-live="sensorHealth"></div>
     <h3>Spuren</h3><div data-live="tracks"></div>
     <h3>Anzeige</h3>
@@ -659,10 +663,10 @@ const PARAMS = [
     ['residents', 'Bewohner', '', 'So viele Personen verfolgt das Modell; jede kann auch außer Haus sein. Unbekannte Neuankömmlinge (Gäste) sind noch nicht gebaut.', 1],
   ]],
   ['Räume ohne Sensor', [
-    ['dwell_median', 'Typischer Aufenthalt', 's', 'Annahme für Küche, Balkon und Co., bis genug Besuche gelernt sind.', 10],
+    ['dwell_median', 'Typischer Aufenthalt', 's', 'Annahme für Räume ohne Sensor und ohne Ausgang, bis genug Besuche gelernt sind.', 10],
     ['dwell_spread', 'Streuung des Aufenthalts', '', 'Streuung von ln(Dauer) der Annahme: breit, damit lange Aufenthalte möglich bleiben.', 0.1],
     ['dwell_prior_weight', 'Gewicht der Annahme', 'Besuche', 'Die Annahme zählt wie so viele gelernte Besuche.', 1],
-    ['dwell_median_open', 'Typischer Aufenthalt, offener Bereich', 's', 'Dasselbe für den Bereich mit dem Weg nach draußen (Flur, Schlafzimmer): Stunden sind normal.', 60],
+    ['dwell_median_open', 'Typischer Aufenthalt, offener Bereich', 's', 'Dasselbe für Räume ohne Sensor mit Ausgang (verbunden mit Treppe oder Eingang, oft mit dem Schlafzimmer): Stunden sind normal.', 60],
     ['dwell_spread_open', 'Streuung, offener Bereich', '', '', 0.1],
   ]],
   ['LD2410C', [

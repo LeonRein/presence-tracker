@@ -801,7 +801,7 @@ class Crowd:
         for rid, r in self.config.regions.items():
             k = self.world.index.get(rid)
             probs = [float(person.cloud.place_probabilities(len(self.world.places))[k]) for person in self.people] if k is not None else []
-            regions[rid] = {"name": r["name"], "open": r["open"],
+            regions[rid] = {"name": r["name"], "rooms": r["rooms"], "open": r["open"],
                             "count": sum(pr >= 0.5 for pr in probs),
                             "probabilities": [round(pr, 3) for pr in probs if pr >= 0.005],
                             "dwell": self.dwell.stats(rid)}
