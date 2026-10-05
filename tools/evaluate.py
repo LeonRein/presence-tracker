@@ -39,8 +39,11 @@ def run(args):
     db, tracker_dir, episode, seed = args
     sys.path.insert(0, tracker_dir)
     from presence_tracker.crowd import Crowd
-    from presence_tracker.frames import SensorClock
     from presence_tracker.model import Config
+    try:
+        from presence_tracker.frames import SensorClock
+    except ImportError:  # versions before 0.6.11
+        from presence_tracker.tracker import SensorClock
 
     config = Config.from_dict(json.load(open(os.path.join(db["dir"], "configs", episode["config"]))))
     rooms = [z.id for z in config.zones_of("room") if not any(z.id in r["rooms"] for r in config.regions.values())]
