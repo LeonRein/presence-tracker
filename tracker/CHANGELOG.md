@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.18
+
+- Gehende behalten ihre Richtung länger: Geschwindigkeitsänderungen wie gemessen (0,6 statt 1,0
+  m/s² je √s, aus 4,6 h Zielspuren). Wer zur Tür hinausgeht, bleibt im Modell nicht mehr davor stehen.
+  Wahrheitsdatenbank, 12 Seeds: Leon geht hinaus 7,9 % → 2,8 % falsch, Abend 8,9 % → 0 %, Drehbuch
+  9,4 % → 9,3 %.
+
 ## 0.6.17
 
 - Wie gut die Sensoren an den Rändern sehen, folgt jetzt der Messung (22 h Aufnahmen): Gehende bis 7 m

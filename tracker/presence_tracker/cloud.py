@@ -20,10 +20,13 @@ MIN_PER_PLACE = 16  # particles every place with any weight keeps through resamp
 class Motion:
     """The motion model's numbers (MODEL.md 3.1, 3.2). Priors; learned later."""
 
-    walk_noise = 1.0  # m/s^2 per sqrt(s): random changes of a walker's velocity
+    # measured (5.10., 4.6 h of LD2450 target tracks): velocity changes over 2-3 s like 0.6 m/s^2
+    # per sqrt(s). Until 0.6.17 assumed 1.0: a walk's direction was soon forgotten, and somebody
+    # walking out of a door stayed in front of it in the model (5.10., 16:44). MODEL.md 3.1
+    walk_noise = 0.6  # m/s^2 per sqrt(s): random changes of a walker's velocity
     max_speed = 2.0  # m/s
     still_noise = 0.02  # m per sqrt(s): a standing person sways
-    stop_rate = 0.5  # 1/s: a walker stops
+    stop_rate = 0.5  # 1/s: a walker stops (the measured, rising rate was worse: MODEL.md 3.1)
     go_share, go_time = 0.58, 5.6  # standing -> walking at rate go_share / (time standing + go_time)
     start_speed = (0.6, 1.3)  # m/s, a walker that just started
     exit_speed = 0.8  # m/s, walking into the room from a door

@@ -49,10 +49,20 @@ Personen sind anonym. Nummern in der Oberfläche sind nur Beschriftung und nicht
 ## 3. Dynamik (was zwischen zwei Zeitpunkten passiert)
 
 ### 3.1 Bewegung im beobachteten Bereich
-- **Gehen:** fast konstante Geschwindigkeit mit zufälligen Richtungs- und Tempoänderungen.
-  Rauschstärke **gemessen** auf den Aufnahmen.
+- **Gehen:** fast konstante Geschwindigkeit mit zufälligen Richtungs- und Tempoänderungen, 0,6 m/s²
+  je √s. **Gemessen** (5.10., 4,6 h Zielspuren des LD2450, Wege ab 1,5 m): Tempo im Median 0,8 m/s, 95 %
+  unter 1,6 m/s; Geschwindigkeitsänderungen über 2–3 s wie 0,6 m/s²/√s (über 0,5 s mehr, darin steckt
+  das Messrauschen der Geschwindigkeit). Bis 0.6.17 angenommen: 1,0.
 - **Stehen / Sitzen:** Ort fast fest, kleines Wackeln. **Gemessen.**
-- **Wechsel gehen → stehen:** Rate `λ_stop` = 0,5 /s, überall gleich.
+  Mit 1,0 war die Richtung eines Wegs schnell vergessen, und wer zur Tür hinausging, blieb im Modell
+  davor stehen (5.10., 16:44). Wahrheitsdatenbank, 12 Seeds: Leon geht hinaus 7,9 % → 2,8 % falsch
+  (weg nach 33 s statt 36 s im Median), Abend 8,9 % → 0 %, Drehbuch 9,4 % → 9,3 %.
+- **Wechsel gehen → stehen:** Rate `λ_stop` = 0,5 /s, überall gleich. *Gemessen und verworfen:* In den
+  Zielspuren des LD2450 dauert ein Weg (ab 1,5 m) im Median 4 s, in den ersten 2 s bleibt fast niemand
+  stehen, danach 10–20 % je s. Damit im Modell: Drehbuch 12,7 % statt 9,3 %, Leon geht hinaus 10,4 %.
+  Vermutlich misst die Zielspur das Anhalten zu spät: Der LD2450 glättet intern und führt ein Ziel
+  nach dem Anhalten noch eine Weile mit Tempo weiter (4.1, gehaltene Ziele). Die Statistik stammt
+  damit zum Teil aus dem Bewegungsmodell des Sensors, nicht aus den Menschen.
 - **Wechsel stehen → gehen:** Rate `λ_go(d) = 0,58 / (d + 5,6 s)`, abhängig davon, wie lange jemand
   schon steht oder sitzt (lange Sitzende stehen seltener auf). Gemessen an den Sitzdauern.
 - **Kein Lernen je Ort.** Geplant war, beide Raten und die Aussetzer je 50-cm-Feld zu lernen (Sofa:
