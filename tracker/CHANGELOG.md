@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.12
+
+- Das Phantom an der Wohnzimmerwand (5.10. ab 09:13, ohne ein einziges Ziel): Der LD2410C im
+  Esszimmer-Sensor hatte für 4,5–6 m Entfernung (das Sofa) gelernt, dass niedrige Energie dort
+  häufiger mit als ohne Person vorkommt; er sieht Sitzende in dieser Entfernung kaum. So sprach
+  „nichts los“ alle 3 s für eine Person in 5–6 m. Jetzt kann mehr Energie nur für eine Person
+  sprechen, nie weniger. Mit dem gelernten Zustand wie auf HA: Nächte ohne Phantom (vorher 6 % und
+  24 % der Zeit), der Morgen des 5.10. 17 % statt 47 % falsch.
+- Neue Auswertung (tools/evaluate.py) mit einer Datenbank echter Situationen und ihrer Wahrheit; die
+  Drehbuch-Seite kann die Wahrheit jetzt nebenbei festhalten („Jetzt gerade“).
+
 ## 0.6.11
 
 Aufgeräumt:

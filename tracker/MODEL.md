@@ -266,6 +266,13 @@ Gegeben der Zustand:
 - Eine Entfernungsstufe zählt erst als Beleg, wenn für sie genug gelernt ist: 100 Frames mit Person
   und 300 leer. Nach dem Umhängen hatte die angenommene Verteilung während eines Kalibrierlaufs eine
   Person an einer Stelle bestätigt, an der nie jemand war (4.10., 18:07).
+- **Mehr Energie kann nur für eine Person sprechen.** Eine Person fügt reflektierte Energie hinzu, nie
+  weniger: Das Verhältnis „mit Person“ zu „ohne“ steigt mit der Energie (angepasst an die gelernten
+  Zählungen, gewichtet, im Mittel 1). Bis 0.6.11 nicht: In Stufen, in denen der LD2410C eine sitzende
+  Person nicht mehr sieht (Esszimmer-Sensor, 4,5–6 m, das Sofa), hatte er „sehr niedrige Energie“ mit
+  Person häufiger gelernt als ohne (79 % zu 59 %). Niedrige Energie zählte dann alle 3 s mit Faktor 1,3
+  *für* eine Person in 5–6 m: eine Person an der Wohnzimmerwand, ohne ein einziges Ziel (5.10., 09:13
+  bis mittags). Mit der Bedingung sind diese Stufen ohne Beweis (Faktor 1).
 - Störungen durch den LD2450 im selben Gehäuse (etwa alle 7 s) sind ein eigener, **gelernter**
   Geisteranteil der LD2410C-Energie.
 

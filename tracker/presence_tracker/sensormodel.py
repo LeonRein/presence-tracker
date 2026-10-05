@@ -188,17 +188,32 @@ class SensorModel:
 
     def ld2410_ratio(self, sensor_id: str, gate: int, energy: float, moving: bool = False) -> float:
         """Likelihood ratio: this energy with a person sitting (or moving) in the gate vs. with
-        nobody near it."""
+        nobody near it. A person only adds reflected energy: the ratio can only rise with the energy
+        (fitted so to the learned counts). Without that, a gate where the LD2410C can't see a sitter
+        (5 m away: low energy with somebody there as without) learned low energy as evidence FOR a
+        person from small differences between the times - a phantom at the wall, 5.10."""
         if sensor_id not in self.ld_occ or not (0 <= gate < GATES):
             return 1.0
         b = min(int(energy) // 10, BINS - 1)
-        occ_prior = LD_OCC_PRIOR if gate in LD_GOOD_GATES else LD_FLAT_PRIOR
-        emp_prior = LD_EMP_PRIOR if gate in LD_GOOD_GATES else LD_FLAT_PRIOR
-        occ = (self.ld_move if moving else self.ld_occ)[sensor_id][gate]
-        emp = self.ld_emp[sensor_id][gate]
-        p_occ = (occ[b] + occ_prior[b]) / (occ.sum() + sum(occ_prior))
-        p_emp = (emp[b] + emp_prior[b]) / (emp.sum() + sum(emp_prior))
-        return float(min(max(p_occ / p_emp, LD_RATIO_RANGE[0]), LD_RATIO_RANGE[1]))
+        return float(self._ld_ratios(sensor_id, gate, moving)[b])
+
+    def _ld_ratios(self, sensor_id: str, gate: int, moving: bool) -> np.ndarray:
+        """Per energy bin: p(energy | person) / p(energy | nobody), non-decreasing in the energy
+        (weighted pool-adjacent-violators, weights p(energy | nobody): the ratios still average 1)."""
+        occ_prior = np.array(LD_OCC_PRIOR if gate in LD_GOOD_GATES else LD_FLAT_PRIOR, dtype=float)
+        emp_prior = np.array(LD_EMP_PRIOR if gate in LD_GOOD_GATES else LD_FLAT_PRIOR, dtype=float)
+        occ = (self.ld_move if moving else self.ld_occ)[sensor_id][gate] + occ_prior
+        emp = self.ld_emp[sensor_id][gate] + emp_prior
+        p_occ, p_emp = occ / occ.sum(), emp / emp.sum()
+        blocks = []  # [ratio, weight, bins]
+        for k in range(BINS):
+            blocks.append([p_occ[k] / p_emp[k], p_emp[k], 1])
+            while len(blocks) > 1 and blocks[-2][0] > blocks[-1][0]:
+                r2, w2, n2 = blocks.pop()
+                r1, w1, n1 = blocks.pop()
+                blocks.append([(r1 * w1 + r2 * w2) / (w1 + w2), w1 + w2, n1 + n2])
+        ratios = np.concatenate([[r] * n for r, _, n in blocks])
+        return np.clip(ratios, LD_RATIO_RANGE[0], LD_RATIO_RANGE[1])
 
     def ld2410_stats(self, sensor_id: str) -> list:
         """Per gate: learned frames (occupied, empty) and the ratio for a typical high energy."""

@@ -3,7 +3,7 @@
 usage: python tools/evaluate.py [--db DIR] [--tracker DIR] [--seeds N] [--jobs N] [--only ID ...]
 
 The database (default ~/.config/presence-tracker/truth, private: it holds the floor plan) is a
-directory with episodes.json and the configs it names. An episode: the config, where the model starts
+directory with episodes.json and the configs it names. An episode: the config, what the app had learned by then (optional, in <db>/learned), where the model starts
 ("people": place names, or null = nothing known, like after a restart), the end, and the truth: from
 each listed time on, the people per observed room ({"wohnzimmer": 1, ...}) or only their sum
 ({"observed": 2}), or null (not scored).
@@ -51,6 +51,8 @@ def run(args):
     if episode["start"]["people"] is not None:
         kw["people"] = episode["start"]["people"]
     crowd = Crowd(config, **kw)
+    if episode.get("learned"):  # what the app had learned by then: it never runs without
+        crowd.load_learned(json.load(open(os.path.join(db["dir"], "learned", episode["learned"]))))
     start, end = parse_time(episode["start"]["time"]), parse_time(episode["end"])
     truth = [(parse_time(t), want) for t, want, *_ in episode["truth"]]
     clocks = collections.defaultdict(SensorClock)
