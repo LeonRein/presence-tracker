@@ -195,9 +195,16 @@ Gegeben der Zustand:
   ist `1 − U_s(x, τ+Δt) / U_s(x, τ)`.
 - Zwei Personen im Abstand d erzeugen mit Wahrscheinlichkeit `res(d)` zwei Ziele, sonst
   eines dazwischen. `res(d)` **gemessen** (0 % unter 0,25 m, 41 % bei 0,75–1 m, rund 75 % ab 1 m), **gelernt**.
-- Erkennungswahrscheinlichkeit je Ort und Sensor aus der Geometrie: Sichtfeld, Reichweite (weich
-  auslaufend), Wände. Bis 0.6.6 wurde sie zusätzlich je 25-cm-Feld gelernt; im Drehbuch brachte das
-  nichts (94,7 % ohne gegen 94,4 % mit, mit vorab gelernten Daten 95,4 % gegen 95,1 %), entfernt.
+- Erkennungswahrscheinlichkeit je Ort und Sensor aus der Geometrie: Sichtfeld, Reichweite, Wände.
+  **Gemessen** (5.10., 22 h Aufnahmen; eine gehende Person, die der andere Sensor sicher sieht): bis
+  7 m so gut wie nah (0,8–1,0 bei 5,5–7 m), und 10° über den nominellen Rand des Sichtfelds hinaus
+  noch etwa die Hälfte. Angenommen wird darum: voll bis 15° vor dem Rand, 0,5 am Rand, 0 erst 15°
+  dahinter; voll bis 1 m über die nominelle Reichweite, dann abfallend. Bis 0.6.16 fiel sie schon ab
+  4,5 m und 15° vor dem Rand auf 0,4 (0,18–0,48 bei 5,5–7 m) und war außerhalb 0. Die Ränder sahen
+  blind aus, und die Wolke einer ungesehenen Person floss dorthin und blieb: Partikel, die an gut
+  gesehene Stellen laufen, verlieren Gewicht, übrig bleiben die an den angeblich blinden (5.10., 16:44,
+  eine Person „hing“ an der linken Wohnzimmerwand, nachdem Leon in den Flur gegangen war).
+  Bis 0.6.6 wurde sie zusätzlich je 25-cm-Feld gelernt; im Drehbuch brachte das nichts, entfernt.
 - Messort: `z ~ N(x, R_s(r))`, Streuung nach Entfernung r. Die beiden Sensoren messen dieselbe
   sitzende Person am Sofa bis 0,5 m auseinander. Ein je 50-cm-Feld gelernter Versatz (halbe-halbe auf
   die Sensoren) wurde ausprobiert (0.6.7): Das Drehbuch zählte damit öfter zu viele Personen (Median
@@ -243,6 +250,11 @@ Gegeben der Zustand:
   Ohne die Auflösung bleibt beim gemeinsamen Gehen (Drehbuch-Schritt 8) manchmal eine Person zurück.
 - Jeder lebende Geist erzeugt ein Ziel an seinem Ort.
 - Mehr als 3 Ziele: der Sensor meldet 3 davon. Ein voller Frame sagt also nichts über die Fehlenden.
+- **Leere Frames lässt die Firmware aus.** Solange weder der LD2450 ein Ziel noch der LD2410C Präsenz
+  meldet, kommt nur alle 5 s ein Frame (Herzschlag). Jeder ausgelassene Frame war leer: Die ganze
+  Lücke (bis 6 s; länger ist Datenverlust) ist Zeit ohne Treffer. Bis 0.6.16 zählte ein Frame höchstens
+  1 s, und eine Person, die nichts mehr bestätigte, verlor nur ein Fünftel des Gewichts, das sie hätte
+  verlieren müssen.
 
 **Vorverarbeitung**, keine Wahrscheinlichkeit, sondern Datenreinigung:
 - Bit-identisch wiederholte Ziele (Sensor friert ein) werden verworfen. **Gemessen:** echte Ziele ändern sich in jedem Frame.

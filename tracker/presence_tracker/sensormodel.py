@@ -31,11 +31,17 @@ ORIGIN = (-30.0, -30.0)  # grid anchor
 SIZE = 240  # cells per side: 60 m
 HALF_LIFE = 7 * 24 * 3600.0  # s
 PD_MAX = 0.95
+# Measured (5.10., 22 h of recordings, the other sensor as reference for a walking person): the
+# LD2450 sees walkers up to 7 m as well as near (0.8-1.0 at 5.5-7 m), and still about half of
+# them up to 10 degrees beyond its nominal field of view. Until 0.6.16 assumed: falling from 4.5 m
+# and 15 degrees inside the edge to 0.4 (0.18-0.48 at 5.5-7 m), 0 outside - the edges looked
+# blind, and an unseen person's cloud flowed there and stayed (5.10., 16:44)
 EDGE_ANGLE = 15.0  # degrees inside the field-of-view edge where P_D starts to fall
-EDGE_RANGE = 1.5  # m before the maximum range where P_D starts to fall
-PD_AT_EDGE = 0.4
-RANGE_TAIL = 1.5  # m: beyond the nominal range the assumed P_D falls by e every this much
-RANGE_TAIL_MAX = 4.0  # m beyond the nominal range: assumed 0 from there (about 3 % left)
+PD_AT_EDGE = 0.5  # share at the nominal edge
+BEYOND_ANGLE = 15.0  # degrees beyond the nominal edge where it reaches 0
+FULL_RANGE_EXTRA = 1.0  # m beyond the nominal range still seen fully
+RANGE_TAIL = 1.5  # m: beyond that the assumed P_D falls by e every this much
+RANGE_TAIL_MAX = 4.0  # m beyond the nominal range: assumed 0 from there
 GATE = 0.75  # m, LD2410C distance gate
 GATES = 9
 BINS = 10  # energy 0-100 in steps of 10
@@ -117,15 +123,17 @@ class SensorModel:
         if ly <= 0 or r > s.range + RANGE_TAIL_MAX:
             return 0.0
         az = abs(math.degrees(math.atan2(lx, ly)))
-        if az > s.fov / 2 or not line_of_sight(s.sight_origin(), (x, y), self.config.wall_segments):
+        if az >= s.fov / 2 + BEYOND_ANGLE or not line_of_sight(s.sight_origin(), (x, y), self.config.wall_segments):
             return 0.0
-
-        def taper(value, start, end):
-            if value <= start:
-                return 1.0
-            return 1.0 - (1.0 - PD_AT_EDGE) * min((value - start) / max(end - start, 1e-6), 1.0)
-        far = math.exp(-max(r - s.range, 0.0) / RANGE_TAIL)
-        return PD_MAX * taper(az, s.fov / 2 - EDGE_ANGLE, s.fov / 2) * taper(r, s.range - EDGE_RANGE, s.range) * far
+        edge = s.fov / 2
+        if az <= edge - EDGE_ANGLE:
+            side = 1.0
+        elif az <= edge:
+            side = 1.0 - (1.0 - PD_AT_EDGE) * (az - edge + EDGE_ANGLE) / EDGE_ANGLE
+        else:
+            side = PD_AT_EDGE * (1.0 - (az - edge) / BEYOND_ANGLE)
+        far = math.exp(-max(r - s.range - FULL_RANGE_EXTRA, 0.0) / RANGE_TAIL)
+        return PD_MAX * side * far
 
     def pd(self, sensor_id: str, x: float, y: float) -> float:
         """Prior detection probability (geometry): from the map, or computed outside of it."""

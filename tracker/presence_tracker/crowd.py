@@ -53,6 +53,7 @@ MOUNT_RADIUS = 0.3  # m around a sensor: targets there come from its mount, not 
 # the LD2450's error wanders (MODEL.md 4.1; measured: correlation 0.98 frame to frame, 0.8 after 1 s,
 # 0.5 after 3 s, gone after 10 s). 3 s fit the measurement better, but the clouds then found the right
 # spot again too slowly after a wrong start (truth database: Drehbuch 16 % against 7 %)
+IDLE_GAP = 6.0  # s: frames further apart were lost on the way (the firmware's heartbeat is 5 s)
 BIAS_TIME = 1.0  # s
 BIAS_WHITE = 0.1  # share of its variance that is new every frame
 BODY = 0.3  # m: two people's centers are never closer
@@ -191,7 +192,13 @@ class Crowd:
         self.now = max(self.now, t)
         sensor = self.config.sensor_by_id.get(sensor_id)
         rt = self.runtime.setdefault(sensor_id, SensorRuntime())
-        gap = min(max(t - rt.last_frame, 1e-3), 1.0)
+        # the time this frame stands for. While nothing is there, the firmware sends only a heartbeat
+        # every 5 s (idle_interval_ms): every frame left out in between was empty, and the whole gap
+        # is time without a detection. Until 0.6.16 it counted at most 1 s, and somebody nothing
+        # detected any more lost a fifth of the weight they should have (5.10., 16:44). A longer gap
+        # is lost data and says nothing
+        gap = t - rt.last_frame
+        gap = max(gap, 1e-3) if gap <= IDLE_GAP else 1e-3
         rt.last_frame = t
         rt.frame = frame
         rt.frames += 1

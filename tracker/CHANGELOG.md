@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.17
+
+- Wie gut die Sensoren an den Rändern sehen, folgt jetzt der Messung (22 h Aufnahmen): Gehende bis 7 m
+  fast wie nah, auch etwas über den Rand des Sichtfelds hinaus. Vorher galten die Ränder als fast
+  blind, und die Wolke einer nicht mehr gesehenen Person floss dorthin und blieb (linke Wohnzimmerwand,
+  6-m-Zonen).
+- Ist niemand da, senden die Sensoren nur alle 5 s einen Frame; die ganze Lücke zählt jetzt als Zeit
+  ohne Treffer (vorher höchstens 1 s). Personen ohne Bestätigung verschwinden dadurch etwa fünfmal
+  schneller.
+- Wahrheitsdatenbank, 12 Seeds, gegenüber 0.6.16: Leon geht durch und wieder in den Flur (5.10., 16:43)
+  17 % → 8 % falsch (verschwindet im Median nach 36 s), leeres Haus nach dem Andocken 49 % → 22 %,
+  Drehbuch 11,9 % → 9,4 %, Morgen 0,4 %, Nächte und Reset 0 %. Abend 0 % → 8,9 %: in einem von 12
+  Durchläufen bleibt eine zweite Person auf dem Sofa.
+
 ## 0.6.16
 
 - Eine Person, die nichts mehr bestätigt, verschwindet jetzt. Bisher wurde die Wolke einer Person als
