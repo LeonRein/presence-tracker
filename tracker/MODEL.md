@@ -293,12 +293,16 @@ Gegeben der Zustand:
   ein eingefrorenes behandelt.
   So stand der Wohnzimmer-Sensor 1,5 s lang auf +0,24 m/s vor der Küchentür, während die Person schon
   in der Küche war.
-- Eingefrorene Ziele sagen bis 35 s nichts über ihre Stelle (gemessen: eine still sitzende Person friert
-  höchstens so lange ein). Länger eingefroren ist kein Mensch, und Fehlmessungen zählen dort wieder.
-  Solange es nichts sagt, läuft auch die Uhr „nicht gesehen“ an dieser Stelle nicht: Sie beginnt erst,
-  wenn das Einfrieren endet. Bis 0.6.4 lief sie weiter. Wer 35 s an einem eingefrorenen Ziel stand, galt
-  danach schon als im langen Aussetzer, und dass ihn zwei Sensoren mit 95 % Trefferwahrscheinlichkeit
-  nicht sahen, kostete fast nichts (Drehbuch-Schritt 5: „steht vor der Balkontür“).
+- Eingefrorene und gehaltene Ziele sind keine Messung, und sonst nichts Besonderes: Die Person dort
+  ist schlicht nicht detektiert, mit den Aussetzern von 3.3. Bis 0.6.18 galt dazu eine Sonderregel:
+  Bis 35 s sagte ein eingefrorenes Ziel nichts über seine Stelle, und die Uhr „nicht gesehen“ lief dort
+  nicht (eingeführt in 0.6.5 für jemanden, der still vor der Balkontür stand). **Gemessen** (5.10.,
+  Wahrheitsdatenbank): Ruhende Ziele in leeren Räumen sind zu 86 % eingefrorene, typisch 35 s lang,
+  bei echten ruhigen Personen sind es 22 %. Das Einfrieren ist vor allem die Spur einer Person, die
+  gerade gegangen ist; die Regel gab ihr 35 s Schonfrist. Ohne sie, 12 Seeds: Leon geht hinaus 2,8 % →
+  2,3 % falsch (weg nach 23 s statt 33 s), Küche 7,3 % → 5,4 %, Drehbuch gleich (9,3 %) mit weniger
+  Wechseln (9,0 → 6,5); leeres Haus mit angedocktem Roboter 25 % → 31 %. Mit 10 s statt 35 s war es
+  schlechter als beides (Leon geht hinaus 27 %).
 - Ziele in einem Bereich ohne Sensor (durch eine offene Tür gesehen, z. B. jemand in der Küche) sind
   Messungen wie alle anderen: Personen haben auch dort einen Ort (Abschnitt 2).
 

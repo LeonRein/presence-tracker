@@ -47,8 +47,6 @@ GHOST_MIN = 0.02  # ghosts less probable than this are forgotten
 GHOST_BORN = 0.5  # a ghost is kept from a detection that is more probably a new ghost than not
 MAX_GHOSTS = 3  # per sensor
 HELD_FRAMES = 5  # the same nonzero speed this often in a row: the sensor holds a lost target
-FROZEN_RADIUS = 1.0  # m around a frozen target where the sensor's silence says nothing
-FROZEN_MAX = 35.0  # s: the longest a person's target stays frozen (measured)
 MOUNT_RADIUS = 0.3  # m around a sensor: targets there come from its mount, not from people
 # the LD2450's error wanders (MODEL.md 4.1; measured: correlation 0.98 frame to frame, 0.8 after 1 s,
 # 0.5 after 3 s, gone after 10 s). 3 s fit the measurement better, but the clouds then found the right
@@ -239,19 +237,16 @@ class Crowd:
             inside = self.world.place_of(np.array([d.pos for d in dets])) >= 0
             dets = [d for d, ok in zip(dets, inside) if ok]
         self.step(t, np.array([d.pos for d in dets]).reshape(-1, 2))
-        # frozen targets: a person sitting still makes the LD2450 repeat itself for up to FROZEN_MAX
-        # (measured); longer it is something of its own (a reflection at the mount), not a person
-        frames = {slot: n for slot, (_, n) in rt.repeats.items()}
-        frozen = np.array([d.pos for d in detections if d.stale and not d.hidden
-                           and frames.get(d.slot, 0) * FRAME <= FROZEN_MAX]).reshape(-1, 2)
-        self._update(sensor, t, dets, gap, full=len(detections) >= 3, frozen=frozen)
+        # a frozen or held target is no measurement (left out above) and no special case either: the
+        # person there is simply not detected (MODEL.md 4.1)
+        self._update(sensor, t, dets, gap, full=len(detections) >= 3)
         if energies:
             self._ld_learn(sensor, t, energies, dets)
             if t - self._ld_used.get(sensor.id, -math.inf) >= LD_CORR:
                 self._ld_used[sensor.id] = t
                 self._ld_weigh(sensor, t, energies)
 
-    def _update(self, s, t, dets, gap, full, frozen=None):
+    def _update(self, s, t, dets, gap, full):
         p = self.p
         m_det = len(dets)
         # ghost density (MODEL.md 3.4): measured almost none in an empty room, echoes near walkers
@@ -274,14 +269,6 @@ class Crowd:
             idx = np.flatnonzero(c.place != self.world.outside)
             tau_before.append(t - c.last_hit[idx, self.sidx[s.id]])
             m = self._miss(s.id, c, idx, t, gap) if len(idx) else np.zeros(0)
-            if frozen is not None and len(frozen) and len(idx):
-                # the sensor repeats a target bit-identically: it is stuck there and says nothing new
-                # about that spot (mostly the person is still there, measured)
-                d = c.pos[idx][:, None, :] - frozen[None, :, :]
-                stuck = (np.hypot(d[..., 0], d[..., 1]) < FROZEN_RADIUS).any(axis=1)
-                m[stuck] = 1.0
-                # and no news is not "unseen": the clock of not being seen starts when it ends
-                c.last_hit[idx[stuck], self.sidx[s.id]] = t
             r = np.zeros((len(idx), m_det))
             e = np.zeros((len(idx), m_det, 2))
             # the error each sensor makes stays a while (MODEL.md 4.1): the particle remembers where this

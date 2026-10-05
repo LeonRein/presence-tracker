@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.19
+
+- Keine Schonfrist mehr an eingefrorenen Zielen. Der LD2450 meldet ein verlorenes Ziel oft bis 35 s
+  bitgenau weiter; bisher galt die Person dort so lange als „nicht widerlegt“. Gemessen ist das vor
+  allem die Spur von jemandem, der gerade gegangen ist. Wahrheitsdatenbank, 12 Seeds: Leon geht hinaus
+  2,8 % → 2,3 % falsch (verschwindet nach 23 s statt 33 s), Küche 7,3 % → 5,4 %, Drehbuch gleich mit
+  weniger Wechseln der Anzeige; leeres Haus mit angedocktem Roboter 25 % → 31 %.
+- tools/replay.py: eine Aufnahme durch den Tracker abspielen und ansehen, was er zeigt.
+
 ## 0.6.18
 
 - Gehende behalten ihre Richtung länger: Geschwindigkeitsänderungen wie gemessen (0,6 statt 1,0
