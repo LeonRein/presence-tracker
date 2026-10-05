@@ -67,6 +67,8 @@ class World:
     def sample(self, place: int, n: int, rng) -> np.ndarray:
         """n points evenly in the place (n, 2)."""
         ii, jj = np.nonzero(self.labels == place)
+        if not len(ii):  # no rooms drawn yet (e.g. while calibrating a new installation)
+            return np.zeros((n, 2))
         k = rng.integers(0, len(ii), n)
         return np.stack([self.x0 + (ii[k] + rng.random(n)) * CELL, self.y0 + (jj[k] + rng.random(n)) * CELL], axis=1)
 

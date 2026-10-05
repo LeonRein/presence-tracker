@@ -21,8 +21,7 @@ from .calibration import Calibrator
 from .model import Config
 from .crowd import Crowd
 from .sources import Clock, ReplayClock, mqtt_source, replay_source
-from .tracker import SensorClock
-from .zones import evaluate
+from .frames import SensorClock
 
 log = logging.getLogger(__name__)
 STATIC = (pathlib.Path(__file__).parent / "static").resolve()
@@ -128,7 +127,7 @@ class App:
                 continue
             start = time.process_time()
             self.tracker.step(self.clock())
-            self.zone_states = evaluate(self.config, self.tracker)
+            self.zone_states = self.tracker.zone_states()
             if self.tracker.sensor_model.changed and not self.replay and time.monotonic() - self.last_model_save > 600:
                 self.tracker.sensor_model.changed = False
                 self.last_model_save = time.monotonic()
@@ -314,16 +313,8 @@ class App:
         return web.json_response(self.calibrator.status())
 
     async def h_sensormodel(self, request):
-        """Detection probability (from the geometry) and ghost map of one sensor, and the learned
-        measurement error next to the one the tracker uses."""
-        model = self.tracker.sensor_model
-        p = self.config.params
-        return web.json_response({
-            "maps": model.maps(request.query.get("sensor", "")),
-            "accuracy": model.accuracy_fit(),
-            "model": {"range_base": p.range_sigma_base, "range_slope": p.range_sigma_slope,
-                      "lateral_base": p.lateral_sigma_base, "lateral_slope": p.lateral_sigma_slope},
-        })
+        """Detection probability of one sensor (from the geometry)."""
+        return web.json_response({"maps": self.tracker.sensor_model.maps(request.query.get("sensor", ""))})
 
     async def h_import_learned(self, request):
         """Take over what was learned elsewhere, e.g. offline from recordings: {"sensormodel":
@@ -335,9 +326,7 @@ class App:
         if "dwell" in data:
             self.tracker.dwell.dwell = {k: [float(x) for x in v] for k, v in data["dwell"].items()}
             self.tracker.dwell.changed = True
-        model = self.tracker.sensor_model
         return web.json_response({
-            "accuracy": model.accuracy_fit(),
             "dwell": {k: len(v) for k, v in self.tracker.dwell.dwell.items()},
         })
 

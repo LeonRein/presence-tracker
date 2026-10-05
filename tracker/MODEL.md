@@ -126,8 +126,10 @@ Wahrscheinlichkeit verteilt sich auf die Wege, die ungesehen möglich waren, und
 
 ### 3.4 Geister
 Je Sensor:
-- **Entstehen:** Poisson-Rate je Ort `β_s(x)`, **gelernt** als Geisterkarte. Zusätzlich mehr Geister in
-  der Nähe von Gehenden (Mehrwegeechos), Faktor **gelernt**.
+- **Entstehen:** Poisson-Rate je Ort `β_s(x)`, **gelernt** als Geisterkarte (nur wo ein zweiter Sensor
+  gut hinsieht und nichts meldet; Startwert gemessen, unten). Zusätzlich mehr Geister in der Nähe von
+  Gehenden (Mehrwegeechos). Ohne die Karte war das Drehbuch in drei Messreihen jedes Mal etwas schlechter
+  (−0,9, −0,3, −1,7 Punkte; z. B. Spiegelungen durch die Küchentür als Person in der Küche).
 - **Lebensdauer:** **gelernte** Verteilung, die meisten unter 1 s, manche viele Sekunden an derselben
   Stelle. Wo der Nutzer Störzonen zeichnet (Ventilator, Vorhang), ist `β` dort hoch.
 - Ein Geist behält die Radialgeschwindigkeit, mit der er auftaucht (stehende Echos etwa 0; ein vom

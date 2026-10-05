@@ -22,8 +22,8 @@ import math
 import numpy as np
 
 from .cloud import STILL, WALK, Cloud, Motion
-from .sensormodel import GAP_FLOOR, GAP_PRIOR, GAP_TAUS, GATE, PD_MAX, SensorModel, cell_of
-from .tracker import SensorClock, SensorRuntime, Tracker  # noqa: F401 (SensorClock re-exported)
+from .sensormodel import CELL as CELL_GHOSTS, GAP_FLOOR, GAP_TAUS, GATE, PD_MAX, STILL_GAPS, SensorModel, cell_of
+from .frames import SensorRuntime, detections as frame_detections, mark_stale
 from .unobserved import Dwell
 from .world import OBSERVED, World
 
@@ -32,9 +32,9 @@ FRAME = 0.089  # s, LD2450 frame period (measured)
 DROP_RATE = {STILL: 1 / 70, WALK: 1 / 300}  # 1/s: dropouts begin (measured on the recordings)
 WALK_GAP = 0.7  # s, mean dropout of a walker in view (measured 0.3-1.2 s)
 PD_CELL = 0.1  # m, cache of the detection probability per sensor
-# ghosts per m^2 and frame, until learned: measured 0.4 short ghosts per hour in the empty rooms at
-# night (5 h), none next to people sitting; while somebody walks about 4 per minute and sensor
-# (each ~1 s, simulation calibrated to the recordings) within a few meters of the walker
+# ghosts per m^2 and frame until learned per place: measured 0.4 short ghosts per hour in the empty
+# rooms at night (5 h), none next to people sitting; while somebody walks about 4 per minute and
+# sensor (each ~1 s, simulation calibrated to the recordings) within a few meters of the walker
 CLUTTER_PRIOR = 1e-4
 CLUTTER_FLOOR = 1e-5
 ECHO_DENSITY = 3e-3  # per m^2 and frame per walker (a reflection can show up anywhere in view)
@@ -67,7 +67,7 @@ def _survival(mode: int, tau: np.ndarray) -> np.ndarray:
     who had left the view."""
     if mode == WALK:
         return np.exp(-np.maximum(tau, 0.0) / WALK_GAP)
-    table = np.array(GAP_PRIOR["still"])
+    table = np.array(STILL_GAPS)
     taus = np.array(GAP_TAUS)
     t = np.maximum(tau, taus[0])
     out = np.exp(np.interp(np.log(t), np.log(taus), np.log(table)))
@@ -97,7 +97,6 @@ class Crowd:
         self.n = n
         self.sensors = [s.id for s in config.sensors]
         self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
-        self.helper = Tracker(config)  # measurement preprocessing (detections, frozen targets)
         self.runtime = {}
         self.now = start or 0.0
         self.start = start
@@ -128,7 +127,6 @@ class Crowd:
         self.dwell.p = config.params
         self.sensors = [s.id for s in config.sensors]
         self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
-        self.helper = Tracker(config)
         self._pd_cache.clear()
         self.reset_people()
 
@@ -189,8 +187,8 @@ class Crowd:
         rt.frames += 1
         if sensor is None:
             return
-        detections = self.helper._detections(sensor, frame)
-        self.helper._mark_stale(rt, frame, detections)
+        detections = frame_detections(self.config, sensor, frame)
+        mark_stale(self.config, rt, frame, detections)
         # a target the LD2450 lost it keeps reporting for about a second, with the same speed
         # frame after frame (measured: at 70 % of the targets' ends, elsewhere in 2.5 %): a
         # prediction of its own, no measurement
@@ -331,7 +329,7 @@ class Crowd:
             c.logw += np.log(np.maximum(factor, 1e-300))
             c.normalize()
             gaps_ended.append(ended)
-        self._learn_frame(s, t, dets, beta, gap, tau_before, gaps_ended)
+        self._learn_ghosts(s, t, dets)
         for k, person in enumerate(self.people):
             gi, taus = gaps_ended[k]
             w = person.cloud.weights()
@@ -570,16 +568,14 @@ class Crowd:
         spread = math.sqrt(float(w[obs] @ ((c.pos[obs] - mean) ** 2).sum(axis=1)) / mass)
         return mean, mass, spread
 
-    def _learn_frame(self, s, t, dets, beta, gap, tau_before, gaps_ended):
-        """MODEL.md 7, per frame: where the sensors see ghosts."""
+    def _learn_ghosts(self, s, t, dets):
+        """MODEL.md 7, per frame: where this sensor reports targets although another online sensor
+        sees the spot well, reports nothing there, and nobody probable is near."""
         sm = self.sensor_model
         sm._decay(t)
         sid = s.id
         if sid not in sm.prior:
             return
-        sure = [self._sure(person) for person in self.people]
-
-        # ghosts: where another online sensor sees well and reports nothing, nobody near
         for other in self.sensors:
             if other == sid or other not in sm.prior or not self._online(other):
                 continue
@@ -590,8 +586,8 @@ class Crowd:
             if not mask.any():
                 continue
             mask = mask.copy()
-            k = int(1.0 / 0.25)
-            blocked = [mn for mn, mass, sp in sure if mn is not None and mass > 0.3] + \
+            k = int(1.0 / CELL_GHOSTS)
+            blocked = [mn for mn, mass, sp in (self._sure(p) for p in self.people) if mn is not None and mass > 0.3] + \
                 [d.pos for d in ort.detections if not d.hidden]
             for x, y in blocked:
                 i, j = cell_of(x, y)

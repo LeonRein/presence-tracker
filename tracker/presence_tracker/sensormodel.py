@@ -1,24 +1,21 @@
-"""What each sensor can see, how reliably, and where it sees ghosts.
+"""What each sensor can see, where it sees ghosts, and what its LD2410C shows with and without a
+person.
 
-Two maps per sensor on a fixed grid (CELL m, anchored at ORIGIN so stored data stays valid
-when rooms are edited):
+  prior P_D   detection probability from the geometry (per CELL m on a fixed grid anchored at
+              ORIGIN): 0 behind walls and in closed rooms without a sensor, falling toward the
+              edge of the field of view and the maximum range. Learning where a sensor actually
+              reports people was measured not to help (Drehbuch 4.10.) and was removed in 0.6.7.
+  ghosts      how often the sensor reports a target where nobody is (same grid): only counted where
+              another online sensor sees the spot well, reports nothing there, and no known person
+              is near. Never from the model's own verdicts: someone who always sits where only one
+              sensor sees would otherwise be learned away as a ghost. Fades like the LD2410C counts.
+  LD2410C     per sensor and 0.75 m gate, the energy it shows with a person sitting / walking in
+              that gate versus with nobody near it, learned. Counts fade with a half-life of
+              HALF_LIFE, so they follow changes (furniture, a moved sensor).
 
-  prior P_D   detection probability from the geometry: 0 behind walls and in closed rooms
-              without a sensor, falling toward the edge of the field of view and the maximum
-              range
-  clutter     how often the sensor reports a target where nobody is: only counted where another
-              online sensor sees the spot well, reports nothing there, and no known person is
-              near. Never from the tracker's own verdicts: someone who always sits where only
-              one sensor sees would otherwise be learned away as a ghost.
-
-Plus the measurement error by distance, from the offsets between two sensors that see the same
-person at the same time; how long the LD2450 drops a person it saw (re-detection survival, per
-walking/still); and for the LD2410C, per sensor and 0.75 m gate, the energy it shows with a
-person in that gate versus with nobody near it.
-
-The detection probability is the geometry's alone: learning where a sensor actually reports people
-was measured not to help (Drehbuch 4.10., with and without learned data) and was removed in 0.6.7.
-Counts fade with a half-life of HALF_LIFE, so the maps follow changes (furniture, a moved sensor).
+The measurement error from pairs of sensors, the LD2450's dropout lengths and its resolution of two
+people close together were learned here once; the model measures them offline now or doesn't need
+them (0.6.11).
 """
 
 import json
@@ -39,39 +36,16 @@ EDGE_RANGE = 1.5  # m before the maximum range where P_D starts to fall
 PD_AT_EDGE = 0.4
 RANGE_TAIL = 1.5  # m: beyond the nominal range the assumed P_D falls by e every this much
 RANGE_TAIL_MAX = 4.0  # m beyond the nominal range: assumed 0 from there (about 3 % left)
-SURE_AGE = 30.0  # s: a track with an origin that old counts as a person for sure
-MAX_ACCURACY_SAMPLES = 20000
 GATE = 0.75  # m, LD2410C distance gate
 GATES = 9
 BINS = 10  # energy 0-100 in steps of 10
-# Re-detection survival S(tau): share of LD2450 dropouts of a person who stays put that last
+# Re-detection survival S(tau) of a person who stays put: share of LD2450 dropouts that last
 # longer than tau (measured 2026-10-03, both sensors). Gaps shorter than 0.3 s don't count.
 GAP_TAUS = (0.3, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0, 20.0, 60.0, 120.0)
-GAP_PRIOR = {
-    "still": (1.0, 0.42, 0.30, 0.26, 0.24, 0.21, 0.18, 0.13, 0.09, 0.03, 0.01),
-    "walking": (1.0, 0.74, 0.67, 0.66, 0.64, 0.58, 0.54, 0.39, 0.20, 0.06, 0.02),
-}
-GAP_PRIOR_WEIGHT = 200  # the prior counts like this many observed gaps
-GAP_FLOOR = 1.5  # s: dropouts are counted from here (the tracker's lost_after)
+STILL_GAPS = (1.0, 0.42, 0.30, 0.26, 0.24, 0.21, 0.18, 0.13, 0.09, 0.03, 0.01)
+GAP_FLOOR = 1.5  # s: a dropout this long that ends where it began tells where the LD2410C saw a sitter
 
 
-def _prior_survival(mode: str, tau: float) -> float:
-    prior, taus = GAP_PRIOR[mode], GAP_TAUS
-    if tau <= taus[0]:
-        return 1.0
-    if tau >= taus[-1]:
-        return prior[-1] * taus[-1] / tau
-    k = max(i for i in range(len(taus)) if taus[i] <= tau)
-    f = (math.log(tau) - math.log(taus[k])) / (math.log(taus[k + 1]) - math.log(taus[k]))
-    return prior[k] * (prior[k + 1] / prior[k]) ** f
-# LD2450 resolution: P(both of two people at distance d get a target | at least one does), by
-# distance bin (upper edges), measured 2026-10-03 on pairs of confirmed tracks (both in view).
-# One person gets two targets far more rarely (SPLIT_RATE per frame, measured <= 0.0013).
-RES_EDGES = (0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, math.inf)
-RES_PRIOR = (0.0, 0.02, 0.15, 0.41, 0.76, 0.80, 0.69, 0.59, 0.68)
-RES_PRIOR_WEIGHT = 500  # frames
-SPLIT_RATE = 0.002
-MAX_GAPS = 2000
 # LD2410C energy histograms, prior counts per bin (0-10, ..., 90-100): with a person in the gate,
 # and with nobody within one gate of it (measured 2026-10-03). Gates beyond 4.5 m: flat, i.e. no
 # evidence until learned.
@@ -96,11 +70,8 @@ def cell_center(i: int, j: int) -> tuple:
 class SensorModel:
     def __init__(self, config):
         self.config = config
-        self.exposure = {}  # sensor -> SIZE x SIZE array (fading counts)
-        self.clutter = {}
-        self.accuracy = []  # [range_a, range_b, offset] of simultaneous detections of one person
-        self.gaps = {"still": [], "walking": []}  # learned LD2450 dropout durations of people who stayed
-        self.pairs = [[0.0, 0.0] for _ in RES_EDGES]  # per distance bin: [both detected, one detected] frames
+        self.exposure = {}  # sensor -> SIZE x SIZE: frames a spot was verifiable (fading counts)
+        self.clutter = {}  # ... and ghosts reported there
         self.ld_occ = {}  # sensor -> GATES x BINS counts of LD2410C energy with a person sitting in the gate
         self.ld_move = {}  # ... with a person moving in the gate (a different population: higher)
         self.ld_emp = {}  # ... with nobody within two gates
@@ -177,93 +148,13 @@ class SensorModel:
         rate = (float(self.clutter[sensor_id][i, j]) + weight * prior * CELL * CELL) / (exposure + weight)
         return max(rate / (CELL * CELL), floor)
 
-    # ------------------------------------------------------------ learning
-
-    def learn(self, tracker, sensor, t: float, detections: list, updates: list):
-        """After one frame of `sensor`. updates: [(detection, track)] assigned in this frame."""
-        self._decay(t)
-        sid = sensor.id
-        if sid not in self.prior:
-            return
-        confirmed = [tr for tr in tracker.confirmed()]
-
-        # clutter: spots another online sensor sees well and reports nothing, nobody known near
-        for other in tracker.config.sensors:
-            if other.id == sid or other.id not in self.prior or not tracker._online(other.id):
-                continue
-            ort = tracker.runtime[other.id]
-            if t - ort.last_frame > 0.3:
-                continue
-            mask = (self.prior[other.id] >= 0.8) & (self.prior[sid] > 0.05)
-            if not mask.any():
-                continue
-            mask = mask.copy()
-            blocked = [tr.position() for tr in confirmed] + [d.pos for d in ort.detections if not d.hidden]
-            for x, y in blocked:
-                i, j = cell_of(x, y)
-                k = int(1.0 / CELL)
-                mask[max(i - k, 0):i + k + 1, max(j - k, 0):j + k + 1] = False
-            self.exposure[sid] += mask
-            for d in detections:
-                if d.stale:
-                    continue
-                i, j = cell_of(*d.pos)
-                if 0 <= i < SIZE and 0 <= j < SIZE and mask[i, j]:
-                    self.clutter[sid][i, j] += 1
-            break  # one verifying sensor per frame is enough
-
-        # measurement error: the same person seen by two sensors at the same moment
-        for d, tr in updates:
-            for other_id, other_t in tr.last_hit_by.items():
-                if other_id == sid or t - other_t > 0.12:
-                    continue
-                prev = tracker.runtime[other_id].detections
-                near = min(prev, key=lambda e: np.linalg.norm(e.pos - d.pos), default=None)
-                if near is None or np.linalg.norm(near.pos - d.pos) > 1.5:
-                    continue
-                o = tracker.config.sensor_by_id[other_id]
-                ra = math.hypot(d.pos[0] - sensor.x, d.pos[1] - sensor.y)
-                rb = math.hypot(near.pos[0] - o.x, near.pos[1] - o.y)
-                self.accuracy.append((round(ra, 2), round(rb, 2), round(float(np.linalg.norm(near.pos - d.pos)), 3)))
-        del self.accuracy[:-MAX_ACCURACY_SAMPLES]
-        self.changed = True
-
     def forget(self, sensor_id: str):
-        """The sensor was moved: drop what was learned about it (detection, ghosts, LD2410C)."""
+        """The sensor was moved: drop what was learned about it (ghosts, LD2410C)."""
         for store in (self.exposure, self.clutter, self.ld_occ, self.ld_move, self.ld_emp):
             if sensor_id in store:
                 store[sensor_id][:] = 0
         self.ld_history.pop(sensor_id, None)
         self.changed = True
-
-    def learn_gap(self, mode: str, duration: float):
-        """A person the LD2450 had dropped was seen again at their place after `duration`."""
-        if duration >= GAP_FLOOR:
-            self.gaps[mode].append(round(duration, 2))
-            del self.gaps[mode][:-MAX_GAPS]
-            self.changed = True
-
-    def learn_pair(self, distance: float, both: bool):
-        """Two people (sure ones) at this distance in view of a sensor, at least one detected."""
-        self.pairs[_res_bin(distance)][0 if both else 1] += 1
-        self.changed = True
-
-    def resolution(self, distance: float) -> float:
-        """P(both of two people at this distance are detected | at least one is)."""
-        k = _res_bin(distance)
-        both, one = self.pairs[k]
-        return (RES_PRIOR_WEIGHT * RES_PRIOR[k] + both) / (RES_PRIOR_WEIGHT + both + one)
-
-    def redetection_survival(self, mode: str, tau: float) -> float:
-        """Share of dropouts (of people who stay put, longer than GAP_FLOOR) that last longer
-        than tau."""
-        if tau <= GAP_FLOOR:
-            return 1.0
-        samples = [g for g in self.gaps[mode] if g >= GAP_FLOOR]
-        # prior table interpolated log-linearly in tau (given longer than GAP_FLOOR), plus the
-        # learned gaps
-        p = _prior_survival(mode, tau) / _prior_survival(mode, GAP_FLOOR)
-        return (GAP_PRIOR_WEIGHT * p + sum(g > tau for g in samples)) / (GAP_PRIOR_WEIGHT + len(samples))
 
     def learn_ld2410(self, sensor_id: str, t: float, energies: list, still: set, moving: set, blocked: set):
         """energies: per gate; still/moving: gates with a sure person sitting/walking; blocked:
@@ -331,40 +222,22 @@ class SensorModel:
 
     # -------------------------------------------------------------- output
 
-    def accuracy_fit(self) -> dict | None:
-        """Total 2D error per sensor sigma(r) = a + b r, from offsets between two sensors:
-        E[offset^2] = sigma(ra)^2 + sigma(rb)^2 (both sensors alike). Least squares on a grid."""
-        if len(self.accuracy) < 200:
-            return None
-        s = np.array(self.accuracy)
-        ra, rb, d2 = s[:, 0], s[:, 1], s[:, 2] ** 2
-        d2 = np.minimum(d2, np.percentile(d2, 95))  # wrong pairs (two people) are outliers
-        best = None
-        for a in np.arange(0.0, 0.41, 0.01):
-            for b in np.arange(0.0, 0.151, 0.005):
-                err = ((a + b * ra) ** 2 + (a + b * rb) ** 2 - d2)
-                cost = float(np.mean(err * err))
-                if best is None or cost < best[0]:
-                    best = (cost, a, b)
-        return {"base": round(best[1], 3), "slope": round(best[2], 3), "samples": len(self.accuracy)}
-
     def maps(self, sensor_id: str) -> dict:
-        """The maps over the house, for the UI. None where too little was learned."""
+        """The detection probability and the learned ghost rate over the house, for the UI (ghosts:
+        None where too little was verifiable)."""
         if sensor_id not in self.prior:
             return {}
         i0, j0, i1, j1 = self.box
         sl = (slice(i0, i1), slice(j0, j1))
         exposure, clutter = self.exposure[sensor_id][sl], self.clutter[sensor_id][sl]
-
-        def grid(values, valid):
-            return [[round(float(v), 3) if ok else None for v, ok in zip(row, oks)] for row, oks in zip(values, valid)]
         rate = np.where(exposure > 0, clutter / np.maximum(exposure, 1e-9), 0)
         x0, y0 = cell_center(i0, j0)
         return {
             "cell": CELL, "x0": x0 - CELL / 2, "y0": y0 - CELL / 2, "cols": i1 - i0, "rows": j1 - j0,
             # [column][row], row 0 = lowest y
-            "prior": grid(self.prior[sensor_id][sl], np.ones_like(exposure, dtype=bool)),
-            "clutter": grid(rate, exposure >= 200),
+            "prior": [[round(float(v), 3) for v in row] for row in self.prior[sensor_id][sl]],
+            "clutter": [[round(float(v), 3) if ok else None for v, ok in zip(row, oks)]
+                        for row, oks in zip(rate, exposure >= 200)],
             "clutter_cells": int((exposure >= 200).sum()),
         }
 
@@ -374,9 +247,8 @@ class SensorModel:
         def sparse(store):
             return {sid: {f"{i},{j}": round(float(g[i, j]), 2) for i, j in zip(*np.nonzero(g > 0.01))}
                     for sid, g in store.items()}
-        return {"exposure": sparse(self.exposure),
-                "clutter": sparse(self.clutter), "accuracy": self.accuracy, "last_decay": self.last_decay,
-                "gaps": self.gaps, "pairs": self.pairs, "ld_occ": {k: v.round(2).tolist() for k, v in self.ld_occ.items()},
+        return {"exposure": sparse(self.exposure), "clutter": sparse(self.clutter),
+                "last_decay": self.last_decay, "ld_occ": {k: v.round(2).tolist() for k, v in self.ld_occ.items()},
                 "ld_move": {k: v.round(2).tolist() for k, v in self.ld_move.items()},
                 "ld_emp": {k: v.round(2).tolist() for k, v in self.ld_emp.items()}}
 
@@ -392,10 +264,6 @@ class SensorModel:
                     i, j = map(int, key.split(","))
                     if 0 <= i < SIZE and 0 <= j < SIZE:
                         grid[i, j] = v
-        self.accuracy = [tuple(a) for a in data.get("accuracy", [])][-MAX_ACCURACY_SAMPLES:]
-        self.gaps = {k: list(data.get("gaps", {}).get(k, []))[-MAX_GAPS:] for k in ("still", "walking")}
-        pairs = data.get("pairs")
-        self.pairs = [list(map(float, x)) for x in pairs] if pairs and len(pairs) == len(RES_EDGES) else [[0.0, 0.0] for _ in RES_EDGES]
         for name in ("ld_occ", "ld_move", "ld_emp"):
             store = getattr(self, name)
             for sid, rows in data.get(name, {}).items():
@@ -413,6 +281,3 @@ class SensorModel:
         if path.exists():
             self.load_dict(json.loads(path.read_text()))
 
-
-def _res_bin(distance: float) -> int:
-    return next(k for k, edge in enumerate(RES_EDGES) if distance < edge)

@@ -7,7 +7,7 @@ from presence_tracker.crowd import Crowd
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
 
-from test_tracker import sim_sensors, walk
+from test_frames import sim_sensors, walk
 
 FLUR_DOOR = (0.0, 4.0)
 BALCONY_DOOR = (6.0, 2.0)

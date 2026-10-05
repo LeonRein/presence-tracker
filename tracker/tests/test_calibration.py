@@ -5,9 +5,9 @@ import pytest
 from presence_tracker.calibration import Calibrator
 from presence_tracker.model import Config, SensorConfig, TrackerParams
 from presence_tracker.sim import Person, SimSensor, simulate
-from presence_tracker.tracker import Tracker
+from presence_tracker.crowd import Crowd
 
-from test_tracker import walk
+from test_frames import walk
 
 
 def test_recovers_poses_from_a_walk():
@@ -15,7 +15,7 @@ def test_recovers_poses_from_a_walk():
         SensorConfig("a", x=0.05, y=0.05, heading=45, placed=True),
         SensorConfig("b", x=5.95, y=0.05, heading=135, placed=True),
         SensorConfig("c", x=3.0, y=4.95, heading=270, placed=True, mirror=True),
-    ], params=TrackerParams(warmup=0))
+    ], params=TrackerParams())
     # what the user drew: positions within 15 cm, headings off by 15-30 degrees (also the first
     # sensor's), c's x direction unknown
     guess = copy.deepcopy(truth)
@@ -26,7 +26,7 @@ def test_recovers_poses_from_a_walk():
 
     person = Person(walk((1, 1), (5, 1), (5, 4), (1, 4), (1, 1), (5, 4), (3, 1), (3, 4), speed=0.8))
     sensors = [SimSensor(s, noise=0.05) for s in truth.sensors]
-    tracker = Tracker(guess, start=0.0)
+    tracker = Crowd(guess, start=0.0)
     calibrator = Calibrator(guess)
     calibrator.start()
     tracker.listeners.append(lambda e, d: e == "frame" and calibrator.on_frame(*d))
@@ -46,7 +46,7 @@ def test_recovers_poses_from_a_walk():
 
 def _session(truth, guess, people, duration):
     sensors = [SimSensor(s, noise=0.05) for s in truth.sensors]
-    tracker = Tracker(guess, start=0.0)
+    tracker = Crowd(guess, start=0.0)
     calibrator = Calibrator(guess)
     calibrator.start()
     tracker.listeners.append(lambda e, d: e == "frame" and calibrator.on_frame(*d))
@@ -59,7 +59,7 @@ def _two_sensors():
     truth = Config(sensors=[
         SensorConfig("a", x=0.05, y=0.05, heading=45, placed=True),
         SensorConfig("b", x=5.95, y=0.05, heading=135, placed=True, mirror=True),
-    ], params=TrackerParams(warmup=0))
+    ], params=TrackerParams())
     guess = copy.deepcopy(truth)
     guess.sensors[0].heading = 60
     guess.sensors[1].x, guess.sensors[1].heading, guess.sensors[1].mirror = 5.85, 110, False

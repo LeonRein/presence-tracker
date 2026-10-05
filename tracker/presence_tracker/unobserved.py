@@ -5,8 +5,8 @@ that ended with a seen return, plus a wide log-normal prior that counts like a f
 Taken straight from the data, not fitted: fetching something and cooking are different kinds
 of visits, and a single fitted curve would declare the cook gone after a few minutes.
 
-The tracker's whereabouts (whereabouts.py) use the hazard, the share of visits of a given age
-that end in the next dt, to let a "went into that room" hypothesis fade.
+The particle model (cloud.py) uses the hazard, the share of visits of a given age
+that end in the next dt, for when somebody behind a door comes out again.
 """
 
 import math

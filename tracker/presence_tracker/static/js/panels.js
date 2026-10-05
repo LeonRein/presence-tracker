@@ -406,7 +406,7 @@ function sensorDetail(el, s) {
       <label class="field">Reichweite (m)<input type="number" step="0.5" value="${s.range}" data-k="range"></label>
     </div>
     <label class="check"><input type="checkbox" data-k="mirror" ${s.mirror ? 'checked' : ''}> x-Achse gespiegelt</label>
-    <h3>Was der Sensor gelernt hat</h3>
+    <h3>Was der Sensor sieht</h3>
     <p class="note">Nur zum Anschauen: blendet eine Karte über den Grundriss ein. Das ändert nichts am Tracking.</p>
     <label class="field">Karte einblenden<select id="smap">${[['', 'keine'], ['prior', 'Erkennung: aus der Geometrie'],
       ['clutter', 'Geister: im Betrieb gelernt']].map(([k, l]) =>
@@ -440,19 +440,13 @@ function sensorDetail(el, s) {
 
 let mapView = null;
 
-// Heatmap of one sensor's model: detection probability (assumed or learned) or ghost rate
+// Heatmap of one sensor's model: detection probability (from the geometry) or learned ghost rate
 async function showSensorMap(info, sensorId) {
   const view = mapView;
   const sel = state.sensorMap?.sensor === sensorId ? state.sensorMap : null;
+  if (!sel) { view.sensorMapImage = null; view.render(); info.innerHTML = ''; return; }
   let data;
   try { data = await api('api/sensormodel?sensor=' + encodeURIComponent(sensorId)); } catch (e) { info.textContent = e.message; return; }
-  const acc = data.accuracy, mod = data.model;
-  const total = (r) => Math.hypot(mod.range_base + mod.range_slope * r, mod.lateral_base + mod.lateral_slope * r);
-  const accText = acc
-    ? `Messfehler gelernt: ${fmt(100 * (acc.base + 3 * acc.slope), 0)} cm bei 3 m, ${fmt(100 * (acc.base + 5 * acc.slope), 0)} cm bei 5 m
-       (das Tracking rechnet mit ${fmt(100 * total(3), 0)} / ${fmt(100 * total(5), 0)} cm; aus ${acc.samples} Messungen zweier Sensoren).`
-    : 'Messfehler: noch zu wenig Stellen, an denen zwei Sensoren dieselbe Person sehen.';
-  if (!sel) { view.sensorMapImage = null; view.render(); info.innerHTML = accText; return; }
   const m = data.maps;
   if (!m || !m.cols) { info.textContent = 'Dafür braucht es Räume.'; return; }
   const grid = m[sel.layer];
@@ -480,7 +474,7 @@ async function showSensorMap(info, sensorId) {
   info.innerHTML = {
     prior: 'Aus der Geometrie: 0 hinter Wänden, fällt zum Rand des Sichtfelds und zur Reichweite hin ab. Rot = selten, grün = fast immer erkannt.',
     clutter: `Wo der Sensor Ziele meldet, obwohl ein anderer Sensor die Stelle gut sieht und dort niemand ist (${m.clutter_cells} Felder prüfbar). Je röter, desto öfter.`,
-  }[sel.layer] + '<br>' + accText;
+  }[sel.layer];
 }
 
 export function refreshCoverage(view) {
@@ -653,65 +647,32 @@ function calibrationResult(el, r) {
 const PARAMS = [
   ['Messung', [
     ['target_height', 'Höhe des Oberkörpers', 'm', 'Für die Umrechnung des schrägen Abstands auf den Boden.', 0.05],
-    ['range_sigma_base', 'Messfehler in Blickrichtung, Grundwert', 'm', 'Fehler = Grundwert + Anstieg × Abstand. Größer = Filter glättet stärker, reagiert langsamer.', 0.01],
+    ['range_sigma_base', 'Messfehler in Blickrichtung, Grundwert', 'm', 'Fehler = Grundwert + Anstieg × Abstand. Größer = einzelne Messungen zählen weniger.', 0.01],
     ['range_sigma_slope', 'Messfehler in Blickrichtung, Anstieg', 'm/m', '', 0.005],
     ['lateral_sigma_base', 'Messfehler seitlich, Grundwert', 'm', 'Seitlich wächst der Fehler schneller mit dem Abstand (Winkelfehler).', 0.01],
     ['lateral_sigma_slope', 'Messfehler seitlich, Anstieg', 'm/m', '', 0.005],
     ['sigma_speed', 'Messrauschen Geschwindigkeit', 'm/s', '', 0.05],
-  ]],
-  ['Bewegung', [
-    ['walk_accel', 'Beschleunigung beim Gehen', 'm/s²', 'Wie abrupt Richtung und Tempo wechseln dürfen.', 0.1],
-    ['still_jitter', 'Unruhe beim Sitzen', 'm/√s', 'Wie weit eine ruhende Person „wandert“.', 0.01],
-    ['walk_to_still', 'Wechsel gehen → ruhig', '1/s', '', 0.1],
-    ['still_to_walk', 'Wechsel ruhig → gehen', '1/s', '', 0.1],
-  ]],
-  ['Neue Personen', [
-    ['birth_entry', 'Startwahrscheinlichkeit an Eingängen', '', 'Wie wahrscheinlich eine neue Messung an einem Eingang oder einer Tür zu einem Raum ohne Sensor eine Person ist.', 0.05],
-    ['birth_room', 'Startwahrscheinlichkeit sonst', '', 'Mitten im Raum taucht niemand auf, außer er kam unbemerkt herein: entsprechend klein.', 0.01],
-    ['confirm_prob', 'Person ab', '', 'Ab dieser Wahrscheinlichkeit gilt eine neue Spur als Person.', 0.05],
-    ['evidence_time', 'Unabhängige Beobachtung je', 's', 'Der LD2450 glättet: Messungen eines Sensors zählen nur einmal je so viele Sekunden als neue Information. Größer = vorsichtiger, langsamer.', 0.5],
-    ['clutter_density', 'Geisterdichte (Annahme)', '1/m² je Frame', 'Bis die Geisterkarte gelernt ist.', 0.005],
-    ['echo_factor', 'Echos neben Gehenden', '×', 'So viel häufiger sind Geister im Umkreis einer gehenden Person (Mehrwege-Reflexionen laufen mit).', 1],
-    ['echo_radius', 'Umkreis für Echos', 'm', '', 0.1],
-    ['warmup', 'Anlaufzeit', 's', 'Nach dem Start dürfen Personen überall sofort erkannt werden.', 1],
+    ['stale_frames', 'Eingefrorene Ziele nach', 'Frames', 'Der LD2450 meldet manchmal ein Ziel noch bis zu 35 s mit exakt gleichen Koordinaten weiter, obwohl niemand mehr da ist. Echte Personen schwanken immer um Millimeter.', 1],
+    ['wall_margin', 'Toleranz an Wänden', 'm', 'Messpunkte weiter hinter einer Wand oder außerhalb aller Räume sind Reflexionen und werden verworfen.', 0.05],
   ]],
   ['Personen', [
     ['residents', 'Bewohner', '', 'So viele Personen verfolgt das Modell; jede kann auch außer Haus sein. Unbekannte Neuankömmlinge (Gäste) sind noch nicht gebaut.', 1],
-    ['guest_prob', 'Besuch', '', 'Annahme, wie wahrscheinlich jede weitere Person (Besuch) ist.', 0.01],
   ]],
-  ['Verdeckte Personen', [
-    ['lost_after', 'Als verdeckt gelten nach', 's', '', 0.1],
-    ['coast_time', 'Weiterlaufen ohne Messung', 's', 'So lange bewegt sich eine verdeckte Person in der vorhergesagten Richtung weiter.', 0.1],
-    ['ld2410_fov', 'LD2410C-Sichtwinkel', '°', 'Innerhalb dieses Winkels zählt die Energie des LD2410C als Beweis.', 5],
-    ['ld2410_evidence_time', 'LD2410C: Beweis je', 's', 'Die Energie des LD2410C ändert sich langsam: so viele Sekunden zählen als eine unabhängige Beobachtung.', 1],
-    ['ld2410_beam', 'LD2410C-Strahl', '°', 'Innerhalb dieses Winkels erzeugen Personen Energie im LD2410C: wer dort ist, erklärt die Energie in seiner Entfernung.', 5],
-    ['getup_time', 'Aufstehen: Zeitskala', 's', 'Wer s Sekunden sitzt, steht mit der Rate Anteil/(s + Wert) auf und geht irgendwohin: je länger jemand sitzt, desto seltener. Nur so kommt eine verdeckte Person zu einer Tür, und nur zu dem Teil, den kein Sensor auf dem Weg sehen würde. Aus den Aufnahmen gemessen.', 10],
-    ['getup_share', 'Aufstehen: Anteil', '', '', 0.02],
-    ['doorway_walk', 'In einer Tür verloren', '', 'Wer in einer Tür nicht mehr gesehen wird, ging mit dieser Wahrscheinlichkeit hindurch (in Türen bleibt niemand lange stehen). Der Rest bleibt im Raum.', 0.05],
-    ['walk_speed', 'Gehtempo', 'm/s', 'So lange ist jemand auf dem Weg zu einer Tür im Blick der Sensoren.', 0.1],
-    ['pair_evidence_time', 'Doppelte Spur: Beweis je', 's', 'Zwei Spuren dicht beieinander, aber nur ein Ziel: Das zählt einmal je so viele Sekunden als Beweis, dass eine davon doppelt ist (zwei ruhig Sitzende verschmilzt der LD2450 dauerhaft).', 1],
-    ['walk_turn', 'Richtungsänderung beim Gehen', 'rad', 'So stark kann sich die Richtung einer gehenden Person ändern, bevor sie eine Tür erreicht.', 0.05],
-    ['duplicate_prior', 'Doppelte Spur möglich', '', 'Wahrscheinlichkeit, dass auch eine lange gemessene Spur nur die zweite Spur einer Person ist.', 0.01],
-    ['end_prob', 'Spur endet ab', '', 'Eine Spur endet, wenn sie mit dieser Wahrscheinlichkeit keine eigene Person war (Geist oder doppelte Spur). Menschen verschwinden nicht.', 0.05],
-    ['unseen_diffusion', 'Ungesehen verrückt', 'm²/s', 'Wie weit sich jemand Verdecktes verschoben haben kann (Varianz pro Sekunde). Eine neue Spur in der Nähe einer verdeckten Person ist diese Person, wenn das wahrscheinlicher ist als jemand Neues.', 0.005],
-    ['newcomer_density', 'Jemand Neues', '1/m²', 'Dichte, mit der eine unbekannte Person mitten im Raum auftaucht (mal der Wahrscheinlichkeit einer Person mehr als die Bewohner).', 0.0005],
-    ['birth_return', 'Rückkehr-Startwert höchstens', '', 'Startwahrscheinlichkeit einer neuen Spur an einer Tür, hinter der wahrscheinlich jemand ist.', 0.05],
-    ['ld2410_hold', 'LD2410C-Haltezeit', 's', 'Lücken in der LD2410C-Präsenz bis zu dieser Länge werden überbrückt.', 0.1],
-    ['dwell_median', 'Räume ohne Sensor: typischer Aufenthalt', 's', 'Annahme, bis genug Besuche gelernt sind.', 10],
-    ['dwell_spread', 'Streuung des Aufenthalts', '', 'Streuung von ln(Dauer) der Annahme.', 0.1],
-    ['missed_return', 'Rückkehr übersehen', '', 'Wahrscheinlichkeit, dass jemand unbemerkt herauskommt, solange ein Sensor die Tür sieht.', 0.05],
+  ['Räume ohne Sensor', [
+    ['dwell_median', 'Typischer Aufenthalt', 's', 'Annahme für Küche, Balkon und Co., bis genug Besuche gelernt sind.', 10],
+    ['dwell_spread', 'Streuung des Aufenthalts', '', 'Streuung von ln(Dauer) der Annahme: breit, damit lange Aufenthalte möglich bleiben.', 0.1],
+    ['dwell_prior_weight', 'Gewicht der Annahme', 'Besuche', 'Die Annahme zählt wie so viele gelernte Besuche.', 1],
+    ['dwell_median_open', 'Typischer Aufenthalt, offener Bereich', 's', 'Dasselbe für den Bereich mit dem Weg nach draußen (Flur, Schlafzimmer): Stunden sind normal.', 60],
+    ['dwell_spread_open', 'Streuung, offener Bereich', '', '', 0.1],
   ]],
-  ['Zuordnung', [
-    ['gate', 'Zuordnungsschwelle (χ²)', '', 'Größer = Messungen werden großzügiger bestehenden Personen zugeordnet.', 0.5],
-    ['max_gate_radius', 'Maximaler Zuordnungsradius', 'm', '', 0.05],
-    ['stale_frames', 'Eingefrorene Ziele nach', 'Frames', 'Der LD2450 meldet manchmal ein Ziel noch bis zu 35 s mit exakt gleichen Koordinaten weiter, obwohl niemand mehr da ist. Echte Personen schwanken immer um Millimeter.', 1],
-    ['wall_margin', 'Toleranz an Wänden', 'm', 'Messpunkte weiter hinter einer Wand oder außerhalb aller Räume sind Reflexionen und werden verworfen. Die Radare sehen nicht durch die Betonwände.', 0.05],
-    ['split_radius', 'Doppelte Ziele zusammenfassen', 'm', 'Der LD2450 meldet eine Person manchmal als zwei Ziele.', 0.05],
+  ['LD2410C', [
+    ['ld2410_fov', 'Sichtwinkel', '°', 'Innerhalb dieses Winkels zählt die Energie des LD2410C als Beweis.', 5],
+    ['ld2410_beam', 'Strahl', '°', 'Innerhalb dieses Winkels erzeugen Personen Energie im LD2410C: wer dort ist, erklärt die Energie in seiner Entfernung.', 5],
+    ['ld2410_hold', 'Haltezeit (Anzeige)', 's', 'Lücken in der LD2410C-Präsenz bis zu dieser Länge werden in der Anzeige überbrückt.', 0.1],
   ]],
   ['Ausgabe', [
     ['lead_time', 'Vorausschau „wird betreten“', 's', 'Wie früh eine Zone als „wird betreten“ gilt. Bei 1 m/s Gehtempo entspricht 1 s etwa 1 m.', 0.1],
     ['approach_min_speed', 'Mindesttempo dafür', 'm/s', '', 0.05],
-    ['zone_hysteresis', 'Zonen-Hysterese', 'm', 'Verhindert Flattern an Zonengrenzen.', 0.01],
   ]],
 ];
 

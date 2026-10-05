@@ -25,21 +25,23 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   gesehen wird, ist wahrscheinlich gegangen; an einer schlecht sichtbaren Stelle ist er wahrscheinlich
   noch da. Friert der LD2450 ein (bit-identische Werte), sagt das nichts über die Stelle.
 - **Zwei Körper stehen nicht am selben Fleck.** Zwei Personen dicht nebeneinander (Sofa) bleiben zwei.
-- **Gelernt** werden je Sensor die Erkennungswahrscheinlichkeit (nur wenn ein zweiter Sensor die Person
-  gleichzeitig sieht), die Geisterdichte (nur wo ein zweiter Sensor gut hinsieht und nichts meldet) und die
-  LD2410C-Energie je Entfernungsstufe mit und ohne Person. Verhalten (wo man stehen bleibt, losgeht) wird
+- **Gelernt** werden je Sensor die Geisterdichte je Ort (nur wo ein zweiter Sensor gut hinsieht und nichts
+  meldet), die LD2410C-Energie je Entfernungsstufe mit und ohne Person und, wie lange Besuche hinter einer
+  Tür dauern. Die Erkennungswahrscheinlichkeit je Ort zu lernen brachte im Testdurchlauf nichts (entfernt in
+  0.6.7). Verhalten (wo man stehen bleibt, losgeht) wird
   bewusst nicht gelernt: Messlücken würden sonst als Verhalten gedeutet und verstärkt.
+- **Geister**: Ein Ziel, das ein Sensor meldet, kann ein Geist sein (Echo, nachgeführtes Ziel). Ein Geist
+  lebt etwa 1,5 s, behält seine Geschwindigkeit und rückt mit seinen Zielen mit; so wird aus einer
+  Geisterspur keine Person.
 - Der **LD2410C** gewichtet alle 3 s jede mögliche Lage einer Person mit der Energie in ihrer
   Entfernungsstufe: Viel Energie spricht für jemanden dort, keine dagegen. So wird auch eine verdeckte
   Sitzende gestützt und eine vermeintlich versteckte Person, die längst gegangen ist, widerlegt.
-- **Reichweite**: Hinter der eingestellten Reichweite fällt die angenommene Erkennung weich ab statt auf 0;
-  was der Sensor dort wirklich kann, wird gelernt.
+- **Reichweite**: Hinter der eingestellten Reichweite fällt die angenommene Erkennung weich ab statt auf 0.
 - **Wände**: Die Radare sehen nicht durch die Betonwände. Ein Messpunkt hinter einer Wand oder außerhalb aller
   Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*). Was ein Sensor durch eine offene Tür in
-  einem Raum ohne Sensor sieht (z. B. jemand im Flur), wird nicht als Person im beobachteten Raum gedeutet.
+  einem Raum ohne Sensor sieht (z. B. jemand in der Küche), zählt als Messung dort.
 - **Personen**: Verfolgt werden die *Bewohner*. Jede kann auch außer Haus sein (über den Flur-Bereich mit der
-  Treppe) und wird dann nirgends angezeigt. Noch nicht gebaut: unbekannte Neuankömmlinge (Gäste) und der
-  gelernte Versatz zwischen den Sensoren.
+  Treppe) und wird dann nirgends angezeigt. Noch nicht gebaut: unbekannte Neuankömmlinge (Gäste).
 
 ## Einrichten
 

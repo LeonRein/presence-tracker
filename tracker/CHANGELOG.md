@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.11
+
+Aufgeräumt:
+- Der alte Tracker vor dem Partikelmodell (Kalman/IMM, Spuren, Hypothesen) ist ganz entfernt. Die App nutzte
+  davon nur noch die Aufbereitung der Rohdaten. Das Sensormodell enthält nur noch die Erkennung aus der
+  Geometrie, die gelernte Geisterkarte und die LD2410C-Verteilungen. Die Geisterkarte bleibt: ohne sie war
+  der Testdurchlauf in drei Messreihen jedes Mal etwas schlechter.
+- Die Einstellungen zeigen nur noch Parameter, die das Modell liest (vorher 80, viele aus dem alten Tracker).
+- Eine App ohne eingezeichnete Räume (z. B. während der ersten Kalibrierung) stürzt nicht mehr ab.
+
+Testdurchlauf: 96,7 % (12 Läufe, 95–97 %), Lauf für Lauf gleich wie 0.6.10.
+
 ## 0.6.10
 
 - Geister behalten ihre Geschwindigkeit: Ein vom Sensor nachgeführtes Geisterziel (am 5.10. um 06:20
