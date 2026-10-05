@@ -42,7 +42,7 @@ ECHO_RADIUS = 8.0  # m
 GHOST_LIFE = 1.5  # s, mean (measured: night ghosts 1.5 s, echoes about 1 s)
 GHOST_SHOWS = 0.85  # P(a ghost that is still there shows up in a frame)
 GHOST_SPREAD = 0.15  # m: a ghost stays at its spot, wobbling about this much
-GHOST_SPEED = 0.2  # m/s, radial speeds a ghost that stays shows
+GHOST_SPEED = 0.2  # m/s: how much a ghost's radial speed varies around the one it showed up with
 GHOST_MIN = 0.02  # ghosts less probable than this are forgotten
 GHOST_BORN = 0.5  # a ghost is kept from a detection that is more probably a new ghost than not
 MAX_GHOSTS = 3  # per sensor
@@ -283,7 +283,9 @@ class Crowd:
                 C = d.R + np.eye(2) * GHOST_SPREAD**2
                 dz = d.pos - g["pos"]
                 dens = math.exp(-0.5 * float(dz @ np.linalg.solve(C, dz))) / (2 * math.pi * math.sqrt(np.linalg.det(C)))
-                spd = math.exp(-0.5 * (d.speed / GHOST_SPEED) ** 2) / (math.sqrt(2 * math.pi) * GHOST_SPEED)
+                # a ghost keeps the radial speed it showed up with (still ones about 0; a target the
+                # LD2450 holds keeps its last speed exactly)
+                spd = math.exp(-0.5 * ((d.speed - g["speed"]) / GHOST_SPEED) ** 2) / (math.sqrt(2 * math.pi) * GHOST_SPEED)
                 A[j] = g["alive"] * GHOST_SHOWS * dens * spd / lam[j]
             free = 1 - self._body_near(g["pos"])
             explain.append((A * free, 1 - g["alive"] * GHOST_SHOWS * free))
@@ -426,12 +428,15 @@ class Crowd:
         return out
 
     def _ghosts_update(self, sid: str, t: float, dets, ghosts, beta_g, new):
-        """After a frame: each ghost still there as likely as the frame says (it stays at its
-        spot); where a detection is more probably a new ghost than anything else, one is kept."""
+        """After a frame: each ghost still there as likely as the frame says, moved to where it
+        probably showed up (it drifts with its own targets); where a detection is more probably a
+        new ghost than anything else, one is kept."""
         for k, g in enumerate(ghosts):
             took = beta_g[k, 1:]
             stays = g["alive"] * (1 - GHOST_SHOWS) / max(1 - g["alive"] * GHOST_SHOWS, 1e-12)
             g["alive"] = float(took.sum() + beta_g[k, 0] * stays)
+            for j, d in enumerate(dets):
+                g["pos"] = g["pos"] + took[j] * (d.pos - g["pos"])
         for j, d in enumerate(dets):
             if new[j] < GHOST_BORN:
                 continue
@@ -439,7 +444,7 @@ class Crowd:
             if near:
                 near[0]["alive"] = max(near[0]["alive"], float(new[j]))
                 continue
-            ghosts.append({"pos": d.pos.copy(), "alive": float(new[j]), "born": t, "last": t})
+            ghosts.append({"pos": d.pos.copy(), "speed": d.speed, "alive": float(new[j]), "born": t, "last": t})
         ghosts.sort(key=lambda g: -g["alive"])
         self._ghosts[sid] = [g for g in ghosts[:MAX_GHOSTS] if g["alive"] >= GHOST_MIN]
 

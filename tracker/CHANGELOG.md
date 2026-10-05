@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.10
+
+- Geister behalten ihre Geschwindigkeit: Ein vom Sensor nachgeführtes Geisterziel (am 5.10. um 06:20
+  im leeren Esszimmer, konstant −0,72 m/s) wurde bisher nach drei Frames als gehende Person erklärt und
+  blieb dann stundenlang unsichtbar im Raum. Jetzt bleibt es ein Geist. Nachttest (leere Räume,
+  23:15–06:28): keine Phantom-Sekunde.
+
+Testdurchlauf: 96,7 % (12 Läufe, 95–97 %).
+
 ## 0.6.9
 
 - Zwei Personen am Esstisch, obwohl nur eine dort saß (nach dem Zurücksetzen am 5.10.): Die beiden

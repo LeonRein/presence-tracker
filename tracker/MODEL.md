@@ -130,7 +130,9 @@ Je Sensor:
   der Nähe von Gehenden (Mehrwegeechos), Faktor **gelernt**.
 - **Lebensdauer:** **gelernte** Verteilung, die meisten unter 1 s, manche viele Sekunden an derselben
   Stelle. Wo der Nutzer Störzonen zeichnet (Ventilator, Vorhang), ist `β` dort hoch.
-- Ein Geist bleibt an seinem Ort (kleines Wackeln) und ist nur für seinen Sensor da.
+- Ein Geist behält die Radialgeschwindigkeit, mit der er auftaucht (stehende Echos etwa 0; ein vom
+  LD2450 nachgeführtes Ziel genau seine letzte), rückt mit seinen eigenen Zielen mit und ist nur für
+  seinen Sensor da.
 
 *Ein Geist, der 5 s an derselben Stelle steht, ist damit erklärbar. Dafür muss keine Person entstehen,
 die dann versteckt bleibt.*
@@ -145,12 +147,19 @@ die dann versteckt bleibt.*
   plus 3e-3 je m² und Frame je gehender Person, irgendwo im Blickfeld.
 
 *Geister als Objekte mit Lebensdauer* (umgesetzt in 0.6.4): Jede Messung kann von einer Person, einem
-bestehenden Geist des Sensors oder einem neuen Geist kommen. Ein Geist steht still (keine
-Radialgeschwindigkeit), lebt im Mittel 1,5 s (gemessen) und ist nie dort, wo wahrscheinlich ein Körper
+bestehenden Geist des Sensors oder einem neuen Geist kommen. Ein Geist lebt im Mittel 1,5 s (gemessen) und ist nie dort, wo wahrscheinlich ein Körper
 steht. Ein Echo aus 17 Messungen in 1,5 s an derselben Stelle zählt damit als *ein* Geist, nicht als 17
 Beweise für eine Person. Mit der früheren, viel zu hohen Geisterdichte erklärte das Modell Sitzende als
 „Person im Aussetzer plus Geist“ (80–89 %). Mit der gemessenen Dichte steht der Drehbuch-Durchlauf bei
 91 %, und die Phantom-Person nach dem Kalibrierlauf am 4.10. um 18:07 verschwindet.
+
+*Geister mit Geschwindigkeit* (0.6.10): Bis dahin hatte ein Geist keine Radialgeschwindigkeit. Am 5.10.
+um 06:20 meldete der Wohnzimmer-Sensor im leeren Esszimmer 16 Frames lang ein Ziel mit immer
+derselben Geschwindigkeit (−0,72 m/s, nachgeführt), das langsam weiterrutschte. Im ersten Frame galt es
+zu 99,7 % als Geist; ab dem dritten erklärte eine gehende Person die Geschwindigkeit tausendfach besser,
+und daraus wurde eine Person, die stundenlang unsichtbar im Raum blieb. Mit Geistern, die ihre
+Geschwindigkeit behalten und mitrücken: in der Nacht 23:15–06:28 keine Phantom-Sekunde (3 Läufe, vorher
+bis 5 Minuten), Drehbuch 96,7 % (12 Läufe, vorher 95,6 %).
 
 ## 4. Messmodell (wie ein Frame entsteht)
 
