@@ -1,7 +1,7 @@
 """Simulated sensors and people, for tests and a demo mode without hardware.
 
 Imitates the MQTT frames of the ESPHome firmware, including the LD2450's quirks:
-noise, at most 3 targets, still people dropping out, occasional ghosts, and the LD2410C
+noise, an error that wanders slowly (each sensor sees a person a bit elsewhere), at most 3 targets, still people dropping out, occasional ghosts, and the LD2410C
 seeing the LD2450's interference every ~7 s.
 """
 
@@ -38,6 +38,8 @@ class Person:
 class SimSensor:
     config: SensorConfig
     noise: float = 0.07
+    bias: float = 0.0  # m: per person, where this sensor's target sits on them wanders by about this much
+    bias_time: float = 1.0  # s, ... this slowly
     still_dropout: float = 0.0  # chance per second that a still person is dropped (stays dropped for still_gap s)
     still_gap: float = 20.0
     ghost_rate: float = 0.0  # LD2450 ghosts per minute
@@ -49,6 +51,7 @@ class SimSensor:
     _dropped: dict = field(default_factory=dict)
     _ghost_until: float = -1.0
     _ghost_pos: tuple = (0.0, 0.0)
+    _bias: dict = field(default_factory=dict)
 
 
 def simulate(people: list, sensors: list, duration: float, rate: float = 11.0, seed: int = 1, walls: list = ()):
@@ -84,6 +87,13 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
         else:
             s._dropped.pop(i, None)
         lx, ly = c.to_local(*pos)
+        if s.bias:
+            a = math.exp(-dt / s.bias_time)
+            bx, by = s._bias.get(i, (rng.gauss(0, s.bias), rng.gauss(0, s.bias)))
+            q = s.bias * math.sqrt(1 - a * a)
+            bx, by = a * bx + rng.gauss(0, q), a * by + rng.gauss(0, q)
+            s._bias[i] = (bx, by)
+            lx, ly = lx + bx, ly + by
         ground = math.hypot(lx, ly)
         slant = math.hypot(ground, c.height - person.height)
         k = slant / ground

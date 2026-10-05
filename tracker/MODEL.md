@@ -193,12 +193,31 @@ Gegeben der Zustand:
   95 s gegen 78 s), also nicht übernommen.
 - Radialgeschwindigkeit: `N(Projektion der Geschwindigkeit, σ_v)` mit σ_v = 0,25 m/s. **Gemessen**
   (4.10.) ist mehr: 0,40 m/s beim Gehen, 0,12 m/s im Stehen. Noch nicht übernommen.
-- **Offen: Der Fehler bleibt eine Weile.** Der LD2450 glättet intern. **Gemessen:** Von Frame zu Frame
-  (0,09 s) korrelieren Ortsfehler mit 0,98 und Geschwindigkeitsfehler mit 0,91, nach 0,7 s kaum noch.
-  Das Modell zählt jeden Frame als unabhängig und überschätzt so einzelne Messungen. Ein erster Versuch
-  (jedes Partikel merkt sich je Sensor seinen letzten Fehler, nur der Rest zählt) machte Personen
-  gegenüber Geistern zu stark: Phantome in leeren Räumen, Drehbuch 74 %. Verworfen; die Geister
-  müssten dasselbe Gedächtnis bekommen.
+- **Der Fehler bleibt eine Weile** (0.6.13). Der LD2450 glättet intern, und jeder Sensor sieht eine
+  Person ein Stück woanders. **Gemessen** (Frau allein am Esstisch, 5.10.): Ortsfehler korrelieren von
+  Frame zu Frame mit 0,98, nach 1 s mit 0,8, nach 3 s mit 0,5, nach 10 s nicht mehr; der Wohnzimmer-
+  Sensor (6,5 m entfernt) wanderte seitlich zwischen 1,0 und 1,85 m, während der Esszimmer-Sensor
+  stetig 1,6 m maß.
+  Modell: Jedes Partikel trägt je Sensor einen Versatz `b_s` (wo das Ziel dieses Sensors gerade auf der
+  Person sitzt), in Einheiten der Streuung (entlang der Sichtlinie, quer). `b_s` wandert als
+  Ornstein-Uhlenbeck-Prozess mit Korrelationszeit 1 s und 90 % der Streuung; 10 % sind in jedem Frame
+  neu. `z = x + L b_s + w`. Der Versatz wird nicht gezogen, sondern je Partikel als Gauß (Mittel,
+  Varianz) mitgeführt und bei jedem Treffer wie ein Kalman-Filter fortgeschrieben (Rao-Blackwell); die
+  Zuordnung zu einem Ziel wird dafür nach ihrem Anteil gezogen. Ohne Treffer kehrt er zur Vorgabe
+  zurück: Die erste Messung zählt genau wie vorher, eine anhaltende Abweichung aber einmal je
+  Korrelationszeit, nicht zehnmal je Sekunde.
+  Ohne das erklärte „zwei Personen, jeder Sensor sieht eine“ einen wandernden Wohnzimmer-Sensor besser
+  als „eine Person, ein Sensor misst 0,5 m daneben“: Jeder Frame bestrafte die Abweichung neu, während
+  der zweiten Person das Nicht-gesehen-Werden nach den ersten Sekunden fast nichts mehr kostete (der
+  lange Aussetzer-Schwanz). So entstanden nach einem Neustart zwei Personen am Tisch und am Sofa
+  (Wahrheitsdatenbank, 12 Seeds: Reset 15 % → 0 %, Abend 25 % → 0 %).
+  Ausprobiert: Korrelationszeit 3 s (Drehbuch 16 %, Orte bleiben an der Stelle der ersten Sekunden
+  hängen, die Wolke findet den richtigen Ort zu langsam wieder), 0,5 s (Drehbuch 7,7 %), 30 % neu je
+  Frame (Klone wieder 16 %). Früher (0.6.x) verworfen: jedes Partikel merkt sich nur seinen letzten
+  Fehler ganz (ohne Vorgabe, ohne Rückkehr): Personen wurden gegenüber Geistern zu stark.
+  **Offen:** Mit dem ehrlicheren LD2450 hat der LD2410C mehr Gewicht beim Ort. Am Esstisch (1,1 m vor dem
+  Esszimmer-Sensor) liegt die Energie der Person in den Stufen 2–3 statt 1 und zieht die Wolke 0,1–0,2 m
+  nach außen. Für die Zählung ohne Folgen.
 - **Zwei nah beieinander, ein Ziel (offen).** Wer weniger als 1 m neben jemand anderem steht, bekommt
   oft kein eigenes Ziel (Auflösung `res(d)`, oben). Das Modell rechnet das derzeit nicht ein: Jede
   Person wird unabhängig erkannt oder nicht. Zwei Versuche wurden wieder entfernt:
@@ -211,22 +230,6 @@ Gegeben der Zustand:
     zweite Person direkt neben einer sichtbaren war fast kostenlos (B „folgte“ A aus dem Flur),
     Drehbuch 69–73 %, doppelte Rechenzeit.
   Ohne die Auflösung bleibt beim gemeinsamen Gehen (Drehbuch-Schritt 8) manchmal eine Person zurück.
-- Radialgeschwindigkeit: `N(Projektion der Geschwindigkeit, σ_v)` mit σ_v = 0,25 m/s. **Gemessen**
-  (4.10.) ist mehr: 0,40 m/s beim Gehen, 0,12 m/s im Stehen. Noch nicht übernommen.
-- **Offen: Der Fehler bleibt eine Weile.** Der LD2450 glättet intern. **Gemessen:** Von Frame zu Frame
-  (0,09 s) korrelieren Ortsfehler mit 0,98 und Geschwindigkeitsfehler mit 0,91, nach 0,7 s kaum noch.
-  Das Modell zählt jeden Frame als unabhängig und überschätzt so einzelne Messungen. Ein erster Versuch
-  (jedes Partikel merkt sich je Sensor seinen letzten Fehler, nur der Rest zählt) machte Personen
-  gegenüber Geistern zu stark: Phantome in leeren Räumen, Drehbuch 74 %. Verworfen; die Geister
-  müssten dasselbe Gedächtnis bekommen.
-- **Zwei nah beieinander, ein Ziel.** Wer weniger als 1 m neben jemand anderem steht, bekommt oft kein
-  eigenes Ziel (Auflösung `res(d)`, oben). Diese Wahrscheinlichkeit, aus den Wolken der anderen
-  berechnet, zählt zum „nicht gesehen“ dazu, nur im beobachteten Bereich. Ohne sie galt „läuft
-  ungesehen neben dem anderen her“ als sehr teuer, und im Drehbuch-Schritt 8 (beide gehen nebeneinander
-  zum Tisch) blieb oft eine Person auf dem Sofa zurück. Ein gemeinsames Paar-Ziel in der Zuordnung
-  (das Ziel zieht beide Wolken mit) wurde ausprobiert und verworfen: Es macht eine unsichtbare zweite
-  Person direkt neben einer sichtbaren fast kostenlos (B „folgte“ A aus dem Flur), Drehbuch 69–73 %,
-  doppelte Rechenzeit.
 - Jeder lebende Geist erzeugt ein Ziel an seinem Ort.
 - Mehr als 3 Ziele: der Sensor meldet 3 davon. Ein voller Frame sagt also nichts über die Fehlenden.
 
@@ -273,6 +276,14 @@ Gegeben der Zustand:
   Person häufiger gelernt als ohne (79 % zu 59 %). Niedrige Energie zählte dann alle 3 s mit Faktor 1,3
   *für* eine Person in 5–6 m: eine Person an der Wohnzimmerwand, ohne ein einziges Ziel (5.10., 09:13
   bis mittags). Mit der Bedingung sind diese Stufen ohne Beweis (Faktor 1).
+- **Was andere erklären, zuerst; dann die Nachbarstufen.** Die genaue Schrägentfernung ist unsicher,
+  deshalb mischt jede Stufe die Nachbarn (25/50/25 %). Energie, die eine andere Person wahrscheinlich
+  schon erklärt (innerhalb zweier Stufen von ihr), sagt über diese Person nichts. Das muss je Stufe
+  *vor* dem Mischen gelten. Bis 0.6.12 umgekehrt: Die Frau saß 1,1 m vor dem Esszimmer-Sensor, ihre
+  Energie füllte die Stufen 2 und 3 (Verhältnis 10). Ein Viertel davon landete gemischt in Stufe 4, wo
+  niemand es erklärte: Faktor 2,8 alle 3 s für eine Person 3–3,75 m vor dem Sensor. Die zweite
+  Bewohnerin des Modells wurde dort binnen 30 s von „außer Haus“ (92 %) zu „im Esszimmer“ (99 %), nie
+  von einem Ziel gesehen, und blieb eine Stunde (5.10., 08:47; Wand-Morgen 17 % → 0,4 %).
 - Störungen durch den LD2450 im selben Gehäuse (etwa alle 7 s) sind ein eigener, **gelernter**
   Geisteranteil der LD2410C-Energie.
 

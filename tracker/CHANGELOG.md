@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.13
+
+- Keine zweite Person mehr, die mit einer echten „mitläuft“: Jeder Sensor sieht eine Person ein Stück
+  woanders, und dieser Versatz bleibt einige Sekunden (gemessen). Bisher wurde er in jedem Frame neu
+  bestraft, so dass „zwei Personen, jeder Sensor sieht eine“ billiger war als „eine Person“. Jetzt merkt
+  sich das Modell den Versatz je Sensor; eine anhaltende Abweichung zählt einmal je Sekunde statt zehnmal.
+- LD2410C: Energie, die eine andere Person schon erklärt, zählt vor dem Mischen der Nachbarstufen nicht
+  mehr. Vorher erzeugte eine Person direkt vor dem Esszimmer-Sensor eine Stufe weiter eine unsichtbare
+  zweite (5.10. morgens, eine Stunde lang).
+- Wahrheitsdatenbank, 12 Seeds, gegenüber 0.6.12: nach dem Zurücksetzen 15 % → 0 % falsch, Abend
+  25 % → 0 %, Morgen mit Phantom 17 % → 0,4 %, Nächte 0 %, Drehbuch 8,3 % → 7,9 %.
+- Der Simulator kann einen wandernden Versatz je Sensor (für Tests).
+
 ## 0.6.12
 
 - Das Phantom an der Wohnzimmerwand (5.10. ab 09:13, ohne ein einziges Ziel): Der LD2410C im

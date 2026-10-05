@@ -47,6 +47,10 @@ class Cloud:
         self.since = np.zeros(n)  # time the particle entered its mode
         self.entered = np.zeros(n)  # time it entered its place (the stays behind doors count from it)
         self.last_hit = np.zeros((n, n_sensors))  # time of the last detection per sensor
+        # where each sensor's target sits on this person right now, in its errors (range, lateral) -
+        # it wanders slowly (MODEL.md 4.1): mean, and variance relative to that of the wandering
+        self.bias = np.zeros((n, n_sensors, 2))
+        self.bias_var = np.ones((n, n_sensors))
         self.logw = np.full(n, -math.log(n))
 
     # ------------------------------------------------------------------ setup
@@ -105,7 +109,7 @@ class Cloud:
         w = self.weights()
         u = (self.rng.random() + np.arange(self.n)) / self.n
         idx = np.minimum(np.searchsorted(np.cumsum(w), u), self.n - 1)
-        for name in ("place", "pos", "vel", "mode", "since", "entered", "last_hit"):
+        for name in ("place", "pos", "vel", "mode", "since", "entered", "last_hit", "bias", "bias_var"):
             setattr(self, name, getattr(self, name)[idx].copy())
         self.logw[:] = -math.log(self.n)
 

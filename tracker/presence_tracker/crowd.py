@@ -50,6 +50,11 @@ HELD_FRAMES = 5  # the same nonzero speed this often in a row: the sensor holds 
 FROZEN_RADIUS = 1.0  # m around a frozen target where the sensor's silence says nothing
 FROZEN_MAX = 35.0  # s: the longest a person's target stays frozen (measured)
 MOUNT_RADIUS = 0.3  # m around a sensor: targets there come from its mount, not from people
+# the LD2450's error wanders (MODEL.md 4.1; measured: correlation 0.98 frame to frame, 0.8 after 1 s,
+# 0.5 after 3 s, gone after 10 s). 3 s fit the measurement better, but the clouds then found the right
+# spot again too slowly after a wrong start (truth database: Drehbuch 16 % against 7 %)
+BIAS_TIME = 1.0  # s
+BIAS_WHITE = 0.1  # share of its variance that is new every frame
 BODY = 0.3  # m: two people's centers are never closer
 LD_LEARNED = (100, 300)  # frames with a person in a gate / empty before the gate is used as evidence
 LD_CORR = 3.0  # s: LD2410C gate energies with a person stay correlated about this long (measured 2.5-4 s)
@@ -243,8 +248,16 @@ class Crowd:
                          + ECHO_DENSITY * walkers[j]) / SPEED_SPREAD for j, d in enumerate(dets)])
         per = []  # per person: (observed particle indices, m, g (n_obs, m_det) / lambda, M, A (m_det,))
         tau_before = []  # per person and observed particle: unseen by this sensor before this frame
+        si = self.sidx[s.id]
+        a = math.exp(-gap / BIAS_TIME)
+        # the errors of the detections, in units of their spread: along the line of sight and across
+        axes = [(d.radial, np.array([-d.radial[1], d.radial[0]])) for d in dets]
+        spread = [(math.sqrt(u @ d.R @ u), math.sqrt(v @ d.R @ v)) for d, (u, v) in zip(dets, axes)]
+        resid = []  # per person: (n_obs, m_det, 2) error of each detection if it came from the particle
         for person in self.people:
             c = person.cloud
+            c.bias[:, si] *= a
+            c.bias_var[:, si] = a * a * c.bias_var[:, si] + (1 - a * a)
             w = c.weights()
             idx = np.flatnonzero(c.place != self.world.outside)
             tau_before.append(t - c.last_hit[idx, self.sidx[s.id]])
@@ -258,11 +271,17 @@ class Crowd:
                 # and no news is not "unseen": the clock of not being seen starts when it ends
                 c.last_hit[idx[stuck], self.sidx[s.id]] = t
             r = np.zeros((len(idx), m_det))
+            e = np.zeros((len(idx), m_det, 2))
+            # the error each sensor makes stays a while (MODEL.md 4.1): the particle remembers where this
+            # sensor's target sat on it, and only what is new in the error counts
+            mu = c.bias[idx, si]
+            var = (1 - BIAS_WHITE) * c.bias_var[idx, si] + BIAS_WHITE
             for j, d in enumerate(dets):
-                dz = c.pos[idx] - d.pos
-                Rinv = np.linalg.inv(d.R)
-                q = np.einsum("ni,ij,nj->n", dz, Rinv, dz)
-                gpos = np.exp(-0.5 * q) / (2 * math.pi * math.sqrt(np.linalg.det(d.R)))
+                dz = d.pos - c.pos[idx]
+                (u, v), (sr, st) = axes[j], spread[j]
+                e[:, j, 0], e[:, j, 1] = dz @ u / sr, dz @ v / st
+                q = ((e[:, j] - mu) ** 2).sum(axis=1) / var
+                gpos = np.exp(-0.5 * q) / (2 * math.pi * sr * st * var)
                 vr = c.vel[idx] @ d.radial
                 gspd = np.exp(-0.5 * ((d.speed - vr) / p.sigma_speed) ** 2) / (math.sqrt(2 * math.pi) * p.sigma_speed)
                 r[:, j] = gpos * gspd / lam[j]
@@ -270,6 +289,7 @@ class Crowd:
             M = float(w[idx] @ miss_full) + float(w.sum() - w[idx].sum())  # out of the house: never detected
             A = (w[idx] * (1 - m)) @ r if m_det else np.zeros(0)
             per.append((idx, m, miss_full, r, M, A))
+            resid.append(e)
 
         # ghosts this sensor has been showing (MODEL.md 3.4): one that lasts shows up again where it
         # was, without speed, and never where a body is
@@ -315,15 +335,26 @@ class Crowd:
             factor = np.full(c.n, beta[k, 0] / max(M, 1e-300))  # out of the house: only "not detected"
             ended = (np.zeros(0, dtype=int), np.zeros(0))
             if len(idx):
-                hit = np.zeros(len(idx))
+                H = np.zeros((len(idx), m_det))
                 for j in range(m_det):
                     if A[j] > 0:
-                        hit += beta[k, j + 1] * (1 - m) * r[:, j] / A[j]
+                        H[:, j] = beta[k, j + 1] * (1 - m) * r[:, j] / A[j]
+                hit = H.sum(axis=1)
                 f_obs = beta[k, 0] * miss_full / max(M, 1e-300) + hit
                 factor[idx] = f_obs
-                # which particles were hit: drawn by their share of "hit" in the factor
+                # which particles were hit, and by which detection: drawn by their shares in the factor
                 got = self.rng.random(len(idx)) < hit / np.maximum(f_obs, 1e-300)
-                c.last_hit[idx[got], self.sidx[s.id]] = t
+                c.last_hit[idx[got], si] = t
+                if got.any():
+                    gi = np.flatnonzero(got)
+                    cum = np.cumsum(H[gi], axis=1)
+                    j = (cum < self.rng.random(len(gi))[:, None] * cum[:, -1:]).sum(axis=1)
+                    j = np.minimum(j, m_det - 1)
+                    P = (1 - BIAS_WHITE) * c.bias_var[idx[gi], si]
+                    gain = P / (P + BIAS_WHITE)
+                    mu = c.bias[idx[gi], si]
+                    c.bias[idx[gi], si] = mu + gain[:, None] * (resid[k][gi, j] - mu)
+                    c.bias_var[idx[gi], si] = (1 - gain) * P / (1 - BIAS_WHITE)
                 long_gap = got & (tau_before[k] > GAP_FLOOR) & (c.mode[idx] == STILL)
                 ended = (idx[long_gap], tau_before[k][long_gap])
             c.logw += np.log(np.maximum(factor, 1e-300))
@@ -468,16 +499,14 @@ class Crowd:
         n_g = len(energies)
         if s.id not in sm.ld_occ:
             return
-        ratio = {}
+        single = {}
         for moving in (False, True):
             # only what was learned: a gate counts once it has seen enough with a person in it and
             # empty (after a reset - a moved sensor - an assumed distribution made people up)
             occ = (sm.ld_move if moving else sm.ld_occ)[s.id].sum(axis=1)
             emp = sm.ld_emp[s.id].sum(axis=1)
-            single = np.array([sm.ld2410_ratio(s.id, k, energies[k], moving=moving)
-                               if occ[k] >= LD_LEARNED[0] and emp[k] >= LD_LEARNED[1] else 1.0 for k in range(n_g)])
-            padded = np.concatenate([[single[0]], single, [single[-1]]])
-            ratio[moving] = 0.25 * padded[:-2] + 0.5 * padded[1:-1] + 0.25 * padded[2:]
+            single[moving] = np.array([sm.ld2410_ratio(s.id, k, energies[k], moving=moving)
+                                       if occ[k] >= LD_LEARNED[0] and emp[k] >= LD_LEARNED[1] else 1.0 for k in range(n_g)])
         # each person's probability of being in each gate of the wider beam (energy reaches it)
         occ = []
         for person in self.people:
@@ -505,8 +534,16 @@ class Crowd:
             idx = obs[seen]
             gg = g[seen]
             walking = c.mode[idx] == WALK
-            r = np.where(walking, ratio[True][gg], ratio[False][gg])
-            factor = others[gg] + (1 - others[gg]) * r
+            # per gate: what the others' energy already explains says nothing about this person; then
+            # the mixture over the neighbouring gates (the slant distance is uncertain). The other way
+            # round, a person sitting right in front of the sensor - whose energy fills the next two
+            # gates - made a phantom one gate further, unseen by anything else (5.10., 08:47)
+            ratio = {}
+            for moving in (False, True):
+                r = others + (1 - others) * single[moving]
+                padded = np.concatenate([[r[0]], r, [r[-1]]])
+                ratio[moving] = 0.25 * padded[:-2] + 0.5 * padded[1:-1] + 0.25 * padded[2:]
+            factor = np.where(walking, ratio[True][gg], ratio[False][gg])
             c.logw[idx] += np.log(np.maximum(factor, 1e-6))
             c.normalize()
 

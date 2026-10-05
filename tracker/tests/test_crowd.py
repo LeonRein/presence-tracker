@@ -88,6 +88,17 @@ def test_one_person_in_the_room_is_one_person():
     assert present(samples, 30, a.waypoints[-1][0] - 1) == {1}
 
 
+def test_nobody_walks_along_unseen():
+    # nothing known at the start, two may live here; one walks around the room, and each sensor sees
+    # them a bit elsewhere, wandering (measured up to 0.5 m apart, MODEL.md 4.1). "Two people, each
+    # sensor sees one of them" must lose against "one person": two people walking exactly alike, one
+    # never seen, is improbable
+    config = flat_config(entry=True, residents=2)
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 1.5), (5, 3.5), (1.5, 3.5), (4.5, 1.0), (2.5, 2.5), start=3))
+    crowd, samples = run(config, [a], a.waypoints[-1][0], None, bias=0.25)
+    assert present(samples, 15, a.waypoints[-1][0] - 1) == {1}
+
+
 import pytest  # noqa: E402
 
 
