@@ -1,8 +1,9 @@
-"""Tiny page for the phone: one button per step of TESTDREHBUCH.md, the press time is logged on
-this machine (its clock is the reference, like the recordings). Log: one JSON line per press in
-~/.config/presence-tracker/drehbuch/<date>.jsonl.
+"""Tiny page for the phone: one button per step of TESTDREHBUCH.md, and "Jetzt gerade": how many
+people are in each observed room from now on, for the truth database (tools/truth_from_log.py turns
+these into episodes). The press time is logged on this machine (its clock is the reference, like
+the recordings). Log: one JSON line per press in ~/.config/presence-tracker/drehbuch/<date>.jsonl.
 
-    python3 tools/drehbuch_server.py [--port 8765]
+    python3 tools/drehbuch_server.py [--port 8765] [--rooms wohnzimmer:Wohnzimmer,esszimmer:Esszimmer]
 """
 
 import argparse
@@ -58,12 +59,35 @@ button{width:100%;font-size:18px;padding:14px;border:0;border-radius:10px;backgr
 .note input{flex:1;font-size:16px;padding:10px;border-radius:8px;border:1px solid #bbb}
 .note button{width:auto}
 #clock{font-variant-numeric:tabular-nums;color:#666}
+.room{display:flex;align-items:center;gap:10px;margin:8px 0}
+.room span{flex:1;font-size:17px}
+.room b{min-width:28px;text-align:center;font-size:22px}
+.room button{width:52px;padding:10px;font-size:22px}
+button.ghost{background:#888;margin-top:8px}
 @media (prefers-color-scheme: dark){body{background:#151515;color:#eee}.step{background:#222}.dur,#clock{color:#aaa}}
 </style></head><body>
-<h1>Testdrehbuch <span id="clock"></span></h1>
+<h1>Jetzt gerade <span id="clock"></span></h1>
+<div class="step"><div class="what">Wie viele Personen sind ab jetzt in den Räumen? Einstellen, dann bestätigen.
+Gilt bis zur nächsten Angabe.</div>
+ROOMS
+<button onclick="truth()">So ist es ab jetzt</button>
+<button class="ghost" onclick="unknown()">Ab jetzt unbekannt</button>
+<div class="times" id="truthlast"></div></div>
+<h1>Testdrehbuch</h1>
 <div id="steps">STEPS</div>
 <div class="note"><input id="note" placeholder="Notiz (z. B. 'A sitzt doch am Tisch')"><button onclick="send(null)">Notiz</button></div>
 <script>
+const counts = {};
+function step(room, d){ counts[room] = Math.max(0, (counts[room] || 0) + d); document.getElementById('c-' + room).textContent = counts[room]; }
+async function truth(){
+  const r = await fetch('press', {method:'POST', headers:{'Content-Type':'application/json'},
+                         body: JSON.stringify({step:null, truth: Object.fromEntries(ROOM_IDS.map(id => [id, counts[id] || 0]))})});
+  show(await r.json());
+}
+async function unknown(){
+  const r = await fetch('press', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({step:null, truth:null, unknown:true})});
+  show(await r.json());
+}
 async function send(n){
   const note = document.getElementById('note').value;
   const r = await fetch('press', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -72,7 +96,11 @@ async function send(n){
   show(await r.json());
 }
 function show(list){
-  document.querySelectorAll('.step').forEach(el => {
+  const last = list.filter(p => 'truth' in p).pop();
+  document.getElementById('truthlast').textContent = !last ? '' : 'zuletzt ' + last.time.slice(11, 19) + ': ' +
+    (last.truth ? ROOM_IDS.map(id => ROOM_NAMES[id] + ' ' + (last.truth[id] || 0)).join(', ') : 'unbekannt');
+  if (last && last.truth) ROOM_IDS.forEach(id => { counts[id] = last.truth[id] || 0; document.getElementById('c-' + id).textContent = counts[id]; });
+  document.querySelectorAll('.step[data-n]').forEach(el => {
     const n = +el.dataset.n, ts = list.filter(p => p.step === n).map(p => p.time.slice(11, 19));
     el.classList.toggle('done', ts.length > 0);
     el.querySelector('.times').textContent = ts.length ? 'gestartet: ' + ts.join(', ') : '';
@@ -91,6 +119,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    rooms: list = []
+
     def do_GET(self):
         if self.path.startswith("/presses"):
             return self._send(json.dumps(presses()).encode(), "application/json")
@@ -100,13 +130,20 @@ class Handler(BaseHTTPRequestHandler):
             f'<div class="what">{html.escape(s["what"])}</div>'
             f'<button onclick="send({s["n"]})">Start</button><div class="times"></div></div>'
             for s in steps())
-        self._send(PAGE.replace("STEPS", cards).encode(), "text/html; charset=utf-8")
+        rooms = "".join(f'<div class="room"><span>{html.escape(name)}</span><button onclick="step(\'{rid}\', -1)">−</button>'
+                        f'<b id="c-{rid}">0</b><button onclick="step(\'{rid}\', 1)">+</button></div>' for rid, name in self.rooms)
+        page = PAGE.replace("STEPS", cards).replace("ROOMS", rooms).replace(
+            "const counts = {};", f"const counts = {{}};\nconst ROOM_IDS = {json.dumps([r for r, _ in self.rooms])};\n"
+            f"const ROOM_NAMES = {json.dumps(dict(self.rooms), ensure_ascii=False)};")
+        self._send(page.encode(), "text/html; charset=utf-8")
 
     def do_POST(self):
         data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         now = datetime.datetime.now().astimezone()
         entry = {"time": now.isoformat(timespec="seconds"), "unix": round(now.timestamp(), 2),
                  "step": data.get("step"), "note": data.get("note", "")}
+        if "truth" in data:  # "Jetzt gerade": people per room from now on (None: unknown from now on)
+            entry["truth"] = data["truth"]
         with log_file().open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         print("press", entry, flush=True)
@@ -119,6 +156,9 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--rooms", default="wohnzimmer:Wohnzimmer,esszimmer:Esszimmer",
+                    help="the observed rooms: id:name,... (ids as in the app)")
     args = ap.parse_args()
+    Handler.rooms = [tuple(r.split(":", 1)) for r in args.rooms.split(",")]
     print(f"Drehbuch on http://0.0.0.0:{args.port}/ - log {log_file()}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", args.port), Handler).serve_forever()
