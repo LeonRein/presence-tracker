@@ -73,6 +73,12 @@ Personen sind anonym. Nummern in der Oberfläche sind nur Beschriftung und nicht
   Dieselbe Rechnung mit allen Geschwindigkeiten ohne Ort bringt aber genauso viel (14 cm): Der Gewinn
   kommt daher, dass Menschen ihr Tempo und ihre Richtung nicht 3 s halten, nicht vom Ort. Eine Karte
   je Ort lohnt mit dieser Datenmenge nicht und trüge das Risiko, Fehler als Verhalten zu lernen (unten).
+  *Ohne Ort, im Filter geprüft (5.10.):* Die Geschwindigkeit kehrt mit einer Korrelationszeit zu
+  typischen zurück (integrierter Ornstein-Uhlenbeck-Prozess, kurzfristiges Rauschen unverändert).
+  Wahrheitsdatenbank, 12 Seeds, T = 2,5 s gegen 0.6.18: Drehbuch 9,3 % → 7,4 %, leeres Haus mit
+  angedocktem Roboter 25 % → 13 %, aber Leon geht hinaus 2,8 % → 4,2 % (verschwindet langsamer) und
+  Abend 0 % → 16 % (in 2 von 12 Läufen fehlt die Sitzende auf dem Sofa 9 Minuten). T = 1,5 s und 4 s
+  schlechter. Nicht übernommen: Es verbessert, was weniger zählt, und verschlechtert, was zählt.
 - **Kein Lernen je Ort.** Geplant war, beide Raten und die Aussetzer je 50-cm-Feld zu lernen (Sofa:
   lange Sitzdauern, Durchgang: kurze). Das Modell würde dabei aber eigene Messfehler als Verhalten
   lernen und verstärken (auf den Daten bestätigt, 4.10.). Das Lernen war aus, die Raster sind
