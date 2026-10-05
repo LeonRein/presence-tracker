@@ -14,6 +14,7 @@ import numpy as np
 from .world import OBSERVED
 
 WALK, STILL = 1, 0
+MIN_PER_PLACE = 16  # particles every place with any weight keeps through resampling
 
 
 class Motion:
@@ -103,15 +104,39 @@ class Cloud:
         return 1.0 / float((w * w).sum())
 
     def resample(self):
-        """Systematic resampling when a few particles carry nearly all weight."""
+        """Resampling when a few particles carry nearly all weight, as in the mixture particle
+        filter (Vermaak, Doucet, Perez 2003; MODEL.md 5): each place is a component. Its total
+        weight - how probable it is that the person is there - stays exactly what Bayes says, and
+        the particles are drawn anew only within it, each place keeping at least MIN_PER_PLACE.
+        Resampled as one cloud, a place of small weight lost all its particles: the possibility
+        "not here" was gone for good, and a person nothing measured any more could never leave."""
         if self.ess() > self.n / 2:
             return
-        w = self.weights()
-        u = (self.rng.random() + np.arange(self.n)) / self.n
-        idx = np.minimum(np.searchsorted(np.cumsum(w), u), self.n - 1)
+        places = np.unique(self.place)
+        groups = [np.flatnonzero(self.place == p) for p in places]
+        # in logs per place: a place may weigh less than exp(-745) of the rest and still count
+        logmass = np.array([self.logw[g].max() + math.log(np.exp(self.logw[g] - self.logw[g].max()).sum()) for g in groups])
+        mass = np.exp(logmass - logmass.max())
+        mass /= mass.sum()
+        reserve = min(MIN_PER_PLACE, self.n // len(groups))
+        counts = np.full(len(groups), reserve)
+        free = self.n - counts.sum()
+        share = mass * free
+        counts += np.floor(share).astype(int)
+        rest = self.n - counts.sum()
+        if rest > 0:
+            counts[np.argsort(-(share - np.floor(share)))[:rest]] += 1
+        idx, logw = [], []
+        for g, k, lm in zip(groups, counts, logmass):
+            w = np.exp(self.logw[g] - self.logw[g].max())
+            u = (self.rng.random() + np.arange(k)) / k
+            idx.append(g[np.minimum(np.searchsorted(np.cumsum(w / w.sum()), u), len(g) - 1)])
+            logw.append(np.full(k, lm - math.log(k)))
+        idx = np.concatenate(idx)
         for name in ("place", "pos", "vel", "mode", "since", "entered", "last_hit", "bias", "bias_var"):
             setattr(self, name, getattr(self, name)[idx].copy())
-        self.logw[:] = -math.log(self.n)
+        self.logw = np.concatenate(logw)
+        self.normalize()
 
     # ---------------------------------------------------------------- motion
 
@@ -214,7 +239,9 @@ class Cloud:
         n_ways = len(ways) + len(entries)
         if len(k) and n_ways:
             p0 = 1 - math.exp(-m.arrive_rate * n_ways * dt)
-            q = max(p0, m.arrive_proposal)
+            # tried more often only while enough particles stay: tried away, the place would lose all
+            # its particles and with them its weight (the mixture components, resample())
+            q = max(p0, m.arrive_proposal) if len(k) > 4 * MIN_PER_PLACE else p0
             go = rng.random(len(k)) < q
             self.logw[k[go]] += math.log(p0 / q)
             self.logw[k[~go]] += math.log((1 - p0) / (1 - q))
@@ -259,7 +286,7 @@ class Cloud:
             ages = np.maximum(np.round(t - self.entered[k]), 0.0)
             uniq, inv = np.unique(ages, return_inverse=True)
             hz = np.array([dwell.hazard(region, a, dt) for a in uniq])[inv]
-            q = np.maximum(hz, m.exit_proposal)
+            q = np.maximum(hz, m.exit_proposal) if len(k) > 4 * MIN_PER_PLACE else hz
             out = rng.random(len(k)) < q
             self.logw[k[out]] += np.log(np.maximum(hz[out], 1e-300) / q[out])
             self.logw[k[~out]] += np.log((1 - hz[~out]) / (1 - q[~out]))

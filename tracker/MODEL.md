@@ -120,6 +120,12 @@ des Orts (4.1) auch je Ort:
   das bildet `U` ab. Unabhängig gerechnet wären 3 s ohne Treffer bei 90 % Erkennung 0,1³⁰, also
   „unmöglich“.
 
+**Der Schwanz** jenseits der Tabelle (120 s) fällt mit ihrer letzten Steigung weiter, ein Drittel je
+Minute. **Gemessen** (5.10., Wahrheitsdatenbank, 40 min mit genau einer ruhigen Person): Wer 10–80 s
+nicht gesehen wurde, wird mit 1–7 % je Frame wiedergefunden, nicht immer seltener. Bis 0.6.15 fiel der
+Schwanz wie 1/τ: Eine Person, die 20 Minuten niemand gesehen hatte, blieb mit 1:4,5 noch eine Stunde
+ungesehen, und ein Phantom blieb mit ihr.
+
 Daraus folgt ohne Sonderregel: An einer schlecht sichtbaren Stelle, ohne gesehenes Weggehen, ist „noch
 dort“ die wahrscheinlichste Möglichkeit. An einer gut sichtbaren Stelle verliert sie schnell, und die
 Wahrscheinlichkeit verteilt sich auf die Wege, die ungesehen möglich waren, und die Türen dahinter.
@@ -136,6 +142,11 @@ Wahrscheinlichkeit verteilt sich auf die Wege, die ungesehen möglich waren, und
   7 Minuten wieder (Abend 2 % statt 34 %). Aber echte Sitzende verschwinden in jedem Fall mit:
   Drehbuch 15–23 %. Beides ist wieder entfernt; das Problem (eine falsche frühe Entscheidung lässt sich
   nicht mehr korrigieren) bleibt offen.
+- Nochmals mit 0.6.15 (5.10. nachmittags), beides allein und zusammen, „woanders“ auch zurück in den
+  Raum (an Messungen ausprobiert): Drehbuch 22–35 % statt 9 %, fast nur zu wenige Personen. Eine frisch
+  eingespeiste Alternative schlägt eine echte Sitzende nach einer langen Lücke immer. Gelöst wurde das
+  Problem stattdessen ohne erfundene Rate: Die Alternativen sterben nicht mehr aus (Abschnitt 5,
+  Komponenten je Ort).
 
 ### 3.4 Geister
 Je Sensor:
@@ -310,6 +321,19 @@ näherungsweise, aber es fügt **nichts hinzu**, was nicht im Modell steht.
 - **Jeder Frame** multipliziert jedes Partikelgewicht mit „wie gut erklärt die Person an dieser Stelle
   diesen Frame“: Treffer nach 4.1, kein Treffer nach 3.3. Danach wird normiert. Wenn wenige Partikel
   fast alles Gewicht tragen, wird neu gezogen (Resampling).
+- **Jeder Ort ist eine Komponente** (Mixture Particle Filter, Vermaak, Doucet, Pérez 2003): beobachteter
+  Bereich, jeder Bereich ohne Sensor, außer Haus. Das Gesamtgewicht einer Komponente ist die
+  Wahrscheinlichkeit, dass die Person dort ist; es folgt exakt Bayes. Neu gezogen wird nur innerhalb
+  einer Komponente, und jede behält mindestens 16 Partikel. „Außer Haus“ ist damit dasselbe wie die
+  Existenzwahrscheinlichkeit eines Bernoulli-Filters (Ristic, Vo, Vo, Farina 2013).
+  Bis 0.6.15 wurde die ganze Wolke gemeinsam neu gezogen. Ein Ort mit kleinem Gewicht verlor dabei alle
+  Partikel, und mit ihnen die Möglichkeit „die Person ist gar nicht hier“: Eine Person, die nichts mehr
+  bestätigte, konnte den Raum nur noch sichtbar durch eine Tür verlassen, also nie. So blieben
+  Phantome stundenlang (5.10.: zwei Personen im Wohnzimmer, niemand zu Hause). Der Gegenbeweis
+  (LD2410C ohne Energie, kein Treffer) traf alle Partikel gleich und verpuffte im Normieren.
+  Seltene Übergänge (Kommen aus einem Bereich, Heimkommen) werden nur dann öfter ausprobiert, wenn
+  genug Partikel am Ort bleiben; sonst probierte sich ein Ort leer, und seine Masse sprang um hunderte
+  Zehnerpotenzen.
 - **Seltene Übergänge** werden öfter ausprobiert, als sie vorkommen, und das Gewicht wird exakt
   korrigiert (Importance Sampling). Ein Beispiel ist „kommt jetzt aus dem Flur“, sonst ist es zu selten,
   um überhaupt ein Partikel an die Tür zu bringen. Das ändert nur die Rechengenauigkeit, nicht das Modell.

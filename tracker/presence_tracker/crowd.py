@@ -76,8 +76,13 @@ def _survival(mode: int, tau: np.ndarray) -> np.ndarray:
     taus = np.array(GAP_TAUS)
     t = np.maximum(tau, taus[0])
     out = np.exp(np.interp(np.log(t), np.log(taus), np.log(table)))
+    # beyond the table: on with its last slope (60-120 s: a third per minute). Measured on the truth
+    # database (5.10.): sitters unseen for 10-80 s are found again at 1-7 % per frame, not ever more
+    # rarely. Until 0.6.15 the tail fell like 1/tau: a person nobody had seen for 20 minutes stayed
+    # unseen for another hour with odds 1:4.5, and a phantom stayed with them (5.10., 12:18-13:35)
     tail = t > taus[-1]
-    out[tail] = table[-1] * taus[-1] / t[tail]
+    slope = math.log(table[-1] / table[-2]) / (taus[-1] - taus[-2])
+    out[tail] = table[-1] * np.exp(slope * (t[tail] - taus[-1]))
     return out
 
 

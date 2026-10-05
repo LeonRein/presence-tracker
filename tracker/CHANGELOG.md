@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.16
+
+- Eine Person, die nichts mehr bestätigt, verschwindet jetzt. Bisher wurde die Wolke einer Person als
+  Ganzes neu gezogen, und Orte mit kleinem Gewicht (außer Haus, Flur, …) verloren dabei alle Partikel:
+  Danach gab es „die Person ist gar nicht hier“ nicht mehr, und ein Phantom blieb stundenlang. Jetzt ist
+  jeder Ort eine eigene Komponente mit exaktem Gewicht (Mixture Particle Filter), die nie ausstirbt.
+- Wie lange echte Personen ungesehen bleiben, fällt jenseits von 2 Minuten wie gemessen (ein Drittel je
+  Minute), nicht mehr wie 1/Zeit.
+- Wahrheitsdatenbank, 12 Seeds, gegenüber 0.6.15: Abend 8,3 % → 0 % falsch, Morgen mit Phantom 1,0 % →
+  0,5 %, Mittag mit leerem Haus (5.10., 12:18–13:35) 67 % → 49 %, Nächte und Reset 0 %. Drehbuch 9,7 % →
+  11,9 %: In einem von 12 Durchläufen fehlt eine echte Person auf dem Sofa, die beide Sensoren gut zwei
+  Minuten nicht sahen. Bekannt: Der angedockte Saugroboter wird vom Wohnzimmer-Sensor gesehen und kann
+  als Person stehen bleiben; Station und Sofa liegen außerhalb des Bereichs, in dem der LD2410C zählt.
+
 ## 0.6.15
 
 - „Störer“-Zonen entfernt. Sie warfen jede Messung darin weg, auch die einer echten Person, eine
