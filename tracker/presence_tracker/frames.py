@@ -1,6 +1,6 @@
 """From an LD2450 frame to detections in the house frame (MODEL.md 4.1, preprocessing): the
 targets turned into floor positions with their measurement error, and marked where they can't be a
-person: behind a wall, in an interference zone, frozen (bit-identical repeats)."""
+person: behind a wall, frozen (bit-identical repeats)."""
 
 import math
 from dataclasses import dataclass, field
@@ -19,7 +19,6 @@ class Detection:
     radial: np.ndarray  # unit vector sensor -> target on the floor
     speed: float  # radial speed on the floor, m/s, negative = approaching
     local: tuple  # raw LD2450 x, y in meters (sensor frame), for calibration
-    ignored: bool = False  # inside an interference zone
     hidden: bool = False  # behind a wall or outside all rooms: a reflection
     stale: bool = False  # frozen or held: the LD2450 repeats itself, nothing new about the spot
 
@@ -85,8 +84,7 @@ def detections(config: Config, s: SensorConfig, frame: dict) -> list:
         R = rot @ np.diag([sigma_r**2, sigma_t**2]) @ rot.T
         speed = target.get("speed", 0) / 1000 * (slant / ground if ground > 0 else 1)
         pos = np.array([wx, wy])
-        ignored = any(z.contains(wx, wy) for z in config.zones_of("ignore"))
-        out.append(Detection(s.id, target.get("slot", 0), pos, R, u, speed, (lx, ly), ignored,
+        out.append(Detection(s.id, target.get("slot", 0), pos, R, u, speed, (lx, ly),
                              config.hidden(s, pos, u, p.wall_margin)))
     return out
 

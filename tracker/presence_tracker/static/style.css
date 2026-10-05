@@ -90,6 +90,10 @@ aside {
   aside { width: auto; flex: 1 1 45%; border-left: 0; border-top: 1px solid var(--line); }
   .status { display: none; }
   .brand span { display: none; }
+  /* all tabs visible: they wrap instead of scrolling out of sight */
+  header { height: auto; min-height: 52px; padding: 6px 12px; }
+  nav { flex-wrap: wrap; overflow-x: visible; }
+  nav button { padding: 6px 8px; }
 }
 
 .map-tools { position: absolute; right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 4px; }

@@ -1,4 +1,4 @@
-import { refreshCoverage, renderPanel, updateLive } from './panels.js';
+import { refreshCoverage, renderPanel, seenTotal, updateLive } from './panels.js';
 import { emit, loadConfig, onChange, redo, select, setTool, state, undo } from './store.js';
 import { AlignTool, DoorTool, PlaceSensorTool, SelectTool, WallTool, ZoneTool } from './tools.js';
 import { esc, toast } from './util.js';
@@ -51,18 +51,20 @@ onChange(what => {
   renderPanel(panel, view, what);
 });
 
-// tabs
-for (const b of document.querySelectorAll('#tabs button')) {
-  b.onclick = () => {
-    state.tab = b.dataset.tab;
-    for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('active', x === b);
-    state.tool = null;
-    if (state.selection && !SELECTABLE[state.tab].includes(state.selection.kind)) state.selection = null;
-    if (state.tab !== 'sensors') { state.showCoverage = false; state.sensorMap = null; }
-    history.replaceState(null, '', '#' + state.tab);
-    emit('tab');
-  };
+// tabs: each has its address (#live, #plan, ...), so the browser's back button and links work
+function showTab(tab) {
+  if (!SELECTABLE[tab] || tab === state.tab) return;
+  state.tab = tab;
+  for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('active', x.dataset.tab === tab);
+  state.tool = null;
+  if (state.selection && !SELECTABLE[state.tab].includes(state.selection.kind)) state.selection = null;
+  if (state.tab !== 'sensors') { state.showCoverage = false; state.sensorMap = null; }
+  emit('tab');
 }
+for (const b of document.querySelectorAll('#tabs button')) {
+  b.onclick = () => { if (location.hash !== '#' + b.dataset.tab) location.hash = b.dataset.tab; else showTab(b.dataset.tab); };
+}
+window.addEventListener('hashchange', () => showTab(location.hash.slice(1)));
 
 document.getElementById('zoom-fit').onclick = () => view.fit();
 document.getElementById('zoom-in').onclick = () => view.zoom(1.4);
@@ -110,10 +112,10 @@ function updateStatus() {
   const live = state.live;
   const sensors = Object.values(live.sensors || {});
   const online = sensors.filter(s => s.online).length;
-  const total = live.zones?._total;
+  const total = seenTotal();
   document.getElementById('status').innerHTML = `
     <span><span class="dot ${online === sensors.length && online ? 'ok' : 'bad'}"></span>${online}/${sensors.length} Sensoren</span>
-    <span>${total ? total.count : 0} Personen</span>
+    <span title="in den Räumen mit Sensor">${total ? total.count : 0} ${total?.count === 1 ? 'Person' : 'Personen'}</span>
     ${state.replay ? '<span>Wiedergabe</span>' : ''}
     <span>${esc(live.load?.cpu ?? '–')} % CPU</span>`;
 }
@@ -128,7 +130,7 @@ function updateStatus() {
     return;
   }
   const tab = location.hash.slice(1);
-  if (SELECTABLE[tab]) document.querySelector(`#tabs button[data-tab="${tab}"]`)?.click();
+  if (SELECTABLE[tab] && tab !== state.tab) showTab(tab);
   else emit('tab');
   makeController();
   // wait for layout before fitting

@@ -220,7 +220,7 @@ class Crowd:
         for d in detections:
             if math.hypot(d.pos[0] - sensor.x, d.pos[1] - sensor.y) < MOUNT_RADIUS:
                 d.hidden = True
-        dets = [d for d in detections if not d.hidden and not d.stale and not d.ignored]
+        dets = [d for d in detections if not d.hidden and not d.stale]
         # outside the plan's rooms (in a wall, beyond the outer wall): not a person. Seen through an
         # open door into a place without a sensor: somebody there, like anywhere else
         if dets:
@@ -778,9 +778,9 @@ class Crowd:
         tracks, clouds = [], []
         for person in self.people:
             d = self._display(person)
-            tracks.append({**d, "status": "confirmed", "age": round(t - (self.start or t), 1),
-                           "where": d["places"] if d["x"] is None or d["lost"] else None,
-                           "existence": None, "real": None})
+            room = None if d["x"] is None else next(
+                (z.id for z in self.config.zones_of("room") if z.contains(d["x"], d["y"])), None)
+            tracks.append({**d, "room": room})
             grid, x0, y0, cell = person.cloud.heat(self.world)
             ii, jj = np.nonzero(grid > 0.002)
             clouds.append({"id": person.pid, "cell": cell,
@@ -792,7 +792,7 @@ class Crowd:
                 "online": t - rt.last_frame < 15,
                 "detections": [{"x": round(float(d.pos[0]), 3), "y": round(float(d.pos[1]), 3),
                                 "lx": round(d.local[0], 3), "ly": round(d.local[1], 3),
-                                "speed": round(d.speed, 2), "ignored": d.ignored, "hidden": d.hidden or d.stale}
+                                "speed": round(d.speed, 2), "hidden": d.hidden or d.stale}
                                for d in rt.detections] if t - rt.last_frame < 1.0 else [],
                 "ld2410": {"present": rt.ld_present, "distance": round(rt.ld_distance, 2),
                            "move_gates": rt.move_gates, "still_gates": rt.still_gates},

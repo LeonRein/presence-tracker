@@ -119,7 +119,7 @@ class Calibrator:
             return
         # exactly one moving target; people sitting still elsewhere and echoes far behind a wall
         # don't matter
-        moving = [d for d in detections if not d.ignored and not d.stale and abs(d.speed) >= MIN_SPEED
+        moving = [d for d in detections if not d.stale and abs(d.speed) >= MIN_SPEED
                   and not self.config.hidden(sensor, d.pos, d.radial, CAL_WALL_MARGIN)]
         if len(moving) == 1:
             self.series[sensor.id].append((t, *moving[0].local))

@@ -62,8 +62,10 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
    (Treppenhaus). Beim Verschieben von Wänden behält jeder Raum seinen Namen und damit seine Entitäten.
 3. **Zonen** (Tab *Zonen*), frei gezeichnet als Rechteck, Kreis oder Polygon:
    - *Bereich*: z. B. Sofa, Esstisch, für Home Assistant
-   - *Eingang*: kleine Bereiche, wo Personen das Gebiet betreten oder verlassen (Balkontür)
-   - *Störer*: Ventilator, Vorhang, Pflanze. Dort entstehen keine neuen Personen.
+   - *Eingang*: kleine Bereiche, wo Personen von außen kommen oder das Haus verlassen (Haustür im
+     beobachteten Raum). Räume ohne Sensor, die über Türen zusammenhängen, erkennt die App selbst.
+   Stellen, an denen ein Sensor oft Geister meldet (Ventilator, Vorhang), lernt die App selbst
+   (Tab *Sensoren*, Karte „Geister“); eine eigene Zone dafür gibt es nicht mehr.
 4. **Sensoren** (Tab *Sensoren*): jeden Sensor platzieren, Blickrichtung drehen, Montagehöhe eintragen.
    *Tote Winkel zeigen* färbt Stellen, die kein Sensor sieht, rot.
 5. **Kalibrierung** (Tab *Kalibrierung*): allein 2–3 Minuten durch die Überschneidungen der Sensoren gehen.

@@ -1,7 +1,7 @@
 // SVG map: projection, pan/zoom, and drawing of the plan, sensors, zones and live data.
 // Everything is drawn in screen pixels; world coordinates are meters with y pointing up.
 import { state, sensorColor } from './store.js';
-import { ZONE_KINDS, doorPlacement, esc, rad, sightSegments, zoneCenter, zoneOutline } from './util.js';
+import { ZONE_KINDS, doorPlacement, esc, fmt, rad, sightSegments, zoneCenter, zoneOutline } from './util.js';
 
 // rooms marked as entry (stairwell) look like entry zones
 const zoneStyle = z => (z.kind === 'room' && z.entry ? ZONE_KINDS.entry : ZONE_KINDS[z.kind] || ZONE_KINDS.area);
@@ -16,9 +16,11 @@ export class MapView {
     this.pointers = new Map();
     this.trails = new Map(); // track id -> [[x, y, t]]
     this.coverage = null;
-    svg.innerHTML = '<g id="l-static"></g><g id="l-dyn"></g><g id="l-overlay"></g><g id="l-scale" class="scale-bar"></g>';
+    // room names above the people, so a person doesn't hide the count of their room
+    svg.innerHTML = '<g id="l-static"></g><g id="l-dyn"></g><g id="l-labels"></g><g id="l-overlay"></g><g id="l-scale" class="scale-bar"></g>';
     this.gStatic = svg.querySelector('#l-static');
     this.gDyn = svg.querySelector('#l-dyn');
+    this.gLabels = svg.querySelector('#l-labels');
     this.gOverlay = svg.querySelector('#l-overlay');
     this.gScale = svg.querySelector('#l-scale');
     this._bind();
@@ -88,7 +90,7 @@ export class MapView {
     });
     svg.addEventListener('pointermove', ev => {
       const world = this.eventWorld(ev);
-      document.getElementById('cursor').textContent = `x ${world[0].toFixed(2)}  y ${world[1].toFixed(2)} m`;
+      document.getElementById('cursor').textContent = `x ${fmt(world[0])}  y ${fmt(world[1])} m`;
       if (this.pointers.has(ev.pointerId)) this.pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);
       if (this.pinch && this.pointers.size === 2) {
         const p = this._pinchState();
@@ -235,13 +237,14 @@ export class MapView {
     // zone labels on top of walls. A room without a sensor that shares its group with others has no
     // count of its own: the model only knows "somewhere in the group"
     const grouped = new Set(Object.values(state.live?.regions || {}).filter(r => (r.rooms || []).length > 1).flatMap(r => r.rooms));
+    const labels = [];
     for (const z of c.zones) {
       if (z.kind === 'room' || state.tab !== 'live' || this.s > 25) {
         const kind = zoneStyle(z);
         const zs = zoneStates[z.id];
         const [x, y] = this.P(...(z.anchor || zoneCenter(z)));
         const count = state.tab === 'live' && zs && !grouped.has(z.id) ? ` · ${zs.count}` : '';
-        out.push(`<text class="zone-label" x="${x}" y="${y}" text-anchor="middle" fill="${kind.color}" pointer-events="none">${esc(z.name)}${count}</text>`);
+        labels.push(`<text class="zone-label" x="${x}" y="${y}" text-anchor="middle" fill="${kind.color}" pointer-events="none">${esc(z.name)}${count}</text>`);
       }
     }
 
@@ -270,6 +273,7 @@ export class MapView {
     }
 
     this.gStatic.innerHTML = out.join('');
+    this.gLabels.innerHTML = labels.join('');
     this.renderOverlay();
     this.renderLive();
     this._scaleBar();
@@ -319,8 +323,6 @@ export class MapView {
           const [x, y] = this.P(d.x, d.y);
           out.push(d.hidden
             ? `<circle cx="${x}" cy="${y}" r="4" fill="none" stroke="var(--muted)" stroke-width="1.5"/>`
-            : d.ignored
-            ? `<path d="M${x - 4},${y - 4}L${x + 4},${y + 4}M${x - 4},${y + 4}L${x + 4},${y - 4}" stroke="${color}" stroke-width="2"/>`
             : `<circle cx="${x}" cy="${y}" r="4" fill="${color}" fill-opacity="0.85"/>`);
         }
       }
@@ -337,7 +339,7 @@ export class MapView {
     // trails
     const now = live.t;
     for (const tr of live.tracks || []) {
-      if (tr.status !== 'confirmed' || tr.x == null) continue;
+      if (tr.x == null) continue;
       const trail = this.trails.get(tr.id) || [];
       if (!trail.length || trail[trail.length - 1][2] < now - 0.05) trail.push([tr.x, tr.y, now]);
       while (trail.length && trail[0][2] < now - 6) trail.shift();
@@ -351,10 +353,6 @@ export class MapView {
     for (const tr of live.tracks || []) {
       if (tr.x == null) continue; // behind a door: shown with the room, not as a point
       const [x, y] = this.P(tr.x, tr.y);
-      if (tr.status !== 'confirmed') {
-        out.push(`<circle cx="${x}" cy="${y}" r="8" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="2 3"/>`);
-        continue;
-      }
       const moving = !tr.lost && tr.walk > 0.5 && Math.hypot(tr.vx, tr.vy) > 0.15;
       const color = tr.lost ? 'var(--lost)' : moving ? 'var(--moving)' : 'var(--still)';
       const sr = Math.max(tr.sigma * 2 * this.s, 14);

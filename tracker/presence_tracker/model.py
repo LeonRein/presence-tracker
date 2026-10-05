@@ -91,7 +91,7 @@ class SensorConfig:
 class ZoneConfig:
     id: str
     name: str
-    kind: str = "area"  # room | area | ignore | entry
+    kind: str = "area"  # room | area | entry
     shape: str = "rect"  # rect | circle | polygon
     points: list = field(default_factory=list)
     center: list | None = None

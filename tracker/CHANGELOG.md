@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.15
+
+- „Störer“-Zonen entfernt. Sie warfen jede Messung darin weg, auch die einer echten Person, eine
+  feste Regel statt einer Wahrscheinlichkeit; Stellen mit häufigen Geistern lernt die App selbst.
+- Die große Zahl (oben und in der Übersicht) sind jetzt die Personen in den Räumen mit Sensor, nicht
+  „im Haus“ (dort zählen auch Vermutungen über Räume ohne Sensor).
+- „Spuren“ heißt jetzt „Personen im Modell“: je Person, wo sie am wahrscheinlichsten ist (Raum, Gruppe
+  ohne Sensor, außer Haus, mit Prozent) und ob sie sich bewegt. „Spuren neu aufnehmen“ heißt
+  „Neu beginnen“ und sagt, was es tut.
+- Grundriss und Zonen: keine Personenzahlen mehr in den Raumlisten (für Räume einer Gruppe ohne Sensor
+  waren sie immer 0); stattdessen „Sensor“ / „ohne Sensor“, und die Raumdetails sagen, mit welchen
+  Räumen ein Raum ohne Sensor zusammenhängt und ob man dort das Haus verlassen kann.
+- Einstellungen: Bewohner und Vorausschau offen, die gemessenen Werte des Modells eingeklappt unter
+  „Experten“. „Alle auf Standard“ lud auch nach „Abbrechen“ neu.
+- Tabs haben ihre Adresse (Zurück-Knopf, Links); auf dem Handy brechen sie um statt zu verschwinden.
+  Raumnamen auf der Karte liegen über den Personen. Zahlen mit Komma, „1 Ziel“, kleinere Textfehler.
+
 ## 0.6.14
 
 - Übersicht: „Räume mit Sensor“ und „Räume ohne Sensor“ folgen dem Grundriss. Bisher fehlten die Räume

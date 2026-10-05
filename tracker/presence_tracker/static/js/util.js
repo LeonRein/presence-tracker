@@ -4,9 +4,20 @@ export const SENSOR_COLORS = ['#e8590c', '#0c8599', '#9c36b5', '#2b8a3e', '#c225
 export const ZONE_KINDS = {
   room: { label: 'Raum', color: '#2f6fde' },  // from the walls, not drawn
   area: { label: 'Bereich', color: '#1f9d55', note: 'Wird an Home Assistant gemeldet (z. B. Sofa, Esstisch)' },
-  entry: { label: 'Eingang', color: '#d48806', note: 'Hier dürfen Personen auftauchen und verschwinden (Treppe, Haustür, Balkon)' },
-  ignore: { label: 'Störer', color: '#d64545', note: 'Hier entstehen keine neuen Personen (Ventilator, Vorhang, Pflanze)' },
+  entry: { label: 'Eingang', color: '#d48806', note: 'Hier kommen Personen von außen herein oder verlassen das Haus (z. B. die Haustür in einem Raum mit Sensor)' },
 };
+
+// the rooms the sensors see: every room that is not in a group without a sensor (state.live.regions,
+// derived from the plan on the server)
+export function roomsWithSensor(config, live) {
+  const unseen = new Set(Object.values(live?.regions || {}).flatMap(r => r.rooms || []));
+  return config.zones.filter(z => z.kind === 'room' && !unseen.has(z.id));
+}
+
+// the group without a sensor a room belongs to, or null
+export function regionOfRoom(live, id) {
+  return Object.values(live?.regions || {}).find(r => (r.rooms || []).includes(id)) || null;
+}
 
 export function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -28,7 +39,7 @@ export function uid(prefix = 'z') {
 }
 
 export function fmt(v, digits = 2) {
-  return Number.isFinite(v) ? v.toFixed(digits) : '–';
+  return Number.isFinite(v) ? v.toFixed(digits).replace('.', ',') : '–';
 }
 
 export function toast(text, ms = 2500) {
