@@ -82,6 +82,16 @@ Beim S3 lassen sich die UARTs auf beliebige GPIOs legen. GPIO0, 3, 45 und 46 mei
 Die Logs laufen über USB, ein dritter UART bleibt frei.
 Baudrate: LD2450 und LD2410C 256000 (ein LD2412 hätte laut Datenblatt 115200).
 
+## Verkabelung (ESP32-S3-Zero)
+
+![Verdrahtung ESP32-S3-Zero](verdrahtung-s3-zero.svg)
+
+Der Waveshare ESP32-S3-Zero (ESP32-S3FH4R2, 4 MB Flash) läuft mit derselben Firmware und denselben GPIOs
+wie in der Tabelle oben. Nur die Lage der Pins ist eine andere: Von vorne mit USB-C unten gesehen liegen
+5V, GND und GPIO6 rechts, GPIO7, 8 und 9 links. Nicht nach der Position aus dem SuperMini-Bild löten.
+Die Pads 14–16 an der Unterkante und die Pads auf der Rückseite bleiben frei, die RGB-LED hängt an GPIO21.
+Ob der Zero ins Gehäuse passt (Maße, Platinendicke), ist nicht geprüft.
+
 ## Zusammenbau
 
 1. LD2450: JST-ZH-Kabel in die Buchse stecken, die Stiftleiste bleibt ungenutzt. Den Radar hochkant mit den goldenen Antennen nach vorne und der Buchse **unten** einsetzen: zuerst die rechte Längskante unter die festen Nasen an der rechten Gehäusewand schieben, dann die linke Kante über die Nasen auf dem federnden Steg drücken. Unter dem Radar ist Platz für den Stecker. Das Kabel dort nach hinten biegen und rechts am ESP vorbei führen; links der Mitte sitzt die WLAN-Antenne des ESP.
