@@ -124,6 +124,19 @@ Daraus folgt ohne Sonderregel: An einer schlecht sichtbaren Stelle, ohne gesehen
 dort“ die wahrscheinlichste Möglichkeit. An einer gut sichtbaren Stelle verliert sie schnell, und die
 Wahrscheinlichkeit verteilt sich auf die Wege, die ungesehen möglich waren, und die Türen dahinter.
 
+*Gemessen und verworfen (5.10., Auswertung `tools/evaluate.py` auf 5 Episoden):*
+- **Gemeinsame Aussetzer.** Sitzende verlieren beide LD2450 gleichzeitig etwa 109-mal pro Stunde für
+  mindestens 1 s (Hälfte über 3 s, 1 % über 30 s, längster 58 s; 2,1 h Sitzen). Lange Aussetzer
+  (Minuten) sind dagegen meist die eines einzelnen Sensors, während der andere weiter sieht. Das Modell
+  rechnet die Sensoren unabhängig und hält gemeinsame Aussetzer damit für fast unmöglich. Ein
+  gemeinsamer Zustand „gerade für alle unsichtbar“ je Partikel (gemessene Rate und Dauer) machte aber
+  Phantome billiger: Drehbuch 14,2 % falsche Sekunden statt 6,2 %.
+- **„Die Person ist in Wirklichkeit woanders“** mit kleiner Rate (1/2 h bis 1/2 min, gezogen wie bei
+  einem Start ohne Wissen): Phantome lösen sich, und eine vom Modell verlorene Person kommt nach etwa
+  7 Minuten wieder (Abend 2 % statt 34 %). Aber echte Sitzende verschwinden in jedem Fall mit:
+  Drehbuch 15–23 %. Beides ist wieder entfernt; das Problem (eine falsche frühe Entscheidung lässt sich
+  nicht mehr korrigieren) bleibt offen.
+
 ### 3.4 Geister
 Je Sensor:
 - **Entstehen:** Poisson-Rate je Ort `β_s(x)`, **gelernt** als Geisterkarte (nur wo ein zweiter Sensor
