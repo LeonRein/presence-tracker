@@ -65,6 +65,14 @@ Personen sind anonym. Nummern in der Oberfläche sind nur Beschriftung und nicht
   damit zum Teil aus dem Bewegungsmodell des Sensors, nicht aus den Menschen.
 - **Wechsel stehen → gehen:** Rate `λ_go(d) = 0,58 / (d + 5,6 s)`, abhängig davon, wie lange jemand
   schon steht oder sitzt (lange Sitzende stehen seltener auf). Gemessen an den Sitzdauern.
+- **Karte der Bewegungen (Maps of Dynamics, CLiFF-Map; Kucner et al. 2017), offline geprüft (5.10.).**
+  Gelernt je 50-cm-Feld aus Rohzielen des LD2450, die der andere Sensor bestätigt (unabhängig vom
+  Filter), auf 70 % der Zeit (3249 Geschwindigkeiten, 56 Felder); geprüft auf den übrigen 30 %: Wo ist
+  eine gehende Person in 1–3 s (618 Startpunkte)? Die Karte zieht die Geschwindigkeit mit 0,5 /s zu
+  einer dort gelernten. Gegenüber der reinen Trägheit: nach 1 s nichts, nach 3 s 13 cm weniger Fehler.
+  Dieselbe Rechnung mit allen Geschwindigkeiten ohne Ort bringt aber genauso viel (14 cm): Der Gewinn
+  kommt daher, dass Menschen ihr Tempo und ihre Richtung nicht 3 s halten, nicht vom Ort. Eine Karte
+  je Ort lohnt mit dieser Datenmenge nicht und trüge das Risiko, Fehler als Verhalten zu lernen (unten).
 - **Kein Lernen je Ort.** Geplant war, beide Raten und die Aussetzer je 50-cm-Feld zu lernen (Sofa:
   lange Sitzdauern, Durchgang: kurze). Das Modell würde dabei aber eigene Messfehler als Verhalten
   lernen und verstärken (auf den Daten bestätigt, 4.10.). Das Lernen war aus, die Raster sind
