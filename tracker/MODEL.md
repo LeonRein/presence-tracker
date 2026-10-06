@@ -404,6 +404,14 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Tür“, alles bei jedem Frame vorgerückt; einzelne Frames bis 28 ms, die App ruckelte), 0.9 mit
   Kacheln und Takt 4,0 % (Log-Evidenz +29 gegenüber 0.8.1 auf 20 min), mit LD2410C 4,6 %. Die Form der
   Kacheln macht dabei kaum etwas aus (5.3); gespart haben die wegfallenden 8 Richtungen und der Takt.
+  7.10., 5 Sensoren, je 20 min der Stunden 21/22: 0.9.3 2,2 / 3,5 %; die Zählverteilungen aller Spalten
+  auf einmal und die Bewegung der Kacheldichten in zwei statt sechs Durchgängen über `steht` 2,1 /
+  3,3 % (−4 %, Ergebnisse bis auf Rundung gleich). Alle Kacheldichten in gemeinsamen Arrays, gemeinsam
+  bewegt und gewichtet (Branch `stack-densities`), sparte darüber hinaus nichts: die Zeit steckt in
+  der Arithmetik über die L·K = 35 Schichten von `steht` und in der Gehmatrix (518 Kacheln, ~20 µs je
+  Dichte und Takt), nicht in den numpy-Aufrufen. Als ein Matrixprodukt über alle Dichten startet
+  OpenBLAS ab drei Dichten Threads, deren Warten ein Vielfaches an CPU kostet. Größte Posten danach:
+  `Gauss.predict` 22 %, Kacheldichten bewegen 15 % und gewichten 8 %, LD2410C 16 %, Ausgaben 13 %.
 - **LD2410C ohne Modell seiner Reichweite** (0.9-Entwicklung): Mit fester Reichweite 3,3 m musste das
   lange „an“ des Wohnzimmersensors (Sitzende im Esszimmer in 6,2 m) von einer erfundenen Person nahe
   am Sensor kommen. Daher hält jetzt, wer in der gemeldeten Entfernung ist. Ohne LD2410C blieb in der
