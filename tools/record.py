@@ -3,7 +3,7 @@
 One line per message: {"t": <receive time, s>, "topic": "...", "payload": <JSON or string>}.
 A new file is started every hour, so a long recording can be cut into scenes easily.
 
-    uv run --with paho-mqtt --with pyyaml tools/record.py recordings/
+    uv run --with paho-mqtt --with pyyaml tools/record.py recordings/ 2>> recordings/record.log
 
 Broker and login are read from esphome/secrets.yaml (mqtt_broker, mqtt_username, mqtt_password).
 """
@@ -65,11 +65,18 @@ def main():
     client.username_pw_set(secrets["mqtt_username"], secrets["mqtt_password"])
     client.on_connect = on_connect
     client.on_message = on_message
-    client.connect(args.broker or secrets["mqtt_broker"], int(secrets.get("mqtt_port", 1883)))
-    try:
-        client.loop_forever()
-    except KeyboardInterrupt:
-        pass
+    # the network may drop for a moment (5.10., 22:11 the recorder died with it and the night was
+    # lost): try again every 5 s instead of ending
+    while True:
+        try:
+            client.connect(args.broker or secrets["mqtt_broker"], int(secrets.get("mqtt_port", 1883)))
+            client.loop_forever(retry_first_connection=True)
+            break
+        except KeyboardInterrupt:
+            break
+        except OSError as e:
+            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} connection lost ({e}), retrying in 5 s", file=sys.stderr)
+            time.sleep(5)
     print(f"{current['count']} messages", file=sys.stderr)
 
 
