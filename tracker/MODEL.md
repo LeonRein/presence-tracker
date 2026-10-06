@@ -66,7 +66,7 @@ Geschwindigkeitssprung-Prozess (gemessen 6.10., 8,7 h LD2450-Spuren, Wege ≥ 2 
 **Gauß-Näherung** (für Personen mit Spur, 5.2; eigene Herleitung): Der Prozess hat
 `E[v(t)·v(0)] ∝ e^(−λ_d t)`. Ein Ornstein-Uhlenbeck-Prozess mit τ = 1/λ_d und stationärer Varianz
 (s² + Streuung²)/2 je Achse hat dieselben ersten und zweiten Momente; exakt diskretisiert
-(Buch_SarkkaSolin2019 Bsp. 6.2). Wände kennt sie nicht.
+(Buch_SarkkaSolin2019 Bsp. 6.2). Wände kennt sie nur über das Abschneiden in 5.2.
 
 **Diffusionsgrenze** (für Personen ohne Spur, 5.3): Über Zeiten länger als 1/λ_d breitet sich der
 Prozess wie eine Diffusion aus, je Achse mit `D = E[s²] / (2 λ_d) = (s² + Streuung²) / (2 λ_d)` =
@@ -242,6 +242,14 @@ Schritt (Buch_SarkkaSvensson2023 S. 352; B_Li2019 Gl. 26–33):
 1. Übergänge *steht → geht* (`Σ p_l (1 − e^(−λ_l Δt))`) und *geht → steht* (`1 − e^(−μΔt)`), je
    Ziel-Betriebsart per Momentenabgleich zu einer Komponente zusammengefasst.
 2. Lineare Vorhersage je Komponente (3.1 bzw. OU-Näherung 3.2), Kalman-Update mit der Spur.
+   **Wände:** Nach jeder Vorhersage wird jede Komponente an den achsparallelen Wänden neben ihr
+   abgeschnitten, auf der Seite, auf der ihr Mittel vor dem Schritt lag, und durch die Momente der
+   abgeschnittenen Dichte ersetzt (abgeschnittener Kalman-Filter, H_SimonSimon2006 Gl. 5–15; für eine
+   Schranke an einer Koordinate ist die Transformation die Regression des Zustands auf diese
+   Koordinate: Geschwindigkeit und Versätze ziehen mit). Die Gewichte bleiben: Wer die Wand träfe,
+   kehrt um (3.2); das ist keine Evidenz gegen die Komponente. Ohne das lief eine Person, deren Spur
+   der Sensor gerade hielt, mit ihrer Geschwindigkeit durch die Wand; wiedergefunden passte die Spur
+   dann zu einem Geist (10).
 3. Nicht-Erfassung durch andere Sensoren: Faktor je Komponente, am Mittel der Komponente.
 4. **Durch eine Tür** in einen Bereich ohne Sensor: Die Komponente *geht* verliert dorthin mit der
    Rate der Türkacheln (5.3), gewichtet mit ihrer Masse dort (jede Türkachel als ihr kleiner Gauß).
@@ -349,7 +357,7 @@ Näherungen, die man prüfen oder ersetzen kann:
   beim Wechsel Gauß → Kacheln auch Geschwindigkeit und Versätze. Innerhalb einer Kachel ist die
   Masse nicht weiter aufgelöst; Raten sind über die Kachel gemittelt, auch wo eine Sichtgrenze sie
   schneidet. Die
-  Gauß-Näherung kennt keine Wände.
+  Gauß-Näherung kennt nur die achsparallelen Wände (5.2); schräge Wandstücke nicht.
 - Zwischen zwei Takten (0,2 s) wirken „gehalten, nicht wiedergefunden“ und die Ausgaben auf einen
   bis 0,2 s alten Stand.
 - Versatzvarianz je Achse gemittelt, obwohl entlang/quer verschieden gemessen.
@@ -400,6 +408,13 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   lange „an“ des Wohnzimmersensors (Sitzende im Esszimmer in 6,2 m) von einer erfundenen Person nahe
   am Sensor kommen. Daher hält jetzt, wer in der gemeldeten Entfernung ist. Ohne LD2410C blieb in der
   Küche nach dem Gehen minutenlang „zu 80 % jemand da“, obwohl beide Sensoren nichts sahen.
+- **Gauß ohne Wände** (bis 0.9.3): Geht jemand auf einen Sensor zu (Lichtschalter neben dem Küchensensor,
+  6.10. 21:57), hält der Sensor die Spur in den letzten 0,3 m (Halterung); die Gauß-Verteilung lief mit
+  ihrer Geschwindigkeit durch die Wand ins Esszimmer, die wiedergefundene Spur wurde ein Geist: Küche
+  P(belegt) 0,3, Esszimmer 0,6. Mit dem Abschneiden an Wänden (5.2) Küche 1,0, Esszimmer 0,0. Auf den
+  Meldungen und Lichtschaltungen vom 6.10. (tools/report_eval.py, ohne LD2410C gerechnet, damit dessen
+  Entfernung nicht mitspielt): Licht fälschlich aus in 7,25 → 4,57 von 15 belegten Fenstern, fälschlich
+  an unverändert 0 von 41.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

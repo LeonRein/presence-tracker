@@ -1,5 +1,11 @@
 # Changelog
 
+## Unveröffentlicht
+
+- Personen mit Spur gehen nicht mehr durch Wände: Ihre Gauß-Verteilung wird an den Wänden abgeschnitten
+  (abgeschnittener Kalman-Filter, MODEL.md 5.2). Vorher lief jemand, dessen Spur der Sensor kurz hielt, in
+  der Vorhersage durch die Wand, und die wiedergefundene Spur galt als Geist (Licht im falschen Raum).
+
 ## 0.9.3
 
 - Kacheln sind einfache Quadrate von 0,4 m, an den Raumgrenzen geschnitten (statt 0,6 m, zusätzlich an den
