@@ -1207,36 +1207,44 @@ class Tracker:
         return out + obj.a * obj.away.places() if obj.away is not None else out
 
     @staticmethod
-    def _poisson_binomial(ps, mean: float = 0.0) -> np.ndarray:
-        """The number of people: one Bernoulli per known person (ps), plus a Poisson number of
-        unknown ones (mean), cut where the rest is below 1e-9."""
-        dist = np.array([1.0])
+    def _poisson_binomial(ps, means) -> np.ndarray:
+        """The number of people, per column: one Bernoulli per known person (ps (P, C)), plus a
+        Poisson number of unknown ones (means (C,)), cut where the rest is below 1e-9. (C, size),
+        a column's entries beyond its own cut 0."""
+        C = len(means)
+        dist = np.ones((C, 1))
         for q in ps:
-            dist = np.convolve(dist, [1 - q, q])
-        if mean > 0:
-            k = np.arange(int(mean + 10 * math.sqrt(mean) + 6))
-            pois = np.exp(k * math.log(mean) - mean - np.array([math.lgamma(i + 1) for i in k]))
-            dist = np.convolve(dist, pois)
+            nxt = np.zeros((C, dist.shape[1] + 1))
+            nxt[:, :-1] = dist * (1 - q)[:, None]
+            nxt[:, 1:] += dist * q[:, None]
+            dist = nxt
+        some = np.flatnonzero(means > 0)
+        if len(some):
+            mean = means[some][:, None]
+            cut = (mean + 10 * np.sqrt(mean) + 6).astype(int)
+            k = np.arange(int(cut.max()))
+            pois = np.exp(k * np.log(mean) - mean - np.array([math.lgamma(i + 1) for i in k]))
+            pois[k >= cut] = 0.0
+            out = np.zeros((C, dist.shape[1] + len(k) - 1))
+            out[means <= 0, :dist.shape[1]] = dist[means <= 0]
+            for i in range(dist.shape[1]):
+                out[some, i:i + len(k)] += dist[some, i:i + 1] * pois
+            dist = out
         return dist
 
     def _counts(self, per_object) -> np.ndarray:
         """(columns, K): count distributions per column of per_object(obj) - for a known person the
-        probabilities, for the unknown ones the expected numbers - mixed over the hypotheses."""
+        probabilities, for the unknown ones the expected numbers - mixed over the hypotheses, all
+        columns at once."""
         hw = self.hyp_weights()
-        cache = {}
-        dists = []
-        for w, hy in zip(hw, self.hyps):
-            for obj in hy.objects():
-                if id(obj) not in cache:
-                    cache[id(obj)] = np.atleast_1d(per_object(obj))
-            means = cache[id(hy.ppp)]
-            probs = np.array([cache[id(o)] for o in hy.people()]).reshape(-1, len(means))
-            dists.append((w, [self._poisson_binomial(probs[:, k], float(means[k])) for k in range(len(means))]))
-        size = max(len(d) for _, ds in dists for d in ds)
-        out = np.zeros((len(dists[0][1]), size))
-        for w, ds in dists:
-            for k, d in enumerate(ds):
-                out[k, :len(d)] += w * d
+        objs = [obj for obj, _ in self._objects()]
+        vals = np.array([np.atleast_1d(per_object(o)) for o in objs])
+        row = {id(o): i for i, o in enumerate(objs)}
+        dists = [(w, self._poisson_binomial(vals[[row[id(o)] for o in hy.people()]], vals[row[id(hy.ppp)]]))
+                 for w, hy in zip(hw, self.hyps)]
+        out = np.zeros((vals.shape[1], max(d.shape[1] for _, d in dists)))
+        for w, d in dists:
+            out[:, :d.shape[1]] += w * d
         return out
 
     def _cached(self, name, make):
