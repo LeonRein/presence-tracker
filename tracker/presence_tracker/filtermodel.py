@@ -31,6 +31,10 @@ class Model:
     # 3.3 into the house and out of it (assumed)
     arrive_rate = 1 / (4 * 3600)  # 1/s per way in
     leave_rate = 1 / (2 * 3600)  # 1/s
+    # 3.4 people nobody knows of (assumed): newcomers per way in, and how soon somebody out of the
+    # house is forgotten (whoever comes back after that is a newcomer)
+    guest_rate = 1 / (2 * 86400)  # 1/s per way in
+    forget_rate = 1 / 86400  # 1/s
     # 4.1 the sensor's tracks. A person in view gets a track at a rate rho * P_D(r): P_D of a
     # fluctuating target (Swerling I) at the signal-to-noise ratio of the radar equation, falling
     # with r^-4 (Skolnik), half at r50 [STILL, WALK]. Fitted by maximum likelihood (Poisson) to what

@@ -16,6 +16,11 @@
   das, was sie selbst an dieser Stelle sagt (Park et al. 2020). Bisher konnte eine Stelle, die einmal
   als Geisterort galt, immer mehr dazu werden, bis auch jemand, der dort sitzt, als Geist zählte
   (Simulation: bis 0,34 je Spur gelernt, jetzt unter 0,01). Die Karte beginnt nach dem Update neu.
+- Keine feste Bewohnerzahl mehr: Neuankömmlinge (Gäste) kommen über die Wege nach draußen dazu, wer
+  sicher außer Haus ist, wird vergessen (MODEL.md 3.4, 5.5). Die Einstellung „Bewohner“ heißt jetzt
+  „Personen beim Start“: mit so vielen beginnt das Modell, wenn es nichts weiß. In der Simulation wird
+  ein Dritter, der zu zwei Sitzenden hereinkommt, gezählt (bisher nicht möglich). Mehr Hypothesen,
+  solange Spuren laufen: dort etwa doppelte Rechenzeit.
 
 ## 0.8.0
 

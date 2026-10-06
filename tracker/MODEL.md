@@ -37,8 +37,8 @@ Aus dem Grundriss (`model.py`, `world.py`):
 - **Außer Haus.**
 - Wände trennen (Personen gehen nicht hindurch, Radar sieht nicht hindurch); Türen sind Lücken.
 
-**Zustand:** N Personen (zurzeit fest, `residents` = 2; siehe 3.4), jede an einem Ort: im beobachteten
-Bereich mit Position und Betriebsart *steht* (mit Aufenthaltsart l und Erkennbarkeit κ) oder *geht*
+**Zustand:** die bekannten Personen (ihre Zahl gehört zum Zustand, 3.4) und die unbekannten (eine
+Poisson-Intensität), jede an einem Ort: im beobachteten Bereich mit Position und Betriebsart *steht* (mit Aufenthaltsart l und Erkennbarkeit κ) oder *geht*
 (mit Geschwindigkeit), in *Rₖ* mit der bisherigen Aufenthaltsdauer, oder außer Haus. Dazu je laufende
 Sensorspur ihr Eigentümer (eine Person oder ein Geist) und ihr Versatz auf ihm, je Geisterspur ihre
 Quelle.
@@ -76,10 +76,12 @@ Geschwindigkeitssprung-Prozess (gemessen 6.10., 8,7 h LD2450-Spuren, Wege ≥ 2 
 - Aus einem offenen Bereich nach außer Haus mit 1/(2 h); zurück mit 1/(4 h) je Weg hinein (offene
   Bereiche und Eingänge im beobachteten Bereich) (angenommen).
 
-### 3.4 Gäste
-Nicht umgesetzt. Geplant: Ankünfte als Poisson-Prozess je Weg nach draußen (Rate ν), danach wie
-Bewohner; im Filter als Poisson-Intensität (der unentdeckte Teil des PMBM, B_GarciaFernandez2018
-Gl. 7–10, 18–24). Dann entfällt die feste Zahl N.
+### 3.4 Neuankömmlinge, Personenzahl
+- Neue Personen kommen als Poisson-Prozess an jedem Weg hinein an (offene Bereiche, Eingänge), mit
+  ν = 1/(2 Tage) je Weg (angenommen); danach verhalten sie sich wie alle (3.1–3.3).
+- Wer außer Haus ist, wird mit 1/Tag vergessen (angenommen): Kommt er danach wieder, ist er ein
+  Neuankömmling. So bleibt die Zahl der Personen, die man erwartet, endlich.
+- „Selten ein Dritter“ folgt aus ν und den Daten, nicht aus einer Regel.
 
 ## 4. Messmodell
 
@@ -182,12 +184,13 @@ wird (Test).
   Hypothese mit exaktem Gewicht (Datenassoziation eines PMBM, B_GarciaFernandez2018; δ-GLMB,
   B_Reuter2014).
 - Eine neue Spur verzweigt jede Hypothese: Geist; eine Person, die schon Spuren anderer Sensoren hat;
-  eine Person ohne Spur. Eine wiedergefundene: ihr Eigentümer; eine andere Person nahe der Stelle;
-  Geist/Reflexion.
+  eine bekannte Person ohne Spur; eine unbekannte (5.5). Eine wiedergefundene: ihr Eigentümer; eine
+  andere Person nahe der Stelle; Geist/Reflexion.
 - Behalten werden höchstens 12, solange über 10⁻⁷ des stärksten (Abschneiden nach Gewicht,
   B_Vo2017).
 - Gegeben eine Hypothese sind die Personen unabhängig. Die Zählverteilung je Raum ist die Faltung
-  der Einzelwahrscheinlichkeiten (Poisson-Binomial), gemischt über die Hypothesen.
+  der Einzelwahrscheinlichkeiten der bekannten (Poisson-Binomial) mit einer Poisson-Verteilung für
+  die unbekannten, gemischt über die Hypothesen.
 
 ### 5.2 Personen mit Spur: Gauß-Mischung (IMM)
 `gauss.py`. Gilt, solange eine Person mindestens eine laufende Spur hat (gemessen oder gehalten).
@@ -210,8 +213,10 @@ Richtung h, Richtungswechsel mit λ_d, Anhalten mit μ, Aufstehen mit λ_l, Wand
 den Bereich. Nicht-Erfassung, Nicht-Wiederfinden und die Rate einer neuen Spur sind exakte Summen
 über die Zellen.
 
-Start („nichts bekannt“): je Person 1/3 im beobachteten Bereich (stehend, gleichverteilt), 1/3 in den
-Bereichen ohne Sensor, 1/3 außer Haus.
+Start („nichts bekannt“): `start_people` = 2 bekannte Personen, je 1/3 im beobachteten Bereich
+(stehend, gleichverteilt), 1/3 in den Bereichen ohne Sensor, 1/3 außer Haus; keine unbekannten. Ein
+Poisson-Start erwartet auch nach zwei gefundenen Personen noch genauso viele weitere (seine Zahlen
+sind unabhängig): Simulation, zwei kommen herein, danach P(3 im Haus) = 0,35.
 
 ### 5.4 Wechsel der Darstellung
 - **Raster → Gauß**, wenn eine Spur auf der Person beginnt oder wiedergefunden wird: Raster ×
@@ -221,8 +226,18 @@ Bereichen ohne Sensor, 1/3 außer Haus.
   Spuren behalten so ihren Versatz). Komponenten werden mit ihrer Dichte verteilt, *geht* nach der
   Richtung der Geschwindigkeit; verloren gehen Tempo und Versätze.
 
-### 5.5 Gäste
-Nicht umgesetzt (3.4).
+### 5.5 Die unbekannten Personen
+`hidden.Undetected`: der unentdeckte Teil des PMBM (B_GarciaFernandez2018 Gl. 7–10, 18–24) auf dem
+Raster aus 5.3, als Intensität (Massen sind erwartete Zahlen). Dieselbe lineare Bewegung, dazu die
+Ankünfte und das Vergessen aus 3.4.
+- Wer nicht erfasst wird, wiegt mit der Leerwahrscheinlichkeit `exp(−(Masse vorher − nachher))`.
+- Eine neue Spur auf einer unbekannten Person hat das Gewicht `∫ Intensität × Erfassungsrate ×
+  Dichte der Messung`; daraus wird eine bekannte Person (5.2). Die Intensität bleibt (eine Geburt ist
+  ein Punkt des Prozesses).
+- **Zurückgeben:** Eine bekannte Person ohne Spur, die zu weniger als 1 % im Haus ist, geht mit ihrer
+  ganzen Dichte in die Intensität (Bernoulli → Poisson). Das ändert nur P(mehrere davon kommen
+  zurück), um höchstens 0,01²/2. Sonst würde jeder Gast für immer verfolgt. (Die Literatur verwirft
+  Bernoulli-Teile unter 10⁻⁵, B_GarciaFernandez2018 Abschn. VII; hier geht keine Masse verloren.)
 
 ### 5.6 Zusammenlegen
 Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
@@ -263,7 +278,6 @@ Lebensdauer der Geister geschätzt (4.2).
 
 ## 9. Bekannte Schwächen und Offenes
 Abweichungen von den Vorgaben:
-- **Feste Personenzahl** N = `residents`; Gäste fehlen (3.4).
 - **LD2410C nicht ausgewertet**, obwohl er in 0.6.x nachweislich half (10).
 
 Näherungen, die man prüfen oder ersetzen kann:
@@ -277,7 +291,13 @@ Näherungen, die man prüfen oder ersetzen kann:
   angenommen, nicht über die Evidenz geschätzt. Das Kostenverhältnis `light_cost` ist zu klären.
 - Die Geisterkarte lernt weiter aus dem Urteil des Filters, nur ohne ihren eigenen Beitrag an der
   Stelle. Ein reines Urteil bei der Geburt war zu früh (Hereinkommende an der Tür: P(Geist) 0,56).
-- Höchstens 12 Hypothesen; Paarung beim Zusammenlegen bis 6 Personen.
+- Höchstens 12 Hypothesen; Paarung beim Zusammenlegen bis 6 Personen. Hypothesen mit verschieden
+  vielen bekannten Personen werden nicht zusammengelegt. Jede neue Spur kann auch „unbekannt“ sein:
+  Solange Spuren laufen, gibt es mehr Hypothesen (Simulation, zwei kommen herein: etwa doppelte
+  Rechenzeit gegenüber fester Personenzahl).
+- Wer ins Schlafzimmer oder zur Treppe geht, bleibt wegen des breiten Aufenthalts-Priors lange
+  „bekannt“ (6 h nach dem Gehen noch zu 21 % im Haus) und kostet so lange Rechenzeit.
+- ν, das Vergessen und `start_people` sind angenommen.
 
 Nicht geprüft (Ablationen ausstehend): λ_d = 0,85 gegen langsamere Richtungswechsel; OU-Näherung
 gegen weißes Rauschen in der Beschleunigung; Swerling-I gegen logistisch; Geisterkarte gegen globale

@@ -46,7 +46,7 @@ def test_a_walk_forgets_its_direction_at_the_measured_rate():
 
 
 def test_the_same_data_give_the_same_result():
-    config = flat_config(entry=True, residents=2)
+    config = flat_config(entry=True, people=2)
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), (3.1, 2.5), start=3, pauses={2: 30}))
     end = a.waypoints[-1][0]
     _, s1 = run(config, [a], end, None)
@@ -57,7 +57,7 @@ def test_the_same_data_give_the_same_result():
 def test_getting_up_after_a_long_stay_is_followed():
     # somebody sits for ten minutes and then walks off: a component with a small weight, lifted by
     # the first measurements of the walk - not a ghost, no second person (the morning episode)
-    config = flat_config(entry=True, residents=2)
+    config = flat_config(entry=True, people=2)
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), (3.05, 2.5), (5.0, 1.0), (5.05, 1.0), start=3,
                     pauses={2: 600, 4: 20}))
     tr, samples = run(config, [a], a.waypoints[-1][0], None)

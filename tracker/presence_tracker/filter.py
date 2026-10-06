@@ -4,12 +4,15 @@ nothing is drawn, the same data always give the same result.
 Hypotheses (MODEL.md 5.1): which live tracks are one person's and which are ghosts, with exact
 weights. A new track (or one found again) branches every hypothesis; hypotheses that come to say the
 same about the live tracks are merged (5.6). This is the data association of a PMBM filter
-(Garcia-Fernandez et al. 2018) with a fixed number of people.
+(Garcia-Fernandez et al. 2018).
 
-Given a hypothesis, the people are independent (multi-Bernoulli with existence 1):
+Given a hypothesis, the people are independent:
   - a person with a live track (measured or held): a Gaussian mixture over standing / walking
     (gauss.py, 5.2)
-  - everybody else: a density on a raster (hidden.py, 5.3)
+  - a person known from earlier tracks, without one now: a density on a raster (hidden.py, 5.3)
+  - the people nobody knows of: a Poisson intensity on the raster (hidden.Undetected, 3.4, 5.5)
+The number of people is part of the state: people become known by their tracks, and one who is
+almost surely out of the house is given back to the unknown ones.
 Objects are shared by the hypotheses with the same history and updated once; what differs between
 hypotheses makes new objects (copy on write).
 """
@@ -22,7 +25,7 @@ import numpy as np
 from .filtermodel import FRAME, IDLE, STILL, WALK, Model, Shapes, radar_pd
 from .frames import SensorRuntime, detections as frame_detections
 from .gauss import Gauss
-from .hidden import HC, HEADINGS, Hidden, Lattice
+from .hidden import HC, HEADINGS, Hidden, Lattice, Undetected
 from .sensormodel import PD_MAX, SensorModel
 from .sensortracks import SensorTracks
 from .unobserved import Dwell
@@ -33,6 +36,9 @@ __all__ = ["Model", "Tracker"]
 MAX_STEP = 0.2  # s: motion is cut into parts no longer than this
 MOUNT_RADIUS = 0.3  # m: targets this close to a sensor come from its mount
 LN2 = math.log(2.0)
+GIVE_UP = 0.01  # a known person in the house with less probability joins the unknown ones with all
+                # of their mass: only P(several of them come back) changes, by <= GIVE_UP^2 / 2
+RECYCLE_EVERY = 1.0  # s
 
 
 def _logsumexp(a) -> float:
@@ -53,24 +59,31 @@ def _log(x):
 class Hyp:
     """One hypothesis: its weight; per live track whose it is (a group id, or "g" for a ghost); per
     ghost track the log likelihood of its life per kind of ghost and its source (a Gauss); the
-    people with tracks (group id -> Gauss) and those without (Hidden, one per person)."""
+    people with tracks (group id -> Gauss), the known ones without (Hidden, one per person) and the
+    unknown ones (Undetected)."""
 
-    __slots__ = ("logw", "kind", "ghost", "phantom", "groups", "hidden")
+    __slots__ = ("logw", "kind", "ghost", "phantom", "groups", "hidden", "ppp")
 
-    def __init__(self, logw, kind, ghost, groups, hidden, phantom=None):
+    def __init__(self, logw, kind, ghost, groups, hidden, ppp, phantom=None):
         self.logw = logw
         self.kind = kind
         self.ghost = ghost
         self.phantom = phantom if phantom is not None else {}
         self.groups = groups
         self.hidden = hidden
+        self.ppp = ppp
 
     def child(self, logw) -> "Hyp":
         return Hyp(logw, dict(self.kind), {s: a.copy() for s, a in self.ghost.items()}, dict(self.groups),
-                   list(self.hidden), dict(self.phantom))
+                   list(self.hidden), self.ppp, dict(self.phantom))
+
+    def people(self) -> list:
+        """The known people (with existence 1)."""
+        return list(self.groups.values()) + self.hidden
 
     def objects(self) -> list:
-        return list(self.groups.values()) + self.hidden
+        """Everything that moves and is weighed: the known people and the unknown ones."""
+        return self.people() + [self.ppp]
 
     def group_segs(self) -> dict:
         """group id -> the live tracks the hypothesis says are that person's."""
@@ -82,7 +95,7 @@ class Hyp:
 
     def key(self):
         return (frozenset(frozenset(v) for v in self.group_segs().values()),
-                frozenset(s for s, k in self.kind.items() if k == "g"))
+                frozenset(s for s, k in self.kind.items() if k == "g"), len(self.hidden))
 
 
 class Tracker:
@@ -129,10 +142,12 @@ class Tracker:
             self._g(si, np.zeros((1, 2)))
 
     def reset_people(self, people=None):
-        """Start over: nothing known (or the given places)."""
+        """Start over: nothing known - start_people people, each anywhere (MODEL.md 5.3); or people
+        at the given places ("anywhere" or a place name). Nobody unknown: newcomers arrive from
+        then on (3.4). A Poisson start instead keeps expecting more people however many were found
+        (its counts are independent), and the house then never looks complete."""
         if people is None:
-            people = ["anywhere"] * max(int(self.p.residents), 1)
-        self.N = len(people)
+            people = ["anywhere"] * max(int(round(self.p.start_people)), 0)
         anywhere = None
         hidden = []
         for where in people:
@@ -141,7 +156,8 @@ class Tracker:
                 hidden.append(anywhere)
             else:
                 hidden.append(Hidden.at_place(self.lat, self.world.index[where]))
-        self.hyps = [Hyp(0.0, {}, {}, {}, hidden)]
+        self.hyps = [Hyp(0.0, {}, {}, {}, hidden, Undetected.none(self.lat))]
+        self._recycled = self.now
         self.segs = {}  # seg id -> dict(si, t, zt, var, z, born, lost, ...)
         self._live_by_sensor = {si: [] for si in range(len(self.sensors))}
 
@@ -320,6 +336,31 @@ class Tracker:
         for k in range(parts):
             self._advance(self.now + dt * (k + 1) / parts, dt / parts)
         self.now = t
+        if t - self._recycled >= RECYCLE_EVERY:
+            self._recycled = t
+            self._recycle()
+
+    def _recycle(self):
+        """Known people almost surely out of the house join the unknown ones (MODEL.md 5.5):
+        otherwise every guest who ever came would be followed forever."""
+        cache = {}
+        changed = False
+        for hy in self.hyps:
+            gone = [u for u in hy.hidden if u.out > 1 - GIVE_UP]
+            if not gone:
+                continue
+            key = (id(hy.ppp),) + tuple(sorted(id(u) for u in gone))
+            if key not in cache:
+                new = hy.ppp.copy()
+                for u in gone:
+                    new.add(u)
+                cache[key] = new
+            hy.ppp = cache[key]
+            for u in gone:
+                hy.hidden.remove(u)
+            changed = True
+        if changed:
+            self._merge()
 
     def _advance(self, t: float, dt: float):
         live = [si for si, sid in enumerate(self.sensors)
@@ -741,6 +782,15 @@ class Tracker:
                 ch.groups[gid] = new
                 ch.kind[seg] = gid
                 children.append(ch)
+            # somebody nobody knew of (the unknown ones stay as they are: a birth is one point of
+            # the Poisson process, B_GarciaFernandez2018 eq. 18-24)
+            new, L = attach(hy.ppp)
+            if L > -math.inf:
+                ch = released(hy.child(hy.logw + base + L))
+                gid = next(self._gids)
+                ch.groups[gid] = new
+                ch.kind[seg] = gid
+                children.append(ch)
         if not children:
             return
         # the factor by which the map at z moved the odds of "ghost" (for what the map learns, _end)
@@ -835,6 +885,7 @@ class Tracker:
             rests = [rests[0]] + [self._pair(rests[0], r) for r in rests[1:]]
             mixed = [self._mix_hidden([(w, rest[j]) for w, rest in zip(wn, rests)]) for j in range(len(rests[0]))]
             new.hidden = common + mixed
+            new.ppp = self._mix_hidden([(w, h.ppp) for w, h in zip(wn, hs)])
             out.append(new)
         self.hyps = out
 
@@ -879,7 +930,8 @@ class Tracker:
             for s, k in hy.kind.items():
                 if k == "g":
                     assert s in hy.phantom and s in hy.ghost, "a ghost without its source"
-            assert len(hy.groups) + len(hy.hidden) == self.N, "people lost or added"
+            assert isinstance(hy.ppp, Undetected), "no unknown people"
+            assert all(type(u) is Hidden for u in hy.hidden), "a known person as an intensity"
 
     # -------------------------------------------------------------- LD2410C
 
@@ -921,28 +973,36 @@ class Tracker:
         return out + obj.a * obj.away.places() if obj.away is not None else out
 
     @staticmethod
-    def _poisson_binomial(ps) -> np.ndarray:
+    def _poisson_binomial(ps, mean: float = 0.0) -> np.ndarray:
+        """The number of people: one Bernoulli per known person (ps), plus a Poisson number of
+        unknown ones (mean), cut where the rest is below 1e-9."""
         dist = np.array([1.0])
         for q in ps:
             dist = np.convolve(dist, [1 - q, q])
+        if mean > 0:
+            k = np.arange(int(mean + 10 * math.sqrt(mean) + 6))
+            pois = np.exp(k * math.log(mean) - mean - np.array([math.lgamma(i + 1) for i in k]))
+            dist = np.convolve(dist, pois)
         return dist
 
     def _counts(self, per_object) -> np.ndarray:
-        """(columns, N + 1): count distributions per column of per_object(obj), mixed over the
-        hypotheses."""
+        """(columns, K): count distributions per column of per_object(obj) - for a known person the
+        probabilities, for the unknown ones the expected numbers - mixed over the hypotheses."""
         hw = self.hyp_weights()
         cache = {}
-        out = None
+        dists = []
         for w, hy in zip(hw, self.hyps):
-            probs = []
             for obj in hy.objects():
                 if id(obj) not in cache:
-                    cache[id(obj)] = per_object(obj)
-                probs.append(cache[id(obj)])
-            probs = np.array(probs).reshape(len(probs), -1)
-            dists = np.array([np.pad(self._poisson_binomial(probs[:, k]), (0, self.N + 1 - len(probs) - 1))
-                              for k in range(probs.shape[1])])
-            out = w * dists if out is None else out + w * dists
+                    cache[id(obj)] = np.atleast_1d(per_object(obj))
+            means = cache[id(hy.ppp)]
+            probs = np.array([cache[id(o)] for o in hy.people()]).reshape(-1, len(means))
+            dists.append((w, [self._poisson_binomial(probs[:, k], float(means[k])) for k in range(len(means))]))
+        size = max(len(d) for _, ds in dists for d in ds)
+        out = np.zeros((len(dists[0][1]), size))
+        for w, ds in dists:
+            for k, d in enumerate(ds):
+                out[k, :len(d)] += w * d
         return out
 
     def count_distribution(self) -> dict:
@@ -953,18 +1013,24 @@ class Tracker:
         return out
 
     def place_distribution(self) -> dict:
-        """place name -> [P(0 people), P(1), ...]."""
-        c = self._counts(self._place_probs)
-        return {name: c[k].tolist() for k, name in enumerate(self.world.places)}
+        """place name -> [P(0 people), P(1), ...], and "_house" (anywhere but outside)."""
+        def with_house(o):
+            p = self._place_probs(o)
+            return np.append(p, p[:-1].sum())
+        c = self._counts(with_house)
+        out = {name: c[k].tolist() for k, name in enumerate(self.world.places)}
+        out["_house"] = c[-1].tolist()
+        return out
 
     def present_count(self) -> int:
         """The most probable number of people in view."""
         return int(np.argmax(self.count_distribution()["_observed"]))
 
     def persons(self) -> list:
-        """The people of the most probable hypothesis, for the display: those with a track first."""
+        """The known people of the most probable hypothesis, for the display: those with a track
+        first."""
         hy = self.hyps[int(np.argmax([h.logw for h in self.hyps]))]
-        return [self._display(k + 1, obj) for k, obj in enumerate(hy.objects())]
+        return [self._display(k + 1, obj) for k, obj in enumerate(hy.people())]
 
     def _display(self, pid, obj) -> dict:
         """Where to draw a person: with a measuring track the mean of the mixture (it moves as
@@ -1031,7 +1097,7 @@ class Tracker:
         zones = [z for z in self.config.zones if z.kind in ("room", "area")]
         for z in zones:
             states.setdefault(z.id, ZoneState())
-        total.count = int(np.argmax(places["outside"][::-1]))
+        total.count = int(np.argmax(places["_house"]))
         for d in self.persons():
             if d["x"] is None:
                 continue

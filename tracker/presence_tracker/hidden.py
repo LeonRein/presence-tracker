@@ -17,6 +17,9 @@ State of an unseen person, as masses that sum to 1:
                    detectability kappa_k (filtermodel.Shapes, MODEL.md 3.1, 4.1)
   region[r, a]     behind a door in region r, for a time in age bin a (the stay ends by its hazard)
   out              out of the house
+
+Undetected (below) is the same raster as an intensity: the people nobody knows of yet (MODEL.md 3.4,
+5.5), a Poisson point process - the undetected part of a PMBM.
 """
 
 import math
@@ -191,7 +194,7 @@ class Hidden:
         return h
 
     def copy(self) -> "Hidden":
-        h = Hidden.__new__(Hidden)
+        h = type(self).__new__(type(self))
         h.lat = self.lat
         h.walk, h.still, h.region = self.walk.copy(), self.still.copy(), self.region.copy()
         h.out, h.clock = self.out, self.clock
@@ -337,3 +340,59 @@ class Hidden:
     def places(self) -> np.ndarray:
         """Probability per place (observed, regions..., outside)."""
         return np.concatenate([[self.in_view().sum()], self.region.sum(axis=1), [self.out]])
+
+
+class Undetected(Hidden):
+    """The people nobody knows of (MODEL.md 3.4, 5.5): a Poisson point process on the raster, its
+    intensity in the same arrays as a Hidden person's density but not normalized - the masses are
+    expected numbers of people. Everything about motion is linear and the same as for a person;
+    on top, newcomers arrive at the ways in, and people out of the house are forgotten now and then
+    (whoever comes back after that is a newcomer). Evidence weighs it by the Poisson void
+    probability: P(none of them did it) = exp(-(mass before - mass after))
+    (Garcia-Fernandez et al. 2018, eq. 18-24)."""
+
+    @classmethod
+    def anywhere(cls, lat: Lattice, people: float = 1.0, **kw) -> "Undetected":
+        h = super().anywhere(lat, **kw)
+        h.scale(people)
+        return h
+
+    @classmethod
+    def none(cls, lat: Lattice) -> "Undetected":
+        return cls(lat)
+
+    def scale(self, k: float):
+        self.walk *= k
+        self.still *= k
+        self.region *= k
+        self.out *= k
+
+    def add(self, person: Hidden):
+        """A person given up on (almost surely out of the house) joins the unknown ones."""
+        self.walk += person.walk
+        self.still += person.still
+        self.region += person.region
+        self.out += person.out
+
+    def move(self, dt: float):
+        super().move(dt)
+        lat, m = self.lat, self.lat.tr.m
+        self.out *= math.exp(-m.forget_rate * dt)
+        ways = len(lat.open) + len(lat.entries)
+        if ways:
+            come = m.guest_rate * dt
+            for r in lat.open:
+                self.region[r, 0] += come
+            for c, h in lat.entries:
+                self.walk[h, c] += come
+
+    def weigh(self, f_walk: np.ndarray, f_still: np.ndarray) -> float:
+        if not self.lat.n:
+            return 0.0
+        before = float(self.walk.sum() + self.still.sum())
+        self.walk *= f_walk[None, :]
+        self.still *= np.asarray(f_still)[..., None, :] if np.ndim(f_still) == 1 else f_still[None]
+        return -(before - float(self.walk.sum() + self.still.sum()))
+
+    def _normalize(self) -> float:
+        return 0.0

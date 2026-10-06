@@ -669,7 +669,7 @@ const PARAMS = [
     ['wall_margin', 'Toleranz an Wänden', 'm', 'Messpunkte weiter hinter einer Wand oder außerhalb aller Räume sind Reflexionen und werden verworfen.', 0.05],
   ]],
   ['Personen', [
-    ['residents', 'Bewohner', '', 'So viele Personen verfolgt das Modell; jede kann auch außer Haus sein. Unbekannte Neuankömmlinge (Gäste) sind noch nicht gebaut.', 1],
+    ['start_people', 'Personen beim Start', '', 'Mit so vielen Personen beginnt das Modell, wenn es nichts weiß (nach einem Neustart), jede irgendwo im Haus oder außer Haus. Keine feste Zahl: Neuankömmlinge kommen über die Wege nach draußen dazu, wer sicher außer Haus ist, wird vergessen.', 1],
   ]],
   ['Räume ohne Sensor', [
     ['dwell_median', 'Typischer Aufenthalt', 's', 'Annahme für Räume ohne Sensor und ohne Ausgang.', 10],
