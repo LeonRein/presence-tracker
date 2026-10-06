@@ -143,19 +143,21 @@ class Stats:
         """The part of the tempered log-likelihood that depends on the means mu (k, 16), with the
         block's common gain of each kind integrated out (Likelihood), (k,)."""
         a, tau = lik.alpha, lik.tau
-        w = self.t_unc / tau  # looks per cell
-        out = -(a * w * np.log(mu)).sum(axis=1)
+        look = a * self.t_unc / tau  # alpha x looks per cell
+        out = -(np.log(mu) @ look)
+        inv = 1.0 / mu
+        ae = a * self.t_e / tau
         for cells, comps in lik.kinds:
-            N = float((a[cells] * w[cells]).sum())
+            N = float(look[cells].sum())
             if N <= 0:
                 continue
-            A = (a[cells] * self.t_e[cells] / tau[cells] / mu[:, cells]).sum(axis=1)
-            terms = np.array([c + math.lgamma(N + k) - (N + k) * np.log(k + A) for c, k in comps])
+            A = inv[:, cells] @ ae[cells]
+            terms = np.array([c + math.lgamma(N + k) - (N + k) * np.log(r + A) for c, k, r in comps])
             top = terms.max(axis=0)
             out += top + np.log(np.exp(terms - top).sum(axis=0))
         c = self.t_cens > 0
         if c.any():
-            out += (log_censored(a[c][None, :], mu[:, c]) * (self.t_cens[c] / tau[c])[None, :]).sum(axis=1)
+            out += log_censored(a[c][None, :], mu[:, c]) @ (self.t_cens[c] / tau[c])
         return out
 
     def loglik(self, mu: np.ndarray, lik: "Likelihood") -> float:
@@ -166,22 +168,25 @@ class Stats:
 
     def log_ratio(self, mu1: np.ndarray, mu0: np.ndarray, lik: "Likelihood") -> np.ndarray:
         """Tempered log-likelihood ratio of the means mu1 (k, 16) against mu0 (16,), (k,)."""
-        return self._mu_part(mu1, lik) - self._mu_part(mu0[None, :], lik)[0]
+        both = self._mu_part(np.vstack([mu1, mu0[None, :]]), lik)
+        return both[:-1] - both[-1]
 
 
 class Likelihood:
     """The numbers of the energies' likelihood (Model): per cell the Gamma shape alpha and the
     correlation time tau; per kind (moving, still) the prior of the block's common gain u: 1/u ~
-    Gamma(kappa, kappa), mixed with a broad one for bursts (conjugate: integrated exactly)."""
+    Gamma(kappa, rate kappa) (mean 1), mixed with bursts, 1/u ~ Gamma(shape, rate shape x their gain)
+    (conjugate: integrated exactly)."""
 
     def __init__(self, m):
         self.alpha = cell_values(m, *m.ld_shape)
         self.tau = cell_values(m, *m.ld_tau)
-        bk, bw = m.ld_burst
+        bk, bu, bw = m.ld_burst
+        br = bk * bu
         self.kinds = []
         for cells, k in ((MOVING, m.ld_gain[0]), (STILL_CELLS, m.ld_gain[1])):
-            comps = [(math.log(1 - bw) + k * math.log(k) - math.lgamma(k), k),
-                     (math.log(bw) + bk * math.log(bk) - math.lgamma(bk), bk)]
+            comps = [(math.log(1 - bw) + k * math.log(k) - math.lgamma(k), k, k),
+                     (math.log(bw) + bk * math.log(br) - math.lgamma(bk), bk, br)]
             self.kinds.append((cells, comps))
 
 

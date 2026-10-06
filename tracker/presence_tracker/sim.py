@@ -176,9 +176,10 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
     # each second all cells of a kind share a gain: 1/u ~ Gamma(kappa, kappa), now and then a burst
     if t >= s._ld_block[0]:
         def gain(kappa):
-            bk, bw = m.ld_burst
-            k = bk if rng.random() < bw else kappa
-            return 1.0 / max(rng.gammavariate(k, 1.0 / k), 1e-3)
+            bk, bu, bw = m.ld_burst
+            if rng.random() < bw:
+                return 1.0 / max(rng.gammavariate(bk, 1.0 / (bk * bu)), 1e-3)
+            return 1.0 / max(rng.gammavariate(kappa, 1.0 / kappa), 1e-3)
         s._ld_block = (t + m.ld_every, gain(m.ld_gain[0]), gain(m.ld_gain[1]))
     mu = mu * np.concatenate([np.full(9, s._ld_block[1]), np.full(7, s._ld_block[2])])
     alpha = ld2410.cell_values(m, *m.ld_shape)

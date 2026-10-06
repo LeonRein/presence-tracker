@@ -75,10 +75,11 @@ class Model:
     ld_every = 1.0  # s: the energies are weighed this often
     # all cells of a kind move together within a block (broadband interference, the moving flag's
     # blips): 1/gain ~ Gamma(kappa, kappa) per block and kind, measured sd of the log gain over 1-s
-    # blocks without anybody 0.14-0.27 moving, 0.09-0.18 still [moving, still]; mixed with a broad
-    # one (kappa, weight) for bursts (assumed)
+    # blocks without anybody 0.14-0.27 moving, 0.09-0.18 still [moving, still]; mixed with bursts
+    # (all moving gates at 15-30 for about a second): 1/u ~ Gamma(shape, mean 1 / gain), with this
+    # weight (assumed: shape, gain, weight). Only upward: a low gain must not excuse a missing person.
     ld_gain = (16.0, 50.0)
-    ld_burst = (2.0, 0.02)
+    ld_burst = (4.0, 2.5, 0.02)
     ld_memory = 2.0  # s: the still energies follow a person with this time constant (rise when one
                      # comes, fall when one leaves; measured on two cases, then capped at 100)
     # background per sensor and cell, learned by the app (ld2410.Background): prior = the measured

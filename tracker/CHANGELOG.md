@@ -5,6 +5,16 @@
 - Personen mit Spur gehen nicht mehr durch Wände: Ihre Gauß-Verteilung wird an den Wänden abgeschnitten
   (abgeschnittener Kalman-Filter, MODEL.md 5.2). Vorher lief jemand, dessen Spur der Sensor kurz hielt, in
   der Vorhersage durch die Wand, und die wiedergefundene Spur galt als Geist (Licht im falschen Raum).
+- **Der LD2410C zählt mit seinen Energien je Entfernungsring** (bewegt und ruhig) statt mit Flag und
+  gemeldeter Entfernung (MODEL.md 4.3). Die gemeldete Entfernung erfand Personen: Leon allein am
+  Schreibtisch in 1,5 m, in 27 % der Ruhig-Frames meldete er 2,6–6 m, und das Modell stellte die zweite Person
+  (im Schlafzimmer) 25 Minuten lang zu 100 % ins Arbeitszimmer. Jetzt erklärt das gemessene Profil einer
+  Person über alle Ringe (mit Mehrwege-Schweif) die Energie in den fernen Ringen; die Ruhig-Energien
+  folgen mit 2 s Verzögerung; gleichmäßige Schwankungen aller Ringe (Schübe) zählen nicht als Person.
+- Was jeder LD2410C ohne Personen sieht, **lernt die App selbst** (gespeichert in `ld2410.json` neben der
+  Geisterkarte); wird ein Sensor verschoben, beginnt es für ihn neu.
+- `tools/ld2410/`: Messungen der Energien, die Prüfung „Licht an im leeren Raum“ (`phantom.py`) und eine
+  Diagnose (`diag.py`).
 
 ## 0.9.3
 

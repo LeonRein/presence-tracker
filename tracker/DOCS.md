@@ -27,9 +27,11 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   **lernt die App selbst** (Geisterkarte). Wird ein Sensor verschoben, hinzugefügt oder entfernt, beginnt
   die Karte neu, weil sich die Sensoren gegenseitig stören können. Bis sie ein paar Stunden gelernt hat,
   werden Geister an festen Stellen (Möbel, Ladestation) leichter für Personen gehalten.
-- Der **LD2410C** zählt mit: Ist er aus, sitzt niemand nahe vor ihm (bis etwa 3 m sieht er Sitzende
-  zuverlässig). Bleibt er länger als ein kurzes Aufblitzen an, ist jemand in der Entfernung, die er meldet,
-  auch wenn der LD2450 ihn verloren hat. Was eine andere Person schon erklärt, sagt über die übrigen nichts.
+- Der **LD2410C** zählt mit seinen Energien je 0,75-m-Entfernungsring (bewegt und ruhig): Wo eine Person
+  Energie machen müsste und keine ist, ist niemand; Energie, die niemand erklärt, spricht für jemanden in
+  diesem Ring, auch wenn der LD2450 ihn verloren hat. Was eine andere Person schon erklärt, sagt über die
+  übrigen nichts. Was jeder LD2410C ohne Personen sieht (Hintergrund), **lernt die App selbst**; wird ein
+  Sensor verschoben, beginnt das für ihn neu. Seine Flags und die gemeldete Entfernung zählen nicht mehr.
 - **Wände**: Die Radare sehen nicht durch die Betonwände. Ein Messpunkt hinter einer Wand oder außerhalb aller
   Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*).
 - **Personen**: Mit *Personen beim Start* beginnt das Modell, wenn es nichts weiß. Weitere (Gäste) kommen über

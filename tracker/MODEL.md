@@ -172,37 +172,73 @@ Eine Spur, die zu keiner Person gehört.
   Stellen. Mit gleichverteilter Dichte erklärt das Modell sie als Person.
 
 ### 4.3 LD2410C
-Sein Präsenzflag (bewegt oder ruhig; Haltezeit im Gerät 0) als Markov-modulierter Prozess
-(Gilbert-Elliott, Buch_SarkkaSvensson2023 Bsp. 5.14: binäre Messung mit eigenem Zustand). Gemessen
-6.10. an 2,5 h, 5 Sensoren, gegen die Ziele des LD2450 im selben Gehäuse:
-- Mit einer Person bis 3 m vor ihm ist das Flag fast immer an und nach einem Aussetzer mit
-  0,5–2,4 /s wieder an. Ab 3–4,5 m schaltet ein Sitzender es nur noch zu 10–60 % der Zeit ein.
-- Einschaltphasen ohne Ziel des LD2450 dauern 1,1 s (10–90 % 1,0–1,2 s: Blitze, wohl der LD2450 im
-  Gehäuse), solche mit Person 7 s und mehr, bis Minuten.
-- Gehalten wird es auch von weiter weg: im Wohnzimmer eine Sitzende in 6,2 m und 16° neben der
-  Achse, minutenlang mit niedriger Energie, die gemeldete Entfernung passend.
+Gemessen wird seine **Energie je Entfernungsring** (0,75 m Schrägentfernung, `ld2410.py`): bewegt in Ring
+0–8, ruhig in Ring 2–8 (ruhig 0 und 1 sind immer 0), 0–100, 16 Zahlen je Frame. Seine Flags und die
+gemeldete Entfernung zählen nicht (10). Gemessen 6.10. (4,3 h, 5 Sensoren, `tools/ld2410/`), Bezug die
+Ziele des LD2450 im selben Gehäuse (der unterdrückt Sitzende und hat Geister: nur zum Bedingen):
+- Das **Ruhig-Flag ist die Firmware-Schwelle** auf die Ruhig-Energien (gleich in 90–99 % der Frames); die
+  Energien enthalten es. Das **Bewegt-Flag** ist keine Schwelle auf die gemeldeten Energien (68–84 %);
+  ohne jedes Ziel ist es 2–4 % der Zeit an (die Blitze, 1,1 s), ohne dass die Energien etwas zeigen.
+- **Ohne Person** (kein LD2450-Ziel ±30 s, nach Zeit gewichtet): Mittel je Sensor und Ring verschieden,
+  bewegt Ring 0 9–16, Ring 1 6–12, sonst 3–5; ruhig 3–7; 99 % unter 30. Stundenweise schwankt es
+  (Flur ruhig Ring 5–6 18–19 Uhr 8–10 statt 3,4). Die Streuung wächst mit dem Pegel (Variationskoeffizient
+  ≈ 0,5): eine lineare Größe, keine dB-Skala.
+- **Profil einer Person** über alle Ringe (Frames mit genau einem LD2450-Ziel, Maximum-Likelihood,
+  `tools/ld2410/fit.py`): `A · r^−n · k(c − r − δ)`, r Schrägentfernung, c Mitte des Rings, k eine
+  Gauß-Hauptkeule (σ) und dahinter ein exponentieller Schweif (Anteil τ, Länge ℓ; Mehrwegeechos haben
+  einen längeren Weg: Leistungs-Verzögerungs-Profil, Saleh & Valenzuela 1987):
+
+  | | A (1 m) | n | δ | σ | τ | ℓ |
+  |---|---|---|---|---|---|---|
+  | bewegt, geht | 159 | 2,16 | 0,41 m | 0,57 m | 0,47 | 1,26 m |
+  | bewegt, steht | 63 | 2,52 | 0,41 m | 0,55 m | 0,27 | 1,34 m |
+  | ruhig, geht | 949 | 2,19 | 0,58 m | 1,44 m | 1,00 | 1,25 m |
+  | ruhig, steht | 574 | 2,03 | 0,19 m | 0,77 m | 0,40 | 1,70 m |
+
+  n ≈ 2: eine Amplitude (Radargleichung). Der Schweif ist kein Sonderfall eines Raums (Arbeitszimmer
+  allein und die übrigen vier: τ 0,42 / 0,39, ℓ 1,59 / 1,67 m). Nach dem Winkel flach bis 45–60°
+  (Strahl voll bis 50°, 0 ab 70°, angenommen darüber). Die Amplitude einzelner Aufenthalte streut um
+  einen Faktor 2 um das Potenzgesetz.
+- **Zeit:** Die Ruhig-Energien folgen einer Person mit etwa 2 s (zwei Fälle: Kommen und Gehen; nah
+  gekappt bei 100, darum dort 3 s länger voll). Korrelationszeit des Log-Likelihood-Verhältnisses „Person
+  / niemand“: 4 s bewegt, 13 s ruhig.
+- **Gemeinsamer Pegel:** Alle Ringe einer Art schwanken zusammen (Korrelation zwischen Ringen ohne
+  Person 0,2–0,7; Streuung des gemeinsamen log-Pegels je Sekunde 0,14–0,27 bewegt, 0,09–0,18 ruhig);
+  dazu Breitband-Schübe (alle Bewegt-Ringe 15–30 für etwa eine Sekunde).
 
 Das Modell, je Sensor:
-- **Einschalten:** jede Person mit der Rate `ρ_ld · v_m(x)` (ρ_ld = 1 /s; `v_m` = Kegel × Sicht ×
-  Swerling-Kurve wie beim LD2450 mit r₅₀ 3,3 m stehend / 4,5 m gehend über die Schrägentfernung;
-  Kegel voll bis 30°, 0 ab 50°), dazu Blitze mit 0,04 /s (gemessen 0,001–0,08 je Sensor). Die
-  gemeldete Entfernung liegt um die Schrägentfernung der Person (σ = 0,6 m), bei Blitzen irgendwo
-  bis 6,75 m.
-- **Ausschalten:** mit 1/1,1 s, solange niemand es hält; mit 1/10 s, wenn jemand es hält. Halten
-  kann es eine Person im breiteren Strahl (voll bis 50°, 0 ab 70°; in 0.6.x: Energie von Personen bis
-  60°) etwa in der gemeldeten Entfernung (σ = 0,6 m), unabhängig von der Reichweite.
-- **Belege:** Jede Zeit „aus“ wirkt wie die Nicht-Erfassung des LD2450, ein Produkt über die
-  Personen: Wo er sicher sähe, ist dann niemand. Die Zeit „an“ und die beiden Flanken hängen davon
-  ab, ob *irgendjemand* da ist (kein Produkt): Jede Hypothese bekommt ihren exakten Faktor (die
-  Personen sind gegeben die Hypothese unabhängig), jede Person den Faktor gegeben die anderen,
-  gemischt über die Hypothesen, die sie halten (Marginale wie bei JIPDA). Was andere schon erklären,
-  sagt über diese Person nichts (Lehre aus 0.6.13: sonst entsteht neben einer erklärten Person
-  eine zweite). Wer hinter einer Tür oder außer Haus ist, wird gewichtet wie jemand, den er nicht
-  sieht.
-- Gilt nicht als unabhängige Messung je Frame: Zwischen den Takten (5) wird die Zeit „aus“/„an“
-  summiert; die Flanken sind Ereignisse.
-- Die Energien je Entfernungsring (bewegt/ruhig getrennt) und das bewegt-Flag allein werden noch
-  nicht ausgewertet (9).
+- **Messung:** jede Energie ~ Gamma(Form α, Mittel μ), 100 zensiert (`P(e ≥ 99,5)`); α 2,5 bewegt, 2,0
+  ruhig (gemessen 2,4–3,0 / 1,6–2,4). Die Form der Likelihood je Auflösungszelle wie bei
+  Track-before-detect (Salmond & Birch 2001; Boers & Driessen 2004), Amplitude als Merkmal wie Lerro &
+  Bar-Shalom 1993.
+- **Mittel = (Hintergrund + Summe der Personen) × gemeinsamer Pegel** (inkohärente Überlagerung,
+  superpositionaler Sensor): `μ_g = u · (b_g + w_m·M_g + (1 − w_m)·Σ_i S_g(x_i))`. S ist das Profil oben
+  mal Strahl mal Sicht (Wände wie beim LD2450). Ruhig zählt das Verzögerte: M ist, was die Personen
+  zuletzt hineingaben (geglättet mit 2 s), w_m sein Anteil im Block; bewegt w_m = 0.
+- **Gemeinsamer Pegel u** je Block (1 s) und Art: 1/u ~ Gamma(κ, κ), κ = 16 bewegt, 50 ruhig (gemessen,
+  s. o.), gemischt mit 2 % Schüben, 1/u ~ Gamma(4) mit u um 2,5 (angenommen; nur nach oben: ein
+  niedriger Pegel darf eine fehlende Person nicht entschuldigen). Konjugiert: exakt herausintegriert.
+  Ohne ihn erklärte eine gleichmäßig erhöhte Energie aller Ringe (nachts im Arbeitszimmer ruhig
+  doppelt so hoch wie gelernt, Schübe) eine Person am Rand des Strahls.
+- **Hintergrund b je Sensor, Ring und Art: von der App gelernt** (wie die Geisterkarte): Online-EM der
+  Überlagerung, der Anteil des Hintergrunds an einer Energie ist im Mittel `e · b/μ` (Richardson 1972;
+  Shepp & Vardi 1982), μ aus dem Stand vor diesen Frames (die Energien lernen nicht ihr eigenes Urteil,
+  J_Park2020). Prior: bewegt Ring 0 13, Ring 1 9, sonst 4,5, ruhig 5 mit dem Gewicht 10 min; Vergessen
+  6 h (angenommen). Neu für einen Sensor, wenn er verschoben wird. Gespeichert mit der Geisterkarte.
+- **Zeit:** Die Frames werden je Sekunde gesammelt (Gamma: die Summen von Δt, Δt·e, Δt·ln e und Δt der
+  gekappten genügen), jeder Frame mit Δt / τ, Δt = Zeit seit dem vorigen Frame des Sensors bis 6 s
+  (4.4: ohne Anlass sendet die Firmware nur alle 5 s, die Energien lagen dazwischen unter den
+  Schwellen), τ 4 s bewegt / 13 s ruhig (zusammengesetzte Likelihood mit der Korrelationszeit als
+  effektiver Stichprobengröße; Varin, Reid & Firth 2011).
+- **Verrechnung:** Kein Produkt über die Personen. Je Hypothese die Personen nacheinander (erst die mit
+  Spur, dann die ohne, zuletzt die unbekannten), jede gegeben die vorigen mit dem, was sie danach
+  hineingeben (exakt für Personen an bekanntem Ort). Jede Person (Kacheln bzw. Komponenten an ihrem
+  Mittel) wird dann mit `ℓ(e | Rest + S(x)) / ℓ(e | Rest)` gewichtet, der Rest = alle anderen, gemischt
+  über die Hypothesen, die sie halten (Marginale wie bei JIPDA; was andere erklären, sagt über diese
+  Person nichts, 0.6.13). Die unbekannten Personen: höchstens eine von ihnen im Blick (Poisson nach
+  einer abgeschnitten, danach wieder per Momentenabgleich); wer hinter einer Tür oder außer Haus ist,
+  gibt nichts hinein.
+- Alles in Log-Größen; Verhältnisse auf e^600 begrenzt.
 
 ### 4.4 Lücken zwischen Frames
 Die Firmware sendet leere Frames nur alle 5 s. Eine Lücke bis 6 s zählt als beobachtet und leer;
@@ -348,8 +384,13 @@ Lebensdauer der Geister geschätzt (4.2).
   `tools/ghostmap.py` (Geisterkarte offline).
 
 ## 9. Bekannte Schwächen und Offenes
-Offen beim LD2410C (4.3): Energien je Entfernungsring und bewegt/ruhig getrennt; Reichweite und
-Blitzrate je Sensor (gemessen 0,001–0,08 /s, fest 0,04); ob er durch geschlossene Türen sieht.
+Offen beim LD2410C (4.3): ob und wie stark er durch Wände und Türen sieht (bisher: gar nicht; die zweite Person im
+Bad erscheint im Arbeitszimmer, wenn doch); die Amplitude einzelner Aufenthalte streut um einen Faktor
+2–4 um das Profil (eine Erkennbarkeit wie κ beim LD2450 wäre die Form dafür); δ ist gegen teils
+unkalibrierte LD2450 gemessen (0,07–0,5 m je nach Sensor); die Addition mehrerer Personen ist nicht an
+Zwei-Personen-Zeiten geprüft; α, τ, κ, die Verzögerung und das Vergessen des Hintergrunds sind über die
+Evidenz (7) zu schätzen; das Bewegt-Flag ist ohne Ablation weggelassen. Ein Raumteil, den kein Sensor
+sieht (Küche hinter der Wand bei y = 7,7 m), kann Personen halten, die niemand ausschließt.
 
 Näherungen, die man prüfen oder ersetzen kann:
 - Nicht-Erfassung und Erfassungsrate einer Gauß-Komponente am Mittel statt über ihre Verteilung.
@@ -412,6 +453,10 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Dichte und Takt), nicht in den numpy-Aufrufen. Als ein Matrixprodukt über alle Dichten startet
   OpenBLAS ab drei Dichten Threads, deren Warten ein Vielfaches an CPU kostet. Größte Posten danach:
   `Gauss.predict` 22 %, Kacheldichten bewegen 15 % und gewichten 8 %, LD2410C 16 %, Ausgaben 13 %.
+  Mit den Energien des LD2410C (7.10., 5 Sensoren, 21 Uhr): 3,8 % statt 2,8 % mit Flag und
+  Entfernung. Die Energien selbst kosten etwa ein Sechstel (je Sensor und Sekunde ein Verhältnis je
+  Kachel und Person); der Rest kommt von mehr getrennten Dichten über die Hypothesen (im Mittel 8,6
+  statt 4,6 Personen auf Kacheln).
 - **LD2410C ohne Modell seiner Reichweite** (0.9-Entwicklung): Mit fester Reichweite 3,3 m musste das
   lange „an“ des Wohnzimmersensors (Sitzende im Esszimmer in 6,2 m) von einer erfundenen Person nahe
   am Sensor kommen. Daher hält jetzt, wer in der gemeldeten Entfernung ist. Ohne LD2410C blieb in der
@@ -423,6 +468,21 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Meldungen und Lichtschaltungen vom 6.10. (tools/report_eval.py, ohne LD2410C gerechnet, damit dessen
   Entfernung nicht mitspielt): Licht fälschlich aus in 7,25 → 4,57 von 15 belegten Fenstern, fälschlich
   an unverändert 0 von 41.
+- **Die gemeldete Entfernung des LD2410C erfindet Personen** (0.9.3): Sie ist der Ring, in dem die
+  Energie gerade über ihrer Schwelle liegt. Leon allein am Schreibtisch in 1,5 m (Arbeitszimmer
+  6.10. 22:20–22:50): in 27 % der Ruhig-Frames 2,6–6 m. Das Modell brauchte dafür eine zweite Person
+  und stellte die zweite Person (im Schlafzimmer) 25 Minuten lang zu 100 % ins Arbeitszimmer (Fehlerberichte
+  22:40, 22:42). Die Energie in den fernen Ringen kommt vom Schweif seines eigenen Profils (4.3). Mit
+  den Energien dort: Arbeitszimmer genau 1, Schlafzimmer 0,82.
+- **Energien gegen einzelne LD2450-Frames geprüft** wollten eine zweite Person (dieselbe halbe
+  Stunde: +224 log für eine zweite in 2,5 m); gegen die geglättete Position der Person nicht (−543).
+  Die Energien zählen deshalb gegen die Personen des Filters, nie gegen Frames.
+- **Energien ohne Verzögerung und ohne gemeinsamen Pegel** (Entwicklung der Energien, 7.10.):
+  Nachdem Leon an der Küche vorbei durch die Tür gegangen war, blieben die Ruhig-Energien 3 s bei 100
+  und fielen dann mit etwa 2 s; das Modell holte eine zweite Person in die Küche, die dort in den
+  Teil hinter der Wand ging und blieb (Licht an ohne Person in 3,3 von 41 leeren Raum-Fenstern).
+  Mit der Verzögerung 2,3; mit dem gemeinsamen Pegel je Sekunde 0 (Schübe und gleichmäßig erhöhte
+  Ringe nachts im Arbeitszimmer hatten Personen am Rand des Strahls erklärt).
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

@@ -1140,6 +1140,7 @@ class Tracker:
             self.ld_background.learn(sid, share, st)
         # per hypothesis, one person after the other
         memo = {}
+        cache = {}  # (object, what the others put in) -> its ratio and normalizer
         logf = np.zeros(len(self.hyps))
         totals, owns = [], []
         for h, hy in enumerate(self.hyps):
@@ -1153,12 +1154,12 @@ class Tracker:
                 hit = memo.get(key)
                 if hit is None:
                     mm, S = pts[id(o)]
-                    lr, norm = self._ld_ratio(o, pts[id(o)], b0 + R, st, lik)
+                    lr, norm = cache[(id(o), R.tobytes())] = self._ld_ratio(o, pts[id(o)], b0 + R, st, lik)
                     # what they put in afterwards (for the unknown ones: the moment-matched intensity)
                     post = (mm * np.exp(lr - norm)) @ S
                     hit = memo[key] = (norm, post)
                 logf[h] += hit[0]
-                own.append((o, hit[1]))
+                own.append((o, hit[1], R))
                 R = R + hit[1]
                 prefix += (id(o),)
             totals.append(R)
@@ -1170,8 +1171,8 @@ class Tracker:
         post_w = np.exp(lw - lw.max())
         current = (post_w / post_w.sum()) @ np.array(totals) / np.maximum(now, 1e-9)
         self._ld_memory[si] = current if M is None else a * M + (1 - a) * current
-        # each person given the others, mixed over the hypotheses holding them
-        cache = {}
+        # each person given the others, mixed over the hypotheses holding them (the last one in a
+        # hypothesis: the same as above)
         for obj, refs in objs:
             if id(obj) not in seen:
                 continue
@@ -1182,7 +1183,8 @@ class Tracker:
             q = q / q.sum()
             parts, outs = [], []
             for qh, h in zip(q, hs):
-                rest = totals[h] - next(p for o, p in owns[h] if o is obj)
+                k = next(i for i, (o, _, _) in enumerate(owns[h]) if o is obj)
+                rest = owns[h][k][2] if k == len(owns[h]) - 1 else totals[h] - owns[h][k][1]
                 key = (id(obj), rest.tobytes())
                 hit = cache.get(key)
                 if hit is None:

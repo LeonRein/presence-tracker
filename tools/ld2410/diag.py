@@ -39,6 +39,8 @@ def main():
 
     config = Config.from_dict(json.load(open(a.config)))
     t_start, t_from, t_end = (time.mktime(time.strptime(f"{a.day} {v}", "%Y-%m-%d %H:%M:%S")) for v in (a.start, a.t_from, a.end))
+    t_from += 86400 if t_from < t_start else 0  # after midnight
+    t_end += 86400 if t_end < t_start else 0
     tr = Tracker(config)
     si_want = tr.sensors.index(next(s for s in tr.sensors if a.sensor in s))
     room_k = tr.rooms.index(a.room)
@@ -57,6 +59,10 @@ def main():
             if count[0] % a.every == 0:
                 b = self.ld_background.b(self.sensors[si])
                 e = np.where(st.t_unc > 0, st.t_e / np.maximum(st.t_unc, 1e-9), 100.0)
+                hw = self.hyp_weights()
+                for k, h in enumerate(self.hyps):
+                    print(f"   hypothesis {k}: weight {hw[k]:.3f}, mass in {a.room} per person: "
+                          + " ".join(f"{type(o).__name__[:6]} {mass_in_room(o):.2f}" for o in h.objects()))
                 hy = self.hyps[0]
                 print(time.strftime("%H:%M:%S", time.localtime(self.now)),
                       f"P({a.room}) {1 - self.count_distribution()[a.room][0]:.2f}  hyps {len(self.hyps)}")
@@ -80,7 +86,7 @@ def main():
     Tracker._ld_weigh = wrapped
     clocks = collections.defaultdict(SensorClock)
     nstep = 0.0
-    for path in sorted(glob.glob(os.path.join(a.recordings, a.day.replace("-", "") + "-*.jsonl"))):
+    for path in sorted(glob.glob(os.path.join(a.recordings, "*.jsonl"))):
         for line in open(path):
             msg = json.loads(line)
             if not msg["topic"].endswith("/frame") or msg["t"] < t_start:
