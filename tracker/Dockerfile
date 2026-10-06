@@ -5,4 +5,6 @@ RUN pip install --no-cache-dir "numpy>=2.0" "aiomqtt>=2.3" "aiohttp>=3.10"
 COPY presence_tracker /app/presence_tracker
 
 ENV PYTHONUNBUFFERED=1
+# numpy's OpenBLAS threads only wait on these small products: 7 % more CPU, no faster (6.10.)
+ENV OPENBLAS_NUM_THREADS=1
 CMD ["python", "-m", "presence_tracker"]
