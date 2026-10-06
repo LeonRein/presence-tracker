@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.3
+
+- Kacheln sind einfache Quadrate von 0,4 m, an den Raumgrenzen geschnitten (statt 0,6 m, zusätzlich an den
+  Sichtgrenzen jedes Sensors geschnitten). Gleiche Rechenzeit und gleich gute Erklärung der Daten
+  (MODEL.md 5.3), deutlich weniger Code. Die Karte zeigt sie als Quadrate.
+
 ## 0.9.2
 
 - Karte: Personen mit Spur sind Ellipsen mit dem Verlauf ihrer Gauß-Verteilung (bis 3 Standardabweichungen),

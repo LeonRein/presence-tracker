@@ -252,13 +252,15 @@ Schritt (Buch_SarkkaSvensson2023 S. 352; B_Li2019 Gl. 26–33):
 ### 5.3 Personen ohne Spur: Kacheln
 `tiling.py`, `hidden.py`. Punktmassenfilter (0_Arulampalam2002 Abschn. II-B) über Kacheln statt über
 ein gleichmäßiges Raster:
-- **Kacheln:** Der beobachtete Bereich wird in Blöcke von höchstens 0,6 m geteilt, jeder Block nach
-  Raum und danach, wie gut jeder Sensor dort sieht (nicht / Rand / voll, `g_s` < 0,1, < 0,9, sonst),
-  jedes zusammenhängende Stück eine Kachel; Stücke unter 0,04 m² gehen an den Nachbarn im selben Raum.
-  So sind Wände und Sichtgrenzen Kachelgrenzen, und innerhalb einer Kachel sieht jeder Sensor etwa
-  gleich gut (Wohnung 6.10.: 237 Kacheln statt 1153 Zellen zu 0,2 m). Jede Kachel ist eine kleine
-  Gauß-Verteilung (Schwerpunkt, Streuung je Achse); damit rechnen der Beginn einer Spur (5.4) und
-  der Weg durch eine Tür (5.2).
+- **Kacheln:** Quadrate von 0,4 m, an den Raumgrenzen geschnitten (ein Quadrat über eine Wand sind zwei
+  Kacheln). Innerhalb einer Kachel wird der Ort nicht unterschieden: gleichverteilt. Wo ein Ort
+  gebraucht wird (eine Spur beginnt, Gehen durch eine Tür), zählt die Kachel als die
+  Gauß-Verteilung mit ihrem Schwerpunkt und ihrer Streuung (dieselben ersten zwei Momente).
+  Verglichen am 6.10. auf 20 min (CPU / Log-Evidenz): 0,6 m an den Sichtgrenzen der Sensoren
+  geschnitten 53 s / 17039,6; einfache Quadrate 0,6 m 50 s / 17030,1, 0,4 m 55 s / 17039,5, 0,3 m
+  62 s / 17036,6; 0,4 m mit der Gleichverteilung exakt integriert (Fehlerfunktion) 62 s / 17032,2.
+  Der Schnitt an den Sichtgrenzen und das exakte Integral bringen nichts, was den Code wert wäre.
+  Wohnung 6.10.: 341 Kacheln statt 1153 Zellen zu 0,2 m.
 - **Raten** (Erfassung, Wiederfinden) sind je Kachel das Mittel über ihre Punkte eines 0,2-m-Rasters:
   die Projektion der Likelihood auf den gröberen Zustand (G_Liao2003 Gl. 2).
 - **Zustand:** `geht[Kachel]`, `steht[Art l, Stufe κ, Kachel]`, `Bereich[k, Alter]` (Altersklassen
@@ -345,7 +347,8 @@ Näherungen, die man prüfen oder ersetzen kann:
 - Nicht-Erfassung und Erfassungsrate einer Gauß-Komponente am Mittel statt über ihre Verteilung.
 - Auf den Kacheln ist Gehen eine Diffusion: Kurzzeitig gerades Gehen und die Richtung gehen verloren,
   beim Wechsel Gauß → Kacheln auch Geschwindigkeit und Versätze. Innerhalb einer Kachel ist die
-  Masse nicht weiter aufgelöst (wer im Sichtrand sitzt, ist über die ganze Randkachel verteilt). Die
+  Masse nicht weiter aufgelöst; Raten sind über die Kachel gemittelt, auch wo eine Sichtgrenze sie
+  schneidet. Die
   Gauß-Näherung kennt keine Wände.
 - Zwischen zwei Takten (0,2 s) wirken „gehalten, nicht wiedergefunden“ und die Ausgaben auf einen
   bis 0,2 s alten Stand.
@@ -391,7 +394,8 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
 - **Rechenzeit** (gemessen 6.10., dieselbe Stunde, 3 Sensoren, Anteil eines Kerns): 0.6.21 4,4 %,
   0.8.1 14,7 % (Raster 0,2 m mit 8 Richtungen, je Person mit Spur ein zweites Raster für „durch eine
   Tür“, alles bei jedem Frame vorgerückt; einzelne Frames bis 28 ms, die App ruckelte), 0.9 mit
-  Kacheln und Takt 4,0 % (Log-Evidenz +29 gegenüber 0.8.1 auf 20 min), mit LD2410C 4,6 %.
+  Kacheln und Takt 4,0 % (Log-Evidenz +29 gegenüber 0.8.1 auf 20 min), mit LD2410C 4,6 %. Die Form der
+  Kacheln macht dabei kaum etwas aus (5.3); gespart haben die wegfallenden 8 Richtungen und der Takt.
 - **LD2410C ohne Modell seiner Reichweite** (0.9-Entwicklung): Mit fester Reichweite 3,3 m musste das
   lange „an“ des Wohnzimmersensors (Sitzende im Esszimmer in 6,2 m) von einer erfundenen Person nahe
   am Sensor kommen. Daher hält jetzt, wer in der gemeldeten Entfernung ist. Ohne LD2410C blieb in der

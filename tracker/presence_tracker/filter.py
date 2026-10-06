@@ -1311,8 +1311,8 @@ class Tracker:
     def _cloud(self, pid, obj) -> dict:
         """Where a person may be, for the map: with a track their Gaussians [[weight, x, y, sd x,
         sd y]] as they are; without (and their part gone through a door), [[tile, mass per m^2]]
-        of the tiles holding at least 0.2 % (the tiles are all the model knows about where an
-        unseen person is; their outlines: Tiling.outlines)."""
+        of the tiles holding at least 0.2 % (anywhere in a tile alike: all the model knows about
+        where an unseen person is; the tiles' squares: /api/tiles)."""
         tl = self.tiles
         out = {"id": pid, "gauss": [], "tiles": []}
         if isinstance(obj, Hidden):

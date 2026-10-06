@@ -387,7 +387,9 @@ class Gauss:
     def from_tiles(cls, hidden, tiles, f_walk, f_still, seg, z, var, m) -> tuple:
         """A person without a track gets one at z (MODEL.md 5.4): their density times f (the rate or
         chance of this track starting / being found on somebody in each tile) times the density of
-        z, each tile a small Gaussian, matched per mode to one Gaussian. Returns (Gauss, log of the
+        z, each tile as the Gaussian with its mean and spread (anywhere in it alike, matched in the
+        first two moments; exact over its 0.1 m cells changed nothing: 6.10., evidence -7, 10 % more
+        computing time), matched per mode to one Gaussian. Returns (Gauss, log of the
         mass) - the mass is this alternative's factor for the hypothesis."""
         s2 = var + m.white ** 2
         v = tiles.var + s2  # (n, 2): z given the tile

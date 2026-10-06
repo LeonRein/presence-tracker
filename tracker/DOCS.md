@@ -13,8 +13,8 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   wo sie liegt und ob sie wiedergefunden wird, nicht jeder Frame als neue Messung.
 - **Jede Person ist eine Wahrscheinlichkeitsverteilung**, keine einzelne Spur. Wer gerade eine Spur hat, ist
   eine Mischung aus „steht“ und „geht“, jede mit Position, Geschwindigkeit und Unsicherheit. Wer keine hat,
-  ist eine Dichte über Kacheln des Grundrisses (Raumstücke bis 0,6 m, in denen jeder Sensor etwa gleich gut
-  sieht), hinter Türen und außer Haus. Nichts davon ist zufällig gezogen:
+  ist eine Dichte über Kacheln des Grundrisses (Quadrate von 0,4 m, an den Raumgrenzen geschnitten), hinter
+  Türen und außer Haus. Nichts davon ist zufällig gezogen:
   Gleiche Daten ergeben immer dasselbe Ergebnis. Die Karte im Tab *Live* zeigt die Verteilung jeder Person
   als Wärmekarte, den Punkt am wahrscheinlichsten Ort.
 - **Niemand taucht aus dem Nichts auf und niemand verschwindet einfach.** Personen kommen und gehen nur

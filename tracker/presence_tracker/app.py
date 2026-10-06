@@ -339,9 +339,13 @@ class App:
         return web.json_response({"ghost_map": self.tracker.ghost_map is not None})
 
     async def h_tiles(self, request):
-        """The tiles' outlines (MODEL.md 5.3), for drawing where unseen people may be."""
+        """The tiles (MODEL.md 5.3), for drawing where unseen people may be: per tile its square
+        (lower left corner) and its room, which cuts the square."""
         tiles = self.tracker.tiles
-        return web.json_response({"id": id(tiles), "outlines": await asyncio.to_thread(tiles.outlines)})
+        rooms = self.tracker.rooms
+        return web.json_response({"id": id(tiles), "size": tiles.square,
+                                  "tiles": [[round(float(x), 2), round(float(y), 2), rooms[int(r)]]
+                                            for (x, y), r in zip(tiles.squares, tiles.room)]})
 
     # ------------------------------------------------------------ error reports
 

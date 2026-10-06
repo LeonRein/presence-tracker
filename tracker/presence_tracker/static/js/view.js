@@ -361,16 +361,16 @@ export class MapView {
 
   // where each person may be (filter._cloud): with a track their Gaussians, drawn as ellipses out to
   // 3 standard deviations with a Gaussian fall-off, cut off at the walls (what is in sight from their
-  // mean); without, the tiles they may be in, by mass per m^2
+  // mean); without, the tiles they may be in (squares cut by their room), by mass per m^2
   clouds(live) {
     const out = [];
     const clouds = live.clouds || [];
     if (live.tiling !== this.tilingId && !this.tilingLoading && clouds.some(cl => cl.tiles.length)) {
       this.tilingLoading = true;
-      api('api/tiles').then(r => { this.tilingId = r.id; this.tileOutlines = r.outlines; })
+      api('api/tiles').then(r => { this.tilingId = r.id; this.tiling = r; })
         .finally(() => { this.tilingLoading = false; });
     }
-    const outlines = live.tiling === this.tilingId ? this.tileOutlines : null;
+    const tiling = live.tiling === this.tilingId ? this.tiling : null;
     if (clouds.some(cl => cl.gauss.length)) {
       // the fall-off of a Gaussian along its radius, 0 .. 3 standard deviations
       const stops = color => [0, 0.2, 0.4, 0.6, 0.8, 1].map(o =>
@@ -378,13 +378,23 @@ export class MapView {
       out.push(`<defs>${PERSON_COLORS.map((c, n) => `<radialGradient id="gauss-${n}">${stops(c)}</radialGradient>`).join('')}</defs>`);
     }
     const segs = clouds.some(cl => cl.gauss.length) ? sightSegments(state.config) : [];
+    if (tiling && clouds.some(cl => cl.tiles.length)) {
+      const rooms = new Set(tiling.tiles.map(t => t[2]));
+      out.push(`<defs>${state.config.zones.filter(z => rooms.has(z.id)).map(z =>
+        `<clipPath id="room-${z.id}"><polygon points="${this.pts(zoneOutline(z))}"/></clipPath>`).join('')}</defs>`);
+    }
     for (const cl of clouds) {
       const color = personColor(cl.id);
-      if (outlines && cl.tiles.length) {
+      if (tiling && cl.tiles.length) {
+        // each tile a square, cut by its room; anywhere in it alike
         const top = Math.max(...cl.tiles.map(t => t[1]), 1e-9);
+        const size = (tiling.size * this.s).toFixed(1);
         for (const [i, d] of cl.tiles) {
-          const path = (outlines[i] || []).map(loop => 'M' + loop.map(p => this.P(...p).map(v => v.toFixed(1)).join(',')).join('L') + 'Z').join('');
-          if (path) out.push(`<path d="${path}" fill="${color}" fill-opacity="${(0.06 + 0.45 * d / top).toFixed(2)}" fill-rule="evenodd"/>`);
+          const tile = tiling.tiles[i];
+          if (!tile) continue;
+          const [x, y] = this.P(tile[0], tile[1] + tiling.size);
+          out.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${size}" height="${size}" fill="${color}"
+            fill-opacity="${(0.06 + 0.45 * d / top).toFixed(2)}" clip-path="url(#room-${tile[2]})"/>`);
         }
       }
       cl.gauss.forEach(([w, mx, my, sx, sy], k) => {
