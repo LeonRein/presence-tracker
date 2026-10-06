@@ -1,122 +1,112 @@
 # Das Wahrscheinlichkeitsmodell des Presence Trackers
 
-Entwurf zur Durchsicht, noch nicht umgesetzt. Dieses Dokument ist die Spezifikation: Der Code wertet
-genau dieses Modell aus und enthält keine eigenen Fallunterscheidungen. Jede Wahrscheinlichkeit
-steht hier mit Formel und Herkunft (**gemessen** auf Aufnahmen, **gelernt** im Betrieb, **angenommen**).
-Was hier nicht steht, gibt es im Tracker nicht.
+Stand 0.6.19 (6.10.2026). Dieses Dokument ist die Spezifikation: Der Code wertet genau dieses Modell
+aus und enthält keine eigenen Fallunterscheidungen. Jede Wahrscheinlichkeit steht hier mit ihrer
+Herkunft: **gemessen** auf Aufnahmen, **gelernt** im Betrieb oder **angenommen**. Was noch nicht gebaut
+ist, steht als *Offen* da. Zahlen in der Form „x % falsch“ stammen aus der Wahrheitsdatenbank
+(Abschnitt 8).
 
 ## 1. Grundsätze
 
 1. **Ein generatives Modell.** Es beschreibt, wie die Welt (Personen, Geister) sich bewegt und wie die
    Sensoren daraus ihre Frames erzeugen. Der Tracker rechnet daraus rückwärts, welche Welt die Frames am
-   besten erklärt (Bayes). Es gibt keine Regeln der Art „nach 1,5 s gilt jemand als verloren“.
-2. **Personen entstehen und verschwinden nicht.** Die Zahl der Personen ist Teil des Zustands und nicht
-   festgelegt. Sie ändert sich im beobachteten Bereich nur dadurch, dass jemand durch eine Tür geht.
-   Eine Messung mitten im Raum kann also nur von einer Person kommen, die vorher durch eine Tür kam
-   und auf dem Weg dorthin hätte gesehen werden müssen, oder von einem Geist.
-3. **Keine festen Haushaltsgrößen.** Dass bei uns selten eine dritte Person kommt, ist eine gelernte
-   Ankunftsrate an der Wohnungstür, keine Regel. In einem öffentlichen Gebäude ist dieselbe Rate hoch.
+   besten erklärt (Bayes). Es gibt keine Regeln der Art „nach 1,5 s gilt jemand als verloren“, sondern
+   nur Wahrscheinlichkeiten; die vielen Partikel bilden die verschiedenen Möglichkeiten ab.
+2. **Personen entstehen und verschwinden nicht im Raum.** Verfolgt werden die Bewohner (Einstellung
+   „Bewohner“, bei uns 2). Jede ist irgendwo: in einem Raum mit Sensor, in einem Bereich ohne Sensor oder
+   außer Haus. Ins Haus und hinaus geht es nur über die Wege nach draußen (Treppe), in den beobachteten
+   Bereich und hinaus nur durch Türen. Eine Messung mitten im Raum kommt also von einer Person, die auf
+   dem Weg dorthin hätte gesehen werden müssen, oder von einem Geist.
+   *Offen:* unbekannte Neuankömmlinge (Gäste), siehe 3.2.
+3. **Ohne Evidenz verschwindet eine Person.** Wird sie an einer Stelle nicht mehr bestätigt, an der die
+   Sensoren sie sehen müssten, verliert diese Stelle Wahrscheinlichkeit an die anderen Möglichkeiten
+   (Bereiche ohne Sensor, außer Haus). Wie schnell, folgt aus den gemessenen Aussetzern (3.3).
 4. **Frames sind gegeben den Zustand unabhängig.** Dass aufeinanderfolgende Frames nicht unabhängig
-   *aussehen*, hat Ursachen: Wer an einer Stelle nicht gesehen wird, wird dort meist länger nicht
-   gesehen (Verdeckung, Sitzhaltung), Geister leben eine Weile, und der LD2450 glättet intern, sodass sein Fehler eine knappe Sekunde lang bleibt (4.1,
-   noch nicht modelliert). Diese Ursachen werden modelliert. Eine pauschale Dämpfung (bisher `evidence_time`) gibt es nicht mehr.
-5. **Gelernt wird aus der ganzen Wahrscheinlichkeitsverteilung**, gewichtet mit ihrer
-   Wahrscheinlichkeit (EM-Prinzip). Nicht nur aus der wahrscheinlichsten Hypothese, und nicht erst
-   ab einer Sicherheitsschwelle. Jede gelernte Größe hat einen Startwert (Prior) mit einem Gewicht in
-   „so viel wie N Beobachtungen“.
+   *aussehen*, hat Ursachen, und die sind modelliert: Wer an einer Stelle nicht gesehen wird, wird dort
+   meist länger nicht gesehen (3.3), Geister leben eine Weile (3.4), und jeder Sensor sieht eine Person
+   eine Weile an derselben falschen Stelle (4.1). Eine pauschale Dämpfung gibt es nicht.
+5. **Gemessen vor angenommen, gelernt nur aus unabhängiger Evidenz.** Gelernt wird nur, wo ein zweiter
+   Sensor oder eine sicher gesehene Person die Wahrheit liefert (Abschnitt 7). Aus den eigenen Schätzungen
+   zu lernen verstärkt die eigenen Fehler (4.10. auf den Daten bestätigt).
 
 ## 2. Die Welt (Zustand)
 
-**Geometrie** (aus der Konfiguration): beobachteter Bereich *A* (Räume mit Sensoren) mit Wänden;
-Bereiche ohne Sensor *R₁…Rₖ* (Küche, Balkon, Flur-Bereich, …) und *draußen*; Türen *q* verbinden
-genau zwei davon. Draußen ist nur über bestimmte Türen erreichbar (bei uns über den Flur-Bereich).
+**Geometrie** (aus dem Grundriss abgeleitet, nicht eingestellt): Räume, die die Sensoren zu mindestens
+60 % sehen, bilden den beobachteten Bereich. Räume ohne Sensor, die über Türen zusammenhängen, bilden je
+einen Bereich *Rₖ*; er ist *offen*, wenn man von dort das Haus verlassen kann (Treppe, Eingang). Dazu
+kommt *außer Haus*. Bei uns seit 5.10., 17:23: beobachtet Wohnzimmer, Esszimmer, Küche; ohne Sensor die
+offene Gruppe Arbeitszimmer, Bad, Treppe, Flur, Schlafzimmer und der geschlossene Balkon.
 
 Auch in einem Bereich ohne Sensor hat eine Person einen Ort. Kein Sensor sieht ihn, außer durch eine
 offene Tür. Bis 0.6.4 hatte sie dort keinen Ort: Sah der Esszimmer-Sensor jemanden 1 m hinter der
-Küchentür, konnte das keine Hypothese erklären, und „blieb vor der Tür stehen“ gewann (Küchentest 4.10.,
-18:23).
+Küchentür, konnte das keine Hypothese erklären, und „blieb vor der Tür stehen“ gewann (4.10., 18:23).
 
 **Zustand zur Zeit t:**
 
 | Teil | Inhalt |
 |---|---|
-| Personen | beliebig viele; je Person: wo (ein Ort mit Geschwindigkeit und Modus geht / steht, im beobachteten Bereich oder in einem der Bereiche *Rₖ*, dort mit der Zeit seit dem Betreten, oder draußen), und seit wann sie von welchem Sensor nicht mehr gesehen wurde |
-| Geister | je Sensor beliebig viele, je Geist Ort und Alter |
+| Personen | die Bewohner; je Person: Ort (beobachteter Bereich, ein Bereich *Rₖ* oder außer Haus), dort Position und Geschwindigkeit, Modus geht / steht mit der Zeit darin, Zeit seit dem Betreten des Orts, je Sensor die Zeit seit dem letzten Treffer und der Versatz, mit dem dieser Sensor die Person gerade sieht (4.1) |
+| Geister | je Sensor beliebig viele; je Geist Ort, Radialgeschwindigkeit, Wahrscheinlichkeit, noch da zu sein, Alter |
 
-Personen sind anonym. Nummern in der Oberfläche sind nur Beschriftung und nicht Teil des Modells
-(Abschnitt 6).
+Personen sind anonym. Die Nummern sind die Wolken der Bewohner; wechselt eine Wolke die Person, der sie
+folgt (Personentausch), ändert das an den Zahlen je Raum nichts und ist nicht schlimm.
 
 ## 3. Dynamik (was zwischen zwei Zeitpunkten passiert)
 
 ### 3.1 Bewegung im beobachteten Bereich
 - **Gehen:** fast konstante Geschwindigkeit mit zufälligen Richtungs- und Tempoänderungen, 0,6 m/s²
-  je √s. **Gemessen** (5.10., 4,6 h Zielspuren des LD2450, Wege ab 1,5 m): Tempo im Median 0,8 m/s, 95 %
-  unter 1,6 m/s; Geschwindigkeitsänderungen über 2–3 s wie 0,6 m/s²/√s (über 0,5 s mehr, darin steckt
-  das Messrauschen der Geschwindigkeit). Bis 0.6.17 angenommen: 1,0.
-- **Stehen / Sitzen:** Ort fast fest, kleines Wackeln. **Gemessen.**
-  Mit 1,0 war die Richtung eines Wegs schnell vergessen, und wer zur Tür hinausging, blieb im Modell
-  davor stehen (5.10., 16:44). Wahrheitsdatenbank, 12 Seeds: Leon geht hinaus 7,9 % → 2,8 % falsch
-  (weg nach 33 s statt 36 s im Median), Abend 8,9 % → 0 %, Drehbuch 9,4 % → 9,3 %.
-- **Wechsel gehen → stehen:** Rate `λ_stop` = 0,5 /s, überall gleich. *Gemessen und verworfen:* In den
-  Zielspuren des LD2450 dauert ein Weg (ab 1,5 m) im Median 4 s, in den ersten 2 s bleibt fast niemand
-  stehen, danach 10–20 % je s. Damit im Modell: Drehbuch 12,7 % statt 9,3 %, Leon geht hinaus 10,4 %.
-  Vermutlich misst die Zielspur das Anhalten zu spät: Der LD2450 glättet intern und führt ein Ziel
-  nach dem Anhalten noch eine Weile mit Tempo weiter (4.1, gehaltene Ziele). Die Statistik stammt
-  damit zum Teil aus dem Bewegungsmodell des Sensors, nicht aus den Menschen.
+  je √s; höchstens 2 m/s. **Gemessen** (5.10., 4,6 h Zielspuren des LD2450, Wege ab 1,5 m): Tempo im
+  Median 0,8 m/s, 95 % unter 1,6 m/s; Geschwindigkeitsänderungen über 2–3 s wie 0,6 m/s²/√s (über
+  0,5 s mehr, darin steckt das Messrauschen der Geschwindigkeit). Bis 0.6.17 angenommen: 1,0. Damit
+  war die Richtung eines Wegs schnell vergessen, und wer zur Tür hinausging, blieb im Modell davor
+  stehen (5.10., 16:44). 12 Seeds: Leon geht hinaus 7,9 % → 2,8 % falsch, Abend 8,9 % → 0 %, Drehbuch
+  9,4 % → 9,3 %. Gegenprobe: 0,45 und 0,8 sind beide schlechter.
+- **Stehen / Sitzen:** Ort fast fest, Wackeln 0,02 m je √s. **Gemessen.**
+- **Wechsel gehen → stehen:** Rate `λ_stop` = 0,5 /s, überall gleich (angenommen). *Gemessen und
+  verworfen:* In den Zielspuren dauert ein Weg (ab 1,5 m) im Median 4 s, in den ersten 2 s bleibt fast
+  niemand stehen, danach 10–20 % je s. Damit im Modell: Drehbuch 12,7 % statt 9,3 %, Leon geht hinaus
+  10,4 %. Vermutlich misst die Zielspur das Anhalten zu spät: Der LD2450 glättet intern und führt ein
+  Ziel nach dem Anhalten noch mit Tempo weiter (4.1, gehaltene Ziele). Die Statistik stammt damit zum
+  Teil aus dem Bewegungsmodell des Sensors, nicht aus den Menschen.
 - **Wechsel stehen → gehen:** Rate `λ_go(d) = 0,58 / (d + 5,6 s)`, abhängig davon, wie lange jemand
-  schon steht oder sitzt (lange Sitzende stehen seltener auf). Gemessen an den Sitzdauern.
-- **Karte der Bewegungen (Maps of Dynamics, CLiFF-Map; Kucner et al. 2017), offline geprüft (5.10.).**
-  Gelernt je 50-cm-Feld aus Rohzielen des LD2450, die der andere Sensor bestätigt (unabhängig vom
-  Filter), auf 70 % der Zeit (3249 Geschwindigkeiten, 56 Felder); geprüft auf den übrigen 30 %: Wo ist
-  eine gehende Person in 1–3 s (618 Startpunkte)? Die Karte zieht die Geschwindigkeit mit 0,5 /s zu
-  einer dort gelernten. Gegenüber der reinen Trägheit: nach 1 s nichts, nach 3 s 13 cm weniger Fehler.
-  Dieselbe Rechnung mit allen Geschwindigkeiten ohne Ort bringt aber genauso viel (14 cm): Der Gewinn
-  kommt daher, dass Menschen ihr Tempo und ihre Richtung nicht 3 s halten, nicht vom Ort. Eine Karte
-  je Ort lohnt mit dieser Datenmenge nicht und trüge das Risiko, Fehler als Verhalten zu lernen (unten).
-  *Ohne Ort, im Filter geprüft (5.10.):* Die Geschwindigkeit kehrt mit einer Korrelationszeit zu
-  typischen zurück (integrierter Ornstein-Uhlenbeck-Prozess, kurzfristiges Rauschen unverändert).
-  Wahrheitsdatenbank, 12 Seeds, T = 2,5 s gegen 0.6.18: Drehbuch 9,3 % → 7,4 %, leeres Haus mit
-  angedocktem Roboter 25 % → 13 %, aber Leon geht hinaus 2,8 % → 4,2 % (verschwindet langsamer) und
-  Abend 0 % → 16 % (in 2 von 12 Läufen fehlt die Sitzende auf dem Sofa 9 Minuten). T = 1,5 s und 4 s
-  schlechter. Nicht übernommen: Es verbessert, was weniger zählt, und verschlechtert, was zählt.
-- **Kein Lernen je Ort.** Geplant war, beide Raten und die Aussetzer je 50-cm-Feld zu lernen (Sofa:
-  lange Sitzdauern, Durchgang: kurze). Das Modell würde dabei aber eigene Messfehler als Verhalten
-  lernen und verstärken (auf den Daten bestätigt, 4.10.). Das Lernen war aus, die Raster sind
-  seit 0.6.7 entfernt.
+  schon steht oder sitzt (lange Sitzende stehen seltener auf). **Gemessen** an den Sitzdauern.
 - **Warum „geht / steht“ ein eigener Zustand ist und nicht aus der Geschwindigkeit folgt:** Er trägt
-  die Sichtbarkeit. Ein Sitzender fällt beim LD2450 oft lange aus, ein Gehender nur kurz (3.3). Im
-  Drehbuch mit der Aussetzer-Statistik der Sitzenden auch für Gehende: 84,6 % statt 94,4 %
-  (8 Läufe). Die Dauer im Zustand (Aufstehrate abhängig von der Sitzdauer) war im Drehbuch dagegen
-  nicht nachweisbar nützlich (konstante Rate: 95,2 %); die Sitzzeiten dort sind aber nur 1–3 min.
-- **Wände:** Orte außerhalb des freien Raums haben Wahrscheinlichkeit 0.
-- **Körper:** Zwei Personen stehen nicht im selben Fleck. Abstandsverteilung zweier Personen
-  **gelernt** aus sicheren Paaren. Prior: unter 0,4 m selten.
+  die Sichtbarkeit. Ein Sitzender fällt beim LD2450 oft lange aus, ein Gehender nur kurz (3.3). Mit
+  der Aussetzer-Statistik der Sitzenden auch für Gehende war das Drehbuch deutlich schlechter.
+- **Wände:** Orte außerhalb des freien Raums haben Wahrscheinlichkeit 0. Gehende kommen nur durch Türen
+  in einen anderen Raum.
+- **Körper:** Zwei Personen stehen nicht näher als 0,3 m beieinander (angenommen).
+- *Geprüft und verworfen (5.10.):*
+  - **Karte der Bewegungen** (Maps of Dynamics, CLiFF-Map; Kucner et al. 2017), offline: gelernt je
+    50-cm-Feld aus Rohzielen des LD2450, die der andere Sensor bestätigt, auf 70 % der Zeit (3249
+    Geschwindigkeiten, 56 Felder); geprüft auf den übrigen 30 %: Wo ist eine gehende Person in 1–3 s?
+    Die Karte zieht die Geschwindigkeit mit 0,5 /s zu einer dort gelernten: nach 3 s 13 cm weniger
+    Fehler. Dieselbe Rechnung ohne Ort bringt genauso viel (14 cm). Der Ort trägt bei dieser Datenmenge
+    nichts bei.
+  - **Rückkehr zu typischen Geschwindigkeiten** (integrierter Ornstein-Uhlenbeck-Prozess, T = 2,5 s),
+    im Filter, 12 Seeds gegen 0.6.18: Drehbuch 9,3 % → 7,4 %, leeres Haus mit angedocktem Roboter 25 %
+    → 13 %, aber Leon geht hinaus 2,8 % → 4,2 % und Abend 0 % → 16 % (eine Sitzende fehlt 9 Minuten).
+    Es verbessert, was weniger zählt, und verschlechtert, was zählt.
+  - **Lernen je Ort** (4.10.): Raten und Aussetzer je 50-cm-Feld (Sofa: lange Sitzdauern, Durchgang:
+    kurze). Das Modell lernte dabei eigene Messfehler als Verhalten und verstärkte sie.
 
-### 3.2 Türen
+### 3.2 Türen, Bereiche ohne Sensor, außer Haus
 - Wer sich durch eine Tür bewegt, ist danach im Bereich dahinter. Das ist eine Folge der Bewegung,
-  kein eigenes Ereignis, und gilt in beide Richtungen: Wer in der Küche durch die offene Tür gesehen
-  wird und herausgeht, läuft heraus.
+  kein eigenes Ereignis, und gilt in beide Richtungen.
 - Wer in einem Bereich *Rₖ* ist, kommt mit der Ausfallrate `h_k(Alter)` an einer seiner Türen wieder
-  heraus, gehend, in den Raum hinein. `h_k` stammt aus den **gelernten** Aufenthaltsdauern je Bereich.
-  Prior heute: geschlossene Bereiche (Küche, Balkon) Median 2 min, offener Flur-Bereich 30 min. Später
-  je Tageszeit (nachts Schlafzimmer).
-- **Diese Schätzung ist ungenau, und das Modell weiß das.** Verwendet wird nicht eine gelernte Kurve,
-  sondern die Vorhersage über alle zu den bisherigen Besuchen passenden Kurven (Bayes-Prädiktive):
-  - Bei wenigen Besuchen ist sie breit.
-  - Sie hat immer einen schweren Schwanz: Je länger jemand schon dort ist, desto langsamer sinkt die
-    Chance, dass er gleich herauskommt. Wer deutlich länger bleibt als üblich, bleibt plausibel.
-- Die Dauer zählt ohnehin nur so weit, wie die Tür unbeobachtet ist. Wer herauskommt, geht durch die
-  Tür und wird dort normalerweise gesehen. Solange das nicht passiert, ist „noch drin“ die beste
-  Erklärung, gleich wie lange es dauert.
-- **Draußen** hat keine feste Bevölkerung. Ankunftsrate `α` an jeder Tür nach draußen, **gelernt**
-  (Prior: 1 Person pro Tag). Wer im Flur-Bereich ist, kann über diese Tür auch nach draußen gehen.
-- *Stand 0.6.1:* Gebaut ist nur der Teil für die Bewohner. Jede Person kann auch draußen sein, verlässt
-  das Haus aus dem Flur-Bereich (im Mittel nach 2 h dort) und kommt wieder (im Mittel nach 4 h).
-  **Unbekannte Neuankömmlinge** sind ausprobiert, aber noch nicht drin. Im jetzigen Rechenverfahren wird
-  aus jeder Fehlzuordnung an einer Tür sofort eine dauerhafte zusätzliche Person: Ein paar Sekunden
-  ähnlicher Messungen zählen wie viele unabhängige Beweise und überwinden jede kleine Ankunftsrate. Das
-  braucht zuerst die Geister mit Lebensdauer (3.4). Auf dem Drehbuch-Durchlauf fiel das Ergebnis damit
-  auf 59–87 %.
+  heraus, gehend, in den Raum hinein. `h_k` stammt aus der Verteilung der Aufenthaltsdauern: Annahme
+  geschlossene Bereiche (Balkon) Median 2 min, offene Bereiche (Flur-Gruppe mit Schlafzimmer) 30 min,
+  breit gestreut, mit schwerem Schwanz (wer länger bleibt als üblich, bleibt plausibel). Dazu kommen
+  die beobachteten Besuche, je wie ein Teil der Verteilung.
+  *Offen:* Seit 0.6.11 werden keine neuen Besuche mehr gelernt; verwendet wird die Annahme.
+- Die Dauer zählt nur so weit, wie die Tür unbeobachtet ist. Wer herauskommt, geht durch die Tür und
+  wird dort normalerweise gesehen. Solange das nicht passiert, ist „noch drin“ die beste Erklärung.
+- **Außer Haus:** Wer in einem offenen Bereich ist, verlässt das Haus mit der Rate 1/(2 h); wer außer
+  Haus ist, kommt mit 1/(4 h) je Weg nach draußen wieder (angenommen).
+- *Offen: unbekannte Neuankömmlinge.* Gedacht als gelernte Ankunftsrate an der Tür nach draußen. Im
+  Versuch (0.6.1) wurde aus jeder Fehlzuordnung an einer Tür sofort eine dauerhafte zusätzliche Person.
+  Der passende Filtertyp wäre Labeled Multi-Bernoulli (Reuter, Vo, Vo, Dietmayer 2014): je Person
+  eine eigene Existenz.
 
 ### 3.3 Nicht gesehen werden
 Es gibt keinen eigenen Zustand „ausgesetzt“ und keine Schwelle „verloren“. Es gibt eine
@@ -126,90 +116,64 @@ des Orts (4.1) auch je Ort:
 > `U_s(x, τ)` = P(eine Person, die an x bleibt, wird von Sensor s τ Sekunden lang nicht detektiert)
 
 - Für kleine τ ist das die gewöhnliche Fehlquote eines Frames (1 − Erkennungswahrscheinlichkeit).
-  Für große τ zeigt sie, wie lange Verdeckungen an dieser Stelle dauern: Sofalehne lange, Raummitte
-  praktisch nie.
-- **Gemessen** auf den Aufnahmen: wie lange sichere Personen ohne Treffer blieben (Stehende: langer
-  Schwanz bis Minuten; Gehende: im Mittel 0,7 s). Je Ort gelernt wird das nicht: Wie beim Verhalten
-  (3.1) würde das Modell eigene Fehler als „hier fällt man oft aus“ lernen.
+  Für große τ zeigt sie, wie lange Aussetzer dauern.
 - Kein Treffer im Frame gewichtet „die Person ist an x“ mit `U_s(x, τ+Δt) / U_s(x, τ)`. τ ist die Zeit
-  seit dem letzten Treffer dieser Person bei diesem Sensor.
-  *Offen:* Eigentlich gehört ein langer Aussetzer zu einer Haltung an einem Ort, nicht zur Person.
-  Wer aufsteht und geht, müsste wieder normal sichtbar sein. Umgesetzt (τ ab dem letzten Wechsel zu
-  „geht“) hat das auf dem Drehbuch-Durchlauf deutlich verschlechtert (89 % → 71–73 %). Das Zusammenspiel
-  ist noch nicht verstanden.
-  Gehende im Blickfeld werden nach 0,3–1,2 s wieder gefunden (gemessen). Die langen Lücken der Tabelle
-  für Gehende waren Leute, die das Blickfeld verlassen hatten. Seit der gemessenen Geisterdichte (3.4)
-  misst die kurze Lücke auch nicht mehr schlechter (92,3 % gegenüber 92,2 %). Die alte Tabelle hatte die
-  viel zu hohe Geisterdichte ausgeglichen. Fehlmessungen hängen zusammen, und genau
-  das bildet `U` ab. Unabhängig gerechnet wären 3 s ohne Treffer bei 90 % Erkennung 0,1³⁰, also
-  „unmöglich“.
+  seit dem letzten Treffer dieser Person bei diesem Sensor, Δt die Zeit, für die der Frame steht (4.1:
+  leere Frames lässt die Firmware aus).
+- **Gemessen:** Stehende fallen im Mittel alle 70 s aus, mit langem Schwanz; die Tabelle reicht bis
+  120 s. Gehende im Blickfeld werden nach 0,3–1,2 s wieder gefunden (im Mittel 0,7 s); die langen Lücken
+  Gehender waren Leute, die das Blickfeld verlassen hatten.
+- **Der Schwanz** jenseits der Tabelle fällt mit ihrer letzten Steigung weiter, ein Drittel je Minute.
+  **Gemessen** (5.10., 40 min mit genau einer ruhigen Person): Wer 10–80 s nicht gesehen wurde, wird
+  mit 1–7 % je Frame wiedergefunden, nicht immer seltener. Bis 0.6.15 fiel der Schwanz wie 1/τ: Eine
+  Person, die 20 Minuten niemand gesehen hatte, blieb mit 1:4,5 noch eine Stunde ungesehen, und ein
+  Phantom blieb mit ihr.
+- Wie sichtbar Sitzende wirklich sind, hängt stark vom Ort ab (gemessen 5.10.): am Tisch 1 m vor dem
+  Esszimmer-Sensor in 93 % der Frames, auf dem Sofa 5–6 m entfernt in 8–14 %, mit Lücken bis 94 s
+  (Wohnzimmer-Sensor) und 317 s (Esszimmer-Sensor). Je Ort gelernt wird das nicht (1., Punkt 5).
+- Daraus folgt ohne Sonderregel: An einer schlecht sichtbaren Stelle, ohne gesehenes Weggehen, ist
+  „noch dort“ die wahrscheinlichste Möglichkeit. An einer gut sichtbaren Stelle verliert sie schnell,
+  und die Wahrscheinlichkeit geht an die Wege, die ungesehen möglich waren, und die Orte dahinter.
+  Dass diese Alternativen nicht aussterben, sichert die Inferenz (5, Komponenten je Ort).
+- *Offen:* Eigentlich gehört ein langer Aussetzer zu einer Haltung an einem Ort, nicht zur Person.
+  Umgesetzt (τ ab dem letzten Wechsel zu „geht“) war das Drehbuch deutlich schlechter.
 
-**Der Schwanz** jenseits der Tabelle (120 s) fällt mit ihrer letzten Steigung weiter, ein Drittel je
-Minute. **Gemessen** (5.10., Wahrheitsdatenbank, 40 min mit genau einer ruhigen Person): Wer 10–80 s
-nicht gesehen wurde, wird mit 1–7 % je Frame wiedergefunden, nicht immer seltener. Bis 0.6.15 fiel der
-Schwanz wie 1/τ: Eine Person, die 20 Minuten niemand gesehen hatte, blieb mit 1:4,5 noch eine Stunde
-ungesehen, und ein Phantom blieb mit ihr.
-
-Daraus folgt ohne Sonderregel: An einer schlecht sichtbaren Stelle, ohne gesehenes Weggehen, ist „noch
-dort“ die wahrscheinlichste Möglichkeit. An einer gut sichtbaren Stelle verliert sie schnell, und die
-Wahrscheinlichkeit verteilt sich auf die Wege, die ungesehen möglich waren, und die Türen dahinter.
-
-*Gemessen und verworfen (5.10., Auswertung `tools/evaluate.py` auf 5 Episoden):*
+*Gemessen und verworfen (5.10.):*
 - **Gemeinsame Aussetzer.** Sitzende verlieren beide LD2450 gleichzeitig etwa 109-mal pro Stunde für
-  mindestens 1 s (Hälfte über 3 s, 1 % über 30 s, längster 58 s; 2,1 h Sitzen). Lange Aussetzer
-  (Minuten) sind dagegen meist die eines einzelnen Sensors, während der andere weiter sieht. Das Modell
-  rechnet die Sensoren unabhängig und hält gemeinsame Aussetzer damit für fast unmöglich. Ein
-  gemeinsamer Zustand „gerade für alle unsichtbar“ je Partikel (gemessene Rate und Dauer) machte aber
-  Phantome billiger: Drehbuch 14,2 % falsche Sekunden statt 6,2 %.
-- **„Die Person ist in Wirklichkeit woanders“** mit kleiner Rate (1/2 h bis 1/2 min, gezogen wie bei
-  einem Start ohne Wissen): Phantome lösen sich, und eine vom Modell verlorene Person kommt nach etwa
-  7 Minuten wieder (Abend 2 % statt 34 %). Aber echte Sitzende verschwinden in jedem Fall mit:
-  Drehbuch 15–23 %. Beides ist wieder entfernt; das Problem (eine falsche frühe Entscheidung lässt sich
-  nicht mehr korrigieren) bleibt offen.
-- Nochmals mit 0.6.15 (5.10. nachmittags), beides allein und zusammen, „woanders“ auch zurück in den
-  Raum (an Messungen ausprobiert): Drehbuch 22–35 % statt 9 %, fast nur zu wenige Personen. Eine frisch
-  eingespeiste Alternative schlägt eine echte Sitzende nach einer langen Lücke immer. Gelöst wurde das
-  Problem stattdessen ohne erfundene Rate: Die Alternativen sterben nicht mehr aus (Abschnitt 5,
-  Komponenten je Ort).
+  mindestens 1 s (Hälfte über 3 s, 1 % über 30 s). Ein gemeinsamer Zustand „gerade für alle unsichtbar“
+  je Partikel machte Phantome billiger: Drehbuch 14,2 % statt 6,2 %.
+- **„Die Person ist in Wirklichkeit woanders“** mit kleiner Rate (1/2 h bis 1/10 min), auch zurück in
+  den Raum, allein und mit den gemeinsamen Aussetzern: Phantome lösen sich, aber echte Sitzende
+  verschwinden mit (Drehbuch 15–35 %). Eine frisch eingespeiste Alternative schlägt eine echte Sitzende
+  nach einer langen Lücke immer. Gelöst wurde das ohne erfundene Rate (5, Komponenten je Ort).
 
 ### 3.4 Geister
 Je Sensor:
-- **Entstehen:** Poisson-Rate je Ort `β_s(x)`, **gelernt** als Geisterkarte (nur wo ein zweiter Sensor
-  gut hinsieht und nichts meldet; Startwert gemessen, unten). Zusätzlich mehr Geister in der Nähe von
-  Gehenden (Mehrwegeechos). Ohne die Karte war das Drehbuch in drei Messreihen jedes Mal etwas schlechter
-  (−0,9, −0,3, −1,7 Punkte; z. B. Spiegelungen durch die Küchentür als Person in der Küche).
-- **Lebensdauer:** **gelernte** Verteilung, die meisten unter 1 s, manche viele Sekunden an derselben
-  Stelle. Wo der Nutzer Störzonen zeichnet (Ventilator, Vorhang), ist `β` dort hoch.
-- Ein Geist behält die Radialgeschwindigkeit, mit der er auftaucht (stehende Echos etwa 0; ein vom
-  LD2450 nachgeführtes Ziel genau seine letzte), rückt mit seinen eigenen Zielen mit und ist nur für
-  seinen Sensor da.
-
-*Ein Geist, der 5 s an derselben Stelle steht, ist damit erklärbar. Dafür muss keine Person entstehen,
-die dann versteckt bleibt.*
-
-*Gemessen (4.10.):*
-- In den leeren Räumen nachts (1–6 Uhr) meldet der Esszimmer-Sensor 0,4 Geister pro Stunde, je
-  etwa 1,5 s lang. Der Wohnzimmer-Sensor meldet gar nichts.
-- Neben sitzenden Personen gab es im Drehbuch keine Geister.
-- Geister entstehen also fast nur als Echos von Gehenden. Die Simulation, die an die Aufnahmen
-  angepasst ist, rechnet mit etwa 4 kurzen Geistern pro Minute, solange jemand läuft.
-- Umgesetzt in 0.6.4: Grunddichte 1e-4 je m² und Frame (vorher 0,02, also um Größenordnungen zu hoch)
-  plus 3e-3 je m² und Frame je gehender Person, irgendwo im Blickfeld.
-
-*Geister als Objekte mit Lebensdauer* (umgesetzt in 0.6.4): Jede Messung kann von einer Person, einem
-bestehenden Geist des Sensors oder einem neuen Geist kommen. Ein Geist lebt im Mittel 1,5 s (gemessen) und ist nie dort, wo wahrscheinlich ein Körper
-steht. Ein Echo aus 17 Messungen in 1,5 s an derselben Stelle zählt damit als *ein* Geist, nicht als 17
-Beweise für eine Person. Mit der früheren, viel zu hohen Geisterdichte erklärte das Modell Sitzende als
-„Person im Aussetzer plus Geist“ (80–89 %). Mit der gemessenen Dichte steht der Drehbuch-Durchlauf bei
-91 %, und die Phantom-Person nach dem Kalibrierlauf am 4.10. um 18:07 verschwindet.
-
-*Geister mit Geschwindigkeit* (0.6.10): Bis dahin hatte ein Geist keine Radialgeschwindigkeit. Am 5.10.
-um 06:20 meldete der Wohnzimmer-Sensor im leeren Esszimmer 16 Frames lang ein Ziel mit immer
-derselben Geschwindigkeit (−0,72 m/s, nachgeführt), das langsam weiterrutschte. Im ersten Frame galt es
-zu 99,7 % als Geist; ab dem dritten erklärte eine gehende Person die Geschwindigkeit tausendfach besser,
-und daraus wurde eine Person, die stundenlang unsichtbar im Raum blieb. Mit Geistern, die ihre
-Geschwindigkeit behalten und mitrücken: in der Nacht 23:15–06:28 keine Phantom-Sekunde (3 Läufe, vorher
-bis 5 Minuten), Drehbuch 96,7 % (12 Läufe, vorher 95,6 %).
+- **Entstehen:** Dichte je Ort und Frame. Grundwert 1e-4 je m² (**gemessen**: nachts in leeren Räumen
+  0,4 Geister pro Stunde beim Esszimmer-Sensor, keine beim Wohnzimmer-Sensor), plus 3e-3 je m² je
+  gehender Person irgendwo im Blickfeld (Mehrwegeechos; **gemessen**: neben Sitzenden keine Geister,
+  etwa 4 kurze pro Minute, solange jemand läuft). Je Ort **gelernt** als Geisterkarte, aber nur, wo ein
+  zweiter Sensor gut hinsieht und nichts meldet (7). Ohne die Karte war das Drehbuch in drei Messreihen
+  schlechter (z. B. Spiegelungen durch die Küchentür als Person in der Küche). Die Küche sieht seit 5.10.
+  ein eigener Sensor, aber kein zweiter: Dort gilt nur der Grundwert.
+- **Lebensdauer:** im Mittel 1,5 s, exponentiell (**gemessen**: Nachtgeister 1,5 s, Echos etwa 1 s).
+  Ein lebender Geist erzeugt in 85 % der Frames ein Ziel an seinem Ort. Ein Echo aus 17 Messungen in
+  1,5 s an derselben Stelle zählt damit als *ein* Geist, nicht als 17 Beweise für eine Person. Ein Geist
+  ist nie dort, wo wahrscheinlich ein Körper steht.
+- **Geschwindigkeit** (0.6.10): Ein Geist behält die Radialgeschwindigkeit, mit der er auftaucht
+  (stehende Echos etwa 0, ein vom LD2450 nachgeführtes Ziel genau seine letzte), und rückt mit seinen
+  eigenen Zielen mit. Vorher wurde aus einem nachgeführten Ziel mit −0,72 m/s im leeren Esszimmer eine
+  Person, die stundenlang unsichtbar blieb (5.10., 06:20).
+- Bis 0.6.14 gab es von Hand gezeichnete Störzonen; sie verwarfen jede Messung darin, auch die echter
+  Personen. Entfernt; dafür ist die gelernte Geisterkarte da.
+- *Offen:*
+  - **Spiegelbilder an Wänden.** Der Küchen- und der Esszimmer-Sensor sehen eine gehende Person
+    zusätzlich gespiegelt an der Küchenwand, gegenläufig (5.10., 19:18). Hinter der Wand werden sie
+    verworfen, davor gelten sie als Geister oder ziehen eine zweite Person an. Sie ließen sich aus der
+    Lage der Person und der Wand vorhersagen.
+  - **Der Saugroboter.** Fahrend und angedockt meldet der Wohnzimmer-Sensor ihn als Ziel; er kann als
+    Person gelten (für Leon nicht schlimm). Lage und Zustand stünden in Home Assistant
+    (`camera.dobby_map`, `vacuum.dobby`).
 
 ## 4. Messmodell (wie ein Frame entsteht)
 
@@ -217,229 +181,172 @@ bis 5 Minuten), Drehbuch 96,7 % (12 Läufe, vorher 95,6 %).
 Gegeben der Zustand:
 - Jede Person erzeugt ein Ziel oder nicht, wie in 3.3 beschrieben: die Wahrscheinlichkeit eines Treffers
   ist `1 − U_s(x, τ+Δt) / U_s(x, τ)`.
-- Zwei Personen im Abstand d erzeugen mit Wahrscheinlichkeit `res(d)` zwei Ziele, sonst
-  eines dazwischen. `res(d)` **gemessen** (0 % unter 0,25 m, 41 % bei 0,75–1 m, rund 75 % ab 1 m), **gelernt**.
-- Erkennungswahrscheinlichkeit je Ort und Sensor aus der Geometrie: Sichtfeld, Reichweite, Wände.
+- **Erkennungswahrscheinlichkeit** je Ort und Sensor aus der Geometrie: Sichtfeld, Reichweite, Wände.
   **Gemessen** (5.10., 22 h Aufnahmen; eine gehende Person, die der andere Sensor sicher sieht): bis
   7 m so gut wie nah (0,8–1,0 bei 5,5–7 m), und 10° über den nominellen Rand des Sichtfelds hinaus
   noch etwa die Hälfte. Angenommen wird darum: voll bis 15° vor dem Rand, 0,5 am Rand, 0 erst 15°
   dahinter; voll bis 1 m über die nominelle Reichweite, dann abfallend. Bis 0.6.16 fiel sie schon ab
-  4,5 m und 15° vor dem Rand auf 0,4 (0,18–0,48 bei 5,5–7 m) und war außerhalb 0. Die Ränder sahen
-  blind aus, und die Wolke einer ungesehenen Person floss dorthin und blieb: Partikel, die an gut
-  gesehene Stellen laufen, verlieren Gewicht, übrig bleiben die an den angeblich blinden (5.10., 16:44,
-  eine Person „hing“ an der linken Wohnzimmerwand, nachdem Leon in den Flur gegangen war).
-  Bis 0.6.6 wurde sie zusätzlich je 25-cm-Feld gelernt; im Drehbuch brachte das nichts, entfernt.
-- Messort: `z ~ N(x, R_s(r))`, Streuung nach Entfernung r. Die beiden Sensoren messen dieselbe
-  sitzende Person am Sofa bis 0,5 m auseinander. Ein je 50-cm-Feld gelernter Versatz (halbe-halbe auf
-  die Sensoren) wurde ausprobiert (0.6.7): Das Drehbuch zählte damit öfter zu viele Personen (Median
-  95 s gegen 78 s), also nicht übernommen.
-- Radialgeschwindigkeit: `N(Projektion der Geschwindigkeit, σ_v)` mit σ_v = 0,25 m/s. **Gemessen**
-  (4.10.) ist mehr: 0,40 m/s beim Gehen, 0,12 m/s im Stehen. Noch nicht übernommen.
+  4,5 m und 15° vor dem Rand auf 0,4 und war außerhalb 0. Die Ränder sahen blind aus, und die Wolke
+  einer ungesehenen Person floss dorthin und blieb (5.10., 16:44: eine Person „hing“ an der linken
+  Wohnzimmerwand, nachdem Leon in den Flur gegangen war). Bis 0.6.6 wurde sie zusätzlich je 25-cm-Feld
+  gelernt; das brachte nichts.
+- **Messort:** `z = x + L b_s + w`, Streuung `L` nach Entfernung (entlang der Sichtlinie
+  0,15 m + 2 % der Entfernung, quer 0,10 m + 5 %, zum Rand des Sichtfelds mehr).
 - **Der Fehler bleibt eine Weile** (0.6.13). Der LD2450 glättet intern, und jeder Sensor sieht eine
   Person ein Stück woanders. **Gemessen** (Frau allein am Esstisch, 5.10.): Ortsfehler korrelieren von
   Frame zu Frame mit 0,98, nach 1 s mit 0,8, nach 3 s mit 0,5, nach 10 s nicht mehr; der Wohnzimmer-
   Sensor (6,5 m entfernt) wanderte seitlich zwischen 1,0 und 1,85 m, während der Esszimmer-Sensor
   stetig 1,6 m maß.
-  Modell: Jedes Partikel trägt je Sensor einen Versatz `b_s` (wo das Ziel dieses Sensors gerade auf der
-  Person sitzt), in Einheiten der Streuung (entlang der Sichtlinie, quer). `b_s` wandert als
+  Modell: Jedes Partikel trägt je Sensor einen Versatz `b_s` in Einheiten der Streuung. `b_s` wandert als
   Ornstein-Uhlenbeck-Prozess mit Korrelationszeit 1 s und 90 % der Streuung; 10 % sind in jedem Frame
-  neu. `z = x + L b_s + w`. Der Versatz wird nicht gezogen, sondern je Partikel als Gauß (Mittel,
-  Varianz) mitgeführt und bei jedem Treffer wie ein Kalman-Filter fortgeschrieben (Rao-Blackwell); die
-  Zuordnung zu einem Ziel wird dafür nach ihrem Anteil gezogen. Ohne Treffer kehrt er zur Vorgabe
-  zurück: Die erste Messung zählt genau wie vorher, eine anhaltende Abweichung aber einmal je
-  Korrelationszeit, nicht zehnmal je Sekunde.
-  Ohne das erklärte „zwei Personen, jeder Sensor sieht eine“ einen wandernden Wohnzimmer-Sensor besser
-  als „eine Person, ein Sensor misst 0,5 m daneben“: Jeder Frame bestrafte die Abweichung neu, während
-  der zweiten Person das Nicht-gesehen-Werden nach den ersten Sekunden fast nichts mehr kostete (der
-  lange Aussetzer-Schwanz). So entstanden nach einem Neustart zwei Personen am Tisch und am Sofa
-  (Wahrheitsdatenbank, 12 Seeds: Reset 15 % → 0 %, Abend 25 % → 0 %).
-  Ausprobiert: Korrelationszeit 3 s (Drehbuch 16 %, Orte bleiben an der Stelle der ersten Sekunden
-  hängen, die Wolke findet den richtigen Ort zu langsam wieder), 0,5 s (Drehbuch 7,7 %), 30 % neu je
-  Frame (Klone wieder 16 %). Früher (0.6.x) verworfen: jedes Partikel merkt sich nur seinen letzten
-  Fehler ganz (ohne Vorgabe, ohne Rückkehr): Personen wurden gegenüber Geistern zu stark.
-  **Offen:** Mit dem ehrlicheren LD2450 hat der LD2410C mehr Gewicht beim Ort. Am Esstisch (1,1 m vor dem
-  Esszimmer-Sensor) liegt die Energie der Person in den Stufen 2–3 statt 1 und zieht die Wolke 0,1–0,2 m
-  nach außen. Für die Zählung ohne Folgen.
-- **Zwei nah beieinander, ein Ziel (offen).** Wer weniger als 1 m neben jemand anderem steht, bekommt
-  oft kein eigenes Ziel (Auflösung `res(d)`, oben). Das Modell rechnet das derzeit nicht ein: Jede
-  Person wird unabhängig erkannt oder nicht. Zwei Versuche wurden wieder entfernt:
-  - 0.6.5: das Fehlen eines eigenen Ziels neben jemand anderem kostete nichts. Messen die beiden
-    Sensoren dieselbe Person an verschiedenen Stellen (am Esstisch 0,5 m auseinander), erklärte
-    „zwei Personen, jeder Sensor sieht eine“ jeden Frame besser als „eine Person, beide 25 cm
-    daneben“: nach einem Neustart zwei Personen am Tisch (5.10.). Die richtige Rechnung bräuchte
-    den Ort des gemeinsamen Ziels (zwischen beiden) und den festen Versatz der Sensoren.
-  - ein gemeinsames Paar-Ziel in der Zuordnung (das Ziel zieht beide Wolken mit): eine unsichtbare
-    zweite Person direkt neben einer sichtbaren war fast kostenlos (B „folgte“ A aus dem Flur),
-    Drehbuch 69–73 %, doppelte Rechenzeit.
-  Ohne die Auflösung bleibt beim gemeinsamen Gehen (Drehbuch-Schritt 8) manchmal eine Person zurück.
-- Jeder lebende Geist erzeugt ein Ziel an seinem Ort.
-- Mehr als 3 Ziele: der Sensor meldet 3 davon. Ein voller Frame sagt also nichts über die Fehlenden.
+  neu (`w`). Der Versatz wird nicht gezogen, sondern je Partikel als Gauß mitgeführt und bei jedem
+  Treffer wie ein Kalman-Filter fortgeschrieben (Rao-Blackwell). Die erste Messung zählt damit wie ohne
+  Versatz, eine anhaltende Abweichung aber einmal je Korrelationszeit, nicht zehnmal je Sekunde.
+  Ohne das erklärte „zwei Personen, jeder Sensor sieht eine“ einen wandernden Sensor besser als „eine
+  Person, ein Sensor misst 0,5 m daneben“: nach einem Neustart zwei Personen am Tisch oder Sofa (Reset
+  15 % → 0 %, Abend 25 % → 0 %). Ausprobiert: Korrelationszeit 3 s (Drehbuch 16 %: die Wolke findet den
+  richtigen Ort zu langsam wieder), 0,5 s (7,7 %), 30 % neu je Frame (Klone wieder 16 %).
+- **Radialgeschwindigkeit:** `N(Projektion der Geschwindigkeit, σ_v)` mit σ_v = 0,25 m/s.
+  *Offen:* **gemessen** (4.10.) sind 0,40 m/s beim Gehen und 0,12 m/s im Stehen.
 - **Leere Frames lässt die Firmware aus.** Solange weder der LD2450 ein Ziel noch der LD2410C Präsenz
   meldet, kommt nur alle 5 s ein Frame (Herzschlag). Jeder ausgelassene Frame war leer: Die ganze
   Lücke (bis 6 s; länger ist Datenverlust) ist Zeit ohne Treffer. Bis 0.6.16 zählte ein Frame höchstens
   1 s, und eine Person, die nichts mehr bestätigte, verlor nur ein Fünftel des Gewichts, das sie hätte
   verlieren müssen.
+- Ein lebender Geist erzeugt ein Ziel (3.4). Mehr als 3 Ziele: Der Sensor meldet 3 davon. Ein voller
+  Frame sagt also nichts über die Fehlenden.
+- *Offen:* **Zwei nah beieinander, ein Ziel.** Wer weniger als 1 m neben jemand anderem steht, bekommt
+  oft kein eigenes Ziel (**gemessen**: 0 % zwei Ziele unter 0,25 m, 41 % bei 0,75–1 m, rund 75 % ab
+  1 m). Das Modell rechnet das nicht ein. Zwei Versuche wurden wieder entfernt: Das Fehlen eines eigenen
+  Ziels neben jemand anderem kostete nichts (0.6.5; zwei Personen am Tisch, weil die Sensoren eine
+  Person 0,5 m auseinander messen), und ein gemeinsames Paar-Ziel in der Zuordnung (eine unsichtbare
+  zweite Person neben einer sichtbaren war fast kostenlos). Beim gemeinsamen Gehen (Drehbuch-Schritt 8)
+  bleibt deshalb manchmal eine Person zurück.
 
 **Vorverarbeitung**, keine Wahrscheinlichkeit, sondern Datenreinigung:
-- Bit-identisch wiederholte Ziele (Sensor friert ein) werden verworfen. **Gemessen:** echte Ziele ändern sich in jedem Frame.
-- Ziele hinter Wänden oder außerhalb aller Räume werden verworfen. Dort kann keine Person sein, es sind Spiegelungen.
+- Ziele hinter Wänden oder außerhalb aller Räume werden verworfen (bis 0,4 m hinter einer Wand gelten
+  sie noch). Dort kann keine Person sein, es sind Spiegelungen.
 - Ziele näher als 0,3 m am Sensor werden verworfen. Der Sensor hängt in etwa 1,5 m Höhe und strahlt nach
-  vorn. Eine Person so nah läge weit außerhalb seines senkrechten Blickwinkels, das Ziel kommt von der
-  Montage (gesehen am umgehängten Wohnzimmer-Sensor, 4.10.).
-- **Gehaltene Ziele.** Verliert der LD2450 ein Ziel, meldet er es noch gut eine Sekunde weiter, mit
-  Frame für Frame derselben Geschwindigkeit und kaum wanderndem Ort. **Gemessen:** bei 70 % aller
-  Zielenden 12–16 Frames dieselbe Geschwindigkeit (ungleich 0), mitten in einer Spur 8 Frames oder mehr
-  nur in 2,5 % (5 Frames oder mehr: 6 %). Ab 5 gleichen Frames gilt ein Ziel als gehalten und wird wie
-  ein eingefrorenes behandelt.
-  So stand der Wohnzimmer-Sensor 1,5 s lang auf +0,24 m/s vor der Küchentür, während die Person schon
-  in der Küche war.
-- Eingefrorene und gehaltene Ziele sind keine Messung, und sonst nichts Besonderes: Die Person dort
-  ist schlicht nicht detektiert, mit den Aussetzern von 3.3. Bis 0.6.18 galt dazu eine Sonderregel:
-  Bis 35 s sagte ein eingefrorenes Ziel nichts über seine Stelle, und die Uhr „nicht gesehen“ lief dort
-  nicht (eingeführt in 0.6.5 für jemanden, der still vor der Balkontür stand). **Gemessen** (5.10.,
-  Wahrheitsdatenbank): Ruhende Ziele in leeren Räumen sind zu 86 % eingefrorene, typisch 35 s lang,
-  bei echten ruhigen Personen sind es 22 %. Das Einfrieren ist vor allem die Spur einer Person, die
-  gerade gegangen ist; die Regel gab ihr 35 s Schonfrist. Ohne sie, 12 Seeds: Leon geht hinaus 2,8 % →
-  2,3 % falsch (weg nach 23 s statt 33 s), Küche 7,3 % → 5,4 %, Drehbuch gleich (9,3 %) mit weniger
-  Wechseln (9,0 → 6,5); leeres Haus mit angedocktem Roboter 25 % → 31 %. Mit 10 s statt 35 s war es
-  schlechter als beides (Leon geht hinaus 27 %).
-- Ziele in einem Bereich ohne Sensor (durch eine offene Tür gesehen, z. B. jemand in der Küche) sind
-  Messungen wie alle anderen: Personen haben auch dort einen Ort (Abschnitt 2).
+  vorn; eine Person so nah läge weit außerhalb seines senkrechten Blickwinkels.
+- **Eingefrorene Ziele** (bitgenau wiederholt; echte Ziele ändern sich in jedem Frame) und **gehaltene
+  Ziele** (Verliert der LD2450 ein Ziel, meldet er es noch gut eine Sekunde weiter, Frame für Frame mit
+  derselben Geschwindigkeit; **gemessen** bei 70 % aller Zielenden; ab 5 gleichen Frames) sind keine
+  Messung. Sonst sind sie nichts Besonderes: Die Person dort ist schlicht nicht detektiert, mit den
+  Aussetzern von 3.3. Bis 0.6.18 galt dazu eine Sonderregel: Bis 35 s sagte ein eingefrorenes Ziel
+  nichts über seine Stelle, und die Uhr „nicht gesehen“ lief dort nicht. **Gemessen** (5.10.): Ruhende
+  Ziele in leeren Räumen sind zu 86 % eingefrorene, typisch 35 s lang, bei echten ruhigen Personen sind es
+  22 %. Das Einfrieren ist vor allem die Spur einer Person, die gerade gegangen ist; die Regel gab ihr
+  35 s Schonfrist. Ohne sie, 12 Seeds: Leon geht hinaus 2,8 % → 2,3 % falsch (weg nach 23 s statt
+  33 s), Küche 7,3 % → 5,4 %, Drehbuch gleich mit weniger Wechseln der Anzeige; leeres Haus mit
+  angedocktem Roboter 25 % → 31 %.
+- Ziele in einem Bereich ohne Sensor (durch eine offene Tür gesehen) sind Messungen wie alle anderen:
+  Personen haben auch dort einen Ort (2).
 
 ### 4.2 LD2410C (Energie je Entfernungsstufe)
-- Energie je Stufe gegeben „leer“, „jemand sitzt in dieser Stufe“ oder „jemand geht in dieser Stufe“:
-  **gelernte** Histogramme. Mehrere Personen in einer Stufe: die stärkere zählt.
+- Energie je Stufe (0,75 m) gegeben „leer“, „jemand sitzt in dieser Stufe“ oder „jemand geht in dieser
+  Stufe“: **gelernte** Histogramme (7). Eine Stufe zählt erst als Beleg, wenn für sie genug gelernt ist:
+  100 Frames mit Person und 300 leer.
+- Als Beleg zählt die Energie nur innerhalb von ±25° vor dem Sensor; erzeugt wird sie von Personen
+  innerhalb von ±60°. Das Sofa und Dobbys Station liegen außerhalb des ausgewerteten Kegels.
 - Die Energien sind vom Gerät geglättet. Verwendet wird deshalb ein Wert je **gemessener**
   Korrelationszeit (mit einer Person in der Stufe 2,5–4 s, also alle 3 s), nicht jeder Frame. Das ist
   eine Aussage über das Gerät, keine Dämpfung.
-- Gelernt nur von sicher gesehenen Personen (LD2450 als unabhängiger Beleg). Wer nach einem langen
-  Aussetzer am selben Ort wieder gefunden wird, saß dort: Seine Stufe wird für diese Zeit rückwirkend
-  als besetzt gelernt, sonst würden verdeckte Sitzende als „leer“ gelernt.
-- Umgesetzt in 0.6.1. Auf dem Drehbuch-Durchlauf brachte das mit vorher gelernten Verteilungen
-  88 % → 93 % und weniger Ausreißer.
-- Eine Entfernungsstufe zählt erst als Beleg, wenn für sie genug gelernt ist: 100 Frames mit Person
-  und 300 leer. Nach dem Umhängen hatte die angenommene Verteilung während eines Kalibrierlaufs eine
-  Person an einer Stelle bestätigt, an der nie jemand war (4.10., 18:07).
-- **Mehr Energie kann nur für eine Person sprechen.** Eine Person fügt reflektierte Energie hinzu, nie
-  weniger: Das Verhältnis „mit Person“ zu „ohne“ steigt mit der Energie (angepasst an die gelernten
-  Zählungen, gewichtet, im Mittel 1). Bis 0.6.11 nicht: In Stufen, in denen der LD2410C eine sitzende
-  Person nicht mehr sieht (Esszimmer-Sensor, 4,5–6 m, das Sofa), hatte er „sehr niedrige Energie“ mit
-  Person häufiger gelernt als ohne (79 % zu 59 %). Niedrige Energie zählte dann alle 3 s mit Faktor 1,3
-  *für* eine Person in 5–6 m: eine Person an der Wohnzimmerwand, ohne ein einziges Ziel (5.10., 09:13
-  bis mittags). Mit der Bedingung sind diese Stufen ohne Beweis (Faktor 1).
+- **Mehr Energie kann nur für eine Person sprechen.** Das Verhältnis „mit Person“ zu „ohne“ steigt mit
+  der Energie (an die gelernten Zählungen angepasst). Bis 0.6.11 nicht: In Stufen, in denen der LD2410C
+  eine sitzende Person kaum sieht (Esszimmer-Sensor, 4,5–6 m, das Sofa), hatte er „sehr niedrige
+  Energie“ mit Person häufiger gelernt als ohne. Niedrige Energie zählte dann alle 3 s *für* eine Person
+  an der Wohnzimmerwand, ohne ein einziges Ziel (5.10., 09:13 bis mittags).
 - **Was andere erklären, zuerst; dann die Nachbarstufen.** Die genaue Schrägentfernung ist unsicher,
   deshalb mischt jede Stufe die Nachbarn (25/50/25 %). Energie, die eine andere Person wahrscheinlich
-  schon erklärt (innerhalb zweier Stufen von ihr), sagt über diese Person nichts. Das muss je Stufe
-  *vor* dem Mischen gelten. Bis 0.6.12 umgekehrt: Die Frau saß 1,1 m vor dem Esszimmer-Sensor, ihre
-  Energie füllte die Stufen 2 und 3 (Verhältnis 10). Ein Viertel davon landete gemischt in Stufe 4, wo
-  niemand es erklärte: Faktor 2,8 alle 3 s für eine Person 3–3,75 m vor dem Sensor. Die zweite
-  Bewohnerin des Modells wurde dort binnen 30 s von „außer Haus“ (92 %) zu „im Esszimmer“ (99 %), nie
-  von einem Ziel gesehen, und blieb eine Stunde (5.10., 08:47; Wand-Morgen 17 % → 0,4 %).
-- Störungen durch den LD2450 im selben Gehäuse (etwa alle 7 s) sind ein eigener, **gelernter**
-  Geisteranteil der LD2410C-Energie.
+  schon erklärt (innerhalb zweier Stufen von ihr), sagt über diese Person nichts, und das gilt je Stufe
+  *vor* dem Mischen. Bis 0.6.12 umgekehrt: Die Energie der Frau 1,1 m vor dem Esszimmer-Sensor füllte die
+  Stufen 2 und 3, ein Viertel davon landete in Stufe 4, und dort entstand eine zweite, nie gesehene
+  Person, die eine Stunde blieb (5.10., 08:47).
+- *Offen:* Am Esstisch liegt die Energie der Person in den Stufen 2–3 statt 1 und zieht die Wolke
+  0,1–0,2 m nach außen. Für die Zählung ohne Folgen. Die Störungen durch den LD2450 im selben Gehäuse
+  (etwa alle 7 s) sind nicht eigens modelliert.
 
 ## 5. Inferenz
 
 Gesucht ist die Verteilung über den Zustand gegeben alle Frames. Das Verfahren berechnet sie
 näherungsweise, aber es fügt **nichts hinzu**, was nicht im Modell steht.
 
-**Je Person eine Partikelwolke, das Raster als Feld-Speicher (wie FLIP):**
-- Jede Person ist eine Wolke aus etwa 500–1000 gewichteten Partikeln. Ein Partikel ist eine mögliche
-  Lage der Person:
-  - ein Ort mit Geschwindigkeit, Modus (geht / steht), Zeit im Modus und Zeit seit dem letzten Treffer
-    je Sensor; in Küche / Balkon / Flur-Bereich zusätzlich die Zeit seit dem Betreten,
-  - oder „draußen“ mit der Zeit seit dem Verlassen.
-
-  Die Wolke *ist* die Superposition. Sitzende sind Partikel mit Geschwindigkeit null.
-- Ein Kalman-Filter wird nicht gebraucht. Er ist der Sonderfall des Bayes-Filters für eine einzelne
-  Glockenkurve, und genau die gibt es hier oft nicht: „Balkon oder an der Tür“ sind zwei Berge, Wände
-  schneiden ab, tote Winkel verformen.
-- **Zwischen Frames** bewegt sich jedes Partikel nach 3.1:
-  - Wände halten es auf.
-  - Durch eine Tür kommt es in den Bereich dahinter.
-  - Aus einem Bereich kommt es nach 3.2 wieder heraus.
+**Je Person eine Partikelwolke (800 Partikel):**
+- Ein Partikel ist eine mögliche Lage der Person mit allen Größen aus 2. Die Wolke *ist* die
+  Superposition. Sitzende sind Partikel mit Geschwindigkeit null.
+- Ein einzelner Kalman-Filter reicht nicht: „Balkon oder an der Tür“ sind zwei Berge, Wände schneiden ab,
+  tote Winkel verformen. Nur der Versatz der Sensoren (4.1) wird je Partikel als Gauß gerechnet.
+- **Zwischen Frames** bewegt sich jedes Partikel nach 3.1 und 3.2.
 - **Jeder Frame** multipliziert jedes Partikelgewicht mit „wie gut erklärt die Person an dieser Stelle
-  diesen Frame“: Treffer nach 4.1, kein Treffer nach 3.3. Danach wird normiert. Wenn wenige Partikel
-  fast alles Gewicht tragen, wird neu gezogen (Resampling).
+  diesen Frame“: Treffer nach 4.1, kein Treffer nach 3.3; der LD2410C alle 3 s nach 4.2.
 - **Jeder Ort ist eine Komponente** (Mixture Particle Filter, Vermaak, Doucet, Pérez 2003): beobachteter
   Bereich, jeder Bereich ohne Sensor, außer Haus. Das Gesamtgewicht einer Komponente ist die
-  Wahrscheinlichkeit, dass die Person dort ist; es folgt exakt Bayes. Neu gezogen wird nur innerhalb
-  einer Komponente, und jede behält mindestens 16 Partikel. „Außer Haus“ ist damit dasselbe wie die
-  Existenzwahrscheinlichkeit eines Bernoulli-Filters (Ristic, Vo, Vo, Farina 2013).
+  Wahrscheinlichkeit, dass die Person dort ist; es folgt exakt Bayes. Wenn wenige Partikel fast alles
+  Gewicht tragen, wird neu gezogen, aber nur innerhalb einer Komponente, und jede behält mindestens 16
+  Partikel. „Außer Haus“ ist damit dasselbe wie die Existenzwahrscheinlichkeit eines Bernoulli-Filters
+  (Ristic, Vo, Vo, Farina 2013).
   Bis 0.6.15 wurde die ganze Wolke gemeinsam neu gezogen. Ein Ort mit kleinem Gewicht verlor dabei alle
   Partikel, und mit ihnen die Möglichkeit „die Person ist gar nicht hier“: Eine Person, die nichts mehr
-  bestätigte, konnte den Raum nur noch sichtbar durch eine Tür verlassen, also nie. So blieben
-  Phantome stundenlang (5.10.: zwei Personen im Wohnzimmer, niemand zu Hause). Der Gegenbeweis
-  (LD2410C ohne Energie, kein Treffer) traf alle Partikel gleich und verpuffte im Normieren.
-  Seltene Übergänge (Kommen aus einem Bereich, Heimkommen) werden nur dann öfter ausprobiert, wenn
+  bestätigte, konnte den Raum nur noch sichtbar durch eine Tür verlassen, also nie. So blieben Phantome
+  stundenlang (5.10.: zwei Personen im Wohnzimmer, niemand zu Hause). Der Gegenbeweis (LD2410C ohne
+  Energie, kein Treffer) traf alle Partikel gleich und verpuffte im Normieren.
+- **Seltene Übergänge** (aus einem Bereich kommen, heimkommen, aufstehen in Richtung einer Messung)
+  werden öfter ausprobiert, als sie vorkommen, und das Gewicht wird exakt korrigiert (Importance
+  Sampling). Das ändert nur die Rechengenauigkeit, nicht das Modell. Öfter ausprobiert wird nur, solange
   genug Partikel am Ort bleiben; sonst probierte sich ein Ort leer, und seine Masse sprang um hunderte
   Zehnerpotenzen.
-- **Seltene Übergänge** werden öfter ausprobiert, als sie vorkommen, und das Gewicht wird exakt
-  korrigiert (Importance Sampling). Ein Beispiel ist „kommt jetzt aus dem Flur“, sonst ist es zu selten,
-  um überhaupt ein Partikel an die Tür zu bringen. Das ändert nur die Rechengenauigkeit, nicht das Modell.
-- **Das Raster** (etwa 20 cm) speichert die gelernten Größen je Feld (3.1, 3.3, 3.4, 4.1). Es nimmt
-  außerdem die Summe der Partikelgewichte je Feld auf: für die Wärmekarte und die Zonenwerte.
-- **Was daraus von selbst folgt:**
-  - Ungesehene Wege: Partikel, die durch gut gesehene Felder müssten, verlieren dort ihr Gewicht.
-  - Die Rückkehr aus einem Bereich ist dieselbe Person.
-  - Die Wärmekarte jeder Person zeigt, warum das Modell etwas glaubt.
+- **Das Raster** (0,25 m) hält je Sensor die Erkennungswahrscheinlichkeit aus der Geometrie und die
+  gelernte Geisterkarte.
 
 **Mehrere Personen:** Die Wolken werden getrennt gerechnet. Was Personen verbindet, steckt in der
-Zuordnung je Frame:
-- Welches Ziel kommt von wem, welches von einem Geist oder einem neuen Geist, welches von einer
-  gerade hereinkommenden Person. Alle Zuordnungen werden mit ihrer Wahrscheinlichkeit aufsummiert,
-  wie beim JPDA-Verfahren.
-- Wer verdeckt wen (4.1, Auflösung), und zwei Körper nicht am selben Fleck (3.1).
-
-Das ist eine Näherung: Gemeinsame Abhängigkeiten über mehrere Frames hinweg gehen verloren. Ob sie reicht,
-zeigen die Drehbuch-Schritte 7 bis 9.
-
-**Anzahl der Personen:** Neue Personen entstehen nur in den Bereichsfeldern „draußen“ mit der Rate `α`
-und kommen von dort durch die Türen. Eine Person, deren Wolke fast ganz „draußen“ liegt, ist weg.
-Es gibt sie im Modell nicht mehr, bis wieder jemand hereinkommt.
-
-**Rechenaufwand:** 500–1000 Partikel je Person, mit numpy je Frame wenige Millisekunden. Die
-Partikelzahl ist eine Einstellung der Näherung, kein Modellparameter. Zeigt sich, dass die Wolke einen
-Gehenden zu unruhig verfolgt, kann jedes Partikel eine kleine Glocke für die Geschwindigkeit tragen
-(Rao-Blackwell). Das wäre eine Rechenverbesserung, kein zweites Modell.
+Zuordnung je Frame: Welches Ziel kommt von welcher Person, von einem bestehenden Geist oder von einem
+neuen Geist. Alle Zuordnungen werden mit ihrer Wahrscheinlichkeit aufsummiert, wie beim JPDA-Verfahren.
+Dazu kommt, dass zwei Körper nicht am selben Fleck stehen (3.1). Das ist eine Näherung: Gemeinsame
+Abhängigkeiten über mehrere Frames hinweg gehen verloren.
 
 **Superposition**, Beispiel: A geht zur Balkontür und wird nicht mehr gesehen. Dann liegen etwa 95 % von
 As Partikeln auf dem Balkon und 5 % an der Tür. Sieht der Sensor die Tür gut und meldet nichts,
 schwinden die 5 %. Kommt jemand durch die Balkontür herein, erklären As Balkon-Partikel das, und es ist A.
-Es entsteht keine neue Spur.
 
 ## 6. Ausgaben
-- Je Zone: Verteilung der Personenzahl (wahrscheinlichster Wert, P(mindestens 1)), P(jemand bewegt
-  sich), P(gleich betreten). Alles direkt aus den Wolken summiert.
-- Für die Anzeige: jede Person an ihrem wahrscheinlichsten Ort. Ist das ein Bereich ohne Sensor (z. B.
-  Balkon), wird sie dort angezeigt und nicht als Punkt an der Tür. Eine Person, deren Ort unsicher
-  ist, wird blass und mit ihren Möglichkeiten angezeigt. Es gibt keine liegengebliebenen Spuren, weil
-  es keine Spuren gibt, nur Personen. Nummern werden über die Zeit durch Zuordnung zur vorherigen
-  Anzeige stabil gehalten. Das ist reine Beschriftung.
+- **Je Raum mit Sensor:** die wahrscheinlichste Personenzahl (aus den Wahrscheinlichkeiten der einzelnen
+  Personen, dort zu sein), dazu bewegt / ruhig und „wird gleich betreten“ aus dem angezeigten Ort und der
+  Geschwindigkeit der Personen, die gerade gesehen werden.
+- **Je Bereich ohne Sensor:** die Wahrscheinlichkeit je Person, dort zu sein; eine Zahl je Raum gibt es
+  nur, wenn der Bereich aus einem Raum besteht. Diese Zahlen dienen der Plausibilität an den Türen
+  („konnte gerade jemand herauskommen?“); bewertet wird der Tracker an den Räumen mit Sensor.
+- **Im Haus:** die wahrscheinlichste Zahl über alle Orte; in der Oberfläche nur nachrangig, weil sie
+  Vermutungen über Räume ohne Sensor enthält.
+- **Für die Karte:** jede Person an ihrem wahrscheinlichsten Ort (im beobachteten Bereich das dichteste
+  20-cm-Feld, sonst der Bereich), dazu ihre Wolke als Wärmekarte. Nicht gesehene Personen werden blass
+  angezeigt, mit ihren Möglichkeiten in Prozent.
 
 ## 7. Lernen
-Alle Größen aus 3 und 4 mit „gelernt“ werden aus den Wolken geschätzt, gewichtet mit ihrer Wahrscheinlichkeit:
-erwartete Zählungen (wie oft war hier jemand sichtbar, wie oft gab es ein Ziel, wie lange dauerten
-Aussetzer, wo entstanden Geister, …), gemischt mit dem Prior. Wird ein Sensor umgehängt, vergisst er
-alles, was von seinem Ort abhängt (Geister, LD2410C).
+Gelernt wird nur, wo eine unabhängige Quelle die Wahrheit liefert (1., Punkt 5):
+- **Geisterkarte** je Sensor und 0,25-m-Feld: Wie oft meldet der Sensor dort ein Ziel, während ein
+  anderer Sensor die Stelle gut sieht (Erkennung ≥ 0,8), nichts meldet und keine sichere Person in der
+  Nähe ist.
+- **LD2410C-Histogramme** je Stufe: Energie mit einer sicher gesehenen sitzenden oder gehenden Person in
+  der Stufe (LD2450 als unabhängiger Beleg) und ohne jemanden innerhalb zweier Stufen. Wer nach einem
+  langen Aussetzer am selben Ort wieder gefunden wird, saß dort: Seine Stufe wird für diese Zeit
+  rückwirkend als besetzt gelernt, sonst würden verdeckte Sitzende als „leer“ gelernt.
+- Alles Gelernte verblasst mit einer Halbwertszeit von 7 Tagen (Möbel werden umgestellt). Wird ein
+  Sensor umgehängt, vergisst er alles, was von seinem Ort abhängt. Das Gelernte übersteht Neustarts.
+- *Offen:* Aufenthaltsdauern in Bereichen ohne Sensor (3.2).
+- Bewusst nicht gelernt: Erkennungswahrscheinlichkeit, Aussetzer und Verhalten je Ort (3.1, 3.3, 4.1).
 
-## 8. Was aus dem bisherigen Code wegfällt
-
-| bisher | ersetzt durch |
-|---|---|
-| `evidence_time`-Dämpfung | Nicht-gesehen-Dauer `U` (3.3), Geisterlebensdauer (3.4) |
-| `lost_after`, `coast_time`, „verloren“-Status, Aussetzer-Beginn | `U` (3.3) |
-| Erklärungsarten track / getup / out / jump / any | Übergänge aus 3, ein Messmodell |
-| Gast-Platz, `residents`, `guests` | Ankunftsrate `α` (3.2) |
-| Aufteilung beim Verlust, `doorway_walk`, Sammelanteile `spawn_share` | Tür = Bewegung (3.2) |
-| `getup_share`, `getup_time`, `getup_spread` | `λ_go(x, d)` (3.1) |
-| Hypothesen, Zusammenlegen, `max_hypotheses`, `hypothesis_floor`, Kalman/IMM | Partikelwolke je Person + Zuordnung je Frame (5) |
-| LD-Regel „schon von jemand anderem erklärt“, Körperabstoßung im LD-Teil | Messmodell 4.2, Körperabstand 3.1 |
-| Dijkstra-Karten | entfallen: ungesehene Wege folgen aus der Wolke (5) |
-
-## 9. Prüfung
-1. **Je Wahrscheinlichkeit ein Test** gegen eine Handrechnung (z. B. ein Frame, eine Person, ein Ziel:
-   die Gewichte von „Person“ und „Geist“ stimmen auf drei Stellen mit der Formel überein).
-2. **Kleine Szenen** (eine Person geht rein und setzt sich, zwei kreuzen sich, ein Geist steht 10 s).
-3. **Das Drehbuch** (`TESTDREHBUCH.md`) mit echten Aufnahmen und notierten Zeiten. Das ist das
-   Freigabekriterium. Die simulierten Abende dienen nur zum Entwickeln.
+## 8. Prüfung
+1. **Die Wahrheitsdatenbank** (`~/.config/presence-tracker/truth`, privat: sie enthält den Grundriss):
+   Episoden aus echten Aufnahmen mit bekannter Wahrheit je Raum mit Sensor. Die Wahrheit kommt von Leon
+   (Notizen, die Seite „Jetzt gerade“ der Drehbuch-App) und von den Handy-Trackern (`person.leon`,
+   `person.alisa`: niemand zu Hause). Dazu je Episode die Konfiguration und das bis dahin Gelernte.
+   Heute: das Drehbuch vom 4.10., zwei Nächte, Reset, Abend, Morgen mit Wand-Phantom, leeres Haus mit
+   Saugroboter, Leons Gang durch den Flur, der Küchengang vom 5.10.
+2. **`tools/evaluate.py`** spielt jede Episode mit mehreren Seeds ab (12 für eine Entscheidung, die
+   Streuung zwischen den Seeds ist groß) und misst je Sekunde: falsche Zahl je Raum, zu viele / zu
+   wenige Personensekunden, Wechsel der Anzeige ohne Grund, Zeit bis zur richtigen Zahl.
+   **`tools/replay.py`** zeigt für eine einzelne Szene, was der Tracker wann glaubt.
+3. **Freigabe:** Eine Änderung kommt nur hinein, wenn sie auf der Wahrheitsdatenbank verbessert, was
+   zählt: Wer geht, verschwindet; wer sitzt, bleibt angezeigt; die Zahlen je Raum stimmen. Weniger
+   wichtig sind der Saugroboter als Person, kurze Aussetzer Sitzender und vertauschte Personen.
+4. **Tests** (`tests/`) für kleine simulierte Szenen und die Vorverarbeitung.
