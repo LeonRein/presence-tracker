@@ -34,7 +34,8 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*).
 - **Personen**: Mit *Personen beim Start* beginnt das Modell, wenn es nichts weiß. Weitere (Gäste) kommen über
   die Wege nach draußen dazu; wer sicher außer Haus ist, wird vergessen.
-- **Fehler melden** (Tab *Live*): Wenn das Licht falsch war, den Raum und die Art des Fehlers wählen. Die App
+- **Fehler melden** (Tab *Live*): Wenn etwas nicht stimmt (Person verloren, Geist, Person am falschen Ort,
+  ungenaues Tracking, hohe Latenz), den Raum und die Art des Fehlers wählen. Die App
   speichert dazu die Sensordaten der letzten 15 Minuten mit der Konfiguration (unter `/data/reports`, in
   der Liste herunterladbar). Daraus entsteht die Wahrheitstabelle für die Bewertung;
   `tools/replay.py --report DATEI` spielt eine Meldung nach.

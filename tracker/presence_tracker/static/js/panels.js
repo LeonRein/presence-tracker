@@ -169,7 +169,7 @@ function livePanel(panel, view) {
       </div>
       <div class="row">
         <label class="field">Vor wie vielen Minuten?<input type="number" id="rep-ago" min="0" max="15" step="1" value="0" style="width:6em"></label>
-        <label class="field grow">Was war los? (optional)<input id="rep-text" placeholder="z. B. saß auf dem Sofa, Licht ging aus"></label>
+        <label class="field grow">Was war los? (optional)<input id="rep-text" placeholder="z. B. saß auf dem Sofa, wurde nach 1 min verloren"></label>
       </div>
       <div class="row"><button class="btn primary" id="rep-send">Melden</button></div>
       <p class="note">Speichert die Sensordaten der letzten 15 Minuten mit der Konfiguration, zum genauen Nachspielen. Die Meldungen sind die Wahrheitsdaten für die Bewertung.</p>

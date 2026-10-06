@@ -1309,9 +1309,21 @@ class Tracker:
         return out
 
     def _heat(self, obj) -> list:
-        """[[x, y, mass]] of a person in view, each tile's mass spread over its points (POINT m cells)."""
+        """[[x, y, mass]] of a person in view on POINT m cells: with a track, their Gaussians as
+        they are; without, each tile's mass spread evenly over it (the tiles are all the model
+        knows about where an unseen person is)."""
         tl = self.tiles
-        mass = tl.spread(self._in_view(obj))
+        if isinstance(obj, Hidden):
+            mass = tl.spread(obj.in_view())
+        else:
+            mass = np.zeros(len(tl.points))
+            for k, w in enumerate(obj.weights()):
+                if w > 0:
+                    v = obj.pos_var()[k] + POINT * POINT / 12
+                    d = np.exp(-0.5 * (((tl.points - obj.pos[k][None, :]) ** 2) / v[None, :]).sum(axis=1))
+                    mass += (1 - obj.a) * w * d / max(d.sum(), 1e-300)
+            if obj.away is not None:
+                mass += obj.a * tl.spread(obj.away.in_view())
         k = np.flatnonzero(mass > 0.002)
         return [[round(float(tl.points[i, 0] - POINT / 2), 2), round(float(tl.points[i, 1] - POINT / 2), 2),
                  round(float(mass[i]), 3)] for i in k]

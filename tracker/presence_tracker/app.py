@@ -31,10 +31,11 @@ STATIC = (pathlib.Path(__file__).parent / "static").resolve()
 BLOCKED_DUMP = 15.0  # s the event loop may be busy before the watchdog logs where it is
 REPORT_WINDOW = 15 * 60.0  # s of sensor data kept for an error report
 REPORT_KINDS = {
-    "light_on": "Licht an, obwohl niemand da ist",
-    "light_off": "Licht aus, obwohl jemand da ist",
-    "late": "Licht kam zu spät",
-    "count": "Falsche Personenzahl",
+    "lost": "Person verloren",
+    "ghost": "Geist (Person, wo niemand ist)",
+    "wrong_place": "Person am falschen Ort",
+    "inaccurate": "Ungenaues Tracking",
+    "latency": "Hohe Latenz",
     "other": "Sonstiges",
 }
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}

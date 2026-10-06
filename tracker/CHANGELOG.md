@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1
+
+- Fehler melden: Die Arten sind jetzt Person verloren, Geist, Person am falschen Ort, ungenaues Tracking,
+  hohe Latenz und Sonstiges (statt Licht an/aus: Es gibt noch keine Lichtautomatisierung).
+- Karte: Personen mit Spur werden wieder als ihre Gauß-Verteilung gezeichnet (in 0.9.0 als grobe Rechtecke
+  der Kacheln). Grobe Rechtecke zeigen jetzt nur Personen ohne Spur: Genauer weiß das Modell es dort nicht.
+
 ## 0.9.0
 
 - **Etwa ein Drittel der Rechenzeit von 0.8.1**, ungefähr so viel wie 0.6.21 (gemessen auf derselben Stunde,
