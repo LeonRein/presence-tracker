@@ -785,7 +785,7 @@ export class PlaceSensorTool {
     edit(c => {
       let s = c.sensors.find(s => s.id === this.id);
       if (!s) {
-        s = { id: this.id, name: this.id.replace(/^presence-/, ''), x: 0, y: 0, heading: 90, height: 1.5, mirror: false,
+        s = { id: this.id, name: this.id.replace(/^presence-/, ''), x: 0, y: 0, heading: 90, height: 1.5, mirror: false, scale: 1,
               fov: 120, range: 6, enabled: true, placed: false };
         c.sensors.push(s);
       }

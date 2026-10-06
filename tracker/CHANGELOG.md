@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.20
+
+- Kalibrierung verschiebt keine Sensoren mehr. Die eingezeichneten Positionen gelten; je Sensor
+  werden Blickrichtung, x-Richtung und ein neuer **Maßstab** bestimmt (wahre Entfernung / gemessene,
+  auch von Hand im Sensor einstellbar). Vorher wurde die gemessene Anordnung starr auf alle
+  Positionen gelegt: ein schlecht bestimmter Sensor zog die anderen mit (Lauf am 5.10., 19:18: Küche
+  1,36 m, Esszimmer 79 cm, Wohnzimmer 57 cm daneben). Am selben Lauf jetzt: Küche bleibt, wie sie ist
+  (nur 13–15 gemeinsame Messungen), Esszimmer +1,3°, Wohnzimmer 0°.
+- Unbrauchbare Ergebnisse einzelner Sensoren sperren das Übernehmen der anderen nicht mehr.
+
 ## 0.6.19
 
 - Keine Schonfrist mehr an eingefrorenen Zielen. Der LD2450 meldet ein verlorenes Ziel oft bis 35 s

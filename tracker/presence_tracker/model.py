@@ -23,6 +23,7 @@ class SensorConfig:
     heading: float = 0.0  # direction the sensor looks, degrees from the +x axis, counterclockwise
     height: float = 1.5  # mounting height above the floor
     mirror: bool = False  # LD2450 x axis points to the left instead of the right
+    scale: float = 1.0  # true distance on the floor / measured one (from the calibration)
     fov: float = 120.0
     range: float = 6.0
     enabled: bool = True
@@ -35,37 +36,29 @@ class SensorConfig:
         h = math.radians(self.heading)
         self._cos, self._sin = math.cos(h), math.sin(h)
 
-    def ground_local(self, lx: float, ly: float, target_height: float) -> tuple:
-        """LD2450 target -> sensor frame on the floor (x right, y forward), mirror applied."""
-        if self.mirror:
-            lx = -lx
-        slant = math.hypot(lx, ly)
-        dh = self.height - target_height
-        ground = math.sqrt(max(slant * slant - dh * dh, 0.01))
-        scale = ground / slant if slant > 0 else 1.0
-        return lx * scale, ly * scale
-
     def to_world(self, lx: float, ly: float, target_height: float) -> tuple:
         """LD2450 target (m, sensor frame) -> house frame. Returns (x, y, ground_range, slant_range).
 
         The radar measures the slant distance from its antenna; the height difference to the
-        reflecting body is taken out so that the position lies on the floor plane.
+        reflecting body is taken out so that the position lies on the floor plane. Then the
+        sensor's scale corrects the distance.
         """
         if self.mirror:
             lx = -lx
         slant = math.hypot(lx, ly)
         dh = self.height - target_height
         ground = math.sqrt(max(slant * slant - dh * dh, 0.01))
-        scale = ground / slant if slant > 0 else 1.0
-        gx, gy = lx * scale, ly * scale
+        k = self.scale * ground / slant if slant > 0 else self.scale
+        gx, gy = lx * k, ly * k
         # sensor frame: y forward along the heading, x to the right
         wx = self.x + gy * self._cos + gx * self._sin
         wy = self.y + gy * self._sin - gx * self._cos
-        return wx, wy, ground, slant
+        return wx, wy, self.scale * ground, self.scale * slant
 
     def to_local(self, wx: float, wy: float) -> tuple:
-        """House frame -> sensor frame on the floor plane (x right, y forward)."""
-        dx, dy = wx - self.x, wy - self.y
+        """House frame -> sensor frame on the floor plane (x right, y forward), as the sensor
+        measures it (scale taken out)."""
+        dx, dy = (wx - self.x) / self.scale, (wy - self.y) / self.scale
         gy = dx * self._cos + dy * self._sin
         gx = dx * self._sin - dy * self._cos
         return (-gx if self.mirror else gx), gy

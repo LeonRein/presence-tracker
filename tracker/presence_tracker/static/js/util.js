@@ -159,10 +159,11 @@ export function sightSegments(config) {
 }
 
 // Sensor geometry, same conventions as model.py: heading = viewing direction (degrees, CCW from +x),
-// LD2450 x to the right of the viewing direction (or to the left when mirrored).
+// LD2450 x to the right of the viewing direction (or to the left when mirrored), as the sensor
+// measures it (scale taken out).
 export function sensorToLocal(s, x, y) {
   const c = Math.cos(rad(s.heading)), sn = Math.sin(rad(s.heading));
-  const dx = x - s.x, dy = y - s.y;
+  const dx = (x - s.x) / s.scale, dy = (y - s.y) / s.scale;
   const gy = dx * c + dy * sn, gx = dx * sn - dy * c;
   return [s.mirror ? -gx : gx, gy];
 }

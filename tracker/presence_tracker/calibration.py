@@ -6,13 +6,18 @@ pair with the walker, and a single still spot says nothing about rotation. For t
 target of one is interpolated to the frame times of the other, giving pairs of the same point
 seen by both.
 
-Positions are easy to draw on the map, headings are not. So no sensor is taken as given: the
-sensors' poses relative to each other come from the pairs alone (2D rigid fits with RANSAC,
-Kabsch), and this rigid constellation is then placed onto the drawn positions. Only hypotheses
-whose sensor distances roughly match the drawing are considered (wrong pairs from a second
-person or reflections otherwise produce a consensus meters away). Each result gets a verdict.
+The drawn positions are taken as given, the drawn headings are not. Per sensor the calibration
+fits the heading, a scale (the LD2450's distances may be off by some percent) and whether its x
+axis is mirrored. With the position p fixed, heading and scale are one complex number c: the
+floor point z in the sensor frame (as a complex number) lies at p + c z in the house. For a pair
+of sensors seeing the same point, c_a z_a + p_a = c_b z_b + p_b is linear in c_a and c_b, so all
+sensors are fitted together by least squares: robustly, with RANSAC per sensor pair (wrong pairs
+from a second person or reflections), then jointly on the pairs that agree. A sensor without
+enough pairs with any other stays as it is. Each result gets a verdict.
 """
 
+import cmath
+import itertools
 import math
 import random
 from collections import defaultdict
@@ -24,8 +29,7 @@ from .model import Config, SensorConfig
 MAX_GAP = 0.25  # s, interpolate only between frames this close
 INLIER = 0.35  # m
 MIN_SPEED = 0.05  # m/s, radial speed for a target to count as moving
-MAX_DIST_ERR = 1.0  # m, measured sensor distance vs. drawn distance, for a hypothesis to be considered
-MAX_POS_RESIDUAL = 0.5  # m, a sensor this far from its drawn position after placing gets a warning
+MAX_SCALE_ERR = 0.2  # a fit that needs a scale further from 1 comes from wrong pairs, not from the radar
 # quality thresholds
 MIN_INLIERS = 150  # matching pairs for a good result
 MIN_INLIER_RATIO = 0.25  # below this, the pairs are mostly wrong (second person, echoes)
@@ -33,56 +37,64 @@ MIN_SPREAD = 0.5  # m, standard deviation of the inlier points along their narro
 CAL_WALL_MARGIN = 1.0  # m, points this far behind a wall are echoes even with a heading 20 degrees off
 
 
-def _rot(a: float) -> np.ndarray:
-    c, s = math.cos(a), math.sin(a)
-    return np.array([[c, -s], [s, c]])
+def _heading(c: complex) -> float:
+    """Heading of a sensor whose frame is turned by the angle of c (its forward axis is y)."""
+    return (math.degrees(cmath.phase(c)) + 90) % 360
 
 
-def _pose_matrix(s: SensorConfig):
-    """world = p + R g, with g the floor point in the sensor frame (x right, y forward)."""
-    return np.array([s.x, s.y]), _rot(math.radians(s.heading) - math.pi / 2)
+def _complex(g: np.ndarray) -> np.ndarray:
+    return g[:, 0] + 1j * g[:, 1]
 
 
-def _heading(angle: float) -> float:
-    return (math.degrees(angle) + 90) % 360
+def _plausible(c: complex) -> bool:
+    return abs(abs(c) - 1) <= MAX_SCALE_ERR
 
 
-def kabsch(src: np.ndarray, dst: np.ndarray):
-    """Rotation angle and translation with dst ~ R src + t (least squares)."""
-    cs, cd = src.mean(0), dst.mean(0)
-    a, b = src - cs, dst - cd
-    angle = math.atan2((a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]).sum(), (a * b).sum())
-    t = cd - _rot(angle) @ cs
-    return angle, t
-
-
-def ransac(src: np.ndarray, dst: np.ndarray, valid=None, iterations: int = 1000, seed: int = 0):
-    """Robust rigid fit. valid(angle, t) rejects hypotheses (e.g. far from the drawn pose)."""
+def ransac(za: np.ndarray, zb: np.ndarray, d: complex, iterations: int = 1000, seed: int = 0):
+    """Robust fit of c_a z_a - c_b z_b = d (d = p_b - p_a) from two points per hypothesis.
+    Returns the inlier mask of the best hypothesis, or None."""
     rng = random.Random(seed)
-    n = len(src)
+    n = len(za)
     if n < 3:
         return None
     best = None
     for _ in range(iterations):
         i, j = rng.sample(range(n), 2)
-        if np.linalg.norm(src[i] - src[j]) < 0.5:
+        if abs(za[i] - za[j]) < 0.5:
             continue
-        angle, t = kabsch(src[[i, j]], dst[[i, j]])
-        if valid and not valid(angle, t):
+        det = zb[i] * za[j] - za[i] * zb[j]
+        if abs(det) < 1e-6:
             continue
-        inliers = np.linalg.norm(src @ _rot(angle).T + t - dst, axis=1) < INLIER
+        ca, cb = d * (zb[i] - zb[j]) / det, d * (za[i] - za[j]) / det
+        if not (_plausible(ca) and _plausible(cb)):
+            continue
+        inliers = np.abs(ca * za - cb * zb - d) < INLIER
         if best is None or inliers.sum() > best.sum():
             best = inliers
     if best is None or best.sum() < 3:
         return None
-    for _ in range(3):  # refit on the inliers, which may change them
-        angle, t = kabsch(src[best], dst[best])
-        err = np.linalg.norm(src @ _rot(angle).T + t - dst, axis=1)
-        best = err < INLIER
-        if best.sum() < 3:
+    return best
+
+
+def joint_fit(sensors: list, rows: list, iterations: int = 3):
+    """Least squares c per sensor from all pairs: rows = [(a, b, za, zb, d, mask)]. Refits on the
+    points that agree with the joint result. Returns (c by sensor, masks) or None."""
+    col = {s: i for i, s in enumerate(sensors)}
+    masks = [r[5] for r in rows]
+    c = None
+    for _ in range(iterations):
+        parts, rhs = [], []
+        for (a, b, za, zb, d, _), m in zip(rows, masks):
+            block = np.zeros((int(m.sum()), len(sensors)), complex)
+            block[:, col[a]], block[:, col[b]] = za[m], -zb[m]
+            parts.append(block)
+            rhs.append(np.full(len(block), d))
+        A = np.concatenate(parts)
+        if np.linalg.matrix_rank(A) < len(sensors):
             return None
-    spread = float(np.sqrt(max(np.linalg.eigvalsh(np.cov(dst[best].T))[0], 0.0)))
-    return angle, t, best, float(np.sqrt((err[best] ** 2).mean())), spread
+        c = np.linalg.lstsq(A, np.concatenate(rhs), rcond=None)[0]
+        masks = [np.abs(c[col[a]] * za - c[col[b]] * zb - d) < INLIER for a, b, za, zb, d, _ in rows]
+    return {s: complex(c[col[s]]) for s in sensors}, masks
 
 
 def verdict(pairs: int, inliers: int, spread: float) -> tuple:
@@ -166,151 +178,136 @@ class Calibrator:
         return np.array(out_a).reshape(-1, 2), np.array(out_b).reshape(-1, 2)
 
     def solve(self, min_pairs: int = 30) -> dict:
-        """New poses for all sensors that overlap (directly or via others).
+        """New heading, scale and mirror for every placed sensor that shares enough pairs with
+        another; positions stay as drawn.
 
-        1. Constellation: the sensors relative to each other, purely from the pairs. The most
-           connected sensor is the root of an arbitrary frame; nobody's drawn heading is trusted.
-        2. Placement: the rigid constellation is rotated and moved onto the drawn positions
-           (least squares). The headings follow from that.
-        3. A mirrored constellation fits the positions just as well; the floor plan decides:
-           the walked points have to be inside the rooms.
+        1. Per sensor pair and mirror combination: RANSAC, which pairs agree.
+        2. Per group of connected sensors and mirror assignment: joint least squares; the
+           assignment with the most agreeing pairs wins.
+        3. Two sensors alone fit just as well reflected across the line between them (all
+           mirrors flipped); the floor plan decides (the walked points have to be inside the
+           rooms), else the drawn headings.
         """
-        sensors = [s.id for s in self.config.sensors if s.id in self.series and s.placed and s.enabled]
+        placed = [s.id for s in self.config.sensors if s.placed and s.enabled]
+        sensors = [s for s in placed if s in self.series]
         if len(sensors) < 2:
             return {"error": "Mindestens zwei platzierte Sensoren brauchen Messungen einer Person in Bewegung."}
-        pair_cache = {}
-
-        def pairs(x, y):
-            if (x, y) not in pair_cache:
-                pair_cache[(x, y)] = self._pairs(x, y)
-            return pair_cache[(x, y)]
 
         def drawn(sid):
             s = self.config.sensor_by_id[sid]
-            return np.array([s.x, s.y])
+            return complex(s.x, s.y)
 
-        def constellation(root, root_mirror):
-            pose = {root: (np.zeros(2), np.eye(2), root_mirror)}  # position, rotation, mirror
-            stats = {}
-
-            def plausible(sid, solved):
-                # the measured distance to every solved sensor must roughly match the drawing
-                want = {o: np.linalg.norm(drawn(sid) - drawn(o)) for o in solved}
-
-                def valid(angle, t):
-                    return all(abs(np.linalg.norm(t - pose[o][0]) - want[o]) <= MAX_DIST_ERR for o in solved)
-                return valid
-
-            def fit(sid, solved):
-                best = None
-                for mirror in (False, True):
-                    src, dst = [], []
-                    for other in solved:
-                        ra, rb = pairs(other, sid)
-                        if len(ra) == 0:
-                            continue
-                        p, R, other_mirror = pose[other]
-                        dst.append(self._ground(other, ra, other_mirror) @ R.T + p)
-                        src.append(self._ground(sid, rb, mirror))
-                    if not src:
-                        return None
-                    src, dst = np.concatenate(src), np.concatenate(dst)
-                    if len(src) < min_pairs:
-                        return None
-                    result = ransac(src, dst, valid=plausible(sid, solved))
-                    if result is None:
-                        continue
-                    angle, t, inliers, rms, spread = result
-                    score = (inliers.sum(), -rms)
-                    if best is None or score > best[0]:
-                        best = (score, angle, t, mirror, {"inliers": int(inliers.sum()), "pairs": len(src),
-                                                          "rms": rms, "spread": spread})
-                return best
-
-            pending = [s for s in sensors if s != root]
-            while pending:
-                fits = [(sid, fit(sid, list(pose))) for sid in pending]
-                fits = [(sid, f) for sid, f in fits if f is not None]
-                if not fits:
-                    break
-                sid, (_, angle, t, mirror, st) = max(fits, key=lambda item: item[1][0])
-                pose[sid] = (t, _rot(angle), mirror)
-                stats[sid] = st
-                pending.remove(sid)
-            for _ in range(3):  # refinement against all others
-                for sid in list(stats):
-                    f = fit(sid, [o for o in pose if o != sid])
-                    if f is not None:
-                        _, angle, t, mirror, st = f
-                        pose[sid] = (t, _rot(angle), mirror)
-                        stats[sid] = st
-            # the root shares the quality of its best connection
-            if stats:
-                stats[root] = max(stats.values(), key=lambda st: st["inliers"])
-            return pose, stats, pending
-
-        def connections(sid):
-            return sum(len(pairs(min(sid, o), max(sid, o))[0]) for o in sensors if o != sid)
-
-        root = max(sensors, key=connections)
-        best = None
-        for root_mirror in (False, True):
-            pose, stats, pending = constellation(root, root_mirror)
-            solved = list(pose)
-            if len(solved) < 2:
+        # 1. which pairs agree, per mirror combination
+        edges = {}
+        for a, b in itertools.combinations(sorted(sensors), 2):
+            ra, rb = self._pairs(a, b)
+            if len(ra) < min_pairs:
                 continue
-            # rotate and move the constellation onto the drawn positions (no scaling, no mirroring)
-            phi, tau = kabsch(np.array([pose[s][0] for s in solved]), np.array([drawn(s) for s in solved]))
-            Rp = _rot(phi)
-            world = {s: (Rp @ pose[s][0] + tau, Rp @ pose[s][1], pose[s][2]) for s in solved}
-            inside = self._inside_share(world)
-            turn = sum(abs(self._turn(s, world[s][1])) for s in solved)
-            key = (round(inside, 2), -turn)
-            if best is None or key > best[0]:
-                best = (key, world, stats, pending, inside)
-        if best is None:
-            return {"error": "Kein Sensorpaar hat genug gemeinsame Messungen, oder die gemessenen Abstände "
-                             "passen nicht zur Zeichnung (mehr als 1 m daneben)."}
-        _, world, stats, pending, inside = best
+            d = drawn(b) - drawn(a)
+            fits = {}
+            for ma, mb in itertools.product((False, True), repeat=2):
+                za, zb = _complex(self._ground(a, ra, ma)), _complex(self._ground(b, rb, mb))
+                mask = ransac(za, zb, d)
+                if mask is not None:
+                    fits[(ma, mb)] = (za, zb, d, mask)
+            if fits:
+                edges[(a, b)] = fits
+        if not edges:
+            return {"error": "Kein Sensorpaar hat genug gemeinsame Messungen einer Person in Bewegung."}
+
+        # 2. per group of connected sensors: the best mirror assignment, jointly fitted
+        groups = []
+        for a, b in edges:
+            joined = [g for g in groups if a in g or b in g]
+            for g in joined:
+                groups.remove(g)
+            groups.append(set().union({a, b}, *joined))
+
+        def fit(group, mirrors):
+            """Joint fit of the sensors in the group that have agreeing pairs with these mirrors."""
+            rows = [(a, b, *fits[(mirrors[a], mirrors[b])]) for (a, b), fits in edges.items()
+                    if a in group and (mirrors[a], mirrors[b]) in fits]
+            if not rows:
+                return None
+            result = joint_fit(sorted({s for r in rows for s in r[:2]}), rows)
+            if result is None:
+                return None
+            c, masks = result
+            return sum(int(m.sum()) for m in masks), c, rows, masks
+
+        def plan_key(mirrors, f):
+            # the floor plan first, then the drawn headings, which are roughly right
+            world = {s: (f[1][s], mirrors[s]) for s in f[1]}
+            turn = sum(abs(self._turn(s, f[1][s])) for s in f[1])
+            return round(self._inside_share(world), 2), -turn
+
+        solved, stats = {}, {}
+        for group in groups:
+            group = sorted(group)
+            best = None
+            for flags in itertools.product((False, True), repeat=len(group) - 1):
+                mirrors = dict(zip(group, (False, *flags)))
+                f = fit(group, mirrors)
+                if f is not None and (best is None or f[0] > best[1][0]):
+                    best = (mirrors, f)
+            if best is None:
+                continue
+            # 3. the reflected solution (all mirrors flipped), if it fits about as well
+            flipped = {s: not m for s, m in best[0].items()}
+            options = [best] + [(flipped, f) for f in [fit(group, flipped)] if f is not None and f[0] >= 0.9 * best[1][0]]
+            mirrors, (_, c, rows, masks) = max(options, key=lambda o: plan_key(*o))
+            for sid in c:
+                solved[sid] = (c[sid], mirrors[sid])
+                stats[sid] = self._stats(sid, c, rows, masks, drawn)
 
         out = {}
-        for sid, (p, R, mirror) in world.items():
-            current = self.config.sensor_by_id[sid]
+        for sid, (c, mirror) in solved.items():
             st = stats[sid]
             quality, reason = verdict(st["pairs"], st["inliers"], st["spread"])
-            residual = float(np.linalg.norm(p - drawn(sid)))
-            if quality == "ok" and residual > MAX_POS_RESIDUAL:
-                quality, reason = "warn", (f"Liegt nach der Messung {100 * residual:.0f} cm neben der eingezeichneten "
-                                           "Position. Sind die Positionen richtig eingezeichnet?")
+            if not _plausible(c):
+                quality, reason = "bad", (f"Maßstab {abs(c):.2f} ist kein plausibler Messfehler. "
+                                          "Stimmen die eingezeichneten Positionen?")
             out[sid] = {
-                "x": round(float(p[0]), 3), "y": round(float(p[1]), 3),
-                "heading": round(_heading(math.atan2(R[1, 0], R[0, 0])), 1), "mirror": bool(mirror),
-                "shift": round(residual, 3), "turn": round(self._turn(sid, R), 1),
-                "quality": quality, "reason": reason,
+                "heading": round(_heading(c), 1), "mirror": bool(mirror), "scale": round(abs(c), 3),
+                "turn": round(self._turn(sid, c), 1), "quality": quality, "reason": reason,
                 **{k: (round(v, 3) if isinstance(v, float) else v) for k, v in st.items()},
             }
-        ids = list(world)
-        distances = [{"a": a, "b": b, "measured": round(float(np.linalg.norm(world[a][0] - world[b][0])), 2),
-                      "drawn": round(float(np.linalg.norm(drawn(a) - drawn(b))), 2)}
-                     for i, a in enumerate(ids) for b in ids[i + 1:]
-                     if len(pairs(min(a, b), max(a, b))[0])]
-        return {"sensors": out, "unsolved": pending, "inside": round(inside, 3), "distances": distances}
+        return {"sensors": out, "unsolved": [s for s in placed if s not in solved],
+                "inside": round(self._inside_share(solved), 3)}
 
-    def _turn(self, sid: str, R: np.ndarray) -> float:
-        heading = _heading(math.atan2(R[1, 0], R[0, 0]))
-        return (heading - self.config.sensor_by_id[sid].heading + 180) % 360 - 180
+    def _stats(self, sid: str, c: dict, rows: list, masks: list, drawn) -> dict:
+        """Pairs, agreeing pairs, their rms error and spread for one sensor."""
+        pairs = inliers = 0
+        err, points = [], []
+        for (a, b, za, zb, d, _), m in zip(rows, masks):
+            if sid not in (a, b):
+                continue
+            pairs += len(za)
+            inliers += int(m.sum())
+            err.append(np.abs(c[a] * za[m] - c[b] * zb[m] - d))
+            points.append(c[a] * za[m] + drawn(a))
+        err, points = np.concatenate(err), np.concatenate(points)
+        xy = np.stack([points.real, points.imag])
+        spread = float(np.sqrt(max(np.linalg.eigvalsh(np.cov(xy))[0], 0.0))) if len(points) > 2 else 0.0
+        return {"pairs": pairs, "inliers": inliers, "rms": float(np.sqrt((err**2).mean())) if len(err) else 0.0,
+                "spread": spread}
+
+    def _turn(self, sid: str, c: complex) -> float:
+        return (_heading(c) - self.config.sensor_by_id[sid].heading + 180) % 360 - 180
 
     def _inside_share(self, world: dict) -> float:
-        """Share of the walked points inside the rooms, with these poses. 0.5 without rooms."""
+        """Share of the walked points inside the rooms, with these fits {sensor: (c, mirror)}.
+        0.5 without rooms."""
         rooms = self.config.zones_of("room")
         if not rooms:
             return 0.5
         inside = total = 0
-        for sid, (p, R, mirror) in world.items():
+        for sid, (c, mirror) in world.items():
+            s = self.config.sensor_by_id[sid]
             raw = np.array([pt[1:] for pt in self.series[sid]])
             if not len(raw):
                 continue
-            for x, y in self._ground(sid, raw[:: max(1, len(raw) // 300)], mirror) @ R.T + p:
+            for z in c * _complex(self._ground(sid, raw[:: max(1, len(raw) // 300)], mirror)) + complex(s.x, s.y):
                 total += 1
-                inside += any(z.contains(x, y, 0.3) for z in rooms)
+                inside += any(room.contains(z.real, z.imag, 0.3) for room in rooms)
         return inside / total if total else 0.5

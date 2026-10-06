@@ -255,7 +255,7 @@ export class MapView {
       const selected = sel?.kind === 'sensor' && sel.id === s.id;
       const [x, y] = this.P(s.x, s.y);
       const a0 = rad(s.heading - s.fov / 2), a1 = rad(s.heading + s.fov / 2);
-      const r = s.range * this.s;
+      const r = s.range * s.scale * this.s;
       const showFov = editing || state.showRaw;
       if (showFov) {
         const [x0, y0] = [x + r * Math.cos(a0), y - r * Math.sin(a0)];

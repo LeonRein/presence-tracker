@@ -421,7 +421,9 @@ function sensorDetail(el, s) {
       <label class="field">Montagehöhe (m)<input type="number" step="0.05" value="${s.height}" data-k="height"></label>
       <label class="field">Öffnungswinkel (°)<input type="number" step="5" value="${s.fov}" data-k="fov"></label>
       <label class="field">Reichweite (m)<input type="number" step="0.5" value="${s.range}" data-k="range"></label>
+      <label class="field">Maßstab<input type="number" step="0.01" value="${s.scale}" data-k="scale"></label>
     </div>
+    <p class="note">Maßstab: wahre Entfernung geteilt durch die gemessene. 1,04 = der Sensor misst 4 % zu kurz. Stellt die Kalibrierung ein.</p>
     <label class="check"><input type="checkbox" data-k="mirror" ${s.mirror ? 'checked' : ''}> x-Achse gespiegelt</label>
     <h3>Was der Sensor sieht</h3>
     <p class="note">Nur zum Anschauen: blendet eine Karte über den Grundriss ein. Das ändert nichts am Tracking.</p>
@@ -588,11 +590,11 @@ function calibrationPanel(panel, view) {
   panel.append(h(`<div>
     <h2>Kalibrierung</h2>
     <ol class="steps">
-      <li>Sensoren möglichst genau an ihrer Position einzeichnen. Die Blickrichtung muss nur grob stimmen.</li>
+      <li>Sensoren genau an ihrer Position einzeichnen. Die Blickrichtung muss nur grob stimmen.</li>
       <li>Alle anderen verlassen die Räume der beteiligten Sensoren. Aufnahme starten und <b>allein</b> 2–3 Minuten in normalem Tempo durch alle Bereiche gehen, die zwei Sensoren gleichzeitig sehen: kreuz und quer, auch nah an den Rändern. Nur Messungen in Bewegung zählen, Stehenbleiben bringt nichts.</li>
       <li>Berechnen, Ergebnis prüfen und übernehmen.</li>
     </ol>
-    <p class="note">Aus den Messungen ergibt sich, wie die Sensoren zueinander stehen. Diese Anordnung wird dann so gedreht und verschoben, dass sie möglichst genau auf den eingezeichneten Positionen liegt. Daraus folgen die Blickrichtungen.</p>
+    <p class="note">Die eingezeichneten Positionen bleiben. Aus den Messungen folgen je Sensor die Blickrichtung, der Maßstab (wie viel zu kurz oder zu lang er misst) und die x-Richtung: so, dass die Punkte einer Person von zwei Sensoren übereinanderliegen. Ein Sensor ohne genug gemeinsame Messungen mit einem anderen bleibt, wie er ist.</p>
     <div class="row" style="margin-top:10px">
       <button class="btn ${active ? '' : 'primary'}" id="toggle" ${placed.length < 2 ? 'disabled' : ''}>${active ? 'Aufnahme stoppen' : 'Aufnahme starten'}</button>
       <button class="btn ${active ? 'primary' : ''}" id="solve" ${placed.length < 2 ? 'disabled' : ''}>Berechnen</button>
@@ -625,35 +627,30 @@ function calibrationResult(el, r) {
   const rows = entries.map(([id, s]) => {
     const cur = sensorById(id);
     return `<tr><td>${esc(cur?.name || id)}</td>
-      <td>${fmt(s.shift * 100, 0)} cm</td><td>${s.turn > 0 ? '+' : ''}${fmt(s.turn, 1)}°</td>
+      <td>${s.turn > 0 ? '+' : ''}${fmt(s.turn, 1)}°</td><td>${fmt(cur?.scale ?? 1, 3)} → ${fmt(s.scale, 3)}</td>
       <td>${s.mirror !== cur?.mirror ? '<b>ändern</b>' : '–'}</td>
       <td><span class="badge ${s.quality}">${label[s.quality]}</span></td></tr>
-      ${s.reason ? `<tr><td colspan="5" class="note">${esc(s.reason)}</td></tr>` : ''}`;
+      <tr><td colspan="5" class="note">${Math.round(100 * s.inliers / s.pairs)} % von ${s.pairs} gemeinsamen Messungen passen zusammen, mittlere Abweichung ${fmt(s.rms * 100, 0)} cm.${s.reason ? ' ' + esc(s.reason) : ''}</td></tr>`;
   }).join('');
   const name = id => esc(sensorById(id)?.name || id);
-  const dists = (r.distances || []).map(d => {
-    const off = Math.abs(d.measured - d.drawn);
-    return `<tr><td>${name(d.a)} ↔ ${name(d.b)}</td><td>${fmt(d.measured)} m</td><td>${fmt(d.drawn)} m</td>
-      <td style="color:${off > 0.5 ? 'var(--bad)' : off > 0.25 ? 'var(--warn)' : 'inherit'}">${fmt(off * 100, 0)} cm</td></tr>`;
-  }).join('');
-  const s0 = entries[0]?.[1];
-  const bad = entries.some(([, s]) => s.quality === 'bad');
+  const usable = entries.filter(([, s]) => s.quality !== 'bad');
+  const skipped = entries.length - usable.length;
   el.append(h(`<div class="card" style="margin-top:12px">
     <b>Ergebnis</b>
-    <table class="data" style="margin-top:8px"><tr><th>Sensor</th><th>Versatz</th><th>Drehung</th><th>Spiegel</th><th></th></tr>${rows || '<tr><td colspan="5">nichts berechnet</td></tr>'}</table>
-    ${dists ? `<h3>Abstand der Sensoren</h3><table class="data"><tr><th></th><th>gemessen</th><th>eingezeichnet</th><th>Differenz</th></tr>${dists}</table>` : ''}
-    ${s0 ? `<p class="note">${Math.round(100 * s0.inliers / s0.pairs)} % von ${s0.pairs} gemeinsamen Messungen passen zusammen, mittlere Abweichung ${fmt(s0.rms * 100, 0)} cm. ${Math.round(100 * r.inside)} % des Laufs liegen in den Räumen.</p>` : ''}
-    ${r.unsolved.length ? `<p class="note">Ohne Ergebnis: ${r.unsolved.map(name).join(', ')}. Zu wenig gemeinsame Messungen in Bewegung, oder der gemessene Abstand weicht mehr als 1 m von der Zeichnung ab.</p>` : ''}
-    ${rows ? `<button class="btn primary" id="apply" ${bad ? 'disabled' : ''}>Übernehmen</button>` : ''}
+    <table class="data" style="margin-top:8px"><tr><th>Sensor</th><th>Drehung</th><th>Maßstab</th><th>Spiegel</th><th></th></tr>${rows || '<tr><td colspan="5">nichts berechnet</td></tr>'}</table>
+    ${entries.length ? `<p class="note">${Math.round(100 * r.inside)} % des Laufs liegen in den Räumen.</p>` : ''}
+    ${r.unsolved.length ? `<p class="note">Bleiben, wie sie sind: ${r.unsolved.map(name).join(', ')}. Zu wenig gemeinsame Messungen in Bewegung mit einem anderen Sensor.</p>` : ''}
+    ${skipped ? `<p class="note">Unbrauchbare Ergebnisse werden nicht übernommen.</p>` : ''}
+    ${usable.length ? `<button class="btn primary" id="apply">Übernehmen</button>` : ''}
   </div>`));
   el.querySelector('#apply')?.addEventListener('click', () => {
     edit(c => {
-      for (const [id, s] of entries) {
-        Object.assign(c.sensors.find(x => x.id === id), { x: s.x, y: s.y, heading: s.heading, mirror: s.mirror });
+      for (const [id, s] of usable) {
+        Object.assign(c.sensors.find(x => x.id === id), { heading: s.heading, mirror: s.mirror, scale: s.scale });
       }
     });
     state.calibResult = null;
-    toast(`${entries.length} Sensoren übernommen`);
+    toast(`${usable.length} Sensoren übernommen`);
     emit('tab');
   });
 }

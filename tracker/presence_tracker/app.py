@@ -249,7 +249,7 @@ class App:
         # learned about it no longer holds
         moved = [s.id for s in config.sensors if (old := self.config.sensor_by_id.get(s.id)) is not None
                  and (math.hypot(s.x - old.x, s.y - old.y) > 0.05 or abs((s.heading - old.heading + 180) % 360 - 180) > 2
-                      or abs(s.height - old.height) > 0.05 or s.mirror != old.mirror)]
+                      or abs(s.height - old.height) > 0.05 or s.mirror != old.mirror or abs(s.scale - old.scale) > 0.02)]
         self.config = config
         self.tracker.reconfigure(config)
         for sid in moved:

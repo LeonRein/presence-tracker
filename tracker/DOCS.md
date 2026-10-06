@@ -69,8 +69,9 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
 4. **Sensoren** (Tab *Sensoren*): jeden Sensor platzieren, Blickrichtung drehen, Montagehöhe eintragen.
    *Tote Winkel zeigen* färbt Stellen, die kein Sensor sieht, rot.
 5. **Kalibrierung** (Tab *Kalibrierung*): allein 2–3 Minuten durch die Überschneidungen der Sensoren gehen.
-   Aus den Messungen ergibt sich, wie die Sensoren zueinander stehen (Abstand, Drehung, x-Richtung). Diese
-   starre Anordnung wird auf die eingezeichneten Positionen gelegt; die Blickrichtungen müssen nur grob stimmen.
+   Die eingezeichneten Positionen bleiben; aus den Messungen folgen je Sensor Blickrichtung, Maßstab (misst er
+   ein paar Prozent zu kurz oder zu lang) und x-Richtung. Die Blickrichtungen müssen nur grob stimmen. Ein
+   Sensor ohne genug gemeinsame Messungen mit einem anderen (z. B. Küche) bleibt, wie er ist.
 
 **Sensormodell** (Tab *Sensoren*, Sensor auswählen): Karten, wo der Sensor wie zuverlässig erkennt (angenommen und
 aus dem Betrieb gelernt) und wo er Geister meldet, dazu der gelernte Messfehler nach Abstand. Die App lernt das
