@@ -172,7 +172,37 @@ Eine Spur, die zu keiner Person gehört.
   Stellen. Mit gleichverteilter Dichte erklärt das Modell sie als Person.
 
 ### 4.3 LD2410C
-Wird nur angezeigt, nicht ausgewertet (siehe 9 und 10).
+Sein Präsenzflag (bewegt oder ruhig; Haltezeit im Gerät 0) als Markov-modulierter Prozess
+(Gilbert-Elliott, Buch_SarkkaSvensson2023 Bsp. 5.14: binäre Messung mit eigenem Zustand). Gemessen
+6.10. an 2,5 h, 5 Sensoren, gegen die Ziele des LD2450 im selben Gehäuse:
+- Mit einer Person bis 3 m vor ihm ist das Flag fast immer an und nach einem Aussetzer mit
+  0,5–2,4 /s wieder an. Ab 3–4,5 m schaltet ein Sitzender es nur noch zu 10–60 % der Zeit ein.
+- Einschaltphasen ohne Ziel des LD2450 dauern 1,1 s (10–90 % 1,0–1,2 s: Blitze, wohl der LD2450 im
+  Gehäuse), solche mit Person 7 s und mehr, bis Minuten.
+- Gehalten wird es auch von weiter weg: im Wohnzimmer eine Sitzende in 6,2 m und 16° neben der
+  Achse, minutenlang mit niedriger Energie, die gemeldete Entfernung passend.
+
+Das Modell, je Sensor:
+- **Einschalten:** jede Person mit der Rate `ρ_ld · v_m(x)` (ρ_ld = 1 /s; `v_m` = Kegel × Sicht ×
+  Swerling-Kurve wie beim LD2450 mit r₅₀ 3,3 m stehend / 4,5 m gehend über die Schrägentfernung;
+  Kegel voll bis 30°, 0 ab 50°), dazu Blitze mit 0,04 /s (gemessen 0,001–0,08 je Sensor). Die
+  gemeldete Entfernung liegt um die Schrägentfernung der Person (σ = 0,6 m), bei Blitzen irgendwo
+  bis 6,75 m.
+- **Ausschalten:** mit 1/1,1 s, solange niemand es hält; mit 1/10 s, wenn jemand es hält. Halten
+  kann es eine Person im breiteren Strahl (voll bis 50°, 0 ab 70°; in 0.6.x: Energie von Personen bis
+  60°) etwa in der gemeldeten Entfernung (σ = 0,6 m), unabhängig von der Reichweite.
+- **Belege:** Jede Zeit „aus“ wirkt wie die Nicht-Erfassung des LD2450, ein Produkt über die
+  Personen: Wo er sicher sähe, ist dann niemand. Die Zeit „an“ und die beiden Flanken hängen davon
+  ab, ob *irgendjemand* da ist (kein Produkt): Jede Hypothese bekommt ihren exakten Faktor (die
+  Personen sind gegeben die Hypothese unabhängig), jede Person den Faktor gegeben die anderen,
+  gemischt über die Hypothesen, die sie halten (Marginale wie bei JIPDA). Was andere schon erklären,
+  sagt über diese Person nichts (Lehre aus 0.6.13: sonst entsteht neben einer erklärten Person
+  eine zweite). Wer hinter einer Tür oder außer Haus ist, wird gewichtet wie jemand, den er nicht
+  sieht.
+- Gilt nicht als unabhängige Messung je Frame: Zwischen den Takten (5) wird die Zeit „aus“/„an“
+  summiert; die Flanken sind Ereignisse.
+- Die Energien je Entfernungsring (bewegt/ruhig getrennt) und das bewegt-Flag allein werden noch
+  nicht ausgewertet (9).
 
 ### 4.4 Lücken zwischen Frames
 Die Firmware sendet leere Frames nur alle 5 s. Eine Lücke bis 6 s zählt als beobachtet und leer;
@@ -308,8 +338,8 @@ Lebensdauer der Geister geschätzt (4.2).
   `tools/ghostmap.py` (Geisterkarte offline).
 
 ## 9. Bekannte Schwächen und Offenes
-Abweichungen von den Vorgaben:
-- **LD2410C nicht ausgewertet**, obwohl er in 0.6.x nachweislich half (10).
+Offen beim LD2410C (4.3): Energien je Entfernungsring und bewegt/ruhig getrennt; Reichweite und
+Blitzrate je Sensor (gemessen 0,001–0,08 /s, fest 0,04); ob er durch geschlossene Türen sieht.
 
 Näherungen, die man prüfen oder ersetzen kann:
 - Nicht-Erfassung und Erfassungsrate einer Gauß-Komponente am Mittel statt über ihre Verteilung.
@@ -361,9 +391,13 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
 - **Rechenzeit** (gemessen 6.10., dieselbe Stunde, 3 Sensoren, Anteil eines Kerns): 0.6.21 4,4 %,
   0.8.1 14,7 % (Raster 0,2 m mit 8 Richtungen, je Person mit Spur ein zweites Raster für „durch eine
   Tür“, alles bei jedem Frame vorgerückt; einzelne Frames bis 28 ms, die App ruckelte), 0.9 mit
-  Kacheln und Takt 4,0 % (Log-Evidenz +29 gegenüber 0.8.1 auf 20 min).
+  Kacheln und Takt 4,0 % (Log-Evidenz +29 gegenüber 0.8.1 auf 20 min), mit LD2410C 4,6 %.
+- **LD2410C ohne Modell seiner Reichweite** (0.9-Entwicklung): Mit fester Reichweite 3,3 m musste das
+  lange „an“ des Wohnzimmersensors (Sitzende im Esszimmer in 6,2 m) von einer erfundenen Person nahe
+  am Sensor kommen. Daher hält jetzt, wer in der gemeldeten Entfernung ist. Ohne LD2410C blieb in der
+  Küche nach dem Gehen minutenlang „zu 80 % jemand da“, obwohl beide Sensoren nichts sahen.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
-  verbessert; braucht ein Modell seiner eigenen Haltezeit und Torenergien), Körperabstand zweier
+  verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.
 - **In 0.6.x getestet und verworfen:** gelernte P_D-Karte, Verhaltenskarten je Ort, harte
   Störzonen, ein fester Versatz je Sensor (mehr Doppelzählungen; jetzt als Versatz je Spur gelöst).

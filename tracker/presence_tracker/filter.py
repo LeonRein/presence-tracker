@@ -1,4 +1,4 @@
-"""The Bayes filter of MODEL.md: everybody's whereabouts given the LD2450 tracks. Deterministic:
+"""The Bayes filter of MODEL.md: everybody's whereabouts given the LD2450 tracks and the LD2410C flags (4.3). Deterministic:
 nothing is drawn, the same data always give the same result.
 
 Hypotheses (MODEL.md 5.1): which live tracks are one person's and which are ghosts, with exact
@@ -161,6 +161,7 @@ class Tracker:
         self._recycled = self.now
         self._flushed = self.now
         self._out_cache = {}
+        self._ld_pending = {}  # (sensor, flag) -> time of the LD2410C flag off / on since the last move
         self._version = 0  # counts the moves of everybody and the events (for the outputs' cache)
         self.segs = {}  # seg id -> dict(si, t, zt, var, z, born, lost, ...)
         self._live_by_sensor = {si: [] for si in range(len(self.sensors))}
@@ -233,7 +234,12 @@ class Tracker:
             self._gcache[si] = grid
             self._area[si] = float((grid > 0.05).sum()) * CELL * CELL
         shape = pos.shape[:-1]
-        i, j = self.world.cell_of(pos.reshape(-1, 2))
+        flat = pos.reshape(-1, 2)
+        w = self.world
+        if len(flat) <= 4:  # a person's components: plain Python is faster than numpy for so few
+            return np.array([grid[min(max(int((x - w.x0) / CELL), 0), w.nx - 1), min(max(int((y - w.y0) / CELL), 0), w.ny - 1)]
+                             for x, y in flat.tolist()]).reshape(shape)
+        i, j = w.cell_of(flat)
         return grid[i, j].reshape(shape)
 
     def _polar(self, si: int, pos: np.ndarray) -> tuple:
@@ -332,6 +338,8 @@ class Tracker:
         gap = t - prev
         delta = gap if gap <= IDLE else 0.0  # longer: lost data, says nothing
         self._evidence(si, t, delta, ev)
+        if "ld2410" in frame:
+            self._ld_frame(si, rt, t, frame["ld2410"] or {})
 
     def step(self, t: float, targets=None):
         """Time goes on to t (MODEL.md 3). Everybody is moved and weighed by the tracks not started
@@ -369,6 +377,10 @@ class Tracker:
                 continue
             self._sync(obj, refs, t, None if lat_f is None else
                        tuple(f ** (MAX_STEP * parts / (t - t0)) for f in lat_f))
+        pending, self._ld_pending = self._ld_pending, {}
+        for (si, on, d), E in pending.items():
+            if E > 0:
+                self._ld_weigh(si, "on" if on else "off", E, d)
         self._flushed = t
         self._version += 1
 
@@ -508,7 +520,17 @@ class Tracker:
         self._normalize()
 
     def _walkers(self, si) -> np.ndarray:
-        """Per hypothesis: the expected number of walkers in view of sensor si."""
+        """Per hypothesis: the expected number of walkers in view of sensor si (as of the last move
+        of everybody or event)."""
+        key = ("walkers", si)
+        hit = self._out_cache.get(key)
+        if hit is not None and hit[0] == self._version and len(hit[1]) == len(self.hyps):
+            return hit[1]
+        val = self._count_walkers(si)
+        self._out_cache[key] = (self._version, val)
+        return val
+
+    def _count_walkers(self, si) -> np.ndarray:
         val = np.zeros(len(self.hyps))
         g, _ = self.tiles.seen(si)
         for obj, refs in self._objects():
@@ -855,6 +877,7 @@ class Tracker:
         map_odds = _logsumexp(ghost_ms) - _logsumexp(ghost_ls) if not refind and ghost_ms else 0.0
         top = max(c.logw for c in children)
         self.hyps = [c for c in children if c.logw > top + math.log(m.hyp_floor)] if top > -math.inf else children
+        self._version += 1
         if refind:
             info["lost"] = None
             info["t"] = info["zt"] = info["gt"] = t
@@ -891,6 +914,7 @@ class Tracker:
         """Hypotheses that now say the same about every live track are one: their mixture (MODEL.md
         5.6). People held by the same object in all of them stay as they are; the others are mixed
         per person (exact for one, the multi-Bernoulli approximation for more)."""
+        self._version += 1  # the hypotheses change: cached per-hypothesis values are void
         by = {}
         for hy in self.hyps:
             by.setdefault(hy.key(), []).append(hy)
@@ -949,6 +973,7 @@ class Tracker:
 
     def _prune(self):
         """Keep the strongest hypotheses (Vo et al. 2017: cutting by weight minimizes the L1 error)."""
+        self._version += 1
         self.hyps.sort(key=lambda h: -h.logw)
         top = self.hyps[0].logw
         if top == -math.inf:  # nothing explains the data (should not happen): keep them, see _normalize
@@ -992,6 +1017,157 @@ class Tracker:
             assert all(type(u) is Hidden for u in hy.hidden), "a known person as an intensity"
 
     # -------------------------------------------------------------- LD2410C
+
+    def _ld_geometry(self, si: int, pos) -> tuple:
+        """(degrees off the LD2410C's axis, slant distance, in sight) of the points (n, 2)."""
+        s = self.config.sensors[si]
+        pos = np.asarray(pos, dtype=float).reshape(-1, 2)
+        dx, dy = pos[:, 0] - s.x, pos[:, 1] - s.y
+        ahead = dx * s._cos + dy * s._sin
+        side = dx * s._sin - dy * s._cos
+        angle = np.degrees(np.abs(np.arctan2(side, np.maximum(ahead, 1e-9))))
+        slant = np.sqrt(dx * dx + dy * dy + (s.height - self.p.target_height) ** 2)
+        return angle, slant, (ahead > 0) & (self._g(si, pos) > 0)
+
+    def _ld_values(self, si: int, kind: str, d) -> tuple:
+        """What an LD2410C factor depends on, per person position (MODEL.md 4.3): for "off" and
+        "rise", how surely it sees a person there [still, walking] (its cone and reach) - for "rise"
+        times the density of the reported distance d; for "on" and "fall", whether a person there
+        can hold it on (its wider beam, at about the reported distance). Returns (per tile still,
+        per tile walking, function of positions (n, 2) -> (still, walking))."""
+        m = self.m
+
+        def cone(angle, edges):
+            full, none = edges
+            return np.clip((none - angle) / (none - full), 0.0, 1.0)
+
+        def values(pos):
+            angle, slant, sight = self._ld_geometry(si, pos)
+            if kind in ("off", "rise"):
+                v = cone(angle, m.ld_cone) * sight
+                out = [v * radar_pd(slant, m.ld_reach[STILL]), v * radar_pd(slant, m.ld_reach[WALK])]
+                if kind == "rise" and d is not None:
+                    dens = np.exp(-0.5 * ((slant - d) / m.ld_spread) ** 2) / (math.sqrt(2 * math.pi) * m.ld_spread)
+                    out = [o * dens for o in out]
+                return out
+            v = cone(angle, m.ld_beam) * sight
+            if d is not None:
+                v = v * np.exp(-0.5 * ((slant - d) / m.ld_spread) ** 2)
+            return [v, v]
+
+        key = ("ld", si, kind, d)
+        if key not in self._gcache:
+            tl = self.tiles
+            vs, vw = values(tl.points)
+            if len(self._gcache) > 4096:
+                self._gcache = {k: v for k, v in self._gcache.items() if not (isinstance(k, tuple) and k[0] == "ld")}
+            self._gcache[key] = (tl.average(vs), tl.average(vw))
+        vs, vw = self._gcache[key]
+        return vs, vw, values
+
+    def _ld_frame(self, si, rt, t, ld):
+        """The LD2410C flag of this frame (MODEL.md 4.3): the time since the last frame counts as
+        off or on (weighed with the next move of everybody); a change is an event now. With the
+        distance it reports (slant, m; the still one when it says still, else the moving one)."""
+        on = bool(ld.get("moving") or ld.get("still"))
+        dist = (ld.get("still_distance") if ld.get("still") else ld.get("moving_distance")) or 0
+        d = round(dist / 250) * 0.25 if on and dist > 0 else None  # the 0.75 m gates, finer than needed
+        before, since, d_before = rt.ld_on, rt.ld_t, rt.ld_d
+        rt.ld_on, rt.ld_t, rt.ld_d = on, t, d
+        if before is None or t - since > IDLE:
+            return  # nothing known before (start, lost data)
+        key = (si, before, d_before if before else None)
+        self._ld_pending[key] = self._ld_pending.get(key, 0.0) + (t - since)
+        if on and not before:
+            self._ld_weigh(si, "rise", d=d)
+        elif before and not on:
+            self._ld_weigh(si, "fall", d=d_before)
+        else:
+            return
+        self._version += 1
+
+    def _ld_share(self, obj, vals) -> float:
+        """E[the value] for a person (or the expected sum over the unknown ones)."""
+        vs, vw, fn = vals
+        if isinstance(obj, Hidden):
+            return float(obj.walk @ vw + obj.still.sum(axis=(0, 1)) @ vs)
+        w = obj.weights()
+        v = fn(obj.pos)
+        out = (1 - obj.a) * (w[STILL] * v[0][STILL] + w[WALK] * v[1][WALK])
+        if obj.away is not None:
+            out += obj.a * float(obj.away.walk @ vw + obj.away.still.sum(axis=(0, 1)) @ vs)
+        return float(out)
+
+    def _ld_apply(self, obj, vals, f) -> float:
+        """Multiply a person by f(value), per tile or per component; where the LD2410C can't see
+        them (behind doors, out of the house) by f(0)."""
+        vs, vw, fn = vals
+        f0 = float(f(0.0))
+        if isinstance(obj, Hidden):
+            return obj.weigh(f(vw) / f0, f(vs) / f0) + (math.log(f0) if not isinstance(obj, Undetected) else 0.0)
+        v = fn(obj.pos)
+        dlog = np.log(np.maximum([f(v[0][STILL]), f(v[1][WALK])], 1e-300))
+        da = obj.away.weigh(f(vw) / f0, f(vs) / f0) + math.log(f0) if obj.away is not None else 0.0
+        return obj.reweigh(dlog, da)
+
+    def _ld_weigh(self, si, kind, E=0.0, d=None):
+        """The LD2410C flag (MODEL.md 4.3). Off for E s: nobody turned it on (a rate per person, a
+        product over the people, like the LD2450's tracks). Turning on (at the reported distance d),
+        on for E s, turning off: whether anybody is there - not a product over the people: each
+        hypothesis gets its exact factor (the people independent given it), each person the factor
+        given the others, mixed over the hypotheses holding them (the marginals of JIPDA; what the
+        others explain says nothing about this person, 0.6.13)."""
+        m = self.m
+        a0 = m.ld_rate
+        k, c = 1.0 / m.ld_blip, 1.0 / m.ld_hold
+        vals = self._ld_values(si, kind, d)
+        objs = self._objects()
+        if kind == "off":
+            for obj, refs in objs:
+                dl = self._ld_apply(obj, vals, lambda v: np.exp(-a0 * v * E))
+                for h in refs:
+                    self.hyps[h].logw += dl - m.ld_blips * E
+            return
+        # blips report any distance up to the farthest gate
+        b = m.ld_blips / m.ld_max if (kind == "rise" and d is not None) else m.ld_blips
+        S = {id(o): self._ld_share(o, vals) for o, _ in objs}
+        none = np.zeros(len(self.hyps))  # P(nobody holds it)
+        rate = np.zeros(len(self.hyps))  # expected rate (density) of turning it on
+        for h, hy in enumerate(self.hyps):
+            people = [S[id(o)] for o in hy.people()]
+            lam = S[id(hy.ppp)]
+            none[h] = float(np.prod([1 - x for x in people])) * math.exp(-lam)
+            rate[h] = b + a0 * (sum(people) + lam)
+            if kind == "rise":
+                hy.logw += math.log(rate[h])
+            elif kind == "fall":
+                hy.logw += math.log(c + (k - c) * none[h])
+            else:
+                hy.logw += -c * E - (k - c) * E * none[h]
+        hw = self.hyp_weights()
+        for obj, refs in objs:
+            if isinstance(obj, Undetected):
+                continue
+            w = hw[refs]
+            if w.sum() <= 0:
+                continue
+            if kind == "rise":
+                other = float(w @ (rate[refs] - a0 * S[id(obj)]) / w.sum())
+                self._ld_apply(obj, vals, lambda v: other + a0 * v)
+                continue
+            # P(none of the others holds it), per hypothesis without this person
+            rest = []
+            for h in refs:
+                hy = self.hyps[h]
+                others = list(hy.people())
+                others.remove(obj)
+                rest.append(float(np.prod([1 - S[id(o)] for o in others])) * math.exp(-S[id(hy.ppp)]))
+            P = float(w @ np.array(rest) / w.sum())
+            if kind == "fall":
+                self._ld_apply(obj, vals, lambda v: c + (k - c) * (1 - v) * P)
+            else:
+                self._ld_apply(obj, vals, lambda v: np.exp(-(k - c) * E * (1 - v) * P))
+        self._normalize()
 
     def _ld_runtime(self, s, rt, t, ld):
         """LD2410C state for the display (presence with the app's own hold time)."""

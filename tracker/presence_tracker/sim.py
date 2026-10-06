@@ -2,13 +2,15 @@
 
 Imitates the MQTT frames of the ESPHome firmware, including the LD2450's quirks:
 a lost target coasted for 15 frames with its last speed (MODEL.md 4.1), noise, an error that wanders slowly (each sensor sees a person a bit elsewhere), at most 3 targets, still people dropping out, occasional ghosts, and the LD2410C
-seeing the LD2450's interference every ~7 s.
+as MODEL.md 4.3 describes it (its flag a Markov process: turned on by people in its cone, held while
+somebody is in view, short blips without anybody).
 """
 
 import math
 import random
 from dataclasses import dataclass, field
 
+from .filtermodel import Model, radar_pd
 from .model import SensorConfig
 
 
@@ -44,7 +46,7 @@ class SimSensor:
     still_dropout: float = 0.0  # chance per second that a still person is dropped (stays dropped for still_gap s)
     still_gap: float = 20.0
     ghost_rate: float = 0.0  # LD2450 ghosts per minute
-    ld2410_ghost_period: float = 7.0
+    ld2410: bool = True  # the LD2410C's flag in the frames
     resolution: float = 0.0  # m, people closer than this to each other come out as one target
     blind_to: tuple = ()  # indices of people this sensor doesn't see from blind_after on (hidden behind someone)
     blind_after: float = 0.0
@@ -54,6 +56,7 @@ class SimSensor:
     _ghost_pos: tuple = (0.0, 0.0)
     _bias: dict = field(default_factory=dict)
     _coast: dict = field(default_factory=dict)  # person -> (local x, y, vx, vy, raw speed, frames left)
+    _ld_on: bool = False
 
 
 def simulate(people: list, sensors: list, duration: float, rate: float = 11.0, seed: int = 1, walls: list = ()):
@@ -140,32 +143,36 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
     for slot, tgt in enumerate(targets, 1):
         tgt["slot"] = slot
 
-    # LD2410C: sees everyone in its field, plus the LD2450 interference every few seconds
-    near = [math.hypot(*c.to_local(*p)) for p in (person.position(t) for person in people)
-            if p is not None and c.sees(p[0], p[1], walls)]
+    # LD2410C (MODEL.md 4.3): turned on by the people in its cone at a rate by how surely it sees
+    # them, by blips without anybody; it drops out quickly unless somebody is in view
+    m = Model()
+    seen = []
+    for person in people:
+        p = person.position(t)
+        if p is None or not c.sees(p[0], p[1], walls):
+            continue
+        lx, ly = c.to_local(*p)
+        angle = math.degrees(math.atan2(abs(lx), max(ly, 1e-9)))
+        full, none = m.ld_cone
+        cone = min(max((none - angle) / (none - full), 0.0), 1.0) if ly > 0 else 0.0
+        slant = math.hypot(math.hypot(lx, ly), c.height - 1.0)
+        walking = math.hypot(*person.velocity(t)) > 0.3
+        seen.append((cone * float(radar_pd(slant, m.ld_reach[1 if walking else 0])), slant))
     moving = still = False
     md = sd = 0
     gates = [5 + rng.uniform(0, 8) for _ in range(9)]
-    for r_floor in near:
-        slant = math.hypot(r_floor, c.height - 1.0)
-        g = int(slant / 0.75)
-        for k, boost in ((g, 65), (g - 1, 20), (g + 1, 20)):
-            if 0 <= k < 9:
-                gates[k] += boost + rng.uniform(-10, 10)
-    if near:
-        still = True
-        sd = round(min(near) * 1000, -1)
-    elif s.ld2410_ghost_period:
-        # as recorded: moving 0.1 s, then moving+still 1 s (the radar's own hold time is 0)
-        phase = t % s.ld2410_ghost_period
-        episode = int(t // s.ld2410_ghost_period)
-        dist = round(random.Random(episode).uniform(0.5, 5.0) * 1000, -1)
-        moving = phase < 1.1
-        still = 0.1 <= phase < 1.1
-        md = dist if moving else 0
-        sd = dist if still else 0
-        if moving:
-            gates[min(int(dist / 1000 / 0.75), 8)] += 40
+    if s.ld2410:
+        if s._ld_on:
+            nobody = math.prod(1 - v for v, _ in seen)
+            off = 1 / m.ld_hold + (1 / m.ld_blip - 1 / m.ld_hold) * nobody
+            s._ld_on = rng.random() >= -math.expm1(-off * dt)
+        else:
+            s._ld_on = rng.random() < -math.expm1(-(m.ld_blips + m.ld_rate * sum(v for v, _ in seen)) * dt)
+        still = s._ld_on
+        if still:
+            near = [r for v, r in seen if v > 0.05]
+            sd = round((min(near) if near else rng.uniform(0.5, 5.0)) * 1000, -1)
+            gates[min(int(sd / 1000 / 0.75), 8)] += 50
     s.seq += 1
     return {
         "seq": s.seq,

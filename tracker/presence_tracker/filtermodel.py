@@ -60,6 +60,23 @@ class Model:
     # and s over all setups, 40 % living 3 s on average, 60 % 39 s (setup of 4.10. 18:06, 10.8 h)
     ghost_types = ((0.4 * 1.8e-5, 3.0), (0.6 * 1.8e-5, 39.0))
     ghost_prior_time = 4 * 3600.0  # s: weight of that rate in each cell of a ghost map, as watching time
+    # 4.3 LD2410C: its presence flag (moving or still) as a Markov-modulated process. Measured 6.10.
+    # on 2.5 h of 5 sensors against the LD2450 targets of the same housing: with a person within 3 m
+    # in front of it the flag is on nearly always and back on 0.5-2.4 /s after a drop; beyond, a
+    # still person turns it on only 10-60 % of the time; flags begun without any LD2450 target last
+    # 1.1 s (10-90 % 1.0-1.2 s, blips), begun with a person 7 s and more (to minutes)
+    ld_rate = 1.0  # 1/s: a person in full view turns the flag on at this rate
+    ld_reach = (3.3, 4.5)  # m slant distance where a person turns it on half as often [STILL, WALK]
+    ld_cone = (30.0, 50.0)  # degrees off its axis: fully in view / not at all (linear between)
+    # ... but a person farther or more to the side still holds it on once on (6.10.: a sitter 6.2 m
+    # and 16 degrees off the living room's sensor, flag on with low energy for minutes), at the
+    # distance it reports (0.75 m gates); people within 60 degrees put energy into its gates (0.6.x)
+    ld_beam = (50.0, 70.0)  # degrees: holding it, fully / not at all
+    ld_spread = 0.6  # m: reported slant distance about the person's
+    ld_max = 6.75  # m: its farthest gate (blips report any distance up to here)
+    ld_blips = 0.04  # 1/s: blips without anybody (measured 0.001-0.08 per sensor)
+    ld_blip = 1.1  # s: a blip lasts this long on average
+    ld_hold = 10.0  # s: with somebody in view, the flag drops out after this long on average
     # 5 inference: hypotheses over the tracks' owners, cut by weight (Vo et al. 2017)
     max_hyps = 12
     hyp_floor = 1e-7  # hypotheses with less weight are dropped
