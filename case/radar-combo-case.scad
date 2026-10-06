@@ -1,4 +1,4 @@
-// Kombi-Gehaeuse: HLK-LD2450 + HLK-LD2410C (oder LD2412) + ESP32-S3/C3 SuperMini
+// Kombi-Gehaeuse: HLK-LD2450 + HLK-LD2410C (oder LD2412) + ESP32-S3/C3 SuperMini oder ESP32-S3-Zero
 // Teile: Gehaeuse (shell), Deckel (lid), Eckhalter (corner), Schrankfuss (stand)
 //
 // Koordinaten (Sensor): x = rechts, y = Tiefe (0 = Front, +y Richtung Wand), z = oben
@@ -12,8 +12,10 @@
 //
 // Export:  openscad -D 'part="shell"'  -o shell.stl  radar-combo-case.scad
 //          part = "shell" | "lid" | "corner" | "stand" | "stand_flat" | "assembly" | "assembly_stand"
+//          Deckel fuer den ESP32-S3-Zero: openscad -D 'part="lid"' -D 'esp_board="S3-Zero"' -o lid_s3zero.stl ...
 
 part = "assembly";
+esp_board = "SuperMini";   // "SuperMini" (ESP32-S3/C3 SuperMini) oder "S3-Zero" (Waveshare); aendert nur den Deckel
 secz = 20;
 secx = -8;
 
@@ -53,7 +55,9 @@ so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 ridge_up  = 0.6;   // Rastnasen-Mitte ueber der Platinenrueckseite (Nase beginnt 0,1 mm darueber)
 inner_top = front_t + max(so + t50, so12 + t12) + ridge_up + 0.5;   // knapp ueber den Nasen
 
-esp_w = 18; esp_l = 23.4; esp_t = 1.65;  // ESP32-S3 SuperMini; Laenge 23,0 gemessen, +0,4 Spiel (23,2 war noch zu knapp; Datenblatt 22,52),
+// Platinenlaenge ohne USB-Buchse, gemessen: SuperMini 23,0 (Datenblatt 22,52), S3-Zero 24,1 (Datenblatt 23,5)
+esp_play = 0.6;   // Laengsspiel; mit 0,4 sass der SuperMini aeusserst stramm
+esp_w = 18; esp_l = (esp_board == "S3-Zero" ? 24.1 : 23.0) + esp_play; esp_t = 1.65;
                                          // Dicke angenommen (Standard 1,6) - federnder Arm gleicht 1,2..1,9 aus
 usb_over = 1.9;                          // USB-C-Buchse steht so weit ueber die Platinenkante (gemessen)
 esp_z0 = 0;                              // ESP-Unterkante liegt auf dem Boden bzw. der Deckelnase; Buchse ragt durch den Ausschnitt

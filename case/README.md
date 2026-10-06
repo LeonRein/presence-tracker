@@ -1,6 +1,6 @@
 # Kombi-Präsenzsensor LD2450 + LD2410C – Gehäuse
 
-Schmales, hochkantes Gehäuse (30,2 × 77,8 × 16 mm) für beide Radare und einen ESP32-S3/C3 SuperMini.
+Schmales, hochkantes Gehäuse (30,2 × 77,8 × 16 mm) für beide Radare und einen ESP32-S3/C3 SuperMini oder einen Waveshare ESP32-S3-Zero.
 Die untere Tasche ist für den **LD2410C** ausgelegt. Mit `static_radar = "LD2412"` in der `.scad`-Datei
 wird sie für den LD2412 umgebaut (dann 34,1 × 72,8 mm).
 
@@ -30,7 +30,8 @@ Quelle: `radar-combo-case.scad` (OpenSCAD). Alle Maße sind oben als Parameter �
 | Teil | Lage | Hinweis |
 |---|---|---|
 | `shell.stl` | Front nach unten | Front nur 0,6 mm (Radom, 3 Schichten à 0,2 mm), keine Stützen |
-| `lid.stl` | Rückseite nach unten | Nut und Senkungen druckbar ohne Stützen |
+| `lid.stl` | Rückseite nach unten | für den SuperMini; Nut und Senkungen druckbar ohne Stützen |
+| `lid_s3zero.stl` | Rückseite nach unten | dasselbe für den ESP32-S3-Zero |
 | `corner.stl` | stehend | – |
 | `test_beams.stl` | Front nach unten | Teststück für Federstege, Radar-Taschen und Trennrippe |
 | `stand.stl`, `stand_flat.stl` | auf der Bodenplatte | Tunnel oben 10 mm Brücke |
@@ -46,7 +47,7 @@ Druck zuerst `shell.stl` und prüf die Passung.
 
 ## Teile
 
-- HLK-LD2450, HLK-LD2410C, ESP32-S3 SuperMini (C3 SuperMini passt auch)
+- HLK-LD2450, HLK-LD2410C, ESP32-S3 SuperMini (C3 SuperMini passt auch) oder ESP32-S3-Zero (eigener Deckel)
 - dünne Litze (28–30 AWG) für den LD2410C
 - 2× M2×10 Senkkopf, selbstschneidend (Deckel). Der Deckel hat Durchgangslöcher (Ø 2,6), das Gewinde greift nur im Dom (Ø 2,0). Nicht mit Gewalt anziehen.
 - Eckhalter: 2 Schrauben 3–3,5 mm (Kopf bis Ø 7,5 mm, mind. 30 mm lang) + Dübel, oder doppelseitiges Klebeband
@@ -90,7 +91,9 @@ Der Waveshare ESP32-S3-Zero (ESP32-S3FH4R2, 4 MB Flash) läuft mit derselben Fir
 wie in der Tabelle oben. Nur die Lage der Pins ist eine andere: Von vorne mit USB-C unten gesehen liegen
 5V, GND und GPIO6 rechts, GPIO7, 8 und 9 links. Nicht nach der Position aus dem SuperMini-Bild löten.
 Die Pads 14–16 an der Unterkante und die Pads auf der Rückseite bleiben frei, die RGB-LED hängt an GPIO21.
-Ob der Zero ins Gehäuse passt (Maße, Platinendicke), ist nicht geprüft.
+Der Zero braucht den Deckel `lid_s3zero.stl`: Er ist mit 24,1 mm (gemessen, ohne Buchse) 1,1 mm länger als der
+SuperMini, Federsteg und Rastnase sitzen entsprechend höher. Nicht geprüft ist, ob am oberen Ende links der
+Mitte (x = −6 … −2 mm), wo die Rastnase aufliegt, Bauteile oder die Antenne sitzen.
 
 ## Zusammenbau
 
