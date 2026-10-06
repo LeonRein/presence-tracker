@@ -1,6 +1,6 @@
 # Das Wahrscheinlichkeitsmodell des Presence Trackers
 
-Stand: Code 0.8.0 (6.10.2026). Beschreibt, was der Code rechnet; was fehlt oder nur genähert ist,
+Stand: Code 0.9.0 (Entwicklung, 6.10.2026). Beschreibt, was der Code rechnet; was fehlt oder nur genähert ist,
 steht in 9. Zahlen sind **gemessen** (auf Aufnahmen), **geschätzt** (EM auf Aufnahmen ohne Wahrheit)
 oder **angenommen**. Literaturkürzel wie im Literaturordner (`~/Documents/presence-tracker-literatur`).
 Die Abschnittsnummern werden im Code zitiert (`MODEL.md 4.1`); beim Umbau beibehalten.
@@ -25,8 +25,8 @@ ersetzen darf, wenn etwas Besseres belegt ist.
 5. **Was nicht nachweislich hilft, fliegt raus; was nachweislich geholfen hat, bleibt**, bis ein
    Vergleich etwas anderes zeigt.
 6. **Wahrheitsdaten nur zum Bewerten**, nie zum Einstellen oder Lernen.
-7. **Läuft als Home-Assistant-App**: wenig Rechenzeit, reproduzierbare Ergebnisse. Was gelernt wird
-   (Geisterkarte), lernt die App selbst.
+7. **Läuft als Home-Assistant-App**: wenig Rechenzeit (nicht mehr als 0.6.21), reproduzierbare
+   Ergebnisse. Was gelernt wird (Geisterkarte), lernt die App selbst.
 
 ## 2. Die Welt
 
@@ -67,6 +67,11 @@ Geschwindigkeitssprung-Prozess (gemessen 6.10., 8,7 h LD2450-Spuren, Wege ≥ 2 
 `E[v(t)·v(0)] ∝ e^(−λ_d t)`. Ein Ornstein-Uhlenbeck-Prozess mit τ = 1/λ_d und stationärer Varianz
 (s² + Streuung²)/2 je Achse hat dieselben ersten und zweiten Momente; exakt diskretisiert
 (Buch_SarkkaSolin2019 Bsp. 6.2). Wände kennt sie nicht.
+
+**Diffusionsgrenze** (für Personen ohne Spur, 5.3): Über Zeiten länger als 1/λ_d breitet sich der
+Prozess wie eine Diffusion aus, je Achse mit `D = E[s²] / (2 λ_d) = (s² + Streuung²) / (2 λ_d)` =
+0,50 m²/s; dieselbe Langzeitstreuung wie die OU-Näherung (2 s²_OU τ). Kürzer ist Gehen eher gerade
+(ballistisch); das geht auf den Kacheln verloren.
 
 ### 3.3 Türen, Bereiche ohne Sensor, außer Haus
 - Aufenthalt in *Rₖ*: log-normal, Median 2 min / Streuung von ln(Dauer) 1,5 (geschlossen) bzw.
@@ -175,9 +180,16 @@ eine längere sagt nichts.
 
 ## 5. Inferenz
 
-Deterministisch: Was diskret ist und wenige Werte hat, wird aufgezählt, nicht gezogen. Der Filter
-rechnet in Schritten von höchstens 0,2 s; das Ergebnis hängt nicht davon ab, wie die Zeit zerlegt
-wird (Test).
+Deterministisch: Was diskret ist und wenige Werte hat, wird aufgezählt, nicht gezogen. Das Ergebnis
+hängt nicht davon ab, wie die Zeit zerlegt wird (Test).
+
+**Takt:** Alle Personen und Geisterquellen werden gemeinsam vorgerückt und mit „keine neue Spur“
+gewichtet, höchstens alle 0,2 s (`MAX_STEP`), und sofort vor jedem Ereignis, das alle betrifft:
+neue Spur, wiedergefundene, endende, Start oder Datenlücke. Eine gemessene Position rückt nur die
+Gauß-Mischungen vor, zu denen ihre Spur gehört; jede hat dafür ihre eigene Zeit. Zwischen zwei
+Takten wirkt „gehalten, nicht wiedergefunden“ auf den Stand des letzten Takts, und die Ausgaben
+werden nur nach einem Takt oder Ereignis neu berechnet (bis 0,2 s alt). Vorher (0.8) wurde bei jedem
+Frame jedes Sensors alles vorgerückt: etwa 23-mal je Sekunde, ein Hauptteil der Rechenzeit.
 
 ### 5.1 Hypothesen über die Spuren
 - Welche laufenden Spuren zu derselben Person gehören und welche Geister sind, ist eine diskrete
@@ -201,34 +213,53 @@ Schritt (Buch_SarkkaSvensson2023 S. 352; B_Li2019 Gl. 26–33):
    Ziel-Betriebsart per Momentenabgleich zu einer Komponente zusammengefasst.
 2. Lineare Vorhersage je Komponente (3.1 bzw. OU-Näherung 3.2), Kalman-Update mit der Spur.
 3. Nicht-Erfassung durch andere Sensoren: Faktor je Komponente, am Mittel der Komponente.
-4. **Durch eine Tür:** Was die Rasterbewegung (5.3) von der Komponente *geht* durch eine Tür trägt,
-   wandert in einen Teil „durch eine Tür“ (eine Rasterdichte mit Gewicht a). Eine Messung der Spur
-   sagt „in Sicht“ und streicht ihn.
+4. **Durch eine Tür** in einen Bereich ohne Sensor: Die Komponente *geht* verliert dorthin mit der
+   Rate der Türkacheln (5.3), gewichtet mit ihrer Masse dort (jede Türkachel als ihr kleiner Gauß).
+   Das wandert in einen Teil „durch eine Tür“ (eine Dichte über Kacheln und Bereiche mit Gewicht a).
+   Eine Messung der Spur sagt „in Sicht“ und streicht ihn. Zwischen zwei Räumen mit Sensor gibt es
+   keinen solchen Teil: Dort ist eine Tür nur eine Lücke in der Wand.
 
-### 5.3 Personen ohne Spur: Raster
-`hidden.py`. Punktmassenfilter (0_Arulampalam2002 Abschn. II-B) auf 0,2 m:
-`geht[8 Richtungen, Zelle]`, `steht[Art l, Stufe κ, Zelle]`, `Bereich[k, Alter]` (Altersklassen
-2 s … 36 h), `außer Haus`. Der Sprungprozess aus 3.2 als Markov-Kette: ein Feld je Takt HC/s in
-Richtung h, Richtungswechsel mit λ_d, Anhalten mit μ, Aufstehen mit λ_l, Wand spiegelt, Tür führt in
-den Bereich. Nicht-Erfassung, Nicht-Wiederfinden und die Rate einer neuen Spur sind exakte Summen
-über die Zellen.
+### 5.3 Personen ohne Spur: Kacheln
+`tiling.py`, `hidden.py`. Punktmassenfilter (0_Arulampalam2002 Abschn. II-B) über Kacheln statt über
+ein gleichmäßiges Raster:
+- **Kacheln:** Der beobachtete Bereich wird in Blöcke von höchstens 0,6 m geteilt, jeder Block nach
+  Raum und danach, wie gut jeder Sensor dort sieht (nicht / Rand / voll, `g_s` < 0,1, < 0,9, sonst),
+  jedes zusammenhängende Stück eine Kachel; Stücke unter 0,04 m² gehen an den Nachbarn im selben Raum.
+  So sind Wände und Sichtgrenzen Kachelgrenzen, und innerhalb einer Kachel sieht jeder Sensor etwa
+  gleich gut (Wohnung 6.10.: 237 Kacheln statt 1153 Zellen zu 0,2 m). Jede Kachel ist eine kleine
+  Gauß-Verteilung (Schwerpunkt, Streuung je Achse); damit rechnen der Beginn einer Spur (5.4) und
+  der Weg durch eine Tür (5.2).
+- **Raten** (Erfassung, Wiederfinden) sind je Kachel das Mittel über ihre Punkte eines 0,2-m-Rasters:
+  die Projektion der Likelihood auf den gröberen Zustand (G_Liao2003 Gl. 2).
+- **Zustand:** `geht[Kachel]`, `steht[Art l, Stufe κ, Kachel]`, `Bereich[k, Alter]` (Altersklassen
+  2 s … 36 h), `außer Haus`.
+- **Gehen** zwischen Kacheln als Diffusion (3.2) in finiten Volumen: von Kachel i zum Nachbarn j mit
+  `D · L_ij / (A_i · d_ij)` (gemeinsame Kante L, Fläche A, Abstand der Schwerpunkte d), durch eine
+  Tür in einen Bereich ohne Sensor ebenso, mit d = doppelter Abstand zur Tür. Wände sind keine
+  Kante. Exakt diskretisiert als Matrixexponential je Takt von 0,1 s. Anhalten mit μ, Aufstehen mit
+  λ_l wie in 3.1/3.2. Eine Tür zwischen zwei Räumen mit Sensor ist eine Kante wie jede andere.
+- Nicht-Erfassung, Nicht-Wiederfinden und die Rate einer neuen Spur sind exakte Summen über die
+  Kacheln.
 
 Start („nichts bekannt“): `start_people` = 2 bekannte Personen, je 1/3 im beobachteten Bereich
-(stehend, gleichverteilt), 1/3 in den Bereichen ohne Sensor, 1/3 außer Haus; keine unbekannten. Ein
-Poisson-Start erwartet auch nach zwei gefundenen Personen noch genauso viele weitere (seine Zahlen
-sind unabhängig): Simulation, zwei kommen herein, danach P(3 im Haus) = 0,35.
+(stehend, gleichverteilt nach Fläche), 1/3 in den Bereichen ohne Sensor, 1/3 außer Haus; keine
+unbekannten. Ein Poisson-Start erwartet auch nach zwei gefundenen Personen noch genauso viele weitere
+(seine Zahlen sind unabhängig): Simulation, zwei kommen herein, danach P(3 im Haus) = 0,35.
 
 ### 5.4 Wechsel der Darstellung
-- **Raster → Gauß**, wenn eine Spur auf der Person beginnt oder wiedergefunden wird: Raster ×
-  Erfassungsrate × Dichte der Messung, je Betriebsart per Momentenabgleich. Die Aufteilung von
-  `z − x` auf c und o folgt aus ihren Varianzen (eigene Herleitung).
-- **Gauß → Raster**, erst wenn die letzte laufende Spur endet, nicht schon beim Verlieren (gehaltene
-  Spuren behalten so ihren Versatz). Komponenten werden mit ihrer Dichte verteilt, *geht* nach der
-  Richtung der Geschwindigkeit; verloren gehen Tempo und Versätze.
+- **Kacheln → Gauß**, wenn eine Spur auf der Person beginnt oder wiedergefunden wird: je Kachel
+  Masse × Erfassungsrate × Dichte der Messung (Kachel-Gauß gefaltet mit dem Messrauschen), die
+  Position je Kachel als Produkt der beiden Gauß-Verteilungen, je Betriebsart per Momentenabgleich
+  zu einer Komponente („Partikel zu einem Gauß zusammenfassen“, J_Luber2014 Abschn. 6.5, Gl. 6.32).
+  Die Geschwindigkeit eines Gehenden ohne Spur ist unbekannt (Mittel 0). Die Aufteilung von `z − x`
+  auf c und o folgt aus ihren Varianzen (eigene Herleitung).
+- **Gauß → Kacheln**, erst wenn die letzte laufende Spur endet, nicht schon beim Verlieren (gehaltene
+  Spuren behalten so ihren Versatz). Komponenten werden mit ihrer Dichte auf die Kacheln verteilt;
+  verloren gehen Geschwindigkeit und Versätze.
 
 ### 5.5 Die unbekannten Personen
-`hidden.Undetected`: der unentdeckte Teil des PMBM (B_GarciaFernandez2018 Gl. 7–10, 18–24) auf dem
-Raster aus 5.3, als Intensität (Massen sind erwartete Zahlen). Dieselbe lineare Bewegung, dazu die
+`hidden.Undetected`: der unentdeckte Teil des PMBM (B_GarciaFernandez2018 Gl. 7–10, 18–24) über den
+Kacheln aus 5.3, als Intensität (Massen sind erwartete Zahlen). Dieselbe lineare Bewegung, dazu die
 Ankünfte und das Vergessen aus 3.4.
 - Wer nicht erfasst wird, wiegt mit der Leerwahrscheinlichkeit `exp(−(Masse vorher − nachher))`.
 - Eine neue Spur auf einer unbekannten Person hat das Gewicht `∫ Intensität × Erfassungsrate ×
@@ -282,8 +313,12 @@ Abweichungen von den Vorgaben:
 
 Näherungen, die man prüfen oder ersetzen kann:
 - Nicht-Erfassung und Erfassungsrate einer Gauß-Komponente am Mittel statt über ihre Verteilung.
-- Auf dem Raster gehen alle mit Tempo s in 8 Richtungen; beim Wechsel Gauß → Raster gehen Tempo und
-  Versätze verloren. Die Gauß-Näherung kennt keine Wände.
+- Auf den Kacheln ist Gehen eine Diffusion: Kurzzeitig gerades Gehen und die Richtung gehen verloren,
+  beim Wechsel Gauß → Kacheln auch Geschwindigkeit und Versätze. Innerhalb einer Kachel ist die
+  Masse nicht weiter aufgelöst (wer im Sichtrand sitzt, ist über die ganze Randkachel verteilt). Die
+  Gauß-Näherung kennt keine Wände.
+- Zwischen zwei Takten (0,2 s) wirken „gehalten, nicht wiedergefunden“ und die Ausgaben auf einen
+  bis 0,2 s alten Stand.
 - Versatzvarianz je Achse gemittelt, obwohl entlang/quer verschieden gemessen.
 - Jenseits von 7 m zählt die Entfernung zweimal: in `g_s` (Abfall ab Reichweite + 1 m, aus 0.6.17)
   und in `P_m(r)`. Gegen welches `g_s` ρ und r₅₀ gefittet wurden, ist nicht festgehalten.
@@ -323,6 +358,10 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
 - **Wiener-Prozess für die Geschwindigkeit** (bis 0.6.21): Gehende behalten ihre Richtung viel zu
   lange und sind zu schnell. Eine OU-Geschwindigkeit war im Partikelfilter 0.6.x trotzdem schlechter
   (Commit 5379fd1); im IMM ist sie ungeprüft drin.
+- **Rechenzeit** (gemessen 6.10., dieselbe Stunde, 3 Sensoren, Anteil eines Kerns): 0.6.21 4,4 %,
+  0.8.1 14,7 % (Raster 0,2 m mit 8 Richtungen, je Person mit Spur ein zweites Raster für „durch eine
+  Tür“, alles bei jedem Frame vorgerückt; einzelne Frames bis 28 ms, die App ruckelte), 0.9 mit
+  Kacheln und Takt 4,0 % (Log-Evidenz +29 gegenüber 0.8.1 auf 20 min).
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; braucht ein Modell seiner eigenen Haltezeit und Torenergien), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

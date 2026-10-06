@@ -5,11 +5,12 @@ wandering o), with z = x + c + o + w. Between the modes the mixture is kept at t
 moment matching (GPB / IMM, Saerkkae & Svensson 2023 p. 352; Li 2019 eq. 26-33). Nothing is drawn:
 getting up is a component with a small weight that the first measurement of a walk lifts.
 
-A person also has a part "gone through a door" (a raster density, hidden.py, with its weight a):
-while their tracks are held, walkers move on, and the share that a step of the raster's own motion
-(MODEL.md 3.2, 5.3) takes through a door goes there. A measurement of their track says they are in
-view: the part is dropped (coming back to exactly that spot is neglected). When their last track
-ends, both parts become one raster density.
+A person also has a part "gone through a door" into a region without a sensor (a density over the
+tiles and regions, hidden.py, with its weight a): while their tracks are held, walkers move on, and
+the share that walking takes through a door (the rates of the tiles at the doors, tiling.py) goes
+there. A measurement of their track says they are in view: the part is dropped (coming back to
+exactly that spot is neglected). When their last track ends, both parts become one density over the
+tiles.
 
 Per axis its own covariance (the moments of a mixture differ between the axes). The standing
 component also holds the probability of each kind of stay (MODEL.md 3.1) and of each level of the
@@ -51,9 +52,9 @@ def _log(w):
 
 
 class Gauss:
-    __slots__ = ("logw", "mean", "cov", "gow", "kw", "slots", "var", "phantom", "a", "away")
+    __slots__ = ("logw", "mean", "cov", "gow", "kw", "slots", "var", "phantom", "a", "away", "t")
 
-    def __init__(self, logw, mean, cov, gow, kw, slots=None, var=None, phantom=False, a=0.0, away=None):
+    def __init__(self, logw, mean, cov, gow, kw, slots=None, var=None, phantom=False, a=0.0, away=None, t=None):
         self.logw = np.asarray(logw, dtype=float)  # (2,) log weights of [STILL, WALK], normalized
         self.mean = mean  # (2 modes, 2 axes, d)
         self.cov = cov  # (2 modes, 2 axes, d, d)
@@ -64,10 +65,11 @@ class Gauss:
         self.phantom = phantom  # the source of a ghost track, not a person
         self.a = a  # weight of the part gone through a door
         self.away = away  # ... its density (hidden.Hidden), or None
+        self.t = t  # the time it was moved to (None: made at the tracker's last move of everybody)
 
     def copy(self) -> "Gauss":
         return Gauss(self.logw.copy(), self.mean.copy(), self.cov.copy(), self.gow.copy(), self.kw.copy(), self.slots,
-                     self.var, self.phantom, self.a, self.away.copy() if self.away is not None else None)
+                     self.var, self.phantom, self.a, self.away.copy() if self.away is not None else None, self.t)
 
     @property
     def segs(self) -> set:
@@ -122,25 +124,17 @@ class Gauss:
         d2 = (self.pos - np.asarray(z)[None, :]) ** 2
         return np.prod(np.sqrt(radius ** 2 / v) * np.exp(-0.5 * d2 / v), axis=1)
 
-    def density(self, centers: np.ndarray, cell: float) -> np.ndarray:
-        """(n,) probability of each raster cell (centers (n, 2), size cell), mixed over the modes."""
-        out = np.zeros(len(centers))
+    def tile_mass(self, tiles) -> np.ndarray:
+        """(n,) probability of each tile, mixed over the modes."""
+        out = np.zeros(tiles.n)
         for k, w in enumerate(self.weights()):
-            if w <= 0:
-                continue
-            v = self.pos_var()[k] + cell * cell / 12
-            d = np.exp(-0.5 * (((centers - self.pos[k][None, :]) ** 2) / v[None, :]).sum(axis=1))
-            s = d.sum()
-            if s <= 0:
-                d = np.zeros(len(centers))
-                d[int(np.argmin(((centers - self.pos[k][None, :]) ** 2).sum(axis=1)))] = 1.0
-                s = 1.0
-            out += w * d / s
+            if w > 0:
+                out += w * tiles.gauss_mass(self.pos[k], self.pos_var()[k])
         return out
 
     # ------------------------------------------------------------ dynamics
 
-    def predict(self, dt: float, m, shapes, lat=None, headings=None):
+    def predict(self, dt: float, m, shapes, tiles=None):
         """One step of MODEL.md 3.1/3.2 and of the tracks' offsets (4.1): first the mode changes
         (standing -> walking at the stay's rate, walking -> standing at speed / walk length), the
         incoming parts of each mode matched to one Gaussian (IMM), then each mode's linear
@@ -201,43 +195,20 @@ class Gauss:
         self.mean = np.einsum("kij,kaj->kai", F, np.stack([mS, mW]))
         P = np.stack([PS, PW])
         self.cov = np.einsum("kij,kajl,kml->kaim", F, P, F) + Q[:, None, :, :]
-        if lat is not None and lat.n and not self.phantom:
-            self._through_doors(dt, m, lat, headings)
+        if tiles is not None and tiles.n and not self.phantom:
+            self._through_doors(dt, tiles)
 
-    def _cells(self, k: int, lat) -> np.ndarray:
-        """(n,) the component's position spread over the raster cells (summing to 1)."""
-        from .hidden import HC
-        v = self.pos_var()[k] + HC * HC / 12
-        d = np.exp(-0.5 * (((lat.centers - self.pos[k][None, :]) ** 2) / v[None, :]).sum(axis=1))
-        if d.sum() <= 0:
-            d = np.zeros(lat.n)
-            d[lat.cell_near(self.pos[k])] = 1.0
-        return d / d.sum()
-
-    def _headings(self, m, headings) -> np.ndarray:
-        """(8,) probability of each raster heading for the walking component's velocity."""
-        u = headings / np.hypot(headings[:, 0], headings[:, 1])[:, None] * m.speed
-        pv = self.cov[WALK, :, V, V] + 0.5 * m.speed_spread ** 2
-        hw = np.exp(-0.5 * (((u - self.mean[WALK, :, V][None, :]) ** 2) / pv[None, :]).sum(axis=1))
-        return hw / hw.sum() if hw.sum() > 0 else np.full(len(u), 1 / len(u))
-
-    def _through_doors(self, dt, m, lat, headings):
-        """The walkers' share that the raster's motion takes through a door in dt goes to the part
-        gone through a door (into the region behind it, its stay just begun); that part moves on."""
+    def _through_doors(self, dt, tiles):
+        """The walkers' share that walking takes through a door in dt (tiling.py: the rates of the
+        tiles at the doors, by the walking component's mass there) goes to the part gone through a
+        door, into the region behind it, its stay just begun; that part moves on."""
         from .hidden import Hidden
         if self.away is not None:
             self.away.move(dt)
         w = self.weights()
         if w[WALK] < 1e-9:
             return
-        dens = self._cells(WALK, lat)
-        ph = self._headings(m, headings)
-        rate = np.zeros(lat.R)
-        for h in range(8):
-            into = lat.into[h]
-            ok = into >= 0
-            if ok.any():
-                np.add.at(rate, into[ok], dens[ok] * ph[h] * lat.step_share[h] / lat.tick)
+        rate = tiles.near_doors(self.pos[WALK], self.pos_var()[WALK])
         total = float(rate.sum())
         if total <= 0:
             return
@@ -245,15 +216,16 @@ class Gauss:
         moved = (1 - self.a) * w[WALK] * frac
         if moved <= 0:
             return
-        new = Hidden(lat)
-        new.region[:, 0] = rate / total
-        away = new if self.away is None else Hidden.mixture([(self.a / (self.a + moved), self.away),
-                                                            (moved / (self.a + moved), new)])
+        if self.away is None:
+            self.away = Hidden(tiles)
+        else:
+            self.away.scale(self.a / (self.a + moved))
+        self.away.region[:, 0] += moved / (self.a + moved) * rate / total
         lw = self.logw.copy()
         lw[WALK] += math.log1p(-frac) if frac < 1 else -math.inf
         top = lw.max()
         self.logw = lw - (top + math.log(float(np.exp(lw - top).sum())))
-        self.away, self.a = away, self.a + moved
+        self.a += moved
 
     # ------------------------------------------------------------ tracks
 
@@ -320,7 +292,7 @@ class Gauss:
         order = [X, V] + [i for s in segs for i in (g.slots[s], g.slots[s] + 1)]
         return Gauss(g.logw.copy(), g.mean[:, :, order], g.cov[:, :, order][:, :, :, order], g.gow.copy(), g.kw.copy(),
                      {s: 2 + 2 * j for j, s in enumerate(segs)}, {s: g.var[s] for s in segs}, g.phantom, g.a,
-                     g.away)
+                     g.away, g.t)
 
     @staticmethod
     def mixture(parts) -> "Gauss":
@@ -347,7 +319,7 @@ class Gauss:
             gow, kw = g0.gow.copy(), g0.kw.copy()
         tot = np.array([comps[0][0], comps[1][0]])
         return Gauss(_log(tot / tot.sum()) if tot.sum() > 0 else np.log([0.5, 0.5]), np.stack([comps[0][1], comps[1][1]]),
-                     np.stack([comps[0][2], comps[1][2]]), gow, kw, g0.slots, g0.var, g0.phantom, a, away)
+                     np.stack([comps[0][2], comps[1][2]]), gow, kw, g0.slots, g0.var, g0.phantom, a, away, g0.t)
 
     # ------------------------------------------------------------ making one
 
@@ -412,60 +384,56 @@ class Gauss:
         return g
 
     @classmethod
-    def from_raster(cls, hidden, lat, f_walk, f_still, seg, z, var, m, headings) -> tuple:
-        """A person on the raster gets a track at z (MODEL.md 5.4): the raster times f (the rate or
-        chance of this track starting / being found on somebody in each cell) times the density of
-        z, matched per mode to a Gaussian. Returns (Gauss, log of the mass) - the mass is this
-        alternative's factor for the hypothesis."""
-        from .hidden import HC
+    def from_tiles(cls, hidden, tiles, f_walk, f_still, seg, z, var, m) -> tuple:
+        """A person without a track gets one at z (MODEL.md 5.4): their density times f (the rate or
+        chance of this track starting / being found on somebody in each tile) times the density of
+        z, each tile a small Gaussian, matched per mode to one Gaussian. Returns (Gauss, log of the
+        mass) - the mass is this alternative's factor for the hypothesis."""
         s2 = var + m.white ** 2
-        v = s2 + HC * HC / 12
-        dz = lat.centers - np.asarray(z)[None, :]
-        dens = np.exp(-0.5 * (dz * dz).sum(axis=1) / v) / (2 * math.pi * v)
-        qw = hidden.walk * (f_walk * dens)[None, :]
+        v = tiles.var + s2  # (n, 2): z given the tile
+        dz = np.asarray(z)[None, :] - tiles.centers
+        dens = np.exp(-0.5 * (dz * dz / v).sum(axis=1)) / (2 * math.pi * np.sqrt(v.prod(axis=1)))
+        gain = tiles.var / v
+        post_m = tiles.centers + gain * dz  # x given the tile and z
+        post_v = tiles.var * s2 / v
+        qw = hidden.walk * f_walk * dens
         fs = np.asarray(f_still) * dens  # (n,) or per detectability (K, n)
         qs = hidden.still * (fs[None, None, :] if fs.ndim == 1 else fs[None, :, :])  # (L, K, n)
         mass = float(qw.sum() + qs.sum())
         if not mass > 0:
             return None, -math.inf
         mx, Px, w = np.zeros((2, 2)), np.zeros((2, 2)), np.zeros(2)
-        for k, q in ((STILL, qs.sum(axis=(0, 1))), (WALK, qw.sum(axis=0))):
+        for k, q in ((STILL, qs.sum(axis=(0, 1))), (WALK, qw)):
             w[k] = q.sum()
             if w[k] <= 0:
                 mx[k] = z
                 Px[k] = s2
                 continue
-            mx[k] = q @ lat.centers / w[k]
-            Px[k] = q @ (lat.centers - mx[k]) ** 2 / w[k] + HC * HC / 12
-        u = headings / np.hypot(headings[:, 0], headings[:, 1])[:, None] * m.speed
-        wh = qw.sum(axis=1)
-        if wh.sum() > 0:
-            mv = wh @ u / wh.sum()
-            Pv = wh @ (u - mv) ** 2 / wh.sum() + 0.5 * m.speed_spread ** 2
-        else:
-            mv, Pv = np.zeros(2), np.full(2, 0.5 * (m.speed ** 2 + m.speed_spread ** 2))
-        sh = hidden.lat.sh
+            mx[k] = q @ post_m / w[k]
+            Px[k] = q @ (post_v + (post_m - mx[k]) ** 2) / w[k]
+        # a walker without a track: which way is not known (walking is a diffusion between tiles)
+        mv, Pv = np.zeros(2), np.full(2, 0.5 * (m.speed ** 2 + m.speed_spread ** 2))
+        sh = tiles.sh
         gow = qs.sum(axis=(1, 2))
         gow = gow / gow.sum() if gow.sum() > 0 else sh.go_w_ongoing.copy()
         kw = qs.sum(axis=(0, 2))
         kw = kw / kw.sum() if kw.sum() > 0 else sh.kappa_w.copy()
         return cls._make(seg, var, w, mx, Px, mv, Pv, gow, kw, z, m.const_share, m.white), math.log(mass)
 
-    def to_raster(self, lat, headings, m):
-        """The density of this person on the raster (MODEL.md 5.4), when their last track ends: each
-        component spread over the cells, walkers by the direction of their velocity, standing ones
-        with their kinds of stay and detectability; with the part gone through a door. The speed
-        and the offsets are lost."""
+    def to_tiles(self, tiles):
+        """The density of this person over the tiles (MODEL.md 5.4), when their last track ends:
+        each component spread over the tiles, standing ones with their kinds of stay and
+        detectability; with the part gone through a door. The velocity and the offsets are lost."""
         from .hidden import Hidden
-        h = Hidden(lat)
-        if not lat.n:
+        h = Hidden(tiles)
+        if not tiles.n:
             h.out = 1.0
             return h
         w = self.weights()
         if w[STILL] > 0:
-            h.still += w[STILL] * np.outer(self.gow, self.kw)[:, :, None] * self._cells(STILL, lat)[None, None, :]
+            h.still += w[STILL] * np.outer(self.gow, self.kw)[:, :, None] * tiles.gauss_mass(self.pos[STILL], self.pos_var()[STILL])[None, None, :]
         if w[WALK] > 0:
-            h.walk += w[WALK] * self._headings(m, headings)[:, None] * self._cells(WALK, lat)[None, :]
+            h.walk += w[WALK] * tiles.gauss_mass(self.pos[WALK], self.pos_var()[WALK])
         h._normalize()
         if self.a > 0 and self.away is not None:
             return Hidden.mixture([(1 - self.a, h), (self.a, self.away)]) if self.a < 1 else self.away.copy()

@@ -9,8 +9,8 @@ same about the live tracks are merged (5.6). This is the data association of a P
 Given a hypothesis, the people are independent:
   - a person with a live track (measured or held): a Gaussian mixture over standing / walking
     (gauss.py, 5.2)
-  - a person known from earlier tracks, without one now: a density on a raster (hidden.py, 5.3)
-  - the people nobody knows of: a Poisson intensity on the raster (hidden.Undetected, 3.4, 5.5)
+  - a person known from earlier tracks, without one now: a density over the tiles (hidden.py, 5.3)
+  - the people nobody knows of: a Poisson intensity over the tiles (hidden.Undetected, 3.4, 5.5)
 The number of people is part of the state: people become known by their tracks, and one who is
 almost surely out of the house is given back to the unknown ones.
 Objects are shared by the hypotheses with the same history and updated once; what differs between
@@ -25,9 +25,10 @@ import numpy as np
 from .filtermodel import FRAME, IDLE, STILL, WALK, Model, Shapes, radar_pd
 from .frames import SensorRuntime, detections as frame_detections
 from .gauss import Gauss
-from .hidden import HC, HEADINGS, Hidden, Lattice, Undetected
+from .hidden import Hidden, Undetected
 from .sensormodel import PD_MAX, SensorModel
 from .sensortracks import SensorTracks
+from .tiling import POINT, Tiling
 from .unobserved import Dwell
 from .world import CELL, OBSERVED, World
 
@@ -137,7 +138,7 @@ class Tracker:
         self.room_of = np.full((w.nx, w.ny), -1, dtype=np.int16)
         for k, z in enumerate(rooms):
             self.room_of[w.zone_mask(z) & (w.labels == OBSERVED)] = k
-        self.lat = Lattice(self)
+        self.tiles = Tiling(self)
         for si in range(len(self.sensors)):
             self._g(si, np.zeros((1, 2)))
 
@@ -152,12 +153,15 @@ class Tracker:
         hidden = []
         for where in people:
             if where == "anywhere":
-                anywhere = anywhere or Hidden.anywhere(self.lat)
+                anywhere = anywhere or Hidden.anywhere(self.tiles)
                 hidden.append(anywhere)
             else:
-                hidden.append(Hidden.at_place(self.lat, self.world.index[where]))
-        self.hyps = [Hyp(0.0, {}, {}, {}, hidden, Undetected.none(self.lat))]
+                hidden.append(Hidden.at_place(self.tiles, self.world.index[where]))
+        self.hyps = [Hyp(0.0, {}, {}, {}, hidden, Undetected.none(self.tiles))]
         self._recycled = self.now
+        self._flushed = self.now
+        self._out_cache = {}
+        self._version = 0  # counts the moves of everybody and the events (for the outputs' cache)
         self.segs = {}  # seg id -> dict(si, t, zt, var, z, born, lost, ...)
         self._live_by_sensor = {si: [] for si in range(len(self.sensors))}
 
@@ -267,18 +271,21 @@ class Tracker:
         g = self._g(si, pos)
         return rw * radar_pd(r, r50w) * g, rs * radar_pd(r, r50s) * g
 
-    def _lattice_rates(self, si: int, skip=()) -> tuple:
-        """(walkers, still people) rates (n,) of sensor si on the raster."""
-        lat = self.lat
-        if not lat.n:
+    def _tile_rates(self, si: int, skip=()) -> tuple:
+        """(walkers, still people) rates (n,) of sensor si per tile (averaged over the tile)."""
+        tl = self.tiles
+        if not tl.n:
             return np.zeros(0), np.zeros(0)
-        key = ("lat", si)
+        key = ("tiles", si)
         base = self._gcache.get(key)
         if base is None:
-            base = self._base_rates(si, lat.centers)
-            self._gcache[key] = base
-        mask = self._mask(si, lat.centers, skip)
-        return base[0] * mask, base[1] * mask
+            base = self._base_rates(si, tl.points)
+            self._gcache[key] = (base, tl.average(base[0]), tl.average(base[1]))
+            base = self._gcache[key]
+        if not any(s not in skip for s in self._live_by_sensor.get(si, [])):
+            return base[1], base[2]
+        mask = self._mask(si, tl.points, skip)
+        return tl.average(base[0][0] * mask), tl.average(base[0][1] * mask)
 
     def _gauss_rates(self, si: int, g: Gauss, skip=()) -> np.ndarray:
         """(2,) rate of sensor si per component [STILL, WALK], at its mean (0 where the person has a
@@ -293,8 +300,7 @@ class Tracker:
 
     def process_frame(self, sensor_id: str, t: float, frame: dict):
         if self.start is None:
-            self.start = t
-            self.now = t
+            self.start = self.now = self._flushed = self._recycled = t
         sensor = self.config.sensor_by_id.get(sensor_id)
         rt = self.runtime.setdefault(sensor_id, SensorRuntime())
         prev = rt.last_frame
@@ -328,17 +334,86 @@ class Tracker:
         self._evidence(si, t, delta, ev)
 
     def step(self, t: float, targets=None):
-        """Move everybody to time t (MODEL.md 3), and weigh by the tracks not started meanwhile."""
+        """Time goes on to t (MODEL.md 3). Everybody is moved and weighed by the tracks not started
+        meanwhile together, at most MAX_STEP apart in time (and before every event that concerns
+        all of them, _evidence); a measured track moves its owners alone (_measured)."""
         if self.start is None or t <= self.now:
             return
-        dt = t - self.now
-        parts = int(math.ceil(dt / MAX_STEP - 1e-9))
-        for k in range(parts):
-            self._advance(self.now + dt * (k + 1) / parts, dt / parts)
         self.now = t
+        if t - self._flushed >= MAX_STEP - 1e-9:
+            self._flush(t)
         if t - self._recycled >= RECYCLE_EVERY:
             self._recycled = t
             self._recycle()
+
+    def _flush(self, t: float):
+        """Move everybody to time t: the people without a track all from the last flush, each
+        Gaussian from its own time; in parts no longer than MAX_STEP."""
+        if t <= self._flushed:
+            return
+        objs = self._objects(phantoms=True)
+        t0 = self._flushed
+        parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
+        lat_f = None
+        for k in range(parts):
+            tk = t0 + (t - t0) * (k + 1) / parts
+            live, lat_f = self._watching(tk, (t - t0) / parts)
+            for obj, refs in objs:
+                if isinstance(obj, Hidden):
+                    obj.move((t - t0) / parts)
+                    d = obj.weigh(*lat_f) if lat_f is not None else 0.0
+                    for h in refs:
+                        self.hyps[h].logw += d
+        for obj, refs in objs:
+            if isinstance(obj, Hidden):
+                continue
+            self._sync(obj, refs, t, None if lat_f is None else
+                       tuple(f ** (MAX_STEP * parts / (t - t0)) for f in lat_f))
+        self._flushed = t
+        self._version += 1
+
+    def _watching(self, t: float, dt: float) -> tuple:
+        """The sensors watching at t, and the factors (walkers, still people per level of
+        detectability) per tile for no track started by them in dt."""
+        live = self._live(t)
+        if not live or not self.tiles.n:
+            return live, None
+        rates = [self._tile_rates(si) for si in live]
+        rw, rs = sum(r[0] for r in rates), sum(r[1] for r in rates)
+        return live, (np.exp(-rw * dt), np.exp(-np.outer(self.shapes.kappa, rs) * dt))
+
+    def _sync(self, obj: Gauss, refs, t: float, lat_f=None):
+        """Move one Gaussian (a person with tracks, or a ghost's source) from its own time to t, and
+        weigh it by no track started on the person meanwhile. Its part gone through a door is
+        weighed with lat_f (the factors per tile for MAX_STEP from _flush); without (a measurement
+        of the person follows, which drops that part) only moved."""
+        t0 = self._flushed if obj.t is None else obj.t
+        if t <= t0:
+            return
+        kappa = self.shapes.kappa
+        parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
+        dt = (t - t0) / parts
+        for k in range(parts):
+            obj.predict(dt, self.m, self.shapes, self.tiles)
+            if obj.phantom:
+                continue
+            live = self._live(t0 + dt * (k + 1))
+            if not live:
+                continue
+            r = sum(self._gauss_rates(si, obj) for si in live)
+            da = 0.0
+            if obj.away is not None and lat_f is not None:
+                share = dt / MAX_STEP  # lat_f holds for MAX_STEP; dt is at most that long
+                da = obj.away.weigh(lat_f[0] ** share, lat_f[1] ** share)
+            d = obj.reweigh(obj.kappa_weigh(np.exp(-kappa * r[STILL] * dt), math.exp(-r[WALK] * dt)), da)
+            for h in refs:
+                self.hyps[h].logw += d
+        obj.t = t
+
+    def _live(self, t: float) -> list:
+        return [si for si, sid in enumerate(self.sensors)
+                if sid in self.runtime and t - self.runtime[sid].last_frame <= IDLE
+                and self.config.sensors[si].enabled and self.config.sensors[si].placed]
 
     def _recycle(self):
         """Known people almost surely out of the house join the unknown ones (MODEL.md 5.5):
@@ -360,31 +435,9 @@ class Tracker:
                 hy.hidden.remove(u)
             changed = True
         if changed:
+            self._flush(self.now)
             self._merge()
-
-    def _advance(self, t: float, dt: float):
-        live = [si for si, sid in enumerate(self.sensors)
-                if sid in self.runtime and t - self.runtime[sid].last_frame <= IDLE
-                and self.config.sensors[si].enabled and self.config.sensors[si].placed]
-        kappa = self.shapes.kappa
-        lat_f = None
-        if live and self.lat.n:
-            rates = [self._lattice_rates(si) for si in live]
-            rw, rs = sum(r[0] for r in rates), sum(r[1] for r in rates)
-            lat_f = (np.exp(-rw * dt), np.exp(-np.outer(kappa, rs) * dt))
-        for obj, refs in self._objects(phantoms=True):
-            if isinstance(obj, Hidden):
-                obj.move(dt)
-                d = obj.weigh(*lat_f) if lat_f is not None else 0.0
-            else:
-                obj.predict(dt, self.m, self.shapes, self.lat, HEADINGS)
-                d = 0.0
-                if not obj.phantom and live:  # no track started on a person meanwhile
-                    r = sum(self._gauss_rates(si, obj) for si in live)
-                    da = obj.away.weigh(*lat_f) if obj.away is not None and lat_f is not None else 0.0
-                    d = obj.reweigh(obj.kappa_weigh(np.exp(-kappa * r[STILL] * dt), math.exp(-r[WALK] * dt)), da)
-            for h in refs:
-                self.hyps[h].logw += d
+            self._version += 1
 
     def _objects(self, phantoms=False) -> list:
         """The distinct objects of all hypotheses (people; with phantoms: also the sources of ghost
@@ -404,6 +457,11 @@ class Tracker:
     def _evidence(self, si, t, delta, ev):
         m = self.m
         censored = delta <= 0
+        events = censored or ev.born or ev.ended or any(seg in self.segs and self.segs[seg]["lost"] is not None
+                                                       for seg, _ in ev.measured)
+        if events:
+            self._flush(t)  # these weigh, branch or merge everybody: all at t
+            self._version += 1
         # 1. no ghost track was born meanwhile (echoes come with walkers in view)
         area = self._area.get(si, 0.0)
         if delta > 0:
@@ -443,7 +501,7 @@ class Tracker:
         # 4. new tracks, and lost ones found again
         if refound or ev.born:
             skip = {seg for seg, _ in ev.born}
-            rates = self._lattice_rates(si, skip)
+            rates = self._tile_rates(si, skip)
             last = FRAME if censored else min(delta, FRAME)
             for seg, d in refound + ev.born:
                 self._branch(si, seg, d, t, last, censored, rates, skip)
@@ -452,13 +510,13 @@ class Tracker:
     def _walkers(self, si) -> np.ndarray:
         """Per hypothesis: the expected number of walkers in view of sensor si."""
         val = np.zeros(len(self.hyps))
-        g, _ = self.lat.seen(si)
+        g, _ = self.tiles.seen(si)
         for obj, refs in self._objects():
             if isinstance(obj, Hidden):
-                v = float(obj.walking() @ (g > 0.1)) if self.lat.n else 0.0
+                v = float(obj.walking() @ (g > 0.1)) if self.tiles.n else 0.0
             else:
                 v = (1 - obj.a) * obj.walking() * float(self._g(si, obj.pos[WALK][None, :])[0] > 0.1)
-                if obj.away is not None and self.lat.n:
+                if obj.away is not None and self.tiles.n:
                     v += obj.a * float(obj.away.walking() @ (g > 0.1))
             for h in refs:
                 val[h] += v
@@ -469,7 +527,7 @@ class Tracker:
         by it - with the stationary share 1 / (1 + rate * life of a track)."""
         m = self.m
         kappa = self.shapes.kappa
-        rw, rs = self._lattice_rates(si)
+        rw, rs = self._tile_rates(si)
         lw, ls = m.track_life[WALK], m.track_life[STILL]
         for obj, refs in self._objects():
             if isinstance(obj, Hidden):
@@ -504,6 +562,7 @@ class Tracker:
             return
         for obj, refs in self._objects(phantoms=True):
             if isinstance(obj, Gauss) and seg in obj.slots:
+                self._sync(obj, refs, t)
                 dl = obj.update(seg, d.pos, m.white)
                 for h in refs:
                     self.hyps[h].logw += dl
@@ -531,11 +590,11 @@ class Tracker:
         later = 0.5 * math.erfc((math.log(u) - math.log(median)) / (spread * math.sqrt(2)))
         return never + (1 - never) * later
 
-    def _kk_lattice(self, si, z) -> np.ndarray:
-        """(n,): how well the sensor could find its target held at z on somebody in each cell."""
-        g, _ = self.lat.seen(si)
-        dz = self.lat.centers - z
-        return g * self._near((dz * dz).sum(axis=1))
+    def _kk_tiles(self, si, z) -> np.ndarray:
+        """(n,): how well the sensor could find its target held at z on somebody in each tile."""
+        tl = self.tiles
+        dz = tl.points - z
+        return tl.average(self._g(si, tl.points) * self._near((dz * dz).sum(axis=1)))
 
     def _kk_gauss(self, si, c: Gauss, z) -> np.ndarray:
         return self._g(si, c.pos) * c.near(z, self.m.find_radius)
@@ -550,7 +609,7 @@ class Tracker:
         lost["u"] = u1
         lr = math.log(max(ratio, 1e-300))
         if lr < 0:
-            kl = self._kk_lattice(si, lost["z"]) if self.lat.n else None
+            kl = self._kk_tiles(si, lost["z"]) if self.tiles.n else None
             for obj, refs in self._objects():
                 if isinstance(obj, Hidden):
                     f = np.exp(kl * lr) if kl is not None else np.zeros(0)
@@ -603,7 +662,7 @@ class Tracker:
     def _release(self, hy, gid, seg, cache):
         """In hypothesis hy, the person of group gid no longer owns seg (it ended, or it is somebody
         else's in this child): its offset is marginalized out; without any live track left they go
-        to the raster (MODEL.md 5.4)."""
+        to the tiles (MODEL.md 5.4)."""
         obj = hy.groups[gid]
         rest = [s for s, k in hy.kind.items() if k == gid and s != seg]
         key = (id(obj), seg, bool(rest))
@@ -611,7 +670,7 @@ class Tracker:
             new = obj.copy()
             if seg in new.slots:
                 new.drop_track(seg)
-            cache[key] = new if rest else new.to_raster(self.lat, HEADINGS, self.m)
+            cache[key] = new if rest else new.to_tiles(self.tiles)
         new = cache[key]
         if rest:
             hy.groups[gid] = new
@@ -622,11 +681,11 @@ class Tracker:
     def _branch(self, si, seg, d, t, last, censored, rates, skip):
         """A new track, or a lost one found again: branch every hypothesis (MODEL.md 5.1). A new
         track is a ghost's, or a person's who has tracks of other sensors, or a person's without
-        any (from their raster). A track found again is its owner's again, or the sensor found it
+        any (from their tiles). A track found again is its owner's again, or the sensor found it
         on somebody else near the spot, or on a reflection there - the LD2450 lets a held track
         glide to the next target. Every alternative is a hypothesis with its exact weight."""
         m = self.m
-        lat = self.lat
+        tl = self.tiles
         refind = seg in self.segs
         info = self.segs.get(seg)
         var = info["var"] if refind else self._offset_var(si, d.pos)
@@ -639,7 +698,7 @@ class Tracker:
             lost = info["lost"]
             u0, u1 = lost["u"], t - lost["t"]
             lr_nf = math.log(max(self._no_find(lost["kind"], u1) / max(self._no_find(lost["kind"], u0), 1e-300), 1e-300))
-            kl = self._kk_lattice(si, lost["z"]) if lat.n else np.zeros(0)
+            kl = self._kk_tiles(si, lost["z"]) if tl.n else np.zeros(0)
             f_lat = (kl, kl)
             g_life = np.array([-(t - info.get("gt", info["born"])) / life_ for life_ in ghost_life])
 
@@ -686,10 +745,9 @@ class Tracker:
                         new.add_track(seg, var, m.const_share)
                     return new, new.update(seg, z, m.white, logf(new))
                 return derived(("gauss", id(obj)), make)
-            if not lat.n:
+            if not tl.n:
                 return None, -math.inf
-            return derived(("raster", id(obj)),
-                           lambda: Gauss.from_raster(obj, lat, f_lat[0], f_lat[1], seg, z, var, m, HEADINGS))
+            return derived(("tiles", id(obj)), lambda: Gauss.from_tiles(obj, tl, f_lat[0], f_lat[1], seg, z, var, m))
 
         children = []
         for h, hy in enumerate(self.hyps):
@@ -711,9 +769,9 @@ class Tracker:
                 for obj in hy.objects():
                     if isinstance(obj, Gauss):
                         E += (1 - obj.a) * float(obj.weights() @ self._kk_gauss(si, obj, lost["z"]))
-                        if obj.away is not None and lat.n:
+                        if obj.away is not None and tl.n:
                             E += obj.a * obj.away.integrate(kl, kl)
-                    elif lat.n:
+                    elif tl.n:
                         E += obj.integrate(kl, kl)
                 pf = math.log(max(-math.expm1(E * lr_nf), 1e-300)) - math.log(E)
                 if cur == "g":
@@ -768,7 +826,7 @@ class Tracker:
                 ch.groups[gid] = new
                 ch.kind[seg] = gid
                 children.append(ch)
-            # somebody without a track: from their raster
+            # somebody without a track: from their tiles
             counts = {}
             for u in hy.hidden:
                 counts.setdefault(id(u), [u, 0])[1] += 1
@@ -951,18 +1009,18 @@ class Tracker:
     # -------------------------------------------------------------- outputs
 
     def _in_view(self, obj) -> np.ndarray:
-        """Mass per raster cell in view (n,)."""
+        """Mass per tile in view (n,)."""
         if isinstance(obj, Hidden):
             return obj.in_view()
-        out = (1 - obj.a) * obj.density(self.lat.centers, HC)
+        out = (1 - obj.a) * obj.tile_mass(self.tiles)
         return out + obj.a * obj.away.in_view() if obj.away is not None else out
 
     def _room_probs(self, obj) -> np.ndarray:
         """P(the person is in each scored room), and in view at all (last entry)."""
         R = len(self.rooms)
         mass = self._in_view(obj)
-        ok = self.lat.room >= 0
-        out = np.bincount(self.lat.room[ok], weights=mass[ok], minlength=R) if R else np.zeros(0)
+        ok = self.tiles.room >= 0
+        out = np.bincount(self.tiles.room[ok], weights=mass[ok], minlength=R) if R else np.zeros(0)
         return np.concatenate([out, [mass.sum()]])
 
     def _place_probs(self, obj) -> np.ndarray:
@@ -1005,8 +1063,18 @@ class Tracker:
                 out[k, :len(d)] += w * d
         return out
 
+    def _cached(self, name, make):
+        """Outputs are computed once per move of everybody (MAX_STEP) or event (_flush)."""
+        key = (name, self._version)
+        if self._out_cache.get(name, (None,))[0] != key:
+            self._out_cache[name] = (key, make())
+        return self._out_cache[name][1]
+
     def count_distribution(self) -> dict:
         """room id -> [P(0 people), P(1), ...] over the observed rooms, and "_observed"."""
+        return self._cached("counts", self._count_distribution)
+
+    def _count_distribution(self) -> dict:
         c = self._counts(self._room_probs)
         out = {rid: c[k].tolist() for k, rid in enumerate(self.rooms)}
         out["_observed"] = c[-1].tolist()
@@ -1014,6 +1082,9 @@ class Tracker:
 
     def place_distribution(self) -> dict:
         """place name -> [P(0 people), P(1), ...], and "_house" (anywhere but outside)."""
+        return self._cached("places", self._place_distribution)
+
+    def _place_distribution(self) -> dict:
         def with_house(o):
             p = self._place_probs(o)
             return np.append(p, p[:-1].sum())
@@ -1034,7 +1105,7 @@ class Tracker:
 
     def _display(self, pid, obj) -> dict:
         """Where to draw a person: with a measuring track the mean of the mixture (it moves as
-        smoothly as the estimate does); on the raster the densest cell of the most probable place."""
+        smoothly as the estimate does); without, the densest tile of the most probable place."""
         pr = self._place_probs(obj)
         best = int(np.argmax(pr))
         out = {"id": pid, "places": {self.world.places[i]: round(float(v), 3) for i, v in enumerate(pr) if v >= 0.005},
@@ -1043,11 +1114,13 @@ class Tracker:
             out.update({"x": None, "y": None, "vx": 0.0, "vy": 0.0, "sigma": 0.0, "walk": 0.0})
             return out
         if isinstance(obj, Hidden):
+            tl = self.tiles
             mass = obj.in_view()
-            c = int(np.argmax(mass))
-            x, y = self.lat.centers[c]
+            c = int(np.argmax(mass / tl.area))
+            x, y = tl.centers[c]
+            spread = mass @ (((tl.centers - [x, y]) ** 2).sum(axis=1) + tl.var.sum(axis=1))
             out.update({"x": round(float(x), 3), "y": round(float(y), 3), "vx": 0.0, "vy": 0.0,
-                        "sigma": round(math.sqrt(float(mass @ ((self.lat.centers - [x, y]) ** 2).sum(axis=1)) / max(mass.sum(), 1e-12)), 3),
+                        "sigma": round(math.sqrt(float(spread) / max(mass.sum(), 1e-12)), 3),
                         "walk": round(float(obj.walking().sum() / max(mass.sum(), 1e-12)), 3)})
             return out
         w = obj.weights()
@@ -1060,10 +1133,11 @@ class Tracker:
         return out
 
     def _heat(self, obj) -> list:
-        """[[x, y, mass]] of a person in view, on the raster."""
-        mass = self._in_view(obj)
+        """[[x, y, mass]] of a person in view, each tile's mass spread over its points (POINT m cells)."""
+        tl = self.tiles
+        mass = tl.spread(self._in_view(obj))
         k = np.flatnonzero(mass > 0.002)
-        return [[round(float(self.lat.centers[i, 0] - HC / 2), 2), round(float(self.lat.centers[i, 1] - HC / 2), 2),
+        return [[round(float(tl.points[i, 0] - POINT / 2), 2), round(float(tl.points[i, 1] - POINT / 2), 2),
                  round(float(mass[i]), 3)] for i in k]
 
     def zone_states(self) -> dict:
@@ -1136,7 +1210,7 @@ class Tracker:
             room = None if d["x"] is None else next(
                 (z.id for z in self.config.zones_of("room") if z.contains(d["x"], d["y"])), None)
             tracks.append({**d, "room": room})
-            clouds.append({"id": d["id"], "cell": HC, "cells": self._heat(obj)})
+            clouds.append({"id": d["id"], "cell": POINT, "cells": self._heat(obj)})
         sensors = {}
         for sid, rt in self.runtime.items():
             sensors[sid] = {

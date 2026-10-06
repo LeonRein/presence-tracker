@@ -92,7 +92,7 @@ def radar_pd(r, r50: float):
 
 
 class Shapes:
-    """How long a stay lasts, as a finite mixture shared by the Gaussians and the raster: every stay
+    """How long a stay lasts, as a finite mixture shared by the Gaussians and the tiles: every stay
     draws its rate of getting up go_l with weight go_w_l."""
 
     def __init__(self, m: Model):
