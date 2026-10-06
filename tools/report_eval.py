@@ -8,7 +8,8 @@ usage: python tools/report_eval.py --config FILE --truth FILE [--recordings DIR]
 
 The truth file (private: it describes who was where) holds the app's starts and per report a window
 (from the event to the report) and counts per room or region without a sensor, only where the
-report says so. Printed per report and room: the means of P(somebody there) and of P(the reported
+report says so; a window with "walks": S (e.g. a night, everybody in bed) excuses the moments in which an
+LD2450 measured somebody in that room in the last S seconds (somebody walking through). Printed per report and room: the means of P(somebody there) and of P(the reported
 number of people) over the window, and the
 share of the window in which the light would be wrong (on without anybody, off with somebody; the
 threshold of MODEL.md 6). --patch: a Python file run before the replay that changes the model (for
@@ -39,7 +40,8 @@ def main():
     ap.add_argument("--patch", action="append", default=[])
     ap.add_argument("--only")
     ap.add_argument("--every", type=float, default=1.0)
-    ap.add_argument("--trace", action="store_true", help="print the rooms' P(somebody there) in the windows")
+    ap.add_argument("--trace", action="store_true", help="print the rooms' P(somebody there) and the people of the "
+                                                        "most probable hypothesis in the windows")
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(a.tracker))
     for p in a.patch:
@@ -56,6 +58,8 @@ def main():
     windows = [(parse_time(r["from"]), parse_time(r["to"]), r) for r in reports]
     c = config.params.light_cost / (config.params.light_cost + 1.0)
     rooms = [z.id for z in config.zones_of("room") if not any(z.id in r["rooms"] for r in config.regions.values())]
+    zones = [z for z in config.zones_of("room") if z.id in rooms]
+    seen = {}  # room -> last time an LD2450 measured somebody there (for windows that excuse walks)
 
     tracker = None
     gm = None
@@ -90,6 +94,12 @@ def main():
             sid = m["topic"].split("/")[1]
             tt = clocks[sid](m["t"], m["payload"].get("uptime_ms"))
             tracker.process_frame(sid, tt, m["payload"])
+            rt = tracker.runtime.get(sid)
+            for d in (rt.detections if rt is not None else []):
+                if not d.hidden and not d.stale:
+                    z = next((z.id for z in zones if z.contains(float(d.pos[0]), float(d.pos[1]))), None)
+                    if z is not None:
+                        seen[z] = m["t"]
             if tt >= next_step:
                 tracker.step(tt)
                 next_step = tt + 0.2
@@ -104,10 +114,15 @@ def main():
             p = {z: counts[z] for z in rooms}
             p.update({rid: places[rid] for rid in config.regions})
             for r in inside:
+                if r.get("walks"):  # nobody stays: where an LD2450 measures somebody, they walk through
+                    p = {z: v for z, v in p.items() if m["t"] - seen.get(z, -1e9) > r["walks"]}
                 samples[r["name"]].append((m["t"], p))
             if a.trace:
                 print(time.strftime("%H:%M:%S", time.localtime(m["t"])) + " "
-                      + " ".join(f"{z[:5]} {1 - v[0]:.2f}" for z, v in p.items()), flush=True)
+                      + " ".join(f"{z[:5]} {1 - v[0]:.2f}" for z, v in p.items()) + f" H{len(tracker.hyps)}"
+                      + "".join(f" | P{d['id']} {max(d['places'].items(), key=lambda kv: kv[1])[0][:6]}"
+                                + ("" if d["x"] is None else f" ({d['x']:.1f},{d['y']:.1f}){' unseen' if d['lost'] else ''}")
+                                for d in tracker.persons()), flush=True)
     loglik += tracker.loglik if tracker is not None else 0.0
 
     # per report and room: mean P(somebody there), share of the time the light would be wrong
@@ -136,6 +151,22 @@ def main():
                     wrong_on += bad
                     n_off += 1
             parts.append(f"{room}{'' if observed else '(ohne Sensor)'}={n}: P {mean:.2f} P(={n}) {right:.2f}{' FALSCH %.0f%%' % (100 * bad) if bad > 0 else ''}")
+            if r.get("walks") and bad > 0:  # long windows: when the light would have been wrong
+                runs, start, last = [], None, None
+                for tt_, p_ in ss:
+                    if room not in p_:
+                        continue
+                    wrong = (1 - p_[room][0] > c) != (n > 0)
+                    if wrong and start is None:
+                        start = tt_
+                    if not wrong and start is not None:
+                        runs.append((start, last))
+                        start = None
+                    last = tt_
+                if start is not None:
+                    runs.append((start, last))
+                parts[-1] += f" [{sum(b - a_ for a_, b in runs) / 60:.1f} min: " + ", ".join(
+                    time.strftime("%H:%M:%S", time.localtime(a_)) + f" {b - a_:.0f} s" for a_, b in runs if b - a_ >= 10) + "]"
         print("   " + "; ".join(parts))
     print(f"observed rooms: light wrongly on {wrong_on:.2f} of {n_off:.0f} empty room-windows, "
           f"wrongly off {wrong_off:.2f} of {n_on:.0f} occupied ones; log evidence {loglik:.1f}; "
