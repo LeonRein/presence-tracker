@@ -987,9 +987,12 @@ class Tracker:
 
     def zone_states(self) -> dict:
         """Per zone: the most probable number of people (observed rooms: from all hypotheses),
-        moving / still and "about to be entered" from the most probable hypothesis' people."""
+        moving / still and "about to be entered" from the most probable hypothesis' people.
+        Occupied, where the probability is known: P(somebody there) above the threshold that
+        minimizes the expected cost of the light (MODEL.md 6)."""
         from .zones import ZoneState
         p = self.p
+        c = p.light_cost / (p.light_cost + 1.0)
         states = {}
         region_of = {room: rid for rid, r in self.config.regions.items() for room in r["rooms"]}
         counts = self.count_distribution()
@@ -998,11 +1001,16 @@ class Tracker:
             st = ZoneState()
             rid = region_of.get(z.id)
             if rid is None:
-                st.count = int(np.argmax(counts[z.id])) if z.id in counts else 0
+                if z.id in counts:
+                    st.count = int(np.argmax(counts[z.id]))
+                    st.probability = 1 - float(counts[z.id][0])
+                    st.decided = st.probability > c
             else:
                 dist = places.get(rid, [1.0])
-                st.count = int(np.argmax(dist)) if len(self.config.regions[rid]["rooms"]) == 1 else 0
                 st.probability = 1 - float(dist[0])
+                if len(self.config.regions[rid]["rooms"]) == 1:
+                    st.count = int(np.argmax(dist))
+                    st.decided = st.probability > c
             states[z.id] = st
         total = ZoneState()
         zones = [z for z in self.config.zones if z.kind in ("room", "area")]

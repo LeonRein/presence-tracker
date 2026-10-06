@@ -8,6 +8,10 @@
   eine Annahme und werden nicht mehr „gelernt“ (das Lernen war in 0.8.0 schon nicht mehr angeschlossen).
 - Die Karte „Geister“ eines Sensors zeigt jetzt die Geisterkarte, mit der der Filter rechnet.
 - Die Geisterkarte beginnt auch neu, wenn sich Höhe, Spiegelung oder Maßstab eines Sensors ändern.
+- Besetzt heißt jetzt: die Wahrscheinlichkeit, dass jemand im Raum ist, liegt über der Schwelle mit den
+  kleinsten erwarteten Kosten fürs Licht (bisher: die wahrscheinlichste Zahl ist größer als 0). Neue
+  Einstellung „Kosten: Licht ohne Person“ (2: besetzt ab 67 %). Die Wahrscheinlichkeit steht auch für
+  Räume mit Sensor als Attribut `probability` am Personen-Sensor und in der Übersicht.
 
 ## 0.8.0
 

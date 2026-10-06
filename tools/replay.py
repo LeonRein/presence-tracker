@@ -78,7 +78,7 @@ def main():
             next_print = tt + a.every
             st = crowd.zone_states()
             line = time.strftime("%H:%M:%S", time.localtime(tt)) + " " + " ".join(
-                f"{names.get(z, z)}={st[z].count}" for z in rooms if z in st)
+                f"{names.get(z, z)}={st[z].count}{'*' if st[z].occupied else ''}" for z in rooms if z in st)
             dist = crowd.count_distribution()
             line += " [" + " ".join(f"{names.get(z, z)[:4]} " + "/".join(f"{q:.2f}" for q in dist[z]) for z in rooms) + f"] H{len(crowd.hyps)}"
             for d in crowd.persons():

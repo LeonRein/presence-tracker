@@ -128,6 +128,8 @@ class TrackerParams:
     # LD2410C
     ld2410_hold: float = 1.5  # s, gaps in the LD2410C presence up to this long are bridged (display)
     # outputs
+    light_cost: float = 2.0  # a second of light without anybody costs as much as this many seconds dark
+                             # with somebody there (assumed; Leon: light without a person is the worst)
     lead_time: float = 1.0  # s, "approaching" looks this far ahead
     approach_min_speed: float = 0.3  # m/s
 

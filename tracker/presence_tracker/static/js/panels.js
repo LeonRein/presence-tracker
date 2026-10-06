@@ -64,7 +64,8 @@ const LIVE = {
       const st = live?.zones?.[z.id];
       const color = ZONE_KINDS[z.kind].color;
       const badges = st ? [
-        st.count ? `<span class="badge on">${st.count} ${st.count === 1 ? 'Person' : 'Personen'}</span>` : '<span class="badge">leer</span>',
+        st.count ? `<span class="badge ${st.occupied ? 'on' : ''}">${st.count} ${st.count === 1 ? 'Person' : 'Personen'}</span>` : `<span class="badge ${st.occupied ? 'on' : ''}">${st.occupied ? 'besetzt' : 'leer'}</span>`,
+        st.probability != null ? `<span class="badge" title="Wahrscheinlichkeit, dass jemand da ist; besetzt (Licht an) ab der Schwelle aus den Kosten">${Math.round(st.probability * 100)} %</span>` : '',
         st.moving ? `<span class="badge ok">${st.moving} bewegt</span>` : '',
         st.still ? `<span class="badge">${st.still} ruhig</span>` : '',
         st.approaching ? `<span class="badge warn">gleich${st.eta != null ? ` (${fmt(st.eta, 1)} s)` : ''}</span>` : '',
@@ -680,6 +681,7 @@ const PARAMS = [
     ['ld2410_hold', 'Haltezeit (Anzeige)', 's', 'Lücken in der LD2410C-Präsenz bis zu dieser Länge werden in der Anzeige überbrückt.', 0.1],
   ]],
   ['Ausgabe', [
+    ['light_cost', 'Kosten: Licht ohne Person', '×', 'Eine Sekunde Licht ohne Person ist so schlimm wie so viele Sekunden Dunkel mit Person. Ein Raum gilt als besetzt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt: bei 2 über 67 %.', 0.5],
     ['lead_time', 'Vorausschau „wird betreten“', 's', 'Wie früh eine Zone als „wird betreten“ gilt. Bei 1 m/s Gehtempo entspricht 1 s etwa 1 m.', 0.1],
     ['approach_min_speed', 'Mindesttempo dafür', 'm/s', '', 0.05],
   ]],

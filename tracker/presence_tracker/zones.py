@@ -10,11 +10,12 @@ class ZoneState:
     still: int = 0
     approaching: bool = False
     eta: float | None = None  # s until the first approaching track enters
-    probability: float | None = None  # rooms without a sensor: someone is in there
+    probability: float | None = None  # P(somebody is in there), where the filter knows it
+    decided: bool | None = None  # occupied by the decision on the probability (MODEL.md 6)
 
     @property
     def occupied(self) -> bool:
-        return self.count > 0
+        return self.decided if self.decided is not None else self.count > 0
 
     def to_dict(self) -> dict:
         return {"count": self.count, "occupied": self.occupied, "moving": self.moving,

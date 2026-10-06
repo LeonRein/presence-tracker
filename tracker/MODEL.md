@@ -228,9 +228,13 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
   Multi-Bernoulli-Näherung.
 
 ## 6. Ausgaben
-- **Je beobachtetem Raum:** Verteilung der Personenzahl (5.1). An Home Assistant geht die
-  wahrscheinlichste Zahl; *belegt* heißt Zahl > 0.
-- **Bereiche ohne Sensor:** P(jemand dort) als Attribut `probability`.
+- **Je beobachtetem Raum:** Verteilung der Personenzahl (5.1); an Home Assistant gehen die
+  wahrscheinlichste Zahl und P(belegt) = 1 − P(0) (Attribut `probability`, in 5-%-Schritten).
+- **Belegt (Licht):** `P(belegt) > c` mit `c = K_an / (K_an + K_dunkel)`, der Schwelle mit den
+  kleinsten erwarteten Kosten (Bayes-Entscheidung; I_GneitingRaftery2007 S. 364–365, Satz 3).
+  `light_cost` = K_an / K_dunkel = 2 (angenommen: Licht ohne Person ist der schlimmste Fehler), also
+  c = 2/3. Das verzögerte Ausschalten bleibt in Home Assistant.
+- **Bereiche ohne Sensor:** P(jemand dort); belegt wie oben, wenn der Bereich nur ein Raum ist.
 - **Bewegt / ruhig, „wird gleich betreten“:** aus den Personen der wahrscheinlichsten Hypothese
   (geht-Gewicht > 0,5 und > 0,15 m/s; Vorausschau 1 s ab 0,3 m/s).
 - Anzeige: Personen der wahrscheinlichsten Hypothese, ihre Dichten als Wärmekarten.
@@ -255,9 +259,6 @@ Lebensdauer der Geister geschätzt (4.2).
 ## 9. Bekannte Schwächen und Offenes
 Abweichungen von den Vorgaben:
 - **Feste Personenzahl** N = `residents`; Gäste fehlen (3.4).
-- **Licht über die wahrscheinlichste Zahl**, nicht über `P(belegt) > c` mit
-  `c = K_an / (K_an + K_dunkel)` aus den Kosten der Fehler (Bayes-Entscheidung,
-  I_GneitingRaftery2007 Satz 3; Licht ohne Person ist teurer, also c > 0,5).
 - **Die Geisterkarte lernt aus dem eigenen Urteil** (P(Geist) am Ende der Spur). Das kann sich
   selbst verstärken: Wer immer dort sitzt, wo nur ein Sensor sieht, kann als Geist weggelernt werden.
   Unabhängige Evidenz wäre z. B. die Vorhersage vor der Geburt (J_Park2020 Abschn. 5.2) oder ein
@@ -272,7 +273,7 @@ Näherungen, die man prüfen oder ersetzen kann:
 - Jenseits von 7 m zählt die Entfernung zweimal: in `g_s` (Abfall ab Reichweite + 1 m, aus 0.6.17)
   und in `P_m(r)`. Gegen welches `g_s` ρ und r₅₀ gefittet wurden, ist nicht festgehalten.
 - Erkennbarkeit nur für Stehende; α, Wechselrate, Ankunft/Weggang, Aufenthalts-Prior und λ_e sind
-  angenommen, nicht über die Evidenz geschätzt.
+  angenommen, nicht über die Evidenz geschätzt. Das Kostenverhältnis `light_cost` ist zu klären.
 - Höchstens 12 Hypothesen; Paarung beim Zusammenlegen bis 6 Personen.
 
 Nicht geprüft (Ablationen ausstehend): λ_d = 0,85 gegen langsamere Richtungswechsel; OU-Näherung

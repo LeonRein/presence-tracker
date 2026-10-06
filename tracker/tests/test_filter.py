@@ -132,3 +132,15 @@ def test_the_bookkeeping_holds_when_two_cross_and_ghosts_come():
     b = Person(walk((7.0, 2.0), BALCONY_DOOR, (5.0, 1.0), (1.0, 4.0), (1.1, 4.0), start=1, pauses={3: 5}))
     run(config, [a, b], 25, ["flur", "balkon"], check=True, bias=0.2, bias_time=3.5, resolution=0.5,
         ghost_rate=20)
+
+
+def test_occupied_is_the_cheaper_decision_on_the_probability():
+    # nothing known: P(somebody in the room) lies between the thresholds of the two costs
+    config = flat_config(residents=2)
+    crowd = Tracker(config, start=0.0)
+    p = 1 - crowd.count_distribution()["wohn"][0]
+    assert 0.2 < p < 0.8
+    for cost, occupied in ((0.1, True), (10.0, False)):
+        config.params.light_cost = cost
+        st = crowd.zone_states()["wohn"]
+        assert st.probability == p and st.occupied is occupied
