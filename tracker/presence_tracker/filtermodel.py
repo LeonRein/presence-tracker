@@ -60,23 +60,32 @@ class Model:
     # and s over all setups, 40 % living 3 s on average, 60 % 39 s (setup of 4.10. 18:06, 10.8 h)
     ghost_types = ((0.4 * 1.8e-5, 3.0), (0.6 * 1.8e-5, 39.0))
     ghost_prior_time = 4 * 3600.0  # s: weight of that rate in each cell of a ghost map, as watching time
-    # 4.3 LD2410C: its presence flag (moving or still) as a Markov-modulated process. Measured 6.10.
-    # on 2.5 h of 5 sensors against the LD2450 targets of the same housing: with a person within 3 m
-    # in front of it the flag is on nearly always and back on 0.5-2.4 /s after a drop; beyond, a
-    # still person turns it on only 10-60 % of the time; flags begun without any LD2450 target last
-    # 1.1 s (10-90 % 1.0-1.2 s, blips), begun with a person 7 s and more (to minutes)
-    ld_rate = 1.0  # 1/s: a person in full view turns the flag on at this rate
-    ld_reach = (3.3, 4.5)  # m slant distance where a person turns it on half as often [STILL, WALK]
-    ld_cone = (30.0, 50.0)  # degrees off its axis: fully in view / not at all (linear between)
-    # ... but a person farther or more to the side still holds it on once on (6.10.: a sitter 6.2 m
-    # and 16 degrees off the living room's sensor, flag on with low energy for minutes), at the
-    # distance it reports (0.75 m gates); people within 60 degrees put energy into its gates (0.6.x)
-    ld_beam = (50.0, 70.0)  # degrees: holding it, fully / not at all
-    ld_spread = 0.6  # m: reported slant distance about the person's
-    ld_max = 6.75  # m: its farthest gate (blips report any distance up to here)
-    ld_blips = 0.04  # 1/s: blips without anybody (measured 0.001-0.08 per sensor)
-    ld_blip = 1.1  # s: a blip lasts this long on average
-    ld_hold = 10.0  # s: with somebody in view, the flag drops out after this long on average
+    # 4.3 LD2410C: its energies per 0.75 m gate of slant distance, moving (gates 0-8) and still (2-8),
+    # each ~ Gamma(shape, mean background + the people's expected energy), 100 censored. Measured 6.10.
+    # (tools/ld2410/fit.py, 4.3 h, 5 sensors, one LD2450 target in the housing, < 30 degrees): what
+    # a person at slant r puts into the gate with centre c, A r^-n k(c - r - delta), k a Gaussian
+    # main lobe (sigma) plus behind it a multipath tail (share tail, exponential with length ell)
+    # [STILL, WALK]: (A at 1 m, n, delta m, sigma m, tail, ell m)
+    ld_moving = ((63.0, 2.52, 0.41, 0.55, 0.27, 1.34), (159.4, 2.16, 0.41, 0.57, 0.47, 1.26))
+    ld_still = ((574.0, 2.03, 0.19, 0.77, 0.40, 1.70), (949.0, 2.19, 0.58, 1.44, 1.00, 1.25))
+    ld_beam = (50.0, 70.0)  # degrees off its axis: full / none (measured flat to 45-60 degrees)
+    ld_shape = (2.5, 2.0)  # Gamma shape (moving, still): measured 2.4-3.0 / 1.6-2.4
+    ld_tau = (4.0, 13.0)  # s: frames count with dt / tau (moving, still; integrated correlation time
+                          # of the log-likelihood ratio "person / nobody", measured)
+    ld_every = 1.0  # s: the energies are weighed this often
+    # all cells of a kind move together within a block (broadband interference, the moving flag's
+    # blips): 1/gain ~ Gamma(kappa, kappa) per block and kind, measured sd of the log gain over 1-s
+    # blocks without anybody 0.14-0.27 moving, 0.09-0.18 still [moving, still]; mixed with a broad
+    # one (kappa, weight) for bursts (assumed)
+    ld_gain = (16.0, 50.0)
+    ld_burst = (2.0, 0.02)
+    ld_memory = 2.0  # s: the still energies follow a person with this time constant (rise when one
+                     # comes, fall when one leaves; measured on two cases, then capped at 100)
+    # background per sensor and cell, learned by the app (ld2410.Background): prior = the measured
+    # means without anybody (moving gate 0, gate 1, gates 2-8, still), its weight, forgetting
+    ld_background = (13.0, 9.0, 4.5, 5.0)
+    ld_prior_time = 600.0  # s
+    ld_forget = 6 * 3600.0  # s
     # 5 inference: hypotheses over the tracks' owners, cut by weight (Vo et al. 2017)
     max_hyps = 12
     hyp_floor = 1e-7  # hypotheses with less weight are dropped

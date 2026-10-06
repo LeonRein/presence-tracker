@@ -2,16 +2,23 @@
 
 Imitates the MQTT frames of the ESPHome firmware, including the LD2450's quirks:
 a lost target coasted for 15 frames with its last speed (MODEL.md 4.1), noise, an error that wanders slowly (each sensor sees a person a bit elsewhere), at most 3 targets, still people dropping out, occasional ghosts, and the LD2410C
-as MODEL.md 4.3 describes it (its flag a Markov process: turned on by people in its cone, held while
-somebody is in view, short blips without anybody).
+as MODEL.md 4.3 describes it: its energies per gate Gamma-distributed about the background plus what
+the people in its beam put in, correlated over the time the filter assumes, capped at 100; its
+flags the firmware's thresholds on them.
 """
 
 import math
 import random
 from dataclasses import dataclass, field
 
-from .filtermodel import Model, radar_pd
+import numpy as np
+
+from . import ld2410
+from .filtermodel import Model
 from .model import SensorConfig
+
+# the firmware's default thresholds (moving gates 0-8, still gates 2-8)
+THRESHOLDS = np.array([50, 50, 40, 30, 20, 15, 15, 15, 15, 40, 40, 30, 30, 20, 20, 20], dtype=float)
 
 
 @dataclass
@@ -46,7 +53,7 @@ class SimSensor:
     still_dropout: float = 0.0  # chance per second that a still person is dropped (stays dropped for still_gap s)
     still_gap: float = 20.0
     ghost_rate: float = 0.0  # LD2450 ghosts per minute
-    ld2410: bool = True  # the LD2410C's flag in the frames
+    ld2410: bool = True  # the LD2410C's energies in the frames
     resolution: float = 0.0  # m, people closer than this to each other come out as one target
     blind_to: tuple = ()  # indices of people this sensor doesn't see from blind_after on (hidden behind someone)
     blind_after: float = 0.0
@@ -56,7 +63,9 @@ class SimSensor:
     _ghost_pos: tuple = (0.0, 0.0)
     _bias: dict = field(default_factory=dict)
     _coast: dict = field(default_factory=dict)  # person -> (local x, y, vx, vy, raw speed, frames left)
-    _ld_on: bool = False
+    _ld_block: tuple = (-1.0, 1.0, 1.0)  # until when, the common gain of the moving / still cells
+    _ld_lag: object = None  # what the people put into the still cells lately (they lag)
+    _ld_gain: list | None = None  # per cell: the Ornstein-Uhlenbeck processes of its energy's Gamma factor
 
 
 def simulate(people: list, sensors: list, duration: float, rate: float = 11.0, seed: int = 1, walls: list = ()):
@@ -143,42 +152,58 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
     for slot, tgt in enumerate(targets, 1):
         tgt["slot"] = slot
 
-    # LD2410C (MODEL.md 4.3): turned on by the people in its cone at a rate by how surely it sees
-    # them, by blips without anybody; it drops out quickly unless somebody is in view
+    # LD2410C (MODEL.md 4.3): energy = (background + what the people in its beam put in) x a Gamma
+    # factor (mean 1, shape alpha) correlated over the time tau: a chi-square with 2 alpha degrees
+    # of freedom from as many Ornstein-Uhlenbeck processes (their squares decorrelate with 2 / tau)
     m = Model()
-    seen = []
+    put = np.zeros(ld2410.CELLS)
     for person in people:
         p = person.position(t)
         if p is None or not c.sees(p[0], p[1], walls):
             continue
         lx, ly = c.to_local(*p)
-        angle = math.degrees(math.atan2(abs(lx), max(ly, 1e-9)))
-        full, none = m.ld_cone
-        cone = min(max((none - angle) / (none - full), 0.0), 1.0) if ly > 0 else 0.0
-        slant = math.hypot(math.hypot(lx, ly), c.height - 1.0)
+        if ly <= 0:
+            continue
+        angle = math.degrees(math.atan2(abs(lx), ly))
+        slant = math.hypot(math.hypot(lx, ly) * c.scale, c.height - person.height)
         walking = math.hypot(*person.velocity(t)) > 0.3
-        seen.append((cone * float(radar_pd(slant, m.ld_reach[1 if walking else 0])), slant))
-    moving = still = False
-    md = sd = 0
-    gates = [5 + rng.uniform(0, 8) for _ in range(9)]
-    if s.ld2410:
-        if s._ld_on:
-            nobody = math.prod(1 - v for v, _ in seen)
-            off = 1 / m.ld_hold + (1 / m.ld_blip - 1 / m.ld_hold) * nobody
-            s._ld_on = rng.random() >= -math.expm1(-off * dt)
-        else:
-            s._ld_on = rng.random() < -math.expm1(-(m.ld_blips + m.ld_rate * sum(v for v, _ in seen)) * dt)
-        still = s._ld_on
-        if still:
-            near = [r for v, r in seen if v > 0.05]
-            sd = round((min(near) if near else rng.uniform(0.5, 5.0)) * 1000, -1)
-            gates[min(int(sd / 1000 / 0.75), 8)] += 50
+        s_still, s_walk = ld2410.expected(m, [angle], [slant], [True])
+        put = put + (s_walk if walking else s_still)[0]
+    # the still energies follow with the time constant ld_memory, the moving ones at once
+    k = math.exp(-dt / m.ld_memory)
+    s._ld_lag = put if s._ld_lag is None else k * s._ld_lag + (1 - k) * put
+    mu = ld2410.prior(m) + np.concatenate([put[:9], s._ld_lag[9:]])
+    # each second all cells of a kind share a gain: 1/u ~ Gamma(kappa, kappa), now and then a burst
+    if t >= s._ld_block[0]:
+        def gain(kappa):
+            bk, bw = m.ld_burst
+            k = bk if rng.random() < bw else kappa
+            return 1.0 / max(rng.gammavariate(k, 1.0 / k), 1e-3)
+        s._ld_block = (t + m.ld_every, gain(m.ld_gain[0]), gain(m.ld_gain[1]))
+    mu = mu * np.concatenate([np.full(9, s._ld_block[1]), np.full(7, s._ld_block[2])])
+    alpha = ld2410.cell_values(m, *m.ld_shape)
+    tau = ld2410.cell_values(m, *m.ld_tau)
+    if s._ld_gain is None:
+        s._ld_gain = [[rng.gauss(0, 1) for _ in range(int(round(2 * a)))] for a in alpha]
+    gain = []
+    for j, z in enumerate(s._ld_gain):
+        rho = math.exp(-dt / (2 * tau[j]))
+        for i in range(len(z)):
+            z[i] = rho * z[i] + math.sqrt(1 - rho * rho) * rng.gauss(0, 1)
+        gain.append(sum(v * v for v in z) / len(z))
+    e = np.minimum(np.round(mu * np.array(gain)), 100).astype(int)
+    over = e >= THRESHOLDS
+    moving, still = bool(over[:9].any()), bool(over[9:].any())
+    md = int(round((int(np.argmax(e[:9])) + 0.5) * 750, -1)) if moving else 0
+    sd = int(round((int(np.argmax(e[9:])) + 2.5) * 750, -1)) if still else 0
+    move_gates = [int(v) for v in e[:9]]
+    still_gates = [0, 0] + [int(v) for v in e[9:]]
     s.seq += 1
     return {
         "seq": s.seq,
         "uptime_ms": int(t * 1000),
         "targets": targets,
-        "ld2410": {"moving": moving, "still": still, "moving_distance": md, "moving_energy": 50 if moving else 0,
-                   "still_distance": sd, "still_energy": 40 if still else 0,
-                   "move_gates": [min(round(e), 100) for e in gates], "still_gates": [min(round(e), 100) for e in gates]},
+        "ld2410": ({"moving": moving, "still": still, "moving_distance": md, "moving_energy": max(move_gates) if moving else 0,
+                    "still_distance": sd, "still_energy": max(still_gates) if still else 0,
+                    "move_gates": move_gates, "still_gates": still_gates} if s.ld2410 else {}),
     }

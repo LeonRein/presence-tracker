@@ -1,6 +1,6 @@
 """Score the tracker against the truth taken from error reports (MODEL.md 8): the recordings replayed
-the way the app ran them (a fresh model at every start of the app, the ghost map learned on from the
-first one), and per reported moment and room P(somebody there) and P(the reported number) against what the report
+the way the app ran them (a fresh model at every start of the app, the ghost map and the LD2410C
+background learned on from the first one), and per reported moment and room P(somebody there) and P(the reported number) against what the report
 says.
 
 usage: python tools/report_eval.py --config FILE --truth FILE [--recordings DIR] [--patch FILE.py]...
@@ -62,7 +62,7 @@ def main():
     seen = {}  # room -> last time an LD2450 measured somebody there (for windows that excuse walks)
 
     tracker = None
-    gm = None
+    gm = ldb = None
     clocks = collections.defaultdict(SensorClock)
     samples = collections.defaultdict(list)  # report name -> [(t, {room: P(somebody)})]
     next_start = 0
@@ -85,10 +85,12 @@ def main():
                 # the app starts: a fresh model with what was learned so far
                 if tracker is not None:
                     loglik += tracker.loglik
-                    gm = tracker.ghost_map
+                    gm, ldb = tracker.ghost_map, getattr(tracker, "ld_background", None)
                 tracker = Tracker(config)
                 if gm is not None:
                     tracker.use_ghost_map(gm)
+                if ldb is not None:
+                    tracker.use_ld_background(ldb)
                 clocks.clear()
                 next_start += 1
             sid = m["topic"].split("/")[1]

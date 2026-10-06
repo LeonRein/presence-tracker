@@ -78,6 +78,15 @@ class App:
                     log.info("ghost map learned with other sensors or poses: starting a new one")
             except (ValueError, KeyError):
                 log.warning("ghostmap.json unreadable, starting without a ghost map")
+        # what each LD2410C sees without anybody (learned online, MODEL.md 4.3), per sensor only
+        # while it is where it was
+        ld_path = self.data_dir / "ld2410.json"
+        if ld_path.exists():
+            try:
+                self.tracker.ld_background.load(ld_path)
+                self.tracker.ld_background.use(self.config)
+            except (ValueError, KeyError, TypeError):
+                log.warning("ld2410.json unreadable, starting from the prior")
         self.last_model_save = time.monotonic()
         self.clocks = defaultdict(SensorClock)
         self.last_frame_t = -math.inf
@@ -150,13 +159,17 @@ class App:
             self.zone_states = self.tracker.zone_states()
             if not self.replay and time.monotonic() - self.last_model_save > 600:
                 self.last_model_save = time.monotonic()
-                self.tracker.ghost_map.save(self.data_dir / "ghostmap.json")
+                self._save_learned()
             self.stats["cpu"] += time.process_time() - start
             await self.discovery.states(self.zone_states)
             now = time.monotonic()
             if self.ws_clients and now - last_push >= 0.12:
                 last_push = now
                 await self._broadcast(self.live_message())
+
+    def _save_learned(self):
+        self.tracker.ghost_map.save(self.data_dir / "ghostmap.json")
+        self.tracker.ld_background.save(self.data_dir / "ld2410.json")
 
     def live_message(self) -> str:
         snap = self.tracker.snapshot()
@@ -204,7 +217,7 @@ class App:
             if self.client is not None:
                 await self._publish(ha.AVAILABILITY, "offline", True)
             if not self.replay:
-                self.tracker.ghost_map.save(self.data_dir / "ghostmap.json")
+                self._save_learned()
             await runner.cleanup()
 
     # ------------------------------------------------------------------- web
