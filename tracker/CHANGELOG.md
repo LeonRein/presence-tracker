@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6.21
+
+- Das Modell hängt nicht mehr davon ab, wie die Zeit in Frames und Rechenschritte zerlegt wird. Drei
+  Fehler, alle beim Prüfen gegen die Grundlagen gefunden und mit Tests belegt:
+  - Ein Ziel nach einer Leerlauf-Lücke (leere Frames lässt die Firmware aus) zählte als „irgendwann
+    in der Lücke getroffen“, richtig ist „die ganze Lücke nicht, erst im letzten Frame“. Nach 5 s
+    passte das Ziel bisher bis zu 10⁶-mal zu gut zu einer Wolke, die angeblich die ganze Zeit
+    ungesehen dort war.
+  - Der Körperterm (zwei Personen nicht näher als 0,3 m) wurde in jedem Rechenschritt neu
+    multipliziert und drückte überlappende Wolken ohne neue Messung immer weiter auseinander.
+    Er gilt jetzt einmal, für den Zustand jetzt.
+  - Im Leerlauf ist ein Rechenschritt bis 1,7 s lang. Gehende streuten darin dreimal zu weit und
+    hielten erst am Ende des Schritts an. Jetzt exakt diskretisiert (Särkkä & Solin 2019) und in
+    Schritten von höchstens 0,2 s.
+- Wahrheitsdatenbank gegenüber 0.6.19, 48 Seeds (die Kalibrierung von 0.6.20 ändert daran nichts) (Drehbuch, Abend, Leon geht hinaus, Küche) bzw. 12:
+  leeres Haus mit angedocktem Roboter 30,6 % → 1,7 % falsch (Licht an, obwohl niemand da ist: 1481 s
+  → 88 s); Leon geht hinaus 2,5 % → 0,8 % (Licht ohne Person 154 s → 117 s); Drehbuch 11,2 % →
+  10,0 % (Licht aus, obwohl jemand da ist: 33 s → 16 s); Abend 4,1 % → 2,4 %; Küche 7,6 % → 6,7 %;
+  Nächte, Reset und Morgen unverändert. Rechenzeit im Leerlauf höher (Auswertung +50 %).
+- tools/evaluate.py bewertet zusätzlich die Verteilung der Personenzahl (Log- und Brier-Score) und
+  das Licht: je Raum Sekunden „an, obwohl niemand da ist“, „aus, obwohl jemand da ist“ und die Zeit
+  bis zum Einschalten, bei 30, 60 und 120 s Ausschaltverzögerung.
+
 ## 0.6.20
 
 - Kalibrierung verschiebt keine Sensoren mehr. Die eingezeichneten Positionen gelten; je Sensor

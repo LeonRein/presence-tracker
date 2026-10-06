@@ -4,8 +4,10 @@ measurement model per frame, the outputs.
 Per sensor frame, every person's particles are weighted by how well the person there explains
 the frame (MODEL.md 4.1 and 3.3):
 
-  hit by detection j:  (1 - m) * g_j / lambda_j     g_j: density of the measurement (position,
+  hit by detection j:  h * g_j / lambda_j           g_j: density of the measurement (position,
                                                      radial speed); lambda_j: ghost density there
+                       h = (U(x, tau + dt - frame) - U(x, tau + dt)) / U(x, tau)
+                       (the frames of an idle gap dt before it were empty: MODEL.md 4.1)
   no hit:              m = U(x, tau + dt) / U(x, tau)
                        U(x, tau) = P(someone who stays at x is not detected for tau seconds)
                              = (1 - c) (1 - P_D(x))^(tau / frame) + c S(tau)
@@ -156,12 +158,19 @@ class Crowd:
         i, j = self.world.cell_of(pos)
         return grid[i, j]
 
-    def _miss(self, sid: str, cloud: Cloud, idx: np.ndarray, t: float, gap: float) -> np.ndarray:
-        """m per particle (observed ones, idx): P(no detection now | unseen since last_hit)."""
+    def _detection(self, sid: str, cloud: Cloud, idx: np.ndarray, t: float, gap: float):
+        """(miss, hit) per particle (observed ones, idx), given unseen since last_hit:
+        P(no detection in the frames of the gap up to now) and P(none in the gap, one in the last
+        frame). The firmware leaves out empty frames only (MODEL.md 4.1): a detection after a gap
+        came in its last frame, all frames before were empty. The gap counts from when the
+        particle came into the observed area, if that was later (it came out of a door)."""
         pos = cloud.pos[idx]
         pd = self._pd(sid, pos)
-        tau = np.maximum(t - gap - cloud.last_hit[idx, self.sidx[sid]], 0.0)
-        out = np.empty(len(idx))
+        since = t - cloud.last_hit[idx, self.sidx[sid]]
+        gap = np.minimum(gap, np.maximum(since, FRAME))
+        tau = np.maximum(since - gap, 0.0)
+        miss = np.empty(len(idx))
+        hit = np.empty(len(idx))
         for mode in (STILL, WALK):
             k = cloud.mode[idx] == mode
             if not k.any():
@@ -172,8 +181,11 @@ class Crowd:
 
             def unseen(tt):
                 return (1 - c) * q ** (tt / FRAME) + c * _survival(mode, tt)
-            out[k] = unseen(tau[k] + gap) / np.maximum(unseen(tau[k]), 1e-300)
-        return np.clip(out, 0.0, 1.0)
+            before = np.maximum(unseen(tau[k]), 1e-300)
+            now = unseen(tau[k] + gap[k])
+            miss[k] = now / before
+            hit[k] = (unseen(tau[k] + np.maximum(gap[k] - FRAME, 0.0)) - now) / before
+        return np.clip(miss, 0.0, 1.0), np.clip(hit, 0.0, 1.0)
 
     # ------------------------------------------------------------ the frames
 
@@ -268,7 +280,7 @@ class Crowd:
             w = c.weights()
             idx = np.flatnonzero(c.place != self.world.outside)
             tau_before.append(t - c.last_hit[idx, self.sidx[s.id]])
-            m = self._miss(s.id, c, idx, t, gap) if len(idx) else np.zeros(0)
+            m, h = self._detection(s.id, c, idx, t, gap) if len(idx) else (np.zeros(0), np.zeros(0))
             r = np.zeros((len(idx), m_det))
             e = np.zeros((len(idx), m_det, 2))
             # the error each sensor makes stays a while (MODEL.md 4.1): the particle remembers where this
@@ -286,8 +298,8 @@ class Crowd:
                 r[:, j] = gpos * gspd / lam[j]
             miss_full = np.ones_like(m) if full else m
             M = float(w[idx] @ miss_full) + float(w.sum() - w[idx].sum())  # out of the house: never detected
-            A = (w[idx] * (1 - m)) @ r if m_det else np.zeros(0)
-            per.append((idx, m, miss_full, r, M, A))
+            A = (w[idx] * h) @ r if m_det else np.zeros(0)
+            per.append((idx, h, miss_full, r, M, A))
             resid.append(e)
 
         # ghosts this sensor has been showing (MODEL.md 3.4): one that lasts shows up again where it
@@ -330,14 +342,14 @@ class Crowd:
         gaps_ended = []
         for k, person in enumerate(self.people):
             c = person.cloud
-            idx, m, miss_full, r, M, A = per[k]
+            idx, h, miss_full, r, M, A = per[k]
             factor = np.full(c.n, beta[k, 0] / max(M, 1e-300))  # out of the house: only "not detected"
             ended = (np.zeros(0, dtype=int), np.zeros(0))
             if len(idx):
                 H = np.zeros((len(idx), m_det))
                 for j in range(m_det):
                     if A[j] > 0:
-                        H[:, j] = beta[k, j + 1] * (1 - m) * r[:, j] / A[j]
+                        H[:, j] = beta[k, j + 1] * h * r[:, j] / A[j]
                 hit = H.sum(axis=1)
                 f_obs = beta[k, 0] * miss_full / max(M, 1e-300) + hit
                 factor[idx] = f_obs
@@ -388,7 +400,10 @@ class Crowd:
 
     def _bodies(self):
         """Two bodies don't stand in one place (MODEL.md 3.1): a particle of one person is only
-        as possible as the others are not within BODY of it."""
+        as possible as the others are not within BODY of it. A statement about the state now:
+        the factor replaces the one in the weight from the step before. Multiplied in again at
+        every step, it pushed two clouds apart further without anything new, the more so the
+        more often the clouds were stepped."""
         if len(self.people) < 2:
             return
         w0 = self.world
@@ -400,7 +415,10 @@ class Crowd:
             i = np.clip(((c.pos[obs, 0] - w0.x0) / BODY).astype(int), 0, nx - 1)
             j = np.clip(((c.pos[obs, 1] - w0.y0) / BODY).astype(int), 0, ny - 1)
             grid = np.zeros((nx + 2, ny + 2))
-            np.add.at(grid, (i + 1, j + 1), c.weights()[obs])
+            # the others' clouds without their own body term: what they say about where they are
+            own = c.logw - c.body
+            own = np.exp(own - own.max())
+            np.add.at(grid, (i + 1, j + 1), own[obs] / own.sum())
             # the probability within about BODY: the own cell and a quarter of the eight around it
             near = grid.copy()
             for di in (-1, 0, 1):
@@ -410,14 +428,16 @@ class Crowd:
             cells.append((obs, i + 1, j + 1))
             dens.append(near)
         for k, person in enumerate(self.people):
+            c = person.cloud
             obs, i, j = cells[k]
-            if not len(obs):
-                continue
+            body = np.zeros(c.n)
             free = np.ones(len(obs))
             for kk, near in enumerate(dens):
                 if kk != k:
                     free *= np.clip(1 - near[i, j], 1e-6, 1)
-            person.cloud.logw[obs] += np.log(free)
+            body[obs] = np.log(free)
+            c.logw += body - c.body
+            c.body = body
 
     def _walking_near(self, pos: np.ndarray) -> np.ndarray:
         """Per point: expected number of people walking within ECHO_RADIUS (their echoes)."""

@@ -1,6 +1,6 @@
 # Das Wahrscheinlichkeitsmodell des Presence Trackers
 
-Stand 0.6.19 (6.10.2026). Dieses Dokument ist die Spezifikation: Der Code wertet genau dieses Modell
+Stand 0.6.21 (6.10.2026). Dieses Dokument ist die Spezifikation: Der Code wertet genau dieses Modell
 aus und enthält keine eigenen Fallunterscheidungen. Jede Wahrscheinlichkeit steht hier mit ihrer
 Herkunft: **gemessen** auf Aufnahmen, **gelernt** im Betrieb oder **angenommen**. Was noch nicht gebaut
 ist, steht als *Offen* da. Zahlen in der Form „x % falsch“ stammen aus der Wahrheitsdatenbank
@@ -75,7 +75,15 @@ folgt (Personentausch), ändert das an den Zahlen je Raum nichts und ist nicht s
   der Aussetzer-Statistik der Sitzenden auch für Gehende war das Drehbuch deutlich schlechter.
 - **Wände:** Orte außerhalb des freien Raums haben Wahrscheinlichkeit 0. Gehende kommen nur durch Türen
   in einen anderen Raum.
-- **Körper:** Zwei Personen stehen nicht näher als 0,3 m beieinander (angenommen).
+- **Körper:** Zwei Personen stehen nicht näher als 0,3 m beieinander (angenommen). Das sagt etwas über
+  den Zustand zu *einem* Zeitpunkt. Mit getrennten Wolken (5) wird daraus je Partikel der Faktor
+  „die anderen sind nicht innerhalb 0,3 m“. Die anderen zählen dabei mit ihrer eigenen Evidenz, ohne
+  ihren Körperfaktor. Der Faktor ersetzt den aus dem vorigen Schritt. Bis 0.6.19 wurde er in jedem
+  Schritt neu multipliziert, also 20-mal je Sekunde bei Bewegung und im Leerlauf alle 1,7 s. Zwei
+  überlappende Wolken wurden so ohne neue Messung immer weiter auseinandergedrückt, umso mehr, je
+  öfter gerechnet wurde. Im gemeinsamen Zustand ist die Bedingung eine Indikatorfunktion, und die
+  ändert sich nicht, wenn man sie mehrfach anwendet. Ihr Erwartungswert über die andere Wolke tut
+  das schon.
 - *Geprüft und verworfen (5.10.):*
   - **Karte der Bewegungen** (Maps of Dynamics, CLiFF-Map; Kucner et al. 2017), offline: gelernt je
     50-cm-Feld aus Rohzielen des LD2450, die der andere Sensor bestätigt, auf 70 % der Zeit (3249
@@ -120,6 +128,16 @@ des Orts (4.1) auch je Ort:
 - Kein Treffer im Frame gewichtet „die Person ist an x“ mit `U_s(x, τ+Δt) / U_s(x, τ)`. τ ist die Zeit
   seit dem letzten Treffer dieser Person bei diesem Sensor, Δt die Zeit, für die der Frame steht (4.1:
   leere Frames lässt die Firmware aus).
+- Ein Treffer im Frame gewichtet mit `(U_s(x, τ+Δt−f) − U_s(x, τ+Δt)) / U_s(x, τ)`, f = 0,089 s die
+  Dauer eines Frames: Alle ausgelassenen Frames der Lücke waren leer, getroffen hat erst der letzte
+  (Kette von Einzelbeobachtungen wie im Hidden-Semi-Markov-Modell, Yu 2010, Abschnitt 3.2). Für
+  gewöhnliche Frames (Δt = f) ist das `1 − U_s(x, τ+f) / U_s(x, τ)`. Bis 0.6.19 galt diese Formel auch
+  nach einer Lücke, also „irgendwann in der Lücke ein Treffer“. Nach 5 s Herzschlag-Lücke bekam so eine
+  seit einer Minute ungesehene Sitzende an gut sichtbarer Stelle 0,12 statt 0,002 und eine gerade
+  noch gesehene fast 1 statt 1e-6. Ein Ziel nach dem Leerlauf passte dadurch zu jeder Wolke, die
+  angeblich die ganze Zeit ungesehen dort war.
+- Die Lücke zählt für eine Person erst ab dem Zeitpunkt, zu dem sie in den beobachteten Bereich kam (aus
+  einer Tür, heimgekommen). Vorher war sie nicht dort, wo der Sensor hätte treffen können.
 - **Gemessen:** Stehende fallen im Mittel alle 70 s aus, mit langem Schwanz; die Tabelle reicht bis
   120 s. Gehende im Blickfeld werden nach 0,3–1,2 s wieder gefunden (im Mittel 0,7 s); die langen Lücken
   Gehender waren Leute, die das Blickfeld verlassen hatten.
@@ -180,7 +198,7 @@ Je Sensor:
 ### 4.1 LD2450 (bis zu 3 Ziele je Frame)
 Gegeben der Zustand:
 - Jede Person erzeugt ein Ziel oder nicht, wie in 3.3 beschrieben: die Wahrscheinlichkeit eines Treffers
-  ist `1 − U_s(x, τ+Δt) / U_s(x, τ)`.
+  ist `(U_s(x, τ+Δt−f) − U_s(x, τ+Δt)) / U_s(x, τ)`.
 - **Erkennungswahrscheinlichkeit** je Ort und Sensor aus der Geometrie: Sichtfeld, Reichweite, Wände.
   **Gemessen** (5.10., 22 h Aufnahmen; eine gehende Person, die der andere Sensor sicher sieht): bis
   7 m so gut wie nah (0,8–1,0 bei 5,5–7 m), und 10° über den nominellen Rand des Sichtfelds hinaus
@@ -276,7 +294,14 @@ näherungsweise, aber es fügt **nichts hinzu**, was nicht im Modell steht.
   Superposition. Sitzende sind Partikel mit Geschwindigkeit null.
 - Ein einzelner Kalman-Filter reicht nicht: „Balkon oder an der Tür“ sind zwei Berge, Wände schneiden ab,
   tote Winkel verformen. Nur der Versatz der Sensoren (4.1) wird je Partikel als Gauß gerechnet.
-- **Zwischen Frames** bewegt sich jedes Partikel nach 3.1 und 3.2.
+- **Zwischen Frames** bewegt sich jedes Partikel nach 3.1 und 3.2, in Schritten von höchstens 0,2 s.
+  Das Gehen (weißes Rauschen in der Beschleunigung) ist darin exakt diskretisiert: in Δ wächst die
+  Ortsstreuung um `q²Δ³/3`, die Geschwindigkeit um `q²Δ`, gemeinsam um `q²Δ²/2` (Särkkä & Solin 2019,
+  Beispiel 6.3). Das Ergebnis hängt so nicht davon ab, wie oft gerechnet wird. Bis 0.6.19 kam im
+  Leerlauf (Herzschlag alle 5 s, drei Sensoren) ein Schritt nur alle 1,7 s, und er wurde mit der neuen
+  Geschwindigkeit in einem Zug gerechnet: Gehende streuten im Ort dreimal zu weit, liefen bis zum Ende
+  des Schritts weiter, auch wenn sie mittendrin angehalten hatten, und blieben vor einer Wand am
+  Anfang des Schritts stehen.
 - **Jeder Frame** multipliziert jedes Partikelgewicht mit „wie gut erklärt die Person an dieser Stelle
   diesen Frame“: Treffer nach 4.1, kein Treffer nach 3.3; der LD2410C alle 3 s nach 4.2.
 - **Jeder Ort ist eine Komponente** (Mixture Particle Filter, Vermaak, Doucet, Pérez 2003): beobachteter
@@ -344,9 +369,21 @@ Gelernt wird nur, wo eine unabhängige Quelle die Wahrheit liefert (1., Punkt 5)
    Saugroboter, Leons Gang durch den Flur, der Küchengang vom 5.10.
 2. **`tools/evaluate.py`** spielt jede Episode mit mehreren Seeds ab (12 für eine Entscheidung, die
    Streuung zwischen den Seeds ist groß) und misst je Sekunde: falsche Zahl je Raum, zu viele / zu
-   wenige Personensekunden, Wechsel der Anzeige ohne Grund, Zeit bis zur richtigen Zahl.
+   wenige Personensekunden, Wechsel der Anzeige ohne Grund, Zeit bis zur richtigen Zahl. Dazu (0.6.21):
+   - **Log- und Brier-Score** der Verteilung der Personenzahl je Raum (Gneiting & Raftery 2007). Das
+     misst feiner als „falsch“: Eine mit 51 % richtig gezeigte Zahl zählt weniger als eine mit 99 %.
+   - **Licht**, wofür der Tracker vor allem da ist: je Raum ein Licht, das angeht, sobald der Raum
+     jemanden zeigt, und eine Verzögerung (30, 60, 120 s) nach dem letzten Zeigen ausgeht, verglichen
+     mit einem Licht, das der Wahrheit mit derselben Verzögerung folgt. Gemessen werden die Sekunden
+     „an, obwohl niemand da ist“ (der schlimmste Fehler), wie oft es dort angeht, die Sekunden „aus,
+     obwohl jemand da ist“ (kurze Aussetzer unter der Verzögerung zählen nicht) und die Zeit bis zum
+     Einschalten nach dem Betreten eines leeren Raums.
    **`tools/replay.py`** zeigt für eine einzelne Szene, was der Tracker wann glaubt.
 3. **Freigabe:** Eine Änderung kommt nur hinein, wenn sie auf der Wahrheitsdatenbank verbessert, was
    zählt: Wer geht, verschwindet; wer sitzt, bleibt angezeigt; die Zahlen je Raum stimmen. Weniger
    wichtig sind der Saugroboter als Person, kurze Aussetzer Sitzender und vertauschte Personen.
+   Gewichtet wird nach dem Licht (Leon, 6.10.): am schlimmsten ist Licht in einem Raum, in dem niemand
+   ist, danach ein zu spätes Einschalten. Aussetzer, die kürzer sind als die Ausschaltverzögerung,
+   schaden nicht, und eine falsche Zahl in einem besetzten Raum (2 statt 1) auch nicht. Der fahrende
+   Saugroboter darf Licht bekommen.
 4. **Tests** (`tests/`) für kleine simulierte Szenen und die Vorverarbeitung.

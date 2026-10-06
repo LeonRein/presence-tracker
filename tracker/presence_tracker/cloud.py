@@ -15,6 +15,7 @@ from .world import OBSERVED
 
 WALK, STILL = 1, 0
 MIN_PER_PLACE = 16  # particles every place with any weight keeps through resampling
+MAX_STEP = 0.2  # s: longer steps are cut into parts (stops, starts, walls and doors happen in between)
 
 
 class Motion:
@@ -55,6 +56,9 @@ class Cloud:
         # it wanders slowly (MODEL.md 4.1): mean, and variance relative to that of the wandering
         self.bias = np.zeros((n, n_sensors, 2))
         self.bias_var = np.ones((n, n_sensors))
+        # log of the body term (MODEL.md 3.1) that is in the weight now: it holds for the state at
+        # one time and is replaced, not multiplied again, at the next step
+        self.body = np.zeros(n)
         self.logw = np.full(n, -math.log(n))
 
     # ------------------------------------------------------------------ setup
@@ -136,7 +140,7 @@ class Cloud:
             idx.append(g[np.minimum(np.searchsorted(np.cumsum(w / w.sum()), u), len(g) - 1)])
             logw.append(np.full(k, lm - math.log(k)))
         idx = np.concatenate(idx)
-        for name in ("place", "pos", "vel", "mode", "since", "entered", "last_hit", "bias", "bias_var"):
+        for name in ("place", "pos", "vel", "mode", "since", "entered", "last_hit", "bias", "bias_var", "body"):
             setattr(self, name, getattr(self, name)[idx].copy())
         self.logw = np.concatenate(logw)
         self.normalize()
@@ -145,25 +149,36 @@ class Cloud:
 
     def predict(self, t: float, dt: float, world, dwell, m: Motion = Motion, targets=None):
         """targets: positions (k, 2) of the current measurements; they only steer which rare moves
-        are tried (getting up toward them), the weights stay exact."""
+        are tried (getting up toward them), the weights stay exact. The motion must not depend on
+        how the time is cut: while nothing is seen, dt is seconds long (the sensors' 5-s
+        heartbeat), so it is cut into parts of at most MAX_STEP, in which walkers stop, start and
+        meet walls."""
         if dt <= 0:
             return
+        parts = int(math.ceil(dt / MAX_STEP - 1e-9))
+        for k in range(parts):
+            self._predict(t - dt + dt * (k + 1) / parts, dt / parts, world, dwell, m, targets)
+
+    def _predict(self, t: float, dt: float, world, dwell, m: Motion, targets):
         rng = self.rng
         # everybody in the house has a position, also where no sensor sees (MODEL.md 2)
         obs = self.place != world.outside
         walk = obs & (self.mode == WALK)
         still = obs & (self.mode == STILL)
 
-        # walkers: random acceleration, a speed limit; standing: a little sway
+        # walkers: white noise in the acceleration, discretized exactly (Saerkkae & Solin 2019, 6.3):
+        # velocity q^2 dt, position q^2 dt^3 / 3, both q^2 dt^2 / 2; a speed limit. Standing: a
+        # little sway
         k = np.flatnonzero(walk)
+        new = self.pos.copy()
         if len(k):
+            v0 = self.vel[k].copy()
             self.vel[k] += rng.normal(0, m.walk_noise * math.sqrt(dt), (len(k), 2))
             speed = np.linalg.norm(self.vel[k], axis=1)
             fast = speed > m.max_speed
             self.vel[k[fast]] *= (m.max_speed / speed[fast])[:, None]
+            new[k] += 0.5 * (v0 + self.vel[k]) * dt + rng.normal(0, m.walk_noise * math.sqrt(dt**3 / 12), (len(k), 2))
         k_still = np.flatnonzero(still)
-        new = self.pos.copy()
-        new[k] += self.vel[k] * dt
         new[k_still] += rng.normal(0, m.still_noise * math.sqrt(dt), (len(k_still), 2))
         moved = np.flatnonzero(obs)
         if len(moved):
