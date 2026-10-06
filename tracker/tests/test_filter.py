@@ -144,3 +144,38 @@ def test_occupied_is_the_cheaper_decision_on_the_probability():
         config.params.light_cost = cost
         st = crowd.zone_states()["wohn"]
         assert st.probability == p and st.occupied is occupied
+
+
+def _learned(crowd):
+    """(z0, P(ghost) the map learns with) of every track that ends."""
+    out = []
+    crowd.listeners.append(lambda kind, d: out.append((d[1], d[2])) if kind == "track_end" else None)
+    return out
+
+
+def test_the_ghost_map_does_not_confirm_itself():
+    # the map claims a hotspot of ghosts where somebody sits down (MODEL.md 4.2): the tracks on them
+    # there count as a person all the same - what the map says at a spot is no evidence for it
+    seat = (4.5, 3.5)
+    config = flat_config(entry=True, residents=2)
+    crowd = Tracker(config, start=0.0, people=["flur", "outside"])
+    for sid in ("a", "b"):
+        crowd.ghost_map.add_birth(sid, seat, 200.0)
+    learned = _learned(crowd)
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, seat, (seat[0] + 0.05, seat[1]), start=2, pauses={2: 150}))
+    for t, sid, frame in simulate([a], sim_sensors(config, still_dropout=1 / 30, still_gap=40), a.waypoints[-1][0],
+                                  walls=config.wall_segments):
+        crowd.process_frame(sid, t, frame)
+    at_seat = [p for z, p in learned if np.hypot(z[0] - seat[0], z[1] - seat[1]) < 0.5]
+    assert len(at_seat) >= 2 and max(at_seat) < 0.01, learned
+    assert max(p for _, p in learned) < 0.05, learned  # coming in at the door: a person too
+
+
+def test_a_ghost_in_an_empty_house_is_learned_as_one():
+    config = flat_config(residents=2)
+    crowd = Tracker(config, start=0.0, people=["outside", "outside"])
+    learned = _learned(crowd)
+    ghost = Person([(20.0, 3.0, 2.5), (21.0, 3.0, 2.5)])
+    for t, sid, frame in simulate([ghost], sim_sensors(config), 40, walls=config.wall_segments):
+        crowd.process_frame(sid, t, frame)
+    assert learned and min(p for _, p in learned) > 0.9, learned

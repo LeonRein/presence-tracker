@@ -4,7 +4,8 @@ usage: python tools/ghostmap.py --config FILE --window FROM TO [--window ...] --
                                 [--iterations N] [--jobs N] [--recordings DIR]
 
 EM (Kantas et al. 2015, sec. 5): run the filter with the current map over the windows; every track
-that ends counts with the filter's probability that it was a ghost at its first position; the time
+that ends counts at its first position with the filter's probability that it was a ghost (without
+what the map itself said there, MODEL.md 4.2); the time
 each sensor watched is the exposure (Luber 2014, ch. 6: a Poisson process per cell with a Gamma
 prior). The next map is these counts; repeat. The windows are cut into pieces of an hour, run in
 parallel, each from "nothing known"; the first WARMUP s of a piece are not counted.

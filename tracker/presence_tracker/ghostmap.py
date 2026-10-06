@@ -2,9 +2,12 @@
 with a Gamma prior (Luber, Tipaldi & Arras 2011 = Luber 2014, ch. 6, eq. 6.8-6.13).
 
 The prior has the mean of the global rate (one ghost track in 7 h at night) and the weight of a few
-hours of watching. Learned by EM (Kantas et al. 2015, sec. 5), online in the app: every track that ends counts with the
-filter's probability that it was a ghost (judged at its end) at the cell where it began, against the
-time the sensor watched; how long ghosts live (a mixture of exponentials) is fitted to the tracks'
+hours of watching. Learned by EM (Kantas et al. 2015, sec. 5), online in the app: every track that
+ends counts at the cell where it began, against the time the sensor watched, with the filter's
+probability that it was a ghost - judged at its end, but with the prior's rate at the birth in place
+of the map's (Park et al. 2020, eq. 37-41: the clutter probability without the clutter estimate).
+What the map says at a spot is no evidence for it: else a spot judged "ghost" once is judged so
+more and more, and somebody who always sits where only one sensor sees is learned away; how long ghosts live (a mixture of exponentials) is fitted to the tracks'
 lives weighted the same way (online EM, sufficient statistics). Counts fade with FORGET (furniture,
 the robot's dock move). tools/ghostmap.py runs the same EM offline over recordings, for judging it
 on the truth database without learning from it.

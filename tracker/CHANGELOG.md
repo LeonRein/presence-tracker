@@ -12,6 +12,10 @@
   kleinsten erwarteten Kosten fürs Licht (bisher: die wahrscheinlichste Zahl ist größer als 0). Neue
   Einstellung „Kosten: Licht ohne Person“ (2: besetzt ab 67 %). Die Wahrscheinlichkeit steht auch für
   Räume mit Sensor als Attribut `probability` am Personen-Sensor und in der Übersicht.
+- Die Geisterkarte bestätigt sich nicht mehr selbst: Ob eine Spur ein Geist war, beurteilt sie ohne
+  das, was sie selbst an dieser Stelle sagt (Park et al. 2020). Bisher konnte eine Stelle, die einmal
+  als Geisterort galt, immer mehr dazu werden, bis auch jemand, der dort sitzt, als Geist zählte
+  (Simulation: bis 0,34 je Spur gelernt, jetzt unter 0,01). Die Karte beginnt nach dem Update neu.
 
 ## 0.8.0
 

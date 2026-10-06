@@ -150,9 +150,14 @@ Eine Spur, die zu keiner Person gehört.
 - **Quelle:** bewegt sich wie eine Person (3.1, 3.2), mit demselben Versatz. Geist und Person
   unterscheiden sich durch Entstehungsort, Lebensdauer und Verhalten der Spur, nicht durch ein anderes
   Rauschen.
-- **Lernen in der App** (online-EM, I_Kantas2015 Abschn. 5): Endet eine Spur, zählt sie mit
-  P(Geist) des Filters an ihrem Startpunkt; die Beobachtungszeit jedes Sensors ist die Belichtung; die
-  Lebensdauern werden gleich gewichtet. Vergessen mit Zeitkonstante 14 Tage. Wird ein Sensor
+- **Lernen in der App** (online-EM, I_Kantas2015 Abschn. 5): Endet eine Spur, zählt sie an ihrem
+  Startpunkt mit P(Geist) des Filters; die Beobachtungszeit jedes Sensors ist die Belichtung; die
+  Lebensdauern werden gleich gewichtet. P(Geist) wird am Ende der Spur beurteilt (Bewegung, andere
+  Sensoren, Lebensdauer zählen mit), aber ohne das, was die Karte selbst an dieser Stelle sagte: Ihr
+  Faktor bei der Geburt wird aus den Odds herausgerechnet, als hätte dort die Prior-Rate gegolten
+  (J_Park2020 Gl. 37–41: Clutter-Wahrscheinlichkeit ohne die Clutter-Schätzung). Sonst bestätigt
+  sich die Karte selbst (Simulation: Sitzplatz mit vorgegebener Karte, alt bis 0,34 je Spur gelernt,
+  jetzt < 0,01). Vergessen mit Zeitkonstante 14 Tage. Wird ein Sensor
   verschoben, gedreht, anders kalibriert (Höhe, Spiegelung, Maßstab), hinzugefügt oder entfernt,
   beginnt die Karte neu. Die Oberfläche zeigt sie je Sensor. `tools/ghostmap.py` rechnet dasselbe
   offline auf gewählten Zeitfenstern.
@@ -259,10 +264,6 @@ Lebensdauer der Geister geschätzt (4.2).
 ## 9. Bekannte Schwächen und Offenes
 Abweichungen von den Vorgaben:
 - **Feste Personenzahl** N = `residents`; Gäste fehlen (3.4).
-- **Die Geisterkarte lernt aus dem eigenen Urteil** (P(Geist) am Ende der Spur). Das kann sich
-  selbst verstärken: Wer immer dort sitzt, wo nur ein Sensor sieht, kann als Geist weggelernt werden.
-  Unabhängige Evidenz wäre z. B. die Vorhersage vor der Geburt (J_Park2020 Abschn. 5.2) oder ein
-  zweiter Sensor.
 - **LD2410C nicht ausgewertet**, obwohl er in 0.6.x nachweislich half (10).
 
 Näherungen, die man prüfen oder ersetzen kann:
@@ -274,6 +275,8 @@ Näherungen, die man prüfen oder ersetzen kann:
   und in `P_m(r)`. Gegen welches `g_s` ρ und r₅₀ gefittet wurden, ist nicht festgehalten.
 - Erkennbarkeit nur für Stehende; α, Wechselrate, Ankunft/Weggang, Aufenthalts-Prior und λ_e sind
   angenommen, nicht über die Evidenz geschätzt. Das Kostenverhältnis `light_cost` ist zu klären.
+- Die Geisterkarte lernt weiter aus dem Urteil des Filters, nur ohne ihren eigenen Beitrag an der
+  Stelle. Ein reines Urteil bei der Geburt war zu früh (Hereinkommende an der Tür: P(Geist) 0,56).
 - Höchstens 12 Hypothesen; Paarung beim Zusammenlegen bis 6 Personen.
 
 Nicht geprüft (Ablationen ausstehend): λ_d = 0,85 gegen langsamere Richtungswechsel; OU-Näherung

@@ -526,12 +526,15 @@ class Tracker:
     def _end(self, si, seg, t, data_lost):
         """The sensor dropped the track. For a person this follows from not finding it again
         (counted while it was held); a ghost died: its hazard. A person left without tracks goes
-        to the people without one."""
+        to the people without one. The ghost map learns where ghosts begin and how long they live,
+        with P(ghost) as judged now, but without what the map itself said at the birth (MODEL.md 4.2)."""
         w = self.hyp_weights()
         p_ghost = float(sum(wi for wi, hy in zip(w, self.hyps) if hy.kind.get(seg) == "g"))
         info = self.segs.pop(seg)
+        if 0 < p_ghost < 1:  # the map entered the odds once, as a factor at the birth: taken out
+            p_ghost = 1 / (1 + math.exp(math.log1p(-p_ghost) - math.log(p_ghost) + info["map_odds"]))
         life = (info["lost"]["t"] if info["lost"] else info.get("gt", info["born"])) - info["born"]
-        if self.learn_ghosts and p_ghost > 0:  # the map learns where ghosts begin and how long they live
+        if self.learn_ghosts and p_ghost > 0:
             self.ghost_map.add_birth(self.sensors[si], info["z0"], p_ghost)
             if not data_lost:
                 self.ghost_map.add_life(life, p_ghost, self.m.ghost_types)
@@ -613,6 +616,11 @@ class Tracker:
                 if censored:
                     return g.kappa_weigh(kappa * r[STILL] * ls, r[WALK] * lw)
                 return g.kappa_weigh(np.expm1(kappa * r[STILL] * last), math.expm1(r[WALK] * last))
+        if not refind:
+            # the ghost map learns from P(ghost) judged without itself at z (MODEL.md 4.2)
+            map_rate = self._ghost_rate(si, z)
+            ghost_ms, ghost_ls = [], []  # this track's ghost children: their log weights, and the same
+                                         # with the prior's rate at z in place of the map's
         cache = {}
         release_cache = {}
 
@@ -693,11 +701,16 @@ class Tracker:
                     children.append(ch)
                 base = pf
             else:
-                lam = ghost_rates * (self._ghost_rate(si, z) / ghost_rates.sum())
+                lam = ghost_rates * (map_rate / ghost_rates.sum())
                 lam[0] += m.ghost_echo * walkers[h]
+                lam_prior = ghost_rates * (self.ghost_map.prior_rate / ghost_rates.sum())
+                lam_prior[0] += m.ghost_echo * walkers[h]
                 if censored:
                     lam = lam * ghost_life / FRAME  # ghosts there now: born at any time before
+                    lam_prior = lam_prior * ghost_life / FRAME
                 ch = hy.child(hy.logw + math.log(lam.sum() * last))
+                ghost_ms.append(ch.logw)
+                ghost_ls.append(ch.logw + math.log(lam_prior.sum() / lam.sum()))
                 ch.kind[seg] = "g"
                 ch.ghost[seg] = _log(lam / lam.sum())
                 ch.phantom[seg] = source()
@@ -730,6 +743,8 @@ class Tracker:
                 children.append(ch)
         if not children:
             return
+        # the factor by which the map at z moved the odds of "ghost" (for what the map learns, _end)
+        map_odds = _logsumexp(ghost_ms) - _logsumexp(ghost_ls) if not refind and ghost_ms else 0.0
         top = max(c.logw for c in children)
         self.hyps = [c for c in children if c.logw > top + math.log(m.hyp_floor)] if top > -math.inf else children
         if refind:
@@ -738,7 +753,7 @@ class Tracker:
             info["z"] = d.pos.copy()
         else:
             self.segs[seg] = {"si": si, "t": t, "zt": t, "var": var, "z": d.pos.copy(), "z0": d.pos.copy(), "born": t,
-                              "lost": None}
+                              "lost": None, "map_odds": map_odds}
             self._live_by_sensor[si].append(seg)
         self._merge()
         self._prune()
