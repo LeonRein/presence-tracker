@@ -60,9 +60,16 @@ def main():
                 b = self.ld_background.b(self.sensors[si])
                 e = np.where(st.t_unc > 0, st.t_e / np.maximum(st.t_unc, 1e-9), 100.0)
                 hw = self.hyp_weights()
+                idx_seen = set(self._ld_tiles(si)[0].tolist())
                 for k, h in enumerate(self.hyps):
                     print(f"   hypothesis {k}: weight {hw[k]:.3f}, mass in {a.room} per person: "
                           + " ".join(f"{type(o).__name__[:6]} {mass_in_room(o):.2f}" for o in h.objects()))
+                    for o in h.objects():
+                        if isinstance(o, Hidden) and mass_in_room(o) > 0.3:
+                            mm = o.in_view() * in_room
+                            top = np.argsort(-mm)[:3]
+                            print("      " + "; ".join(f"tile at {np.round(self.tiles.centers[c], 1)} {mm[c]:.2f}"
+                                                      f"{'' if c in idx_seen else ' (LD2410C: unseen)'}" for c in top))
                 hy = self.hyps[0]
                 print(time.strftime("%H:%M:%S", time.localtime(self.now)),
                       f"P({a.room}) {1 - self.count_distribution()[a.room][0]:.2f}  hyps {len(self.hyps)}")
