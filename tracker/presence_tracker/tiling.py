@@ -70,6 +70,8 @@ class Tiling:
         self.n = n = int(tile.max()) + 1 if len(tile) else 0
         self.fine = tile  # tile of each fine cell in view
         self.fine_xy = centers
+        self.fine_ij = (ii, jj)
+        self._outlines = None
         cnt = np.bincount(tile, minlength=n).astype(float)
         self.area = cnt * CELL * CELL
         self.centers = np.stack([np.bincount(tile, centers[:, k], n) / cnt for k in range(2)], axis=1) if n else np.zeros((0, 2))
@@ -177,6 +179,46 @@ class Tiling:
             tile = np.unique(tile, return_inverse=True)[1].ravel()
             if not changed:
                 return tile
+
+    def outlines(self) -> list:
+        """Per tile its outline: closed loops of [x, y] (the borders of its 0.1 m cells, collinear
+        points dropped), for the display."""
+        if self._outlines is not None:
+            return self._outlines
+        w = self.world
+        ii, jj = self.fine_ij
+        grid = np.full((w.nx + 2, w.ny + 2), -1)
+        grid[ii + 1, jj + 1] = self.fine
+        edges = {t: {} for t in range(self.n)}
+        # each cell's border where the neighbour is another tile, counter-clockwise around the cell
+        for di, dj, a, b in ((0, -1, (0, 0), (1, 0)), (1, 0, (1, 0), (1, 1)), (0, 1, (1, 1), (0, 1)), (-1, 0, (0, 1), (0, 0))):
+            other = grid[ii + 1 + di, jj + 1 + dj]
+            for k in np.flatnonzero(other != self.fine):
+                i, j = int(ii[k]), int(jj[k])
+                edges[int(self.fine[k])].setdefault((i + a[0], j + a[1]), []).append((i + b[0], j + b[1]))
+        out = []
+        for t in range(self.n):
+            nxt = edges[t]
+            loops = []
+            while nxt:
+                start = next(iter(nxt))
+                loop, p = [start], start
+                while True:
+                    q = nxt[p].pop()
+                    if not nxt[p]:
+                        del nxt[p]
+                    if q == start:
+                        break
+                    loop.append(q)
+                    p = q
+                # drop the points in the middle of a straight run
+                keep = [loop[m] for m in range(len(loop))
+                        if (loop[m][0] - loop[m - 1][0]) * (loop[(m + 1) % len(loop)][1] - loop[m][1])
+                        != (loop[m][1] - loop[m - 1][1]) * (loop[(m + 1) % len(loop)][0] - loop[m][0])]
+                loops.append([[round(w.x0 + i * CELL, 2), round(w.y0 + j * CELL, 2)] for i, j in keep])
+            out.append(loops)
+        self._outlines = out
+        return out
 
     # ------------------------------------------------------------ lookups
 

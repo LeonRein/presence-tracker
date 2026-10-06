@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.2
+
+- Karte: Personen mit Spur sind Ellipsen mit dem Verlauf ihrer Gauß-Verteilung (bis 3 Standardabweichungen),
+  an den Wänden abgeschnitten (was vom Mittelpunkt aus in Sicht ist, durch Türlücken hindurch). Personen
+  ohne Spur füllen die Umrisse der Kacheln, in denen sie sein können, nach Masse je m². Statt Hunderter
+  20-cm-Kästchen je Person gehen je Bild ein paar Zahlen an die Oberfläche; die Umrisse einmal.
+
 ## 0.9.1
 
 - Fehler melden: Die Arten sind jetzt Person verloren, Geist, Person am falschen Ort, ungenaues Tracking,

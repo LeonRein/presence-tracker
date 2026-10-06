@@ -224,6 +224,7 @@ class App:
         app.router.add_post("/api/tracks/reset", self.h_reset_tracks)
         app.router.add_get("/api/sensormodel", self.h_sensormodel)
         app.router.add_post("/api/learned", self.h_import_learned)
+        app.router.add_get("/api/tiles", self.h_tiles)
         app.router.add_get("/api/reports", self.h_reports)
         app.router.add_post("/api/reports", self.h_report)
         app.router.add_get("/api/reports/{name}", self.h_report_file)
@@ -336,6 +337,11 @@ class App:
             used = self.tracker.use_ghost_map(gm)
             log.info("ghost map imported, %s", "in use" if used else "not used: learned with other sensor poses")
         return web.json_response({"ghost_map": self.tracker.ghost_map is not None})
+
+    async def h_tiles(self, request):
+        """The tiles' outlines (MODEL.md 5.3), for drawing where unseen people may be."""
+        tiles = self.tracker.tiles
+        return web.json_response({"id": id(tiles), "outlines": await asyncio.to_thread(tiles.outlines)})
 
     # ------------------------------------------------------------ error reports
 

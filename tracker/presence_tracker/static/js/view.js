@@ -1,7 +1,7 @@
 // SVG map: projection, pan/zoom, and drawing of the plan, sensors, zones and live data.
 // Everything is drawn in screen pixels; world coordinates are meters with y pointing up.
-import { state, sensorColor } from './store.js';
-import { ZONE_KINDS, doorPlacement, esc, fmt, rad, sightSegments, zoneCenter, zoneOutline } from './util.js';
+import { api, state, sensorColor } from './store.js';
+import { ZONE_KINDS, doorPlacement, esc, fmt, rad, sightSegments, visibilityPolygon, zoneCenter, zoneOutline } from './util.js';
 
 // rooms marked as entry (stairwell) look like entry zones
 const zoneStyle = z => (z.kind === 'room' && z.entry ? ZONE_KINDS.entry : ZONE_KINDS[z.kind] || ZONE_KINDS.area);
@@ -327,15 +327,7 @@ export class MapView {
         }
       }
     }
-    // where each person may be: their probability per 20 cm cell
-    for (const cl of live.clouds || []) {
-      const top = Math.max(...cl.cells.map(c => c[2]), 1e-9);
-      const size = cl.cell * this.s;
-      for (const [cx, cy, w] of cl.cells) {
-        const [x, y] = this.P(cx, cy + cl.cell);
-        out.push(`<rect x="${x}" y="${y}" width="${size}" height="${size}" fill="${personColor(cl.id)}" fill-opacity="${(0.08 + 0.5 * w / top).toFixed(2)}"/>`);
-      }
-    }
+    out.push(this.clouds(live));
     // trails
     const now = live.t;
     for (const tr of live.tracks || []) {
@@ -365,6 +357,46 @@ export class MapView {
         <text class="track-label" x="${x}" y="${y + 4}" text-anchor="middle">${tr.id % 100}</text>`);
     }
     this.gDyn.innerHTML = out.join('');
+  }
+
+  // where each person may be (filter._cloud): with a track their Gaussians, drawn as ellipses out to
+  // 3 standard deviations with a Gaussian fall-off, cut off at the walls (what is in sight from their
+  // mean); without, the tiles they may be in, by mass per m^2
+  clouds(live) {
+    const out = [];
+    const clouds = live.clouds || [];
+    if (live.tiling !== this.tilingId && !this.tilingLoading && clouds.some(cl => cl.tiles.length)) {
+      this.tilingLoading = true;
+      api('api/tiles').then(r => { this.tilingId = r.id; this.tileOutlines = r.outlines; })
+        .finally(() => { this.tilingLoading = false; });
+    }
+    const outlines = live.tiling === this.tilingId ? this.tileOutlines : null;
+    if (clouds.some(cl => cl.gauss.length)) {
+      // the fall-off of a Gaussian along its radius, 0 .. 3 standard deviations
+      const stops = color => [0, 0.2, 0.4, 0.6, 0.8, 1].map(o =>
+        `<stop offset="${o}" stop-color="${color}" stop-opacity="${Math.exp(-0.5 * (3 * o) ** 2).toFixed(3)}"/>`).join('');
+      out.push(`<defs>${PERSON_COLORS.map((c, n) => `<radialGradient id="gauss-${n}">${stops(c)}</radialGradient>`).join('')}</defs>`);
+    }
+    const segs = clouds.some(cl => cl.gauss.length) ? sightSegments(state.config) : [];
+    for (const cl of clouds) {
+      const color = personColor(cl.id);
+      if (outlines && cl.tiles.length) {
+        const top = Math.max(...cl.tiles.map(t => t[1]), 1e-9);
+        for (const [i, d] of cl.tiles) {
+          const path = (outlines[i] || []).map(loop => 'M' + loop.map(p => this.P(...p).map(v => v.toFixed(1)).join(',')).join('L') + 'Z').join('');
+          if (path) out.push(`<path d="${path}" fill="${color}" fill-opacity="${(0.06 + 0.45 * d / top).toFixed(2)}" fill-rule="evenodd"/>`);
+        }
+      }
+      cl.gauss.forEach(([w, mx, my, sx, sy], k) => {
+        const R = 3 * Math.max(sx, sy) + 0.05;
+        const clip = `clip-${cl.id}-${k}`;
+        out.push(`<clipPath id="${clip}"><polygon points="${this.pts(visibilityPolygon([mx, my], segs, R))}"/></clipPath>`);
+        const [x, y] = this.P(mx, my);
+        out.push(`<ellipse cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="${(3 * sx * this.s).toFixed(1)}" ry="${(3 * sy * this.s).toFixed(1)}"
+          fill="url(#gauss-${(cl.id - 1) % PERSON_COLORS.length})" fill-opacity="${(0.15 + 0.55 * w).toFixed(2)}" clip-path="url(#${clip})"/>`);
+      });
+    }
+    return out.join('');
   }
 }
 

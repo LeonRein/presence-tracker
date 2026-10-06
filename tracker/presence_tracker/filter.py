@@ -28,7 +28,7 @@ from .gauss import Gauss
 from .hidden import Hidden, Undetected
 from .sensormodel import PD_MAX, SensorModel
 from .sensortracks import SensorTracks
-from .tiling import POINT, Tiling
+from .tiling import Tiling
 from .unobserved import Dwell
 from .world import CELL, OBSERVED, World
 
@@ -1308,25 +1308,24 @@ class Tracker:
                     "walk": round(float(w[WALK]), 3)})
         return out
 
-    def _heat(self, obj) -> list:
-        """[[x, y, mass]] of a person in view on POINT m cells: with a track, their Gaussians as
-        they are; without, each tile's mass spread evenly over it (the tiles are all the model
-        knows about where an unseen person is)."""
+    def _cloud(self, pid, obj) -> dict:
+        """Where a person may be, for the map: with a track their Gaussians [[weight, x, y, sd x,
+        sd y]] as they are; without (and their part gone through a door), [[tile, mass per m^2]]
+        of the tiles holding at least 0.2 % (the tiles are all the model knows about where an
+        unseen person is; their outlines: Tiling.outlines)."""
         tl = self.tiles
+        out = {"id": pid, "gauss": [], "tiles": []}
         if isinstance(obj, Hidden):
-            mass = tl.spread(obj.in_view())
+            mass = obj.in_view()
         else:
-            mass = np.zeros(len(tl.points))
-            for k, w in enumerate(obj.weights()):
-                if w > 0:
-                    v = obj.pos_var()[k] + POINT * POINT / 12
-                    d = np.exp(-0.5 * (((tl.points - obj.pos[k][None, :]) ** 2) / v[None, :]).sum(axis=1))
-                    mass += (1 - obj.a) * w * d / max(d.sum(), 1e-300)
-            if obj.away is not None:
-                mass += obj.a * tl.spread(obj.away.in_view())
+            sd = np.sqrt(obj.pos_var())
+            out["gauss"] = [[round(float((1 - obj.a) * w), 3), round(float(obj.pos[k][0]), 3), round(float(obj.pos[k][1]), 3),
+                             round(float(sd[k][0]), 3), round(float(sd[k][1]), 3)]
+                            for k, w in enumerate(obj.weights()) if (1 - obj.a) * w >= 0.01]
+            mass = obj.a * obj.away.in_view() if obj.away is not None else np.zeros(tl.n)
         k = np.flatnonzero(mass > 0.002)
-        return [[round(float(tl.points[i, 0] - POINT / 2), 2), round(float(tl.points[i, 1] - POINT / 2), 2),
-                 round(float(mass[i]), 3)] for i in k]
+        out["tiles"] = [[int(i), round(float(mass[i] / tl.area[i]), 4)] for i in k]
+        return out
 
     def zone_states(self) -> dict:
         """Per zone: the most probable number of people (observed rooms: from all hypotheses),
@@ -1398,7 +1397,7 @@ class Tracker:
             room = None if d["x"] is None else next(
                 (z.id for z in self.config.zones_of("room") if z.contains(d["x"], d["y"])), None)
             tracks.append({**d, "room": room})
-            clouds.append({"id": d["id"], "cell": POINT, "cells": self._heat(obj)})
+            clouds.append(self._cloud(d["id"], obj))
         sensors = {}
         for sid, rt in self.runtime.items():
             sensors[sid] = {
@@ -1418,7 +1417,7 @@ class Tracker:
                             "count": int(np.argmax(dist)),
                             "probabilities": [round(1 - dist[0], 3)] if 1 - dist[0] >= 0.005 else [],
                             "dwell": self.dwell.stats(rid)}
-        return {"t": t, "tracks": tracks, "clouds": clouds, "sensors": sensors, "regions": regions}
+        return {"t": t, "tracks": tracks, "clouds": clouds, "tiling": id(self.tiles), "sensors": sensors, "regions": regions}
 
     # ------------------------------------------------------------- learned
 

@@ -178,3 +178,38 @@ export function sensorSees(s, x, y, segs) {
   for (const [a, b] of segs) if (segmentsCross(from, [x, y], a, b)) return false;
   return true;
 }
+
+// What is in sight from o within radius R: the polygon of the nearest wall hit per direction (rays at
+// n even angles and just beside every wall end near o). For clipping a Gaussian at the walls.
+export function visibilityPolygon(o, segs, R, n = 72) {
+  const [ox, oy] = o;
+  const TAU = 2 * Math.PI;
+  const near = segs.filter(([a, b]) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const t = Math.max(0, Math.min(1, ((ox - a[0]) * dx + (oy - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+    return Math.hypot(a[0] + t * dx - ox, a[1] + t * dy - oy) < R;
+  });
+  const angles = [];
+  for (let k = 0; k < n; k++) angles.push(TAU * k / n);
+  for (const [a, b] of near) {
+    for (const p of [a, b]) {
+      const t = Math.atan2(p[1] - oy, p[0] - ox);
+      for (const e of [-1e-4, 0, 1e-4]) angles.push(((t + e) % TAU + TAU) % TAU);
+    }
+  }
+  angles.sort((x, y) => x - y);
+  return angles.map(t => {
+    const dx = Math.cos(t), dy = Math.sin(t);
+    let best = R;
+    for (const [a, b] of near) {
+      const ex = b[0] - a[0], ey = b[1] - a[1];
+      const den = dx * ey - dy * ex;
+      if (Math.abs(den) < 1e-12) continue;
+      const wx = a[0] - ox, wy = a[1] - oy;
+      const hit = (wx * ey - wy * ex) / den;  // along the ray
+      const u = (wx * dy - wy * dx) / den;    // along the wall
+      if (hit > 0 && u >= 0 && u <= 1 && hit < best) best = hit;
+    }
+    return [ox + dx * best, oy + dy * best];
+  });
+}
