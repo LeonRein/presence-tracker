@@ -55,9 +55,9 @@ so  = 1.0;                        // Abstand Antenne -> Radom-Innenseite
 ridge_up  = 0.6;   // Rastnasen-Mitte ueber der Platinenrueckseite (Nase beginnt 0,1 mm darueber)
 inner_top = front_t + max(so + t50, so12 + t12) + ridge_up + 0.5;   // knapp ueber den Nasen
 
-// Platinenlaenge ohne USB-Buchse, gemessen: SuperMini 23,0 (Datenblatt 22,52), S3-Zero 24,1 (Datenblatt 23,5)
+// Platinenlaenge ohne USB-Buchse, gemessen: SuperMini 23,0 (Datenblatt 22,52), S3-Zero 24,1 (Datenblatt 23,5), im Deckel 1 mm kuerzer angesetzt (23,1)
 esp_play = 0.6;   // Laengsspiel; mit 0,4 sass der SuperMini aeusserst stramm
-esp_w = 18; esp_l = (esp_board == "S3-Zero" ? 24.1 : 23.0) + esp_play; esp_t = 1.65;
+esp_w = 18; esp_l = (esp_board == "S3-Zero" ? 23.1 : 23.0) + esp_play; esp_t = 1.65;
                                          // Dicke angenommen (Standard 1,6) - federnder Arm gleicht 1,2..1,9 aus
 usb_over = 1.9;                          // USB-C-Buchse steht so weit ueber die Platinenkante (gemessen)
 esp_z0 = 0;                              // ESP-Unterkante liegt auf dem Boden bzw. der Deckelnase; Buchse ragt durch den Ausschnitt

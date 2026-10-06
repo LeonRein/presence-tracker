@@ -91,8 +91,8 @@ Der Waveshare ESP32-S3-Zero (ESP32-S3FH4R2, 4 MB Flash) läuft mit derselben Fir
 wie in der Tabelle oben. Nur die Lage der Pins ist eine andere: Von vorne mit USB-C unten gesehen liegen
 5V, GND und GPIO6 rechts, GPIO7, 8 und 9 links. Nicht nach der Position aus dem SuperMini-Bild löten.
 Die Pads 14–16 an der Unterkante und die Pads auf der Rückseite bleiben frei, die RGB-LED hängt an GPIO21.
-Der Zero braucht den Deckel `lid_s3zero.stl`: Er ist mit 24,1 mm (gemessen, ohne Buchse) 1,1 mm länger als der
-SuperMini, Federsteg und Rastnase sitzen entsprechend höher. Nicht geprüft ist, ob am oberen Ende links der
+Der Zero braucht den Deckel `lid_s3zero.stl`. Gemessen ist er 24,1 mm lang (ohne Buchse), der Deckel ist aber
+für 23,1 mm ausgelegt (1 mm kürzer), also nur 0,1 mm länger als für den SuperMini. Federsteg und Rastnase sitzen entsprechend höher. Nicht geprüft ist, ob am oberen Ende links der
 Mitte (x = −6 … −2 mm), wo die Rastnase aufliegt, Bauteile oder die Antenne sitzen.
 
 ## Zusammenbau
