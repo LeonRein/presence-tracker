@@ -69,10 +69,10 @@ Geschwindigkeitssprung-Prozess (gemessen 6.10., 8,7 h LD2450-Spuren, Wege ≥ 2 
 (Buch_SarkkaSolin2019 Bsp. 6.2). Wände kennt sie nicht.
 
 ### 3.3 Türen, Bereiche ohne Sensor, außer Haus
-- Aufenthalt in *Rₖ*: Ausfallrate aus `Dwell.survival` (`unobserved.py`): log-normaler Prior, Median
-  2 min / Streuung 1,5 (geschlossen) bzw. 30 min / 2,0 (offen), zählt wie 3 Besuche, plus gelernte
-  Dauern (angenommen; Lernen zurzeit nicht angeschlossen, 9). Heraus kommt man gehend an einer Tür
-  des Bereichs.
+- Aufenthalt in *Rₖ*: log-normal, Median 2 min / Streuung von ln(Dauer) 1,5 (geschlossen) bzw.
+  30 min / 2,0 (offen) (angenommen; `unobserved.py`). Nicht gelernt: Wann jemand hinein- und
+  herausging, kennt der Filter nur als Wahrscheinlichkeit; seine Urteile als Dauern zu zählen, lernte
+  seine Fehler. Zu schätzen über die Evidenz (7). Heraus kommt man gehend an einer Tür des Bereichs.
 - Aus einem offenen Bereich nach außer Haus mit 1/(2 h); zurück mit 1/(4 h) je Weg hinein (offene
   Bereiche und Eingänge im beobachteten Bereich) (angenommen).
 
@@ -104,7 +104,7 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 - `P_m(r)`: Swerling-I-Kurve über der Radargleichung, `P(r) = P_FA^(1/(1 + SNR₅₀ (r₅₀/r)⁴))`,
   P_FA = 10⁻⁶. ρ, r₅₀ per Maximum-Likelihood (gemessen, 17 h): steht 0,034 /s, 5,0 m; geht 0,51 /s,
   4,55 m. Für Sitzende ist die Form eine empirische Wahl (der LD2450 unterdrückt Ruhendes).
-- `g_s(x)`: Sicht nach Winkel, Reichweite und Wänden (`sensormodel.prior_pd` / 0,95): voll bis 15°
+- `g_s(x)`: Sicht nach Winkel, Reichweite und Wänden (`sensormodel.py`): voll bis 15°
   vor dem Rand des Blickfelds, 0,5 am Rand, 0 bei 15° jenseits; voll bis Reichweite + 1 m, dann
   Abfall mit e je 1,5 m (gemessen 5.10. an Gehenden).
 - `q(x)`: Auflösung neben einem gemessenen Ziel,
@@ -153,7 +153,8 @@ Eine Spur, die zu keiner Person gehört.
 - **Lernen in der App** (online-EM, I_Kantas2015 Abschn. 5): Endet eine Spur, zählt sie mit
   P(Geist) des Filters an ihrem Startpunkt; die Beobachtungszeit jedes Sensors ist die Belichtung; die
   Lebensdauern werden gleich gewichtet. Vergessen mit Zeitkonstante 14 Tage. Wird ein Sensor
-  verschoben, hinzugefügt oder entfernt, beginnt die Karte neu. `tools/ghostmap.py` rechnet dasselbe
+  verschoben, gedreht, anders kalibriert (Höhe, Spiegelung, Maßstab), hinzugefügt oder entfernt,
+  beginnt die Karte neu. Die Oberfläche zeigt sie je Sensor. `tools/ghostmap.py` rechnet dasselbe
   offline auf gewählten Zeitfenstern.
 - Begründung: Wiederkehrende Reflexionen (Möbel, Ladestation des Saugroboters) stehen an festen
   Stellen. Mit gleichverteilter Dichte erklärt das Modell sie als Person.
@@ -262,8 +263,6 @@ Abweichungen von den Vorgaben:
   Unabhängige Evidenz wäre z. B. die Vorhersage vor der Geburt (J_Park2020 Abschn. 5.2) oder ein
   zweiter Sensor.
 - **LD2410C nicht ausgewertet**, obwohl er in 0.6.x nachweislich half (10).
-- **Aufenthaltsdauern in Bereichen ohne Sensor** werden nicht gelernt (`Dwell.learn` wird nicht
-  aufgerufen); es gilt nur der Prior.
 
 Näherungen, die man prüfen oder ersetzen kann:
 - Nicht-Erfassung und Erfassungsrate einer Gauß-Komponente am Mittel statt über ihre Verteilung.
@@ -275,8 +274,6 @@ Näherungen, die man prüfen oder ersetzen kann:
 - Erkennbarkeit nur für Stehende; α, Wechselrate, Ankunft/Weggang, Aufenthalts-Prior und λ_e sind
   angenommen, nicht über die Evidenz geschätzt.
 - Höchstens 12 Hypothesen; Paarung beim Zusammenlegen bis 6 Personen.
-- `sensormodel.py` enthält noch ungenutzten Lerncode aus 0.6.x (Clutter-Karte, LD2410C-Histogramme);
-  gebraucht wird nur `prior_pd`.
 
 Nicht geprüft (Ablationen ausstehend): λ_d = 0,85 gegen langsamere Richtungswechsel; OU-Näherung
 gegen weißes Rauschen in der Beschleunigung; Swerling-I gegen logistisch; Geisterkarte gegen globale

@@ -150,7 +150,7 @@ class Tracker:
         self.p = config.params
         self.sensor_model.config = config
         self.sensor_model.rebuild()
-        self.dwell.p = config.params
+        self.dwell = Dwell(self.p, [rid for rid, r in config.regions.items() if r["open"]])
         self._build()
         self.use_ghost_map(self.ghost_map)  # it holds only while the sensors are where they were
         self.reset_people()
@@ -159,14 +159,14 @@ class Tracker:
         """Use a learned ghost map (MODEL.md 4.2) if it was learned with the sensors where they are
         now; else start a new one from the prior (a moved, added or removed sensor changes where
         all of them see ghosts)."""
-        from .ghostmap import GhostMap
+        from .ghostmap import GhostMap, pose_of
         ok = gm is not None and gm.matches(self.config)
         if ok:
             self.ghost_map = gm
         else:
             self.ghost_map = GhostMap.for_world(self.world, sum(rate for rate, _ in self.m.ghost_types),
                                                 self.m.ghost_prior_time)
-            self.ghost_map.poses = {s.id: (s.x, s.y, s.heading) for s in self.config.sensors}
+            self.ghost_map.poses = {s.id: pose_of(s) for s in self.config.sensors}
         self._ghost_total = {}
         return ok
 
@@ -1072,13 +1072,9 @@ class Tracker:
     # ------------------------------------------------------------- learned
 
     def learned(self) -> dict:
-        return {"sensor_model": self.sensor_model.to_dict(), "dwell": self.dwell.dwell,
-                "ghost_map": self.ghost_map.to_dict()}
+        return {"ghost_map": self.ghost_map.to_dict()}
 
     def load_learned(self, data: dict):
-        self.sensor_model.load_dict(data.get("sensor_model", {}))
-        self.dwell.dwell = {k: list(v) for k, v in data.get("dwell", {}).items()}
-        self.lat._region_rates = None
         if data.get("ghost_map"):  # learned offline (tools/ghostmap.py), used if the sensors are where they were
             from .ghostmap import GhostMap
             self.use_ghost_map(GhostMap.from_dict(data["ghost_map"]))

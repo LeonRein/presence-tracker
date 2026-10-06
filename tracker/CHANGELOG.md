@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.1
+
+- Aufräumen: Was 0.8.0 nicht mehr benutzte, ist weg (gelernte Clutter-Karte und LD2410C-Statistik aus
+  0.6.x, `sensormodel.json`, `dwell.json`, die Einstellungen Messrauschen Geschwindigkeit, eingefrorene
+  Ziele, Gewicht der Annahme, LD2410C-Sicht und -Strahl). Aufenthaltsdauern in Räumen ohne Sensor sind
+  eine Annahme und werden nicht mehr „gelernt“ (das Lernen war in 0.8.0 schon nicht mehr angeschlossen).
+- Die Karte „Geister“ eines Sensors zeigt jetzt die Geisterkarte, mit der der Filter rechnet.
+- Die Geisterkarte beginnt auch neu, wenn sich Höhe, Spiegelung oder Maßstab eines Sensors ändern.
+
 ## 0.8.0
 
 Neuer Filter (Modell: MODEL.md 0.8.0). Noch in Arbeit: Auf der Wahrheitsdatenbank ist „Licht ohne Person“ in

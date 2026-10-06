@@ -118,20 +118,15 @@ class TrackerParams:
     range_sigma_slope: float = 0.02
     lateral_sigma_base: float = 0.10  # m, across it
     lateral_sigma_slope: float = 0.05
-    sigma_speed: float = 0.25  # m/s
-    stale_frames: int = 5  # frames with bit-identical coordinates until an LD2450 target counts as frozen
     wall_margin: float = 0.4  # m, detections farther behind a wall or outside all rooms are reflections
-    # rooms without a sensor, see unobserved.py
-    dwell_median: float = 120.0  # s, prior: typical stay in such a room, until visits are learned
-    dwell_spread: float = 1.5  # prior: spread of ln(duration), wide: long stays stay possible
-    dwell_prior_weight: float = 3.0  # the prior counts like this many visits
+    # rooms without a sensor, see unobserved.py (assumed)
+    dwell_median: float = 120.0  # s, typical stay in such a room
+    dwell_spread: float = 1.5  # spread of ln(duration), wide: long stays stay possible
     dwell_median_open: float = 1800.0  # s, the same for an open region (bedroom, the way out): hours are normal
     dwell_spread_open: float = 2.0
     residents: int = 2  # people who live here (the filter tracks this many until guests are built, MODEL.md 3.4)
     # LD2410C
     ld2410_hold: float = 1.5  # s, gaps in the LD2410C presence up to this long are bridged (display)
-    ld2410_fov: float = 50.0  # degrees, where the LD2410C is trusted to see
-    ld2410_beam: float = 120.0  # degrees, where people still put energy into its gates
     # outputs
     lead_time: float = 1.0  # s, "approaching" looks this far ahead
     approach_min_speed: float = 0.3  # m/s

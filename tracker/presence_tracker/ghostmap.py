@@ -29,6 +29,11 @@ DECAY_EVERY = 60.0  # s between two fadings
 PRIOR_GHOSTS = 20.0  # weight of the prior over the kinds of ghosts, in ghosts
 
 
+def pose_of(s) -> tuple:
+    """What of a sensor's setup decides where its targets land."""
+    return (s.x, s.y, s.heading, s.height, s.mirror, s.scale)
+
+
 class GhostMap:
     def __init__(self, x0: float, y0: float, nx: int, ny: int, prior_rate: float, prior_time: float):
         self.x0, self.y0, self.nx, self.ny = x0, y0, nx, ny
@@ -36,7 +41,7 @@ class GhostMap:
         self.prior_time = prior_time  # s: weight of the prior, as watching time
         self.count = {}  # sensor id -> (nx, ny) expected number of ghost births
         self.time = {}  # sensor id -> s watched
-        self.poses = {}  # sensor id -> (x, y, heading) it was learned with
+        self.poses = {}  # sensor id -> pose it was learned with (see pose_of)
         self.types = ()  # kinds of ghosts: ((share, mean life s), ...), learned with the map
         self.life_stats = None  # online EM over the kinds: (weights (k,), weighted lives (k,))
         self.forget = FORGET
@@ -123,12 +128,17 @@ class GhostMap:
         self._smooth.pop(sid, None)
 
     def matches(self, config) -> bool:
-        """Learned with the sensors where they are now (and no other ones)?"""
+        """Learned with the sensors where they are now (and no other ones)? A sensor re-hung or
+        recalibrated (position, heading, height, mirror, scale) puts its targets elsewhere."""
         if {s.id for s in config.sensors} != set(self.poses):
             return False
         for s in config.sensors:
-            pose = self.poses.get(s.id)
-            if pose is None or abs(pose[0] - s.x) > 0.05 or abs(pose[1] - s.y) > 0.05 or abs(pose[2] - s.heading) > 2:
+            pose, now = self.poses.get(s.id), pose_of(s)
+            if pose is None or len(pose) != len(now):
+                return False
+            x, y, heading, height, mirror, scale = pose
+            if (math.hypot(x - s.x, y - s.y) > 0.05 or abs((heading - s.heading + 180) % 360 - 180) > 2
+                    or abs(height - s.height) > 0.05 or bool(mirror) != s.mirror or abs(scale - s.scale) > 0.02):
                 return False
         return True
 

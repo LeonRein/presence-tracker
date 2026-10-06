@@ -109,7 +109,7 @@ const LIVE = {
     return regions.map(r => `<div class="item" style="flex-wrap:wrap"><span class="grow" style="white-space:normal">${(r.rooms || []).map(id => esc(names[id] || id)).join(', ') || esc(r.name)}</span>
       ${r.open ? '<span class="badge" title="Von hier aus kann man das Haus verlassen (Treppe, Eingang)">Ausgang</span>' : ''}
       ${r.probabilities.length ? r.probabilities.map(p => `<span class="badge ${p >= 0.5 ? 'on' : ''}" title="Wahrscheinlichkeit, dass diese Person hier ist">${Math.round(p * 100)} %</span>`).join('') : '<span class="badge">leer</span>'}
-      <div class="meta" style="flex-basis:100%;white-space:normal">${(r.rooms || []).length > 1 ? 'Ohne Sensor über Türen verbunden, deshalb zusammen. ' : ''}Aufenthalt typisch ${fmtS(r.dwell.median)}, 90 % unter ${fmtS(r.dwell.p90)}${r.dwell.visits ? ` (aus ${r.dwell.visits} Besuchen)` : ' (Annahme, noch nichts gelernt)'}</div></div>`).join('');
+      <div class="meta" style="flex-basis:100%;white-space:normal">${(r.rooms || []).length > 1 ? 'Ohne Sensor über Türen verbunden, deshalb zusammen. ' : ''}Aufenthalt typisch ${fmtS(r.dwell.median)}, 90 % unter ${fmtS(r.dwell.p90)} (Annahme)</div></div>`).join('');
   },
   sensorNow(ds) {
     const sv = state.live?.sensors?.[ds.id];
@@ -428,7 +428,7 @@ function sensorDetail(el, s) {
     <h3>Was der Sensor sieht</h3>
     <p class="note">Nur zum Anschauen: blendet eine Karte über den Grundriss ein. Das ändert nichts am Tracking.</p>
     <label class="field">Karte einblenden<select id="smap">${[['', 'keine'], ['prior', 'Erkennung: aus der Geometrie'],
-      ['clutter', 'Geister: im Betrieb gelernt']].map(([k, l]) =>
+      ['ghosts', 'Geister: im Betrieb gelernt']].map(([k, l]) =>
       `<option value="${k}" ${(state.sensorMap?.sensor === s.id ? state.sensorMap.layer : '') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <p id="smap-info" class="note"></p>
     <p class="note">Prüfen: Vor dem Sensor nach rechts gehen (vom Sensor aus gesehen). Der Punkt auf der Karte muss mitgehen, sonst Haken setzen. Die Kalibrierung erkennt das auch selbst.</p>
@@ -459,7 +459,7 @@ function sensorDetail(el, s) {
 
 let mapView = null;
 
-// Heatmap of one sensor's model: detection probability (from the geometry) or learned ghost rate
+// Heatmap of one sensor's model: what it sees (from the geometry) or where it starts ghost tracks (learned)
 async function showSensorMap(info, sensorId) {
   const view = mapView;
   const sel = state.sensorMap?.sensor === sensorId ? state.sensorMap : null;
@@ -473,14 +473,15 @@ async function showSensorMap(info, sensorId) {
   canvas.width = m.cols; canvas.height = m.rows;
   const ctx = canvas.getContext('2d');
   const img = ctx.createImageData(m.cols, m.rows);
-  const maxClutter = Math.max(1e-6, ...grid.flat().filter(v => v != null));
+  if (!grid) { info.textContent = 'Keine Daten.'; return; }
+  const maxGhosts = Math.max(1e-6, ...grid.flat().filter(v => v != null));
   for (let c = 0; c < m.cols; c++) {
     for (let r = 0; r < m.rows; r++) {
       const v = grid[c][r];
-      if (v == null || (sel.layer !== 'clutter' && v <= 0.01)) continue;
+      if (v == null || (sel.layer !== 'ghosts' && v <= 0.01)) continue;
       const i = 4 * ((m.rows - 1 - r) * m.cols + c);
-      if (sel.layer === 'clutter') {
-        img.data.set([214, 69, 69, Math.round(40 + 200 * Math.min(v / maxClutter, 1))], i);
+      if (sel.layer === 'ghosts') {
+        img.data.set([214, 69, 69, Math.round(40 + 200 * Math.min(v / maxGhosts, 1))], i);
       } else {
         // low = red, high = green
         img.data.set([Math.round(220 * (1 - v)), Math.round(170 * v + 40), 70, 150], i);
@@ -492,7 +493,7 @@ async function showSensorMap(info, sensorId) {
   view.render();
   info.innerHTML = {
     prior: 'Aus der Geometrie: 0 hinter Wänden, fällt zum Rand des Sichtfelds und zur Reichweite hin ab. Rot = selten, grün = fast immer erkannt.',
-    clutter: `Wo der Sensor Ziele meldet, obwohl ein anderer Sensor die Stelle gut sieht und dort niemand ist (${m.clutter_cells} Felder prüfbar). Je röter, desto öfter.`,
+    ghosts: `Wo der Sensor Spuren beginnt, die zu keiner Person gehören (Reflexionen), je röter, desto öfter; höchstens ${fmt(maxGhosts, 2)} je m² und Stunde. Gelernt über ${fmt(m.watched_h, 1)} h, beginnt neu, wenn ein Sensor versetzt wird.`,
   }[sel.layer];
 }
 
@@ -664,23 +665,18 @@ const PARAMS = [
     ['range_sigma_slope', 'Messfehler in Blickrichtung, Anstieg', 'm/m', '', 0.005],
     ['lateral_sigma_base', 'Messfehler seitlich, Grundwert', 'm', 'Seitlich wächst der Fehler schneller mit dem Abstand (Winkelfehler).', 0.01],
     ['lateral_sigma_slope', 'Messfehler seitlich, Anstieg', 'm/m', '', 0.005],
-    ['sigma_speed', 'Messrauschen Geschwindigkeit', 'm/s', 'Gemessen: 0,40 m/s beim Gehen, 0,12 m/s im Stehen; das Modell nutzt noch einen Wert für beides.', 0.05],
-    ['stale_frames', 'Eingefrorene Ziele nach', 'Frames', 'Der LD2450 meldet manchmal ein Ziel noch bis zu 35 s mit exakt gleichen Koordinaten weiter, obwohl niemand mehr da ist. Echte Personen schwanken immer um Millimeter.', 1],
     ['wall_margin', 'Toleranz an Wänden', 'm', 'Messpunkte weiter hinter einer Wand oder außerhalb aller Räume sind Reflexionen und werden verworfen.', 0.05],
   ]],
   ['Personen', [
     ['residents', 'Bewohner', '', 'So viele Personen verfolgt das Modell; jede kann auch außer Haus sein. Unbekannte Neuankömmlinge (Gäste) sind noch nicht gebaut.', 1],
   ]],
   ['Räume ohne Sensor', [
-    ['dwell_median', 'Typischer Aufenthalt', 's', 'Annahme für Räume ohne Sensor und ohne Ausgang, bis genug Besuche gelernt sind.', 10],
-    ['dwell_spread', 'Streuung des Aufenthalts', '', 'Streuung von ln(Dauer) der Annahme: breit, damit lange Aufenthalte möglich bleiben.', 0.1],
-    ['dwell_prior_weight', 'Gewicht der Annahme', 'Besuche', 'Die Annahme zählt wie so viele gelernte Besuche.', 1],
+    ['dwell_median', 'Typischer Aufenthalt', 's', 'Annahme für Räume ohne Sensor und ohne Ausgang.', 10],
+    ['dwell_spread', 'Streuung des Aufenthalts', '', 'Streuung von ln(Dauer): breit, damit lange Aufenthalte möglich bleiben.', 0.1],
     ['dwell_median_open', 'Typischer Aufenthalt, offener Bereich', 's', 'Dasselbe für Räume ohne Sensor mit Ausgang (verbunden mit Treppe oder Eingang, oft mit dem Schlafzimmer): Stunden sind normal.', 60],
     ['dwell_spread_open', 'Streuung, offener Bereich', '', '', 0.1],
   ]],
   ['LD2410C', [
-    ['ld2410_fov', 'Sichtwinkel', '°', 'Innerhalb dieses Winkels zählt die Energie des LD2410C als Beweis.', 5],
-    ['ld2410_beam', 'Strahl', '°', 'Innerhalb dieses Winkels erzeugen Personen Energie im LD2410C: wer dort ist, erklärt die Energie in seiner Entfernung.', 5],
     ['ld2410_hold', 'Haltezeit (Anzeige)', 's', 'Lücken in der LD2410C-Präsenz bis zu dieser Länge werden in der Anzeige überbrückt.', 0.1],
   ]],
   ['Ausgabe', [

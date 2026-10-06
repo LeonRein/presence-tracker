@@ -6,7 +6,7 @@ import pytest
 
 from presence_tracker.frames import SensorClock, detections
 from presence_tracker.model import Config, SensorConfig, ZoneConfig
-from presence_tracker.sensormodel import SensorModel
+from presence_tracker.filter import Tracker
 from presence_tracker.sim import SimSensor
 
 
@@ -74,9 +74,18 @@ def test_detections_behind_a_wall_are_reflections():
     assert [d.hidden for d in detections(config, config.sensors[0], frame)] == [True, False, False]
 
 
-def test_a_moved_sensor_forgets_what_was_learned():
-    sm = SensorModel(room_config())
-    sm.ld_occ["a"][2, 5] = 5
-    sm.ld_emp["b"][2, 5] = 7
-    sm.forget("a")
-    assert sm.ld_occ["a"].sum() == 0 and sm.ld_emp["b"][2, 5] == 7
+def test_a_moved_sensor_starts_the_ghost_map_over():
+    config = room_config()
+    tr = Tracker(config)
+    gm = tr.ghost_map
+    gm.add_birth("a", (2.0, 2.0), 1.0)
+    assert tr.use_ghost_map(gm)  # the same poses: kept
+    for change in ({"x": 0.3}, {"heading": 50}, {"height": 1.8}, {"mirror": True}, {"scale": 1.05}):
+        moved = room_config()
+        for k, v in change.items():
+            setattr(moved.sensors[0], k, v)
+        moved.rebuild()
+        tr.reconfigure(moved)
+        assert tr.ghost_map is not gm and not tr.ghost_map.count, change
+        tr.reconfigure(room_config())
+        assert tr.use_ghost_map(gm)

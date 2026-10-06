@@ -123,7 +123,7 @@ class Lattice:
 
     def region_rates(self) -> np.ndarray:
         """(R, A): rate (1/s) at which a stay in each region and age bin ends (from Dwell)."""
-        if self._region_rates is None or self.tr.dwell.changed:
+        if self._region_rates is None:
             tr = self.tr
             out = np.zeros((self.R, self.A))
             hi = AGE_EDGES + self.widths

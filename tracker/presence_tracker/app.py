@@ -56,14 +56,6 @@ class App:
 
     def _reset_tracker(self):
         self.tracker = Tracker(self.config)
-        # learned stays in rooms without a sensor survive restarts
-        dwell_path = self.data_dir / "dwell.json"
-        if dwell_path.exists():
-            try:
-                self.tracker.dwell.dwell = json.loads(dwell_path.read_text())
-            except ValueError:
-                log.warning("dwell.json unreadable, starting without learned stays")
-        self.tracker.sensor_model.load(self.data_dir / "sensormodel.json")
         # where the sensors start ghost tracks (learned online, MODEL.md 4.2): it holds only while the
         # sensors are where they were when it was learned, else it starts over
         gm_path = self.data_dir / "ghostmap.json"
@@ -141,15 +133,8 @@ class App:
             self.tracker.step(self.clock())
             self.zone_states = self.tracker.zone_states()
             if not self.replay and time.monotonic() - self.last_model_save > 600:
-                self.tracker.sensor_model.changed = False
                 self.last_model_save = time.monotonic()
-                self.tracker.sensor_model.save(self.data_dir / "sensormodel.json")
                 self.tracker.ghost_map.save(self.data_dir / "ghostmap.json")
-            if self.tracker.dwell.changed and not self.replay:
-                self.tracker.dwell.changed = False
-                tmp = self.data_dir / "dwell.tmp"
-                tmp.write_text(json.dumps(self.tracker.dwell.dwell))
-                tmp.replace(self.data_dir / "dwell.json")
             self.stats["cpu"] += time.process_time() - start
             await self.discovery.states(self.zone_states)
             now = time.monotonic()
@@ -203,7 +188,6 @@ class App:
             if self.client is not None:
                 await self._publish(ha.AVAILABILITY, "offline", True)
             if not self.replay:
-                self.tracker.sensor_model.save(self.data_dir / "sensormodel.json")
                 self.tracker.ghost_map.save(self.data_dir / "ghostmap.json")
             await runner.cleanup()
 
@@ -259,16 +243,8 @@ class App:
             config = Config.from_dict(data)
         except (TypeError, ValueError, KeyError) as e:
             return web.json_response({"error": str(e)}, status=400)
-        # a sensor that was moved (re-hung, recalibrated) sees the house differently: what was
-        # learned about it no longer holds
-        moved = [s.id for s in config.sensors if (old := self.config.sensor_by_id.get(s.id)) is not None
-                 and (math.hypot(s.x - old.x, s.y - old.y) > 0.05 or abs((s.heading - old.heading + 180) % 360 - 180) > 2
-                      or abs(s.height - old.height) > 0.05 or s.mirror != old.mirror or abs(s.scale - old.scale) > 0.02)]
         self.config = config
-        self.tracker.reconfigure(config)
-        for sid in moved:
-            self.tracker.sensor_model.forget(sid)
-            log.info("sensor %s moved: its learned detection, ghost and LD2410C statistics start over", sid)
+        self.tracker.reconfigure(config)  # a moved sensor: the ghost map starts over (MODEL.md 4.2)
         self.calibrator.config = config
         config.save(self.config_path)
         if self.client is not None:
@@ -327,29 +303,20 @@ class App:
         return web.json_response(self.calibrator.status())
 
     async def h_sensormodel(self, request):
-        """Detection probability of one sensor (from the geometry)."""
-        return web.json_response({"maps": self.tracker.sensor_model.maps(request.query.get("sensor", ""))})
+        """What one sensor sees (from the geometry) and where it starts ghost tracks (learned)."""
+        return web.json_response({"maps": self.tracker.sensor_model.maps(request.query.get("sensor", ""),
+                                                                         self.tracker.ghost_map)})
 
     async def h_import_learned(self, request):
-        """Take over what was learned elsewhere, e.g. offline from recordings: {"sensormodel":
-        <sensormodel.json>, "dwell": {region: [seconds, ...]}, "ghost_map": <tools/ghostmap.py output>}.
-        Replaces the current state."""
+        """Take over a ghost map learned elsewhere, e.g. offline from recordings: {"ghost_map":
+        <tools/ghostmap.py output>}. Replaces the current one."""
         data = await request.json()
         if "ghost_map" in data:
             gm = GhostMap.from_dict(data["ghost_map"])
             gm.save(self.data_dir / "ghostmap.json")
             used = self.tracker.use_ghost_map(gm)
             log.info("ghost map imported, %s", "in use" if used else "not used: learned with other sensor poses")
-        if "sensormodel" in data:
-            self.tracker.sensor_model.load_dict(data["sensormodel"])
-            self.tracker.sensor_model.save(self.data_dir / "sensormodel.json")
-        if "dwell" in data:
-            self.tracker.dwell.dwell = {k: [float(x) for x in v] for k, v in data["dwell"].items()}
-            self.tracker.dwell.changed = True
-        return web.json_response({
-            "dwell": {k: len(v) for k, v in self.tracker.dwell.dwell.items()},
-            "ghost_map": self.tracker.ghost_map is not None,
-        })
+        return web.json_response({"ghost_map": self.tracker.ghost_map is not None})
 
     async def h_reset_tracks(self, request):
         self.tracker.reset_people()  # nothing known about where anybody is: the data decides again
