@@ -1,12 +1,12 @@
 """Replay recordings through the tracker and print what it shows, for looking into a situation.
 
 usage: python tools/replay.py --config FILE --from "YYYY-MM-DD HH:MM:SS" --to "..." [--show FROM]
-                              [--every S] [--seed N] [--learned FILE] [--db DIR] [--tracker DIR]
+                              [--every S] [--seed N] [--learned FILE] [--recordings DIR] [--tracker DIR]
 
 The model starts at --from with nothing known (like after a restart). From --show on (default: --from)
 it prints every --every seconds the count per observed room and per person where it most probably is
-(room or place, probability) and the time each sensor has not seen them. --config / --learned: files
-in <db>/configs and <db>/learned of the truth database (private: they hold the floor plan).
+(room or place, probability) and the time each sensor has not seen them. --config: the app's config
+(private: it holds the floor plan); --learned: what the app had learned.
 """
 
 import argparse
@@ -16,13 +16,18 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from evaluate import parse_time  # noqa: E402
+RECORDINGS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "recordings")
+
+
+def parse_time(s: str) -> float:
+    """Local time, "YYYY-MM-DD HH:MM:SS" with optional fractions of a second."""
+    whole, _, frac = s.partition(".")
+    return time.mktime(time.strptime(whole, "%Y-%m-%d %H:%M:%S")) + (float("0." + frac) if frac else 0.0)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--db", default=os.path.expanduser("~/.config/presence-tracker/truth"))
+    ap.add_argument("--recordings", default=RECORDINGS)
     ap.add_argument("--tracker", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tracker"))
     ap.add_argument("--config", required=True)
     ap.add_argument("--learned")
@@ -37,11 +42,10 @@ def main():
     from presence_tracker.frames import SensorClock
     from presence_tracker.model import Config
 
-    db = json.load(open(os.path.join(a.db, "episodes.json")))
-    config = Config.from_dict(json.load(open(os.path.join(a.db, "configs", a.config))))
+    config = Config.from_dict(json.load(open(a.config)))
     crowd = Tracker(config, seed=a.seed)
     if a.learned:
-        crowd.load_learned(json.load(open(os.path.join(a.db, "learned", a.learned))))
+        crowd.load_learned(json.load(open(a.learned)))
     rooms = [z.id for z in config.zones_of("room") if not any(z.id in r["rooms"] for r in config.regions.values())]
     names = {z.id: z.name for z in config.zones}
     start, end = parse_time(a.start), parse_time(a.end)
@@ -50,7 +54,7 @@ def main():
     next_step = next_print = 0.0
     t = start - start % 3600
     while t <= end:
-        path = os.path.join(db["recordings"], time.strftime("%Y%m%d-%H", time.localtime(t)) + ".jsonl")
+        path = os.path.join(a.recordings, time.strftime("%Y%m%d-%H", time.localtime(t)) + ".jsonl")
         t += 3600
         if not os.path.exists(path):
             continue

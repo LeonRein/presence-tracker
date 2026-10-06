@@ -1,13 +1,12 @@
 """Learn where each sensor starts ghost tracks (MODEL.md 4.2) from recordings without truth.
 
 usage: python tools/ghostmap.py --config FILE --window FROM TO [--window ...] --out FILE
-                                [--iterations N] [--jobs N] [--db DIR]
+                                [--iterations N] [--jobs N] [--recordings DIR]
 
 EM (Kantas et al. 2015, sec. 5): run the filter with the current map over the windows; every track
 that ends counts with the filter's probability that it was a ghost at its first position; the time
 each sensor watched is the exposure (Luber 2014, ch. 6: a Poisson process per cell with a Gamma
-prior). The next map is these counts; repeat. Times covered by an episode of the truth database are
-left out, so the map can be judged on them. The windows are cut into pieces of an hour, run in
+prior). The next map is these counts; repeat. The windows are cut into pieces of an hour, run in
 parallel, each from "nothing known"; the first WARMUP s of a piece are not counted.
 """
 
@@ -19,40 +18,31 @@ import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from evaluate import parse_time  # noqa: E402
-
 TRACKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tracker")
+RECORDINGS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "recordings")
 PIECE = 3600.0
 WARMUP = 300.0
 
 
-def pieces(windows, episodes):
-    """The windows without the episodes' times, in pieces of at most PIECE s."""
+def parse_time(s: str) -> float:
+    """Local time, "YYYY-MM-DD HH:MM:SS" with optional fractions of a second."""
+    whole, _, frac = s.partition(".")
+    return time.mktime(time.strptime(whole, "%Y-%m-%d %H:%M:%S")) + (float("0." + frac) if frac else 0.0)
+
+
+def pieces(windows):
+    """The windows in pieces of at most PIECE s."""
     out = []
-    for a, b in windows:
-        cuts = [(a, b)]
-        for ea, eb in episodes:
-            nxt = []
-            for x, y in cuts:
-                if eb <= x or ea >= y:
-                    nxt.append((x, y))
-                    continue
-                if ea > x:
-                    nxt.append((x, ea))
-                if eb < y:
-                    nxt.append((eb, y))
-            cuts = nxt
-        for x, y in cuts:
-            t = x
-            while y - t > WARMUP + 60:
-                out.append((t, min(t + PIECE, y)))
-                t += PIECE - WARMUP
+    for x, y in windows:
+        t = x
+        while y - t > WARMUP + 60:
+            out.append((t, min(t + PIECE, y)))
+            t += PIECE - WARMUP
     return out
 
 
 def run(args):
-    db, config_path, gm_dict, piece = args
+    recordings, config_path, gm_dict, piece = args
     sys.path.insert(0, os.path.abspath(TRACKER))
     from presence_tracker.filter import Tracker
     from presence_tracker.frames import SensorClock
@@ -79,7 +69,7 @@ def run(args):
     clocks = collections.defaultdict(SensorClock)
     t = start - start % 3600
     while t <= end:
-        path = os.path.join(db["recordings"], time.strftime("%Y%m%d-%H", time.localtime(t)) + ".jsonl")
+        path = os.path.join(recordings, time.strftime("%Y%m%d-%H", time.localtime(t)) + ".jsonl")
         t += 3600
         if not os.path.exists(path):
             continue
@@ -118,8 +108,8 @@ def fit_lives(lives, types, rounds=200) -> tuple:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--db", default=os.path.expanduser("~/.config/presence-tracker/truth"))
-    ap.add_argument("--config", required=True, help="a config of the truth database (configs/)")
+    ap.add_argument("--recordings", default=RECORDINGS)
+    ap.add_argument("--config", required=True, help="the app's config (private: it holds the floor plan)")
     ap.add_argument("--window", nargs=2, action="append", required=True, metavar=("FROM", "TO"))
     ap.add_argument("--out", required=True)
     ap.add_argument("--iterations", type=int, default=3)
@@ -130,19 +120,16 @@ def main():
     from presence_tracker.ghostmap import GhostMap
     from presence_tracker.model import Config
 
-    db = json.load(open(os.path.join(a.db, "episodes.json")))
-    config_path = os.path.join(a.db, "configs", a.config)
-    config = Config.from_dict(json.load(open(config_path)))
+    config = Config.from_dict(json.load(open(a.config)))
     tr = Tracker(config)
-    episodes = [(parse_time(e["start"]["time"]), parse_time(e["end"])) for e in db["episodes"]]
-    work = pieces([(parse_time(x), parse_time(y)) for x, y in a.window], episodes)
+    work = pieces([(parse_time(x), parse_time(y)) for x, y in a.window])
     print(f"{len(work)} pieces, {sum(y - x for x, y in work) / 3600:.1f} h", flush=True)
     m = tr.m
     gm = GhostMap.for_world(tr.world, sum(rate for rate, _ in m.ghost_types), 4 * 3600.0)
     gm.poses = {s.id: (s.x, s.y, s.heading) for s in config.sensors}
     for it in range(a.iterations):
         with ProcessPoolExecutor(a.jobs) as ex:
-            results = list(ex.map(run, [(db, config_path, gm.to_dict(), p) for p in work]))
+            results = list(ex.map(run, [(a.recordings, a.config, gm.to_dict(), p) for p in work]))
         new = GhostMap(gm.x0, gm.y0, gm.nx, gm.ny, gm.prior_rate, gm.prior_time)
         new.poses = gm.poses
         loglik = 0.0
