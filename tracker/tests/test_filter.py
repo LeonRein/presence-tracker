@@ -179,3 +179,29 @@ def test_a_ghost_in_an_empty_house_is_learned_as_one():
     for t, sid, frame in simulate([ghost], sim_sensors(config), 40, walls=config.wall_segments):
         crowd.process_frame(sid, t, frame)
     assert learned and min(p for _, p in learned) > 0.9, learned
+
+
+def test_a_sitter_the_ld2450_loses_stays_while_the_ld2410c_sees_them():
+    # MODEL.md 4.3: somebody sits 1.5 m in front of sensor a; its LD2450 and the other one lose them
+    # (hidden behind somebody, a posture it can't see), its LD2410C keeps seeing them
+    config = flat_config(people=1)
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (1.2, 1.2), start=2, pauses={2: 240}))
+    sensors = sim_sensors(config)
+    for s in sensors:
+        s.blind_to, s.blind_after = (0,), a.waypoints[2][0] + 10
+    crowd = Tracker(config, start=0.0, people=["flur"])
+    samples = []
+    for t, sid, frame in simulate([a], sensors, a.waypoints[-1][0] - 1, walls=config.wall_segments):
+        crowd.process_frame(sid, t, frame)
+        if t > a.waypoints[2][0] + 180 and not samples:
+            samples.append(1 - crowd.count_distribution()["wohn"][0])
+    assert samples[0] > 0.9, samples
+
+
+def test_the_app_and_its_config_have_one_version():
+    import pathlib
+    import re
+
+    import presence_tracker
+    text = (pathlib.Path(__file__).parent.parent / "config.yaml").read_text()
+    assert re.search(r'version: "([^"]+)"', text).group(1) == presence_tracker.__version__

@@ -161,6 +161,20 @@ function gateBars(ld) {
 function livePanel(panel, view) {
   panel.append(h(`<div>
     <div class="card" data-live="total"></div>
+    <details class="card" id="report">
+      <summary><b>Fehler melden</b></summary>
+      <div class="row" style="margin-top:8px">
+        <label class="field grow">Raum<select id="rep-room"></select></label>
+        <label class="field grow">Was war falsch?<select id="rep-kind"></select></label>
+      </div>
+      <div class="row">
+        <label class="field">Vor wie vielen Minuten?<input type="number" id="rep-ago" min="0" max="15" step="1" value="0" style="width:6em"></label>
+        <label class="field grow">Was war los? (optional)<input id="rep-text" placeholder="z. B. saß auf dem Sofa, Licht ging aus"></label>
+      </div>
+      <div class="row"><button class="btn primary" id="rep-send">Melden</button></div>
+      <p class="note">Speichert die Sensordaten der letzten 15 Minuten mit der Konfiguration, zum genauen Nachspielen. Die Meldungen sind die Wahrheitsdaten für die Bewertung.</p>
+      <div class="list" id="rep-list"></div>
+    </details>
     <h3>Räume mit Sensor</h3><div class="list" data-live="zones"></div>
     <h3>Räume ohne Sensor</h3><div class="list" data-live="unobserved"></div>
     <p class="note">Aus dem Grundriss: Räume, die kein Sensor überwiegend sieht, über Türen zu Gruppen verbunden. Wer hineingeht, ist dort. Die Wahrscheinlichkeit, dass jemand noch drin ist, sinkt mit der Zeit, je nachdem, wie lange Besuche dort üblicherweise dauern. Die Prozente sind je Person.</p>
@@ -182,6 +196,39 @@ function livePanel(panel, view) {
   </div>`));
   panel.querySelector('#raw').onchange = e => { state.showRaw = e.target.checked; view.render(); };
   panel.querySelector('#reset').onclick = async () => { await api('api/tracks/reset', { method: 'POST' }); toast('Neu begonnen'); };
+  reportForm(panel.querySelector('#report'));
+}
+
+// error reports: what looked wrong, saved with the last minutes of sensor data (app.h_report)
+async function reportForm(el) {
+  const rooms = state.config.zones.filter(z => z.kind === 'room');
+  el.querySelector('#rep-room').innerHTML = rooms.map(z => `<option value="${esc(z.id)}">${esc(z.name)}</option>`).join('')
+    + '<option value="">ganzes Haus</option>';
+  const list = el.querySelector('#rep-list');
+  const load = async () => {
+    const data = await api('api/reports');
+    const kinds = el.querySelector('#rep-kind');
+    if (!kinds.options.length) kinds.innerHTML = Object.entries(data.kinds).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+    const names = Object.fromEntries(rooms.map(z => [z.id, z.name]));
+    list.innerHTML = '';
+    for (const r of data.reports.slice(0, 20)) {
+      const when = new Date(r.t_event * 1000).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      list.append(h(`<div class="item"><span class="grow">${when} · ${esc(names[r.room] || 'Haus')} · ${esc(r.kind_text)}${r.text ? ` · <i>${esc(r.text)}</i>` : ''}</span>
+        <a class="meta" href="api/reports/${encodeURIComponent(r.name)}" download>${r.size < 1e6 ? `${Math.max(1, Math.round(r.size / 1e3))} kB` : `${fmt(r.size / 1e6, 1)} MB`}</a></div>`));
+    }
+    if (!data.reports.length) list.append(h('<p class="note">Noch keine Meldungen.</p>'));
+  };
+  el.querySelector('#rep-send').onclick = async () => {
+    try {
+      const r = await api('api/reports', { method: 'POST', body: JSON.stringify({
+        room: el.querySelector('#rep-room').value, kind: el.querySelector('#rep-kind').value,
+        minutes_ago: Number(el.querySelector('#rep-ago').value) || 0, text: el.querySelector('#rep-text').value }) });
+      toast(`Gemeldet (${r.messages} Nachrichten gespeichert)`);
+      el.querySelector('#rep-text').value = '';
+      await load();
+    } catch (err) { toast(err.message, 5000); }
+  };
+  try { await load(); } catch (err) { list.append(h(`<p class="note">${esc(err.message)}</p>`)); }
 }
 
 // ------------------------------------------------------------------- plan

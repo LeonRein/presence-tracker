@@ -2,7 +2,9 @@
 
 import asyncio
 import base64
+import collections
 import faulthandler
+import gzip
 import json
 import logging
 import math
@@ -16,7 +18,7 @@ from collections import defaultdict
 import aiohttp
 from aiohttp import web
 
-from . import ha
+from . import __version__, ha
 from .calibration import Calibrator
 from .model import Config
 from .filter import Tracker
@@ -27,6 +29,14 @@ from .frames import SensorClock
 log = logging.getLogger(__name__)
 STATIC = (pathlib.Path(__file__).parent / "static").resolve()
 BLOCKED_DUMP = 15.0  # s the event loop may be busy before the watchdog logs where it is
+REPORT_WINDOW = 15 * 60.0  # s of sensor data kept for an error report
+REPORT_KINDS = {
+    "light_on": "Licht an, obwohl niemand da ist",
+    "light_off": "Licht aus, obwohl jemand da ist",
+    "late": "Licht kam zu spät",
+    "count": "Falsche Personenzahl",
+    "other": "Sonstiges",
+}
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}
 
 
@@ -51,6 +61,8 @@ class App:
         self.sensor_status: dict[str, str] = {}
         self.ws_clients: set = set()
         self.zone_states: dict = {}
+        self.reports = data_dir / "reports"
+        self.recent = collections.deque()  # (receive time, topic, payload) of the last REPORT_WINDOW s
         self._reset_tracker()
         self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
 
@@ -82,6 +94,9 @@ class App:
         parts = topic.split("/")
         if len(parts) != 3 or parts[0] != self.prefix:
             return
+        self.recent.append((recv, topic, payload))
+        while self.recent and self.recent[0][0] < recv - REPORT_WINDOW:
+            self.recent.popleft()
         sensor_id, kind = parts[1], parts[2]
         if kind == "status":
             self.sensor_status[sensor_id] = payload.decode(errors="replace")
@@ -208,6 +223,9 @@ class App:
         app.router.add_post("/api/tracks/reset", self.h_reset_tracks)
         app.router.add_get("/api/sensormodel", self.h_sensormodel)
         app.router.add_post("/api/learned", self.h_import_learned)
+        app.router.add_get("/api/reports", self.h_reports)
+        app.router.add_post("/api/reports", self.h_report)
+        app.router.add_get("/api/reports/{name}", self.h_report_file)
         return app
 
     async def h_index(self, request):
@@ -317,6 +335,55 @@ class App:
             used = self.tracker.use_ghost_map(gm)
             log.info("ghost map imported, %s", "in use" if used else "not used: learned with other sensor poses")
         return web.json_response({"ghost_map": self.tracker.ghost_map is not None})
+
+    # ------------------------------------------------------------ error reports
+
+    async def h_report(self, request):
+        """Something looked wrong: what (room, kind, how long ago, a note), saved with the config,
+        the ghost map and the sensor data of the last REPORT_WINDOW s in the recordings' format, so
+        the moment can be replayed exactly. These are the truth data of the evaluation (MODEL.md 8)."""
+        body = await request.json()
+        kind = body.get("kind")
+        if kind not in REPORT_KINDS:
+            return web.json_response({"error": "Art des Fehlers fehlt."}, status=400)
+        room = str(body.get("room") or "")
+        ago = min(max(float(body.get("minutes_ago") or 0), 0.0), REPORT_WINDOW / 60)
+        now = self.clock()  # the wall clock, or the recording's time in a replay
+        meta = {"report": {"t": now, "t_event": now - 60 * ago, "room": room, "kind": kind,
+                           "text": str(body.get("text") or "")[:2000], "version": __version__},
+                "config": self.config.to_dict(), "ghost_map": self.tracker.ghost_map.to_dict()}
+        self.reports.mkdir(parents=True, exist_ok=True)
+        name = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{re.sub(r'[^a-z0-9_]', '', room.lower()) or 'haus'}-{kind}"
+        lines = [json.dumps(meta)]
+        for recv, topic, payload in list(self.recent):
+            try:
+                data = json.loads(payload)
+            except ValueError:
+                data = payload.decode(errors="replace")
+            lines.append(json.dumps({"t": recv, "topic": topic, "payload": data}))
+        path = self.reports / f"{name}.jsonl.gz"
+        await asyncio.to_thread(path.write_bytes, gzip.compress("\n".join(lines).encode()))
+        log.info("error report %s: %d messages", path.name, len(lines) - 1)
+        return web.json_response({"name": path.name, "messages": len(lines) - 1})
+
+    async def h_reports(self, request):
+        out = []
+        for path in sorted(self.reports.glob("*.jsonl.gz"), reverse=True) if self.reports.is_dir() else []:
+            try:
+                with gzip.open(path, "rt") as f:
+                    rep = json.loads(f.readline())["report"]
+            except (OSError, ValueError, KeyError):
+                continue
+            out.append({"name": path.name, "size": path.stat().st_size, **rep,
+                        "kind_text": REPORT_KINDS.get(rep.get("kind"), rep.get("kind"))})
+        return web.json_response({"reports": out, "kinds": REPORT_KINDS, "window_min": REPORT_WINDOW / 60})
+
+    async def h_report_file(self, request):
+        name = request.match_info["name"]
+        path = self.reports / name
+        if "/" in name or not name.endswith(".jsonl.gz") or not path.is_file():
+            raise web.HTTPNotFound()
+        return web.FileResponse(path, headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     async def h_reset_tracks(self, request):
         self.tracker.reset_people()  # nothing known about where anybody is: the data decides again

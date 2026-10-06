@@ -13,12 +13,13 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   wo sie liegt und ob sie wiedergefunden wird, nicht jeder Frame als neue Messung.
 - **Jede Person ist eine Wahrscheinlichkeitsverteilung**, keine einzelne Spur. Wer gerade eine Spur hat, ist
   eine Mischung aus „steht“ und „geht“, jede mit Position, Geschwindigkeit und Unsicherheit. Wer keine hat,
-  ist eine Dichte über den Grundriss, hinter Türen und außer Haus. Nichts davon ist zufällig gezogen:
+  ist eine Dichte über Kacheln des Grundrisses (Raumstücke bis 0,6 m, in denen jeder Sensor etwa gleich gut
+  sieht), hinter Türen und außer Haus. Nichts davon ist zufällig gezogen:
   Gleiche Daten ergeben immer dasselbe Ergebnis. Die Karte im Tab *Live* zeigt die Verteilung jeder Person
   als Wärmekarte, den Punkt am wahrscheinlichsten Ort.
 - **Niemand taucht aus dem Nichts auf und niemand verschwindet einfach.** Personen kommen und gehen nur
-  durch Türen. Wer durch eine Tür geht, ist dahinter (Küche, Balkon, Flur-Bereich mit Schlafzimmer und
-  Treppe), wie lange Besuche dort dauern, wird gelernt.
+  durch Türen. Wer durch eine Tür in einen Bereich ohne Sensor geht, ist dahinter (Balkon, Flur-Bereich mit
+  Schlafzimmer und Treppe), wie lange Besuche dort dauern, ist angenommen.
 - **Wer geht, wird schnell gesehen; wer sitzt, nicht immer.** Wie gut ein Sitzender erfasst wird, hängt von
   Haltung und Platz ab und wird für jeden Aufenthalt mitgeschätzt: Wer am Tisch oft erfasst wurde und lange
   nicht mehr, ist wahrscheinlich gegangen; wer auf dem Sofa selten erfasst wird, nicht.
@@ -26,11 +27,17 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   **lernt die App selbst** (Geisterkarte). Wird ein Sensor verschoben, hinzugefügt oder entfernt, beginnt
   die Karte neu, weil sich die Sensoren gegenseitig stören können. Bis sie ein paar Stunden gelernt hat,
   werden Geister an festen Stellen (Möbel, Ladestation) leichter für Personen gehalten.
-- Der **LD2410C** wird in 0.8.0 nur angezeigt, nicht ausgewertet.
+- Der **LD2410C** zählt mit: Ist er aus, sitzt niemand nahe vor ihm (bis etwa 3 m sieht er Sitzende
+  zuverlässig). Bleibt er länger als ein kurzes Aufblitzen an, ist jemand in der Entfernung, die er meldet,
+  auch wenn der LD2450 ihn verloren hat. Was eine andere Person schon erklärt, sagt über die übrigen nichts.
 - **Wände**: Die Radare sehen nicht durch die Betonwände. Ein Messpunkt hinter einer Wand oder außerhalb aller
   Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*).
-- **Personen**: Verfolgt werden die *Bewohner*. Jede kann auch außer Haus sein (über den Flur-Bereich mit der
-  Treppe) und wird dann nirgends angezeigt. Noch nicht gebaut: unbekannte Neuankömmlinge (Gäste).
+- **Personen**: Mit *Personen beim Start* beginnt das Modell, wenn es nichts weiß. Weitere (Gäste) kommen über
+  die Wege nach draußen dazu; wer sicher außer Haus ist, wird vergessen.
+- **Fehler melden** (Tab *Live*): Wenn das Licht falsch war, den Raum und die Art des Fehlers wählen. Die App
+  speichert dazu die Sensordaten der letzten 15 Minuten mit der Konfiguration (unter `/data/reports`, in
+  der Liste herunterladbar). Daraus entsteht die Wahrheitstabelle für die Bewertung;
+  `tools/replay.py --report DATEI` spielt eine Meldung nach.
 
 ## Einrichten
 

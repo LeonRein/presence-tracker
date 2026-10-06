@@ -192,3 +192,6 @@ table.data td { padding: 4px 4px; border-bottom: 1px solid var(--line); }
 .scale-bar line { stroke: var(--muted); stroke-width: 1.5; }
 @keyframes pulse { 0%, 100% { stroke-opacity: 1; } 50% { stroke-opacity: .2; } }
 .approaching { animation: pulse .8s infinite; }
+.row .field.grow { flex: 1; min-width: 140px; }
+.field input, .field select { width: 100%; }
+details.card > summary { cursor: pointer; }

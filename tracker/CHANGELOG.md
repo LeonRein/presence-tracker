@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.0
+
+- **Etwa ein Drittel der Rechenzeit von 0.8.1**, ungefähr so viel wie 0.6.21 (gemessen auf derselben Stunde,
+  Anteil eines Kerns: 0.8.1 14,7 %, 0.9.0 4,6 %, 0.6.21 4,4 %; einzelne Frames dauerten bis 28 ms, die App
+  ruckelte). Personen ohne Spur sind jetzt eine Dichte über Kacheln (Raumstücke bis 0,6 m, an Wänden und an
+  den Sichtgrenzen der Sensoren geschnitten) statt über ein 0,2-m-Raster mit 8 Gehrichtungen; alles wird
+  höchstens alle 0,2 s gemeinsam vorgerückt statt bei jedem Frame jedes Sensors; das zweite Raster je
+  Person für „durch eine Tür“ ist weg (MODEL.md 5).
+- **Der LD2410C zählt wieder** (in 0.6.x half er nachweislich, in 0.7/0.8 war er ohne Prüfung entfernt worden).
+  Neues Modell aus 2,5 h Messungen gegen den LD2450 im selben Gehäuse (MODEL.md 4.3): aus heißt „niemand
+  nahe vor ihm“, kurzes Aufblitzen (1,1 s) ist eine Störung, länger an heißt „jemand in der gemeldeten
+  Entfernung“. Auf der Aufnahme vom 6.10. ist die Küche nach dem Gehen in wenigen Minuten leer (0.8.1: noch
+  80 % belegt, obwohl beide Sensoren nichts sahen); eine Sitzende, die der LD2450 verliert, bleibt, solange
+  der LD2410C sie sieht (Simulation: ohne LD2410C nach 3 min 1 %, mit über 90 %).
+- **Fehler melden** im Tab *Live*: Raum, Art des Fehlers, wie lange her, ein Satz Text. Gespeichert werden die
+  Sensordaten der letzten 15 Minuten mit Konfiguration und Geisterkarte, herunterladbar in der Liste.
+  Daraus wird die neue Wahrheitstabelle.
+
 ## 0.8.1
 
 - Aufräumen: Was 0.8.0 nicht mehr benutzte, ist weg (gelernte Clutter-Karte und LD2410C-Statistik aus
