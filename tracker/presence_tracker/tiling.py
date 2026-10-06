@@ -132,7 +132,6 @@ class Tiling:
         self.widths = np.diff(np.concatenate([AGE_EDGES, [AGE_EDGES[-1] * 2]]))
         self.A = len(AGE_EDGES)
         self._region_rates = None
-        self.fresh_stay = self.sh.stay_prior()[:, :, None]  # a stay just begun: (L, K, 1)
         self.g = {}
         self.dist = {}
 

@@ -119,16 +119,18 @@ class Hidden:
         if tl.n:
             # walkers stop (the mean walk is walk_length long), standing people get up at their rate
             stop = self.walk * -math.expm1(-m.speed / m.walk_length * dt)
-            up_l = self.still * -np.expm1(-sh.go * dt)[:, None, None]
+            up = -np.expm1(-sh.go * dt)  # (L,)
+            s = self.still.sum(axis=1)  # (L, n): over the detectability
+            rise = up[:, None] * s
             self.walk -= stop
-            self.walk += up_l.sum(axis=(0, 1))
-            self.still -= up_l
-            # the detectability changes now and then within a stay (MODEL.md 4.1)
+            self.walk += rise.sum(axis=0)
+            # who stays: the detectability changes now and then within a stay (MODEL.md 4.1), drawn
+            # anew from kappa_w; who stops begins a fresh stay (its kind from go_w, its
+            # detectability from kappa_w: Shapes.stay_prior). Written with the sums over the
+            # detectability: two passes over still instead of six
             q = -math.expm1(-m.kappa_switch * dt)
-            self.still *= 1 - q
-            self.still += (q * self.still.sum(axis=1, keepdims=True) / (1 - q)) * sh.kappa_w[None, :, None]
-            # who stops begins a fresh stay
-            self.still += tl.fresh_stay * stop[None, None, :]
+            self.still *= ((1 - up) * (1 - q))[:, None, None]
+            self.still += sh.kappa_w[None, :, None] * (q * (s - rise) + sh.go_w[:, None] * stop[None, :])[:, None, :]
             self.clock += dt
             while self.clock >= tl.tick:
                 self.clock -= tl.tick
