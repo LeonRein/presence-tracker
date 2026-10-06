@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.0
+
+Neuer Filter (Modell: MODEL.md 0.8.0). Noch in Arbeit: Auf der Wahrheitsdatenbank ist „Licht ohne Person“ in
+einigen Episoden noch häufiger als mit 0.6.21.
+
+- Gemessen wird an den Spuren des LD2450 (wann er eine Spur beginnt, verliert, wiederfindet), nicht mehr
+  jeder Frame als unabhängige Messung.
+- Keine Partikel mehr: Personen mit einer Spur sind eine Mischung aus „steht“ und „geht“ (je ein
+  Kalman-Filter), alle anderen eine Dichte über dem Grundriss. Der Filter enthält keine Zufallszahlen,
+  gleiche Daten ergeben immer dasselbe Ergebnis; etwa ein Drittel der Rechenzeit.
+- Gehen als gemessenes Bewegungsmodell: im Mittel 0,85 m/s, die Richtung ist nach gut einer Sekunde
+  vergessen (bis 0.6.21 behielt ein Gehender sie viel zu lange und war zu schnell).
+- Wie gut ein Sitzender erfasst wird, wird je Aufenthalt mitgeschätzt (Abend auf dem Sofa: 0 % falsch,
+  9a70790: 97 %).
+- Geisterkarte je Sensor, gelernt von der App selbst; beginnt neu, sobald ein Sensor verschoben,
+  hinzugefügt oder entfernt wird.
+- Entfernt: Körperabstand zweier Personen, LD2410C-Auswertung (nur noch angezeigt), Ziele und Wege.
+
 ## 0.6.21
 
 - Das Modell hängt nicht mehr davon ab, wie die Zeit in Frames und Rechenschritte zerlegt wird. Drei

@@ -1,9 +1,9 @@
-"""The particle model (crowd.py, MODEL.md) on simulated scenes in a small flat: one room with two
+"""The filter (filter.py, MODEL.md) on simulated scenes in a small flat: one room with two
 sensors, a balcony and a hallway behind doors."""
 
 import numpy as np
 
-from presence_tracker.crowd import Crowd
+from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
 
@@ -36,20 +36,23 @@ def flat_config(entry: bool = False, residents: int = 2) -> Config:
     })
 
 
-def run(config, people, duration, start_places, every=0.5, **kw):
-    crowd = Crowd(config, start=0.0, n=600, people=start_places)
+def run(config, people, duration, start_places, every=0.5, check=False, **kw):
+    crowd = Tracker(config, start=0.0, people=start_places)
     samples = []
     next_sample = 0.0
     for t, sid, frame in simulate(people, sim_sensors(config, **kw), duration, walls=config.wall_segments):
         crowd.process_frame(sid, t, frame)
+        if check:
+            crowd.check()
         if t >= next_sample:
-            samples.append((t, crowd.place_probabilities(), len(crowd.present())))
+            samples.append((t, crowd.place_distribution(), crowd.present_count()))
             next_sample = t + every
     return crowd, samples
 
 
-def at(samples, t):
-    return min(samples, key=lambda s: abs(s[0] - t))[1]
+def at(samples, t, place):
+    """P(somebody is in the place) at the sample nearest t."""
+    return 1 - min(samples, key=lambda s: abs(s[0] - t))[1][place][0]
 
 
 def present(samples, t0, t1):
@@ -57,7 +60,7 @@ def present(samples, t0, t1):
 
 
 def test_the_world_knows_rooms_regions_and_walls():
-    crowd = Crowd(flat_config(), start=0.0, people=["flur"])
+    crowd = Tracker(flat_config(), start=0.0, people=["flur"])
     world = crowd.world
     assert set(world.places) == {"observed", "balkon", "flur", "outside"}
     pts = np.array([[3.0, 2.5], [7.0, 2.0], [-1.0, 4.0], [10.0, 10.0]])
@@ -73,10 +76,10 @@ def test_one_person_comes_in_goes_to_the_balcony_and_comes_back():
                     pauses={2: 20, 4: 30, 6: 30}))
     crowd, samples = run(config, [a], a.waypoints[-1][0] + 5, ["flur"])
     t = {k: tw[0] for k, tw in enumerate(a.waypoints)}
-    assert at(samples, t[2] + 10)[1].get("observed", 0) > 0.9  # in the room
-    on_balcony = at(samples, t[4] + 15)[1]
-    assert on_balcony.get("balkon", 0) > 0.8, on_balcony  # on the balcony, not hidden at the door
-    assert at(samples, t[6] + 10)[1].get("observed", 0) > 0.9  # back: the same person
+    assert at(samples, t[2] + 10, "observed") > 0.9  # in the room
+    on_balcony = at(samples, t[4] + 15, "balkon")
+    assert on_balcony > 0.8, on_balcony  # on the balcony, not hidden at the door
+    assert at(samples, t[6] + 10, "observed") > 0.9  # back
 
 
 def test_one_person_in_the_room_is_one_person():
@@ -90,12 +93,12 @@ def test_one_person_in_the_room_is_one_person():
 
 def test_nobody_walks_along_unseen():
     # nothing known at the start, two may live here; one walks around the room, and each sensor sees
-    # them a bit elsewhere, wandering (measured up to 0.5 m apart, MODEL.md 4.1). "Two people, each
+    # them a bit elsewhere, wandering (measured: 0.2-0.3 m, correlated over seconds, MODEL.md 4.1). "Two people, each
     # sensor sees one of them" must lose against "one person": two people walking exactly alike, one
     # never seen, is improbable
     config = flat_config(entry=True, residents=2)
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 1.5), (5, 3.5), (1.5, 3.5), (4.5, 1.0), (2.5, 2.5), start=3))
-    crowd, samples = run(config, [a], a.waypoints[-1][0], None, bias=0.25)
+    crowd, samples = run(config, [a], a.waypoints[-1][0], None, bias=0.25, bias_time=3.5)
     assert present(samples, 15, a.waypoints[-1][0] - 1) == {1}
 
 
@@ -112,3 +115,20 @@ def test_somebody_else_coming_in_is_counted():
     crowd, samples = run(config, [a, b], end, ["flur"])
     assert present(samples, 20, 38) == {1}
     assert present(samples, 70, end - 1) == {2}
+
+
+def test_a_short_track_in_an_empty_room_is_a_ghost():
+    # nobody home, known: a target shows up mid-room for a second and is gone again
+    config = flat_config(residents=2)
+    ghost = Person([(20.0, 3.0, 2.5), (21.0, 3.0, 2.5)])
+    crowd, samples = run(config, [ghost], 40, ["outside", "outside"])
+    assert all(n == 0 for t, _, n in samples)
+
+
+def test_the_bookkeeping_holds_when_two_cross_and_ghosts_come():
+    # two people cross, sensors see them a bit elsewhere, merge them when close, and show ghosts
+    config = flat_config(residents=2)
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (1.0, 1.0), (5.0, 4.0), (5.1, 4.0), start=1, pauses={3: 5}))
+    b = Person(walk((7.0, 2.0), BALCONY_DOOR, (5.0, 1.0), (1.0, 4.0), (1.1, 4.0), start=1, pauses={3: 5}))
+    run(config, [a, b], 25, ["flur", "balkon"], check=True, bias=0.2, bias_time=3.5, resolution=0.5,
+        ghost_rate=20)

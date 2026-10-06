@@ -50,10 +50,21 @@ def parse_time(s: str) -> float:
     return time.mktime(time.strptime(whole, "%Y-%m-%d %H:%M:%S")) + (float("0." + frac) if frac else 0.0)
 
 
+def count_dist(ps):
+    """Distribution of the number of people from independent per-person probabilities."""
+    dist = [1.0]
+    for q in ps:
+        dist = [(dist[i] if i < len(dist) else 0.0) * (1 - q) + (dist[i - 1] * q if i else 0.0) for i in range(len(dist) + 1)]
+    return dist
+
+
 def run(args):
-    db, tracker_dir, episode, seed = args
+    db, tracker_dir, episode, seed, overrides, ghostmaps = args
     sys.path.insert(0, tracker_dir)
-    from presence_tracker.crowd import Crowd
+    try:
+        from presence_tracker.filter import Tracker as Crowd
+    except ImportError:  # versions before the track-level filter
+        from presence_tracker.crowd import Crowd
     from presence_tracker.model import Config
     try:
         from presence_tracker.frames import SensorClock
@@ -65,9 +76,20 @@ def run(args):
     kw = {"seed": seed}
     if episode["start"]["people"] is not None:
         kw["people"] = episode["start"]["people"]
+    if overrides:  # model numbers changed for this evaluation (--set)
+        from presence_tracker.filter import Model
+        model = Model()
+        for key, value in overrides.items():
+            setattr(model, key, value)
+        kw["model"] = model
     crowd = Crowd(config, **kw)
     if episode.get("learned"):  # what the app had learned by then: it never runs without
         crowd.load_learned(json.load(open(os.path.join(db["dir"], "learned", episode["learned"]))))
+    gm_path = os.path.join(ghostmaps, episode["config"]) if ghostmaps else None
+    if gm_path and os.path.exists(gm_path):  # a ghost map learned without the episodes (tools/ghostmap.py)
+        from presence_tracker.ghostmap import GhostMap
+        if not crowd.use_ghost_map(GhostMap.load(gm_path)):
+            print(f"{episode['id']}: ghost map learned with other sensor poses, not used", file=sys.stderr)
     start, end = parse_time(episode["start"]["time"]), parse_time(episode["end"])
     truth = [(parse_time(t), want) for t, want, *_ in episode["truth"]]
     clocks = collections.defaultdict(SensorClock)
@@ -99,19 +121,19 @@ def run(args):
             next_score += 1.0
             k = max(i for i, (tc, _) in enumerate(truth) if tc <= tt)
             st = crowd.zone_states()
-            probs = crowd.zone_probabilities()
-            series.append((tt, k, {z: st[z].count if z in st else 0 for z in rooms}, {z: probs.get(z, []) for z in rooms}))
+            if hasattr(crowd, "count_distribution"):  # the joint distribution of the counts
+                probs = crowd.count_distribution()
+            else:  # per person, independent
+                probs = {z: count_dist(ps) for z, ps in crowd.zone_probabilities().items()}
+                n_people = max((len(ps) for ps in crowd.zone_probabilities().values()), default=0)
+                zp = crowd.zone_probabilities()
+                probs["_observed"] = count_dist([sum(zp[z][i] for z in rooms if z in zp) for i in range(n_people)])
+            series.append((tt, k, {z: st[z].count if z in st else 0 for z in rooms}, {z: probs.get(z, [1.0]) for z in rooms + ["_observed"]}))
 
     def matches(shown, want):
         if "observed" in want:
             return sum(shown.values()) == want["observed"]
         return all(shown.get(z, 0) == want.get(z, 0) for z in set(shown) | set(want))
-
-    def count_dist(ps):
-        dist = [1.0]
-        for q in ps:
-            dist = [(dist[i] if i < len(dist) else 0.0) * (1 - q) + (dist[i - 1] * q if i else 0.0) for i in range(len(dist) + 1)]
-        return dist
 
     def score(dist, n):
         p = dist[n] if n < len(dist) else 0.0
@@ -129,12 +151,11 @@ def run(args):
             acc["seconds"] += 1
             acc["wrong"] += not matches(shown, want)
             if "observed" in want:
-                n_people = max((len(ps) for ps in probs.values()), default=0)
-                ls, bs = score(count_dist([sum(ps[i] for ps in probs.values()) for i in range(n_people)]), want["observed"])
+                ls, bs = score(probs["_observed"], want["observed"])
             else:
                 ls = bs = 0.0
                 for z in rooms:
-                    a, b = score(count_dist(probs[z]), want.get(z, 0))
+                    a, b = score(probs[z], want.get(z, 0))
                     ls, bs = ls + a, bs + b
             acc["log"] += ls
             acc["brier"] += bs
@@ -211,11 +232,14 @@ def main():
     ap.add_argument("--only", nargs="*", help="episode ids")
     ap.add_argument("--json", help="also write every run as a JSON line to this file")
     ap.add_argument("--off-delay", type=int, default=60, choices=OFF_DELAYS, help="switch-off delay of the lights printed")
+    ap.add_argument("--set", nargs="*", default=[], metavar="NAME=JSON", help="change a number of the model (filter.Model)")
+    ap.add_argument("--ghostmaps", help="directory with a ghost map per config (tools/ghostmap.py), named like the config")
     a = ap.parse_args()
     db = json.load(open(os.path.join(a.db, "episodes.json")))
     db["dir"] = a.db
     episodes = [e for e in db["episodes"] if not a.only or e["id"] in a.only]
-    tasks = [(db, os.path.abspath(a.tracker), e, s) for e in episodes for s in range(1, a.seeds + 1)]
+    overrides = {k: json.loads(v) for k, v in (item.split("=", 1) for item in a.set)}
+    tasks = [(db, os.path.abspath(a.tracker), e, s, overrides, a.ghostmaps) for e in episodes for s in range(1, a.seeds + 1)]
     with ProcessPoolExecutor(a.jobs) as pool:
         results = list(pool.map(run, tasks))
     if a.json:

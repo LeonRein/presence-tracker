@@ -5,7 +5,7 @@ import pytest
 from presence_tracker.calibration import Calibrator
 from presence_tracker.model import Config, SensorConfig, TrackerParams
 from presence_tracker.sim import Person, SimSensor, simulate
-from presence_tracker.crowd import Crowd
+from presence_tracker.filter import Tracker
 
 from test_frames import walk
 
@@ -28,7 +28,7 @@ def test_recovers_headings_and_scales_from_a_walk():
 
     person = Person(walk((1, 1), (5, 1), (5, 4), (1, 4), (1, 1), (5, 4), (3, 1), (3, 4), speed=0.8))
     sensors = [SimSensor(s, noise=0.05) for s in truth.sensors]
-    tracker = Crowd(guess, start=0.0)
+    tracker = Tracker(guess, start=0.0)
     calibrator = Calibrator(guess)
     calibrator.start()
     tracker.listeners.append(lambda e, d: e == "frame" and calibrator.on_frame(*d))
@@ -48,7 +48,7 @@ def test_recovers_headings_and_scales_from_a_walk():
 
 def _session(truth, guess, people, duration):
     sensors = [SimSensor(s, noise=0.05) for s in truth.sensors]
-    tracker = Crowd(guess, start=0.0)
+    tracker = Tracker(guess, start=0.0)
     calibrator = Calibrator(guess)
     calibrator.start()
     tracker.listeners.append(lambda e, d: e == "frame" and calibrator.on_frame(*d))

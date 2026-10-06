@@ -127,7 +127,7 @@ class TrackerParams:
     dwell_prior_weight: float = 3.0  # the prior counts like this many visits
     dwell_median_open: float = 1800.0  # s, the same for an open region (bedroom, the way out): hours are normal
     dwell_spread_open: float = 2.0
-    residents: int = 2  # people who live here (the particle model tracks this many until arrivals are built)
+    residents: int = 2  # people who live here (the filter tracks this many until guests are built, MODEL.md 3.4)
     # LD2410C
     ld2410_hold: float = 1.5  # s, gaps in the LD2410C presence up to this long are bridged (display)
     ld2410_fov: float = 50.0  # degrees, where the LD2410C is trusted to see

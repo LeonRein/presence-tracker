@@ -1,7 +1,7 @@
 """Simulated sensors and people, for tests and a demo mode without hardware.
 
 Imitates the MQTT frames of the ESPHome firmware, including the LD2450's quirks:
-noise, an error that wanders slowly (each sensor sees a person a bit elsewhere), at most 3 targets, still people dropping out, occasional ghosts, and the LD2410C
+a lost target coasted for 15 frames with its last speed (MODEL.md 4.1), noise, an error that wanders slowly (each sensor sees a person a bit elsewhere), at most 3 targets, still people dropping out, occasional ghosts, and the LD2410C
 seeing the LD2450's interference every ~7 s.
 """
 
@@ -38,6 +38,7 @@ class Person:
 class SimSensor:
     config: SensorConfig
     noise: float = 0.07
+    speed_noise: float = 0.03  # m/s: the reported speed varies from frame to frame (three equal ones mean coasting)
     bias: float = 0.0  # m: per person, where this sensor's target sits on them wanders by about this much
     bias_time: float = 1.0  # s, ... this slowly
     still_dropout: float = 0.0  # chance per second that a still person is dropped (stays dropped for still_gap s)
@@ -52,6 +53,7 @@ class SimSensor:
     _ghost_until: float = -1.0
     _ghost_pos: tuple = (0.0, 0.0)
     _bias: dict = field(default_factory=dict)
+    _coast: dict = field(default_factory=dict)  # person -> (local x, y, vx, vy, raw speed, frames left)
 
 
 def simulate(people: list, sensors: list, duration: float, rate: float = 11.0, seed: int = 1, walls: list = ()):
@@ -74,6 +76,14 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
             continue
         pos = person.position(t)
         if pos is None or not c.sees(pos[0], pos[1], walls):
+            # lost: the LD2450 coasts the target with its last speed, slowing down, for 15 frames
+            co = s._coast.get(i)
+            if co is not None and co[5] > 0:
+                lx, ly, vx_, vy_, raw, left = co
+                lx, ly = lx + vx_ * dt, ly + vy_ * dt
+                s._coast[i] = (lx, ly, 0.8 * vx_, 0.8 * vy_, raw, left - 1)
+                targets.append((math.hypot(lx, ly), {"x": round(lx * 1000), "y": round(ly * 1000), "speed": raw,
+                                                     "resolution": 360}))
             continue
         vx, vy = person.velocity(t)
         speed = math.hypot(vx, vy)
@@ -99,12 +109,15 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
         k = slant / ground
         ux, uy = (pos[0] - c.x) / ground, (pos[1] - c.y) / ground
         radial = vx * ux + vy * uy
-        targets.append((ground, {
+        tgt = {
             "x": round((lx * k + rng.gauss(0, s.noise)) * 1000),
             "y": round((ly * k + rng.gauss(0, s.noise)) * 1000),
-            "speed": round(radial * ground / slant * 1000 / 10) * 10,
+            "speed": round((radial * ground / slant + rng.gauss(0, s.speed_noise)) * 1000 / 10) * 10,
             "resolution": 360,
-        }))
+        }
+        targets.append((ground, tgt))
+        lvx, lvy = c.to_local(pos[0] + vx, pos[1] + vy)
+        s._coast[i] = (tgt["x"] / 1000, tgt["y"] / 1000, lvx - lx, lvy - ly, tgt["speed"] or 10, 15)
     if s.ghost_rate and rng.random() < s.ghost_rate / 60 * dt:
         s._ghost_until = t + rng.uniform(0.2, 1.0)
         s._ghost_pos = (rng.uniform(-2, 2), rng.uniform(0.5, 5))

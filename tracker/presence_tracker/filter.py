@@ -1,0 +1,1084 @@
+"""The Bayes filter of MODEL.md: everybody's whereabouts given the LD2450 tracks. Deterministic:
+nothing is drawn, the same data always give the same result.
+
+Hypotheses (MODEL.md 5.1): which live tracks are one person's and which are ghosts, with exact
+weights. A new track (or one found again) branches every hypothesis; hypotheses that come to say the
+same about the live tracks are merged (5.6). This is the data association of a PMBM filter
+(Garcia-Fernandez et al. 2018) with a fixed number of people.
+
+Given a hypothesis, the people are independent (multi-Bernoulli with existence 1):
+  - a person with a live track (measured or held): a Gaussian mixture over standing / walking
+    (gauss.py, 5.2)
+  - everybody else: a density on a raster (hidden.py, 5.3)
+Objects are shared by the hypotheses with the same history and updated once; what differs between
+hypotheses makes new objects (copy on write).
+"""
+
+import itertools
+import math
+
+import numpy as np
+
+from .filtermodel import FRAME, IDLE, STILL, WALK, Model, Shapes, radar_pd
+from .frames import SensorRuntime, detections as frame_detections
+from .gauss import Gauss
+from .hidden import HC, HEADINGS, Hidden, Lattice
+from .sensormodel import PD_MAX, SensorModel
+from .sensortracks import SensorTracks
+from .unobserved import Dwell
+from .world import CELL, OBSERVED, World
+
+__all__ = ["Model", "Tracker"]
+
+MAX_STEP = 0.2  # s: motion is cut into parts no longer than this
+MOUNT_RADIUS = 0.3  # m: targets this close to a sensor come from its mount
+LN2 = math.log(2.0)
+
+
+def _logsumexp(a) -> float:
+    a = np.asarray(a, dtype=float)
+    if not a.size:
+        return -math.inf
+    top = float(a.max())
+    if top == -math.inf:
+        return top
+    return top + math.log(float(np.exp(a - top).sum()))
+
+
+def _log(x):
+    with np.errstate(divide="ignore"):
+        return np.log(x)
+
+
+class Hyp:
+    """One hypothesis: its weight; per live track whose it is (a group id, or "g" for a ghost); per
+    ghost track the log likelihood of its life per kind of ghost and its source (a Gauss); the
+    people with tracks (group id -> Gauss) and those without (Hidden, one per person)."""
+
+    __slots__ = ("logw", "kind", "ghost", "phantom", "groups", "hidden")
+
+    def __init__(self, logw, kind, ghost, groups, hidden, phantom=None):
+        self.logw = logw
+        self.kind = kind
+        self.ghost = ghost
+        self.phantom = phantom if phantom is not None else {}
+        self.groups = groups
+        self.hidden = hidden
+
+    def child(self, logw) -> "Hyp":
+        return Hyp(logw, dict(self.kind), {s: a.copy() for s, a in self.ghost.items()}, dict(self.groups),
+                   list(self.hidden), dict(self.phantom))
+
+    def objects(self) -> list:
+        return list(self.groups.values()) + self.hidden
+
+    def group_segs(self) -> dict:
+        """group id -> the live tracks the hypothesis says are that person's."""
+        out = {}
+        for s, k in self.kind.items():
+            if k != "g":
+                out.setdefault(k, set()).add(s)
+        return out
+
+    def key(self):
+        return (frozenset(frozenset(v) for v in self.group_segs().values()),
+                frozenset(s for s, k in self.kind.items() if k == "g"))
+
+
+class Tracker:
+    def __init__(self, config, start: float | None = None, n: int | None = None, seed: int = 1, people=None,
+                 sensor_model: SensorModel | None = None, model: Model | None = None):
+        # n and seed are accepted for the tools' sake; nothing here is random
+        self.m = model or Model()
+        self.shapes = Shapes(self.m)
+        self.config = config
+        self.p = config.params
+        self.sensor_model = sensor_model or SensorModel(config)
+        self.dwell = Dwell(self.p, [rid for rid, r in config.regions.items() if r["open"]])
+        self.listeners = []
+        self.runtime = {}
+        self.now = start or 0.0
+        self.start = start
+        self.loglik = 0.0  # log evidence of everything seen so far
+        self._ids = itertools.count(1)
+        self._gids = itertools.count(1)
+        self.ghost_map = None  # where each sensor starts ghost tracks (ghostmap.py)
+        self.learn_ghosts = True  # learn the map online (MODEL.md 4.2); off for the offline EM tool
+        self._build()
+        self.use_ghost_map(None)
+        self.reset_people(people)
+
+    # --------------------------------------------------------------- setup
+
+    def _build(self):
+        self.world = World(self.config)
+        self.sensors = [s.id for s in self.config.sensors]
+        self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
+        self.tracks = {sid: SensorTracks(sid, self._ids) for sid in self.sensors}
+        self._gcache = {}
+        self._area = {}
+        self._ghost_total = {}
+        rooms = [z for z in self.config.zones_of("room") if not any(z.id in r["rooms"] for r in self.config.regions.values())]
+        self.rooms = [z.id for z in rooms]
+        w = self.world
+        self.room_of = np.full((w.nx, w.ny), -1, dtype=np.int16)
+        for k, z in enumerate(rooms):
+            self.room_of[w.zone_mask(z) & (w.labels == OBSERVED)] = k
+        self.lat = Lattice(self)
+        for si in range(len(self.sensors)):
+            self._g(si, np.zeros((1, 2)))
+
+    def reset_people(self, people=None):
+        """Start over: nothing known (or the given places)."""
+        if people is None:
+            people = ["anywhere"] * max(int(self.p.residents), 1)
+        self.N = len(people)
+        anywhere = None
+        hidden = []
+        for where in people:
+            if where == "anywhere":
+                anywhere = anywhere or Hidden.anywhere(self.lat)
+                hidden.append(anywhere)
+            else:
+                hidden.append(Hidden.at_place(self.lat, self.world.index[where]))
+        self.hyps = [Hyp(0.0, {}, {}, {}, hidden)]
+        self.segs = {}  # seg id -> dict(si, t, zt, var, z, born, lost, ...)
+        self._live_by_sensor = {si: [] for si in range(len(self.sensors))}
+
+    def reconfigure(self, config):
+        self.config = config
+        self.p = config.params
+        self.sensor_model.config = config
+        self.sensor_model.rebuild()
+        self.dwell.p = config.params
+        self._build()
+        self.use_ghost_map(self.ghost_map)  # it holds only while the sensors are where they were
+        self.reset_people()
+
+    def use_ghost_map(self, gm) -> bool:
+        """Use a learned ghost map (MODEL.md 4.2) if it was learned with the sensors where they are
+        now; else start a new one from the prior (a moved, added or removed sensor changes where
+        all of them see ghosts)."""
+        from .ghostmap import GhostMap
+        ok = gm is not None and gm.matches(self.config)
+        if ok:
+            self.ghost_map = gm
+        else:
+            self.ghost_map = GhostMap.for_world(self.world, sum(rate for rate, _ in self.m.ghost_types),
+                                                self.m.ghost_prior_time)
+            self.ghost_map.poses = {s.id: (s.x, s.y, s.heading) for s in self.config.sensors}
+        self._ghost_total = {}
+        return ok
+
+    def _ghost_types(self) -> tuple:
+        """The kinds of ghosts ((share or rate, mean life s), ...): learned with the map, else the
+        model's."""
+        if self.ghost_map.types:
+            return self.ghost_map.types
+        return self.m.ghost_types
+
+    def _ghost_rate(self, si: int, pos) -> float:
+        """Rate of ghost births per m^2 and s at pos for sensor si (without the echoes)."""
+        return float(self.ghost_map.rate(self.sensors[si], np.asarray(pos).reshape(1, 2))[0])
+
+    def _ghost_rate_total(self, si: int) -> float:
+        """Rate of ghost births anywhere sensor si sees (per s, without the echoes)."""
+        if si not in self._ghost_total:
+            grid = self._gcache[si]
+            i, j = np.nonzero(grid > 0.05)
+            w = self.world
+            pts = np.stack([w.x0 + (i + 0.5) * CELL, w.y0 + (j + 0.5) * CELL], axis=1)
+            tot = float(self.ghost_map.rate(self.sensors[si], pts).sum()) * CELL * CELL
+            self._ghost_total[si] = tot
+        return self._ghost_total[si]
+
+    def _measuring(self, seg) -> bool:
+        """Is the track live and not held (lost) by its sensor?"""
+        info = self.segs.get(seg)
+        return info is not None and info["lost"] is None
+
+    # ------------------------------------------------------------ geometry
+
+    def _g(self, si: int, pos: np.ndarray) -> np.ndarray:
+        """How well sensor si sees the points (..., 2), 0..1 (MODEL.md 4.1, from the geometry)."""
+        grid = self._gcache.get(si)
+        if grid is None:
+            w = self.world
+            sid = self.sensors[si]
+            grid = np.zeros((w.nx, w.ny))
+            for i in range(w.nx):
+                for j in range(w.ny):
+                    if w.labels[i, j] >= 0:
+                        grid[i, j] = self.sensor_model.pd(sid, w.x0 + (i + 0.5) * CELL, w.y0 + (j + 0.5) * CELL) / PD_MAX
+            self._gcache[si] = grid
+            self._area[si] = float((grid > 0.05).sum()) * CELL * CELL
+        shape = pos.shape[:-1]
+        i, j = self.world.cell_of(pos.reshape(-1, 2))
+        return grid[i, j].reshape(shape)
+
+    def _polar(self, si: int, pos: np.ndarray) -> tuple:
+        s = self.config.sensors[si]
+        dx, dy = pos[..., 0] - s.x, pos[..., 1] - s.y
+        return np.hypot(dx, dy), np.arctan2(dy, dx)
+
+    def _mask(self, si: int, pos: np.ndarray, skip=()) -> np.ndarray:
+        """Share of the rate at which sensor si would start a new track on somebody at pos (n, 2)
+        that is left given its live tracks: next to a target it measures, somebody is merged into it
+        (resolution, Svensson 2012); near where it holds a lost target it finds that one again."""
+        out = np.ones(len(pos))
+        segs = [s for s in self._live_by_sensor.get(si, []) if s not in skip]
+        if not segs:
+            return out
+        m = self.m
+        r, th = self._polar(si, pos)
+        for seg in segs:
+            info = self.segs[seg]
+            if info["lost"] is None:
+                rz, tz = self._polar(si, info["z"])
+                dr = r - rz
+                dc = 0.5 * (r + rz) * np.angle(np.exp(1j * (th - tz)))
+                out *= 1 - np.exp(-LN2 * ((dr / m.res_range) ** 2 + (dc / m.res_cross) ** 2))
+            else:
+                dz = pos - info["lost"]["z"]
+                out *= 1 - self._near((dz * dz).sum(axis=1))
+        return out
+
+    def _base_rates(self, si: int, pos: np.ndarray) -> tuple:
+        """Rate (1/s) at which sensor si starts a track on a walker / on a still person at pos,
+        without the mask: rho * P_D(r) * geometry (MODEL.md 4.1)."""
+        (rs, r50s), (rw, r50w) = self.m.acquire
+        r, _ = self._polar(si, pos)
+        g = self._g(si, pos)
+        return rw * radar_pd(r, r50w) * g, rs * radar_pd(r, r50s) * g
+
+    def _lattice_rates(self, si: int, skip=()) -> tuple:
+        """(walkers, still people) rates (n,) of sensor si on the raster."""
+        lat = self.lat
+        if not lat.n:
+            return np.zeros(0), np.zeros(0)
+        key = ("lat", si)
+        base = self._gcache.get(key)
+        if base is None:
+            base = self._base_rates(si, lat.centers)
+            self._gcache[key] = base
+        mask = self._mask(si, lat.centers, skip)
+        return base[0] * mask, base[1] * mask
+
+    def _gauss_rates(self, si: int, g: Gauss, skip=()) -> np.ndarray:
+        """(2,) rate of sensor si per component [STILL, WALK], at its mean (0 where the person has a
+        measuring track of this sensor: one person, one track per sensor)."""
+        if any(self.segs[s]["si"] == si and self._measuring(s) for s in g.slots if s in self.segs and s not in skip):
+            return np.zeros(2)
+        rw, rs = self._base_rates(si, g.pos)
+        mask = self._mask(si, g.pos, skip)
+        return np.array([rs[STILL], rw[WALK]]) * mask[[STILL, WALK]]
+
+    # ------------------------------------------------------------- frames
+
+    def process_frame(self, sensor_id: str, t: float, frame: dict):
+        if self.start is None:
+            self.start = t
+            self.now = t
+        sensor = self.config.sensor_by_id.get(sensor_id)
+        rt = self.runtime.setdefault(sensor_id, SensorRuntime())
+        prev = rt.last_frame
+        rt.frame = frame
+        rt.frames += 1
+        if sensor is None:
+            rt.last_frame = t
+            return
+        dets = frame_detections(self.config, sensor, frame)
+        for d in dets:
+            if math.hypot(d.pos[0] - sensor.x, d.pos[1] - sensor.y) < MOUNT_RADIUS:
+                d.hidden = True
+        rt.detections = dets
+        self._ld_runtime(sensor, rt, t, frame.get("ld2410") or {})
+        ev = self.tracks[sensor_id].update(t, frame, dets) if sensor_id in self.tracks else None
+        measured = {id(d) for _, d in ev.born + ev.measured} if ev else set()
+        for d in dets:
+            d.stale = not d.hidden and id(d) not in measured
+        for listener in self.listeners:
+            listener("frame", (sensor, t, dets))
+        if ev is None or not sensor.enabled or not sensor.placed:
+            rt.last_frame = t
+            return
+        si = self.sidx[sensor_id]
+        if t > self.now:
+            # the time since this sensor's last frame counts as watched by it (MODEL.md 4.4)
+            self.step(t)
+        rt.last_frame = t
+        gap = t - prev
+        delta = gap if gap <= IDLE else 0.0  # longer: lost data, says nothing
+        self._evidence(si, t, delta, ev)
+
+    def step(self, t: float, targets=None):
+        """Move everybody to time t (MODEL.md 3), and weigh by the tracks not started meanwhile."""
+        if self.start is None or t <= self.now:
+            return
+        dt = t - self.now
+        parts = int(math.ceil(dt / MAX_STEP - 1e-9))
+        for k in range(parts):
+            self._advance(self.now + dt * (k + 1) / parts, dt / parts)
+        self.now = t
+
+    def _advance(self, t: float, dt: float):
+        live = [si for si, sid in enumerate(self.sensors)
+                if sid in self.runtime and t - self.runtime[sid].last_frame <= IDLE
+                and self.config.sensors[si].enabled and self.config.sensors[si].placed]
+        kappa = self.shapes.kappa
+        lat_f = None
+        if live and self.lat.n:
+            rates = [self._lattice_rates(si) for si in live]
+            rw, rs = sum(r[0] for r in rates), sum(r[1] for r in rates)
+            lat_f = (np.exp(-rw * dt), np.exp(-np.outer(kappa, rs) * dt))
+        for obj, refs in self._objects(phantoms=True):
+            if isinstance(obj, Hidden):
+                obj.move(dt)
+                d = obj.weigh(*lat_f) if lat_f is not None else 0.0
+            else:
+                obj.predict(dt, self.m, self.shapes, self.lat, HEADINGS)
+                d = 0.0
+                if not obj.phantom and live:  # no track started on a person meanwhile
+                    r = sum(self._gauss_rates(si, obj) for si in live)
+                    da = obj.away.weigh(*lat_f) if obj.away is not None and lat_f is not None else 0.0
+                    d = obj.reweigh(obj.kappa_weigh(np.exp(-kappa * r[STILL] * dt), math.exp(-r[WALK] * dt)), da)
+            for h in refs:
+                self.hyps[h].logw += d
+
+    def _objects(self, phantoms=False) -> list:
+        """The distinct objects of all hypotheses (people; with phantoms: also the sources of ghost
+        tracks), each with the hypotheses holding it (repeated as often as they hold it)."""
+        seen = {}
+        for h, hy in enumerate(self.hyps):
+            for obj in hy.objects() + (list(hy.phantom.values()) if phantoms else []):
+                seen.setdefault(id(obj), (obj, []))[1].append(h)
+        return list(seen.values())
+
+    # ------------------------------------------------------------ evidence
+
+    def _near(self, d2) -> np.ndarray:
+        """Can the sensor find its held target on a person this far (squared distance) from it?"""
+        return np.exp(-0.5 * d2 / self.m.find_radius ** 2)
+
+    def _evidence(self, si, t, delta, ev):
+        m = self.m
+        censored = delta <= 0
+        # 1. no ghost track was born meanwhile (echoes come with walkers in view)
+        area = self._area.get(si, 0.0)
+        if delta > 0:
+            total = self._ghost_rate_total(si)
+            walkers = self._walkers(si)
+            for h, hy in enumerate(self.hyps):
+                hy.logw -= (total + m.ghost_echo * walkers[h] * area) * delta
+            if self.learn_ghosts:
+                self.ghost_map.add_watch(self.sensors[si], delta)
+                if self.ghost_map.fade(t):
+                    self._ghost_total = {}
+            for listener in self.listeners:
+                listener("watch", (self.sensors[si], delta))
+        # 2. the sensor's tracks: measured (or found again), lost, still held, gone
+        refound = []
+        for seg, d in ev.measured:
+            if seg in self.segs:
+                if self.segs[seg]["lost"] is None:
+                    self._measured(seg, d, t)
+                else:
+                    refound.append((seg, d))
+        for seg, kind, d in ev.lost:
+            if seg in self.segs:
+                self.segs[seg]["lost"] = {"kind": kind, "t": t, "z": d.pos.copy(), "u": 0.0}
+        for seg, d in ev.held:
+            if seg in self.segs:
+                self._held(si, seg, d, t)
+        ended = [seg for seg in ev.ended if seg in self.segs]
+        for seg in ended:
+            self._end(si, seg, t, ev.data_lost)
+        if ended:
+            self._merge()
+        # 3. nothing seen before (start, lost data): a person there now is tracked with the share of
+        # the time a track lasts against the time until one is started
+        if censored:
+            self._censor(si)
+        # 4. new tracks, and lost ones found again
+        if refound or ev.born:
+            skip = {seg for seg, _ in ev.born}
+            rates = self._lattice_rates(si, skip)
+            last = FRAME if censored else min(delta, FRAME)
+            for seg, d in refound + ev.born:
+                self._branch(si, seg, d, t, last, censored, rates, skip)
+        self._normalize()
+
+    def _walkers(self, si) -> np.ndarray:
+        """Per hypothesis: the expected number of walkers in view of sensor si."""
+        val = np.zeros(len(self.hyps))
+        g, _ = self.lat.seen(si)
+        for obj, refs in self._objects():
+            if isinstance(obj, Hidden):
+                v = float(obj.walking() @ (g > 0.1)) if self.lat.n else 0.0
+            else:
+                v = (1 - obj.a) * obj.walking() * float(self._g(si, obj.pos[WALK][None, :])[0] > 0.1)
+                if obj.away is not None and self.lat.n:
+                    v += obj.a * float(obj.away.walking() @ (g > 0.1))
+            for h in refs:
+                val[h] += v
+        return val
+
+    def _censor(self, si):
+        """First frame of a sensor (or after lost data): who has no track of it now was not tracked
+        by it - with the stationary share 1 / (1 + rate * life of a track)."""
+        m = self.m
+        kappa = self.shapes.kappa
+        rw, rs = self._lattice_rates(si)
+        lw, ls = m.track_life[WALK], m.track_life[STILL]
+        for obj, refs in self._objects():
+            if isinstance(obj, Hidden):
+                d = obj.weigh(1 / (1 + rw * lw), 1 / (1 + np.outer(kappa, rs) * ls))
+            else:
+                r = self._gauss_rates(si, obj)
+                da = obj.away.weigh(1 / (1 + rw * lw), 1 / (1 + np.outer(kappa, rs) * ls)) if obj.away is not None else 0.0
+                d = obj.reweigh(obj.kappa_weigh(1 / (1 + kappa * r[STILL] * ls), 1 / (1 + r[WALK] * lw)), da)
+            for h in refs:
+                self.hyps[h].logw += d
+
+    def _offset_var(self, si, pos) -> float:
+        """Variance (per axis, m^2) of where a track sits on a person at this distance: the
+        measured spread along and across the line of sight (MODEL.md 4.1)."""
+        p = self.p
+        s = self.config.sensors[si]
+        dist = math.hypot(pos[0] - s.x, pos[1] - s.y)
+        sr = p.range_sigma_base + p.range_sigma_slope * dist
+        st = p.lateral_sigma_base + p.lateral_sigma_slope * dist
+        return 0.5 * (sr * sr + st * st)
+
+    def _measured(self, seg, d, t):
+        """A measurement of a track that was not lost: it sits at z = x + c + o + w on its source
+        (a person, or a ghost's source), exact Kalman per component; a ghost lives on."""
+        m = self.m
+        info = self.segs[seg]
+        for hy in self.hyps:
+            if hy.kind.get(seg) == "g":
+                self._ghost_life(hy, seg, info, t)
+        info["gt"] = t
+        if t - info["zt"] < m.pos_every:
+            return
+        for obj, refs in self._objects(phantoms=True):
+            if isinstance(obj, Gauss) and seg in obj.slots:
+                dl = obj.update(seg, d.pos, m.white)
+                for h in refs:
+                    self.hyps[h].logw += dl
+        info["t"] = info["zt"] = t
+        info["z"] = d.pos.copy()
+
+    # ghosts: per hypothesis, a mixture over the kinds of ghosts (how long they live)
+
+    def _ghost_life(self, hy, seg, info, t):
+        acc = hy.ghost[seg]
+        before = _logsumexp(acc)
+        dt = t - info.get("gt", info["born"])
+        for k, (_, life) in enumerate(self._ghost_types()):
+            acc[k] += -dt / life
+        hy.logw += _logsumexp(acc) - before
+
+    # lost tracks
+
+    def _no_find(self, kind: str, u: float) -> float:
+        """P(the sensor has not found its lost target again within u s | the person stayed where
+        it was held): measured, a log-normal time to finding it again, and a small share never."""
+        if u <= 0:
+            return 1.0
+        median, spread, never = self.m.refind[kind]
+        later = 0.5 * math.erfc((math.log(u) - math.log(median)) / (spread * math.sqrt(2)))
+        return never + (1 - never) * later
+
+    def _kk_lattice(self, si, z) -> np.ndarray:
+        """(n,): how well the sensor could find its target held at z on somebody in each cell."""
+        g, _ = self.lat.seen(si)
+        dz = self.lat.centers - z
+        return g * self._near((dz * dz).sum(axis=1))
+
+    def _kk_gauss(self, si, c: Gauss, z) -> np.ndarray:
+        return self._g(si, c.pos) * c.near(z, self.m.find_radius)
+
+    def _held(self, si, seg, d, t):
+        """A lost track, still held: not found again on anybody near where it is held, nor on the
+        ghost it may be, nor on a reflection there (MODEL.md 4.1)."""
+        info = self.segs[seg]
+        lost = info["lost"]
+        u0, u1 = lost["u"], t - lost["t"]
+        ratio = self._no_find(lost["kind"], u1) / max(self._no_find(lost["kind"], u0), 1e-300)
+        lost["u"] = u1
+        lr = math.log(max(ratio, 1e-300))
+        if lr < 0:
+            kl = self._kk_lattice(si, lost["z"]) if self.lat.n else None
+            for obj, refs in self._objects():
+                if isinstance(obj, Hidden):
+                    f = np.exp(kl * lr) if kl is not None else np.zeros(0)
+                    dl = obj.weigh(f, f)
+                else:
+                    da = obj.away.weigh(np.exp(kl * lr), np.exp(kl * lr)) if obj.away is not None and kl is not None else 0.0
+                    dl = obj.reweigh(self._kk_gauss(si, obj, lost["z"]) * lr, da)
+                for h in refs:
+                    self.hyps[h].logw += dl
+            for hy in self.hyps:
+                hy.logw += (self.m.find_clutter + (hy.kind.get(seg) == "g")) * lr
+        lost["z"] = d.pos.copy()
+
+    def _end(self, si, seg, t, data_lost):
+        """The sensor dropped the track. For a person this follows from not finding it again
+        (counted while it was held); a ghost died: its hazard. A person left without tracks goes
+        to the people without one."""
+        w = self.hyp_weights()
+        p_ghost = float(sum(wi for wi, hy in zip(w, self.hyps) if hy.kind.get(seg) == "g"))
+        info = self.segs.pop(seg)
+        life = (info["lost"]["t"] if info["lost"] else info.get("gt", info["born"])) - info["born"]
+        if self.learn_ghosts and p_ghost > 0:  # the map learns where ghosts begin and how long they live
+            self.ghost_map.add_birth(self.sensors[si], info["z0"], p_ghost)
+            if not data_lost:
+                self.ghost_map.add_life(life, p_ghost, self.m.ghost_types)
+            self._ghost_total.pop(si, None)
+        for listener in self.listeners:
+            listener("track_end", (self.sensors[si], info["z0"], p_ghost, life, data_lost))
+        self._live_by_sensor[si].remove(seg)
+        cache = {}
+        for hy in self.hyps:
+            kind = hy.kind[seg]
+            acc = hy.ghost.pop(seg, None)
+            hy.phantom.pop(seg, None)
+            if kind == "g":
+                del hy.kind[seg]
+                if not data_lost:
+                    before = _logsumexp(acc)
+                    u = t - (info["lost"]["t"] if info["lost"] else info.get("gt", info["born"]))
+                    for k, (_, life) in enumerate(self._ghost_types()):
+                        acc[k] += math.log(max(-math.expm1(-max(u, FRAME) / life), 1e-300))
+                    hy.logw += _logsumexp(acc) - before
+                continue
+            self._release(hy, kind, seg, cache)
+            del hy.kind[seg]
+
+    def _release(self, hy, gid, seg, cache):
+        """In hypothesis hy, the person of group gid no longer owns seg (it ended, or it is somebody
+        else's in this child): its offset is marginalized out; without any live track left they go
+        to the raster (MODEL.md 5.4)."""
+        obj = hy.groups[gid]
+        rest = [s for s, k in hy.kind.items() if k == gid and s != seg]
+        key = (id(obj), seg, bool(rest))
+        if key not in cache:
+            new = obj.copy()
+            if seg in new.slots:
+                new.drop_track(seg)
+            cache[key] = new if rest else new.to_raster(self.lat, HEADINGS, self.m)
+        new = cache[key]
+        if rest:
+            hy.groups[gid] = new
+        else:
+            del hy.groups[gid]
+            hy.hidden.append(new)
+
+    def _branch(self, si, seg, d, t, last, censored, rates, skip):
+        """A new track, or a lost one found again: branch every hypothesis (MODEL.md 5.1). A new
+        track is a ghost's, or a person's who has tracks of other sensors, or a person's without
+        any (from their raster). A track found again is its owner's again, or the sensor found it
+        on somebody else near the spot, or on a reflection there - the LD2450 lets a held track
+        glide to the next target. Every alternative is a hypothesis with its exact weight."""
+        m = self.m
+        lat = self.lat
+        refind = seg in self.segs
+        info = self.segs.get(seg)
+        var = info["var"] if refind else self._offset_var(si, d.pos)
+        z = d.pos
+        ghost_rates = np.array([rate for rate, _ in self._ghost_types()])
+        ghost_life = np.array([life for _, life in self._ghost_types()])
+        kappa = self.shapes.kappa
+        lw, ls = m.track_life[WALK], m.track_life[STILL]
+        if refind:
+            lost = info["lost"]
+            u0, u1 = lost["u"], t - lost["t"]
+            lr_nf = math.log(max(self._no_find(lost["kind"], u1) / max(self._no_find(lost["kind"], u0), 1e-300), 1e-300))
+            kl = self._kk_lattice(si, lost["z"]) if lat.n else np.zeros(0)
+            f_lat = (kl, kl)
+            g_life = np.array([-(t - info.get("gt", info["born"])) / life_ for life_ in ghost_life])
+
+            def logf(g):
+                return _log(self._kk_gauss(si, g, lost["z"]))
+        else:
+            rw, rs = rates
+            # a birth now instead of none in the last frame (the "none" is in the weights already)
+            rsk = np.outer(kappa, rs)  # still people: per level of detectability
+            f_lat = (rw * lw if censored else np.expm1(rw * last), rsk * ls if censored else np.expm1(rsk * last))
+            walkers = self._walkers(si)
+
+            def logf(g):
+                r = self._gauss_rates(si, g, skip | {seg})
+                if censored:
+                    return g.kappa_weigh(kappa * r[STILL] * ls, r[WALK] * lw)
+                return g.kappa_weigh(np.expm1(kappa * r[STILL] * last), math.expm1(r[WALK] * last))
+        cache = {}
+        release_cache = {}
+
+        def derived(key, make):
+            if key not in cache:
+                cache[key] = make()
+            return cache[key]
+
+        def source():
+            return derived(("source",), lambda: Gauss.source(seg, z, var, m, self.shapes))
+
+        def measured_by_si(gid, hy):
+            return any(self.segs[s]["si"] == si and self._measuring(s) for s, k in hy.kind.items()
+                       if k == gid and s != seg)
+
+        def attach(obj):
+            """seg starts / is found on this person: (new object, log factor)."""
+            if isinstance(obj, Gauss):  # somebody with tracks
+                def make():
+                    new = obj.copy()
+                    if seg not in new.slots:
+                        new.add_track(seg, var, m.const_share)
+                    return new, new.update(seg, z, m.white, logf(new))
+                return derived(("gauss", id(obj)), make)
+            if not lat.n:
+                return None, -math.inf
+            return derived(("raster", id(obj)),
+                           lambda: Gauss.from_raster(obj, lat, f_lat[0], f_lat[1], seg, z, var, m, HEADINGS))
+
+        children = []
+        for h, hy in enumerate(self.hyps):
+            cur = hy.kind.get(seg) if refind else None
+
+            def released(ch, cur=cur):
+                """The track leaves its old owner in this child."""
+                if cur == "g":
+                    ch.ghost.pop(seg, None)
+                    ch.phantom.pop(seg, None)
+                elif cur is not None:
+                    self._release(ch, cur, seg, release_cache)
+                return ch
+
+            if refind:
+                # found in this frame on one of the finders: everybody near the spot as far as the
+                # sensor sees them there, the ghost (if it is one), a reflection
+                E = m.find_clutter + (cur == "g")
+                for obj in hy.objects():
+                    if isinstance(obj, Gauss):
+                        E += (1 - obj.a) * float(obj.weights() @ self._kk_gauss(si, obj, lost["z"]))
+                        if obj.away is not None and lat.n:
+                            E += obj.a * obj.away.integrate(kl, kl)
+                    elif lat.n:
+                        E += obj.integrate(kl, kl)
+                pf = math.log(max(-math.expm1(E * lr_nf), 1e-300)) - math.log(E)
+                if cur == "g":
+                    acc = hy.ghost[seg]
+                    stay = acc + g_life
+                    ph = hy.phantom[seg]
+
+                    def found_source(ph=ph):
+                        new = ph.copy()
+                        return new, new.update(seg, z, m.white)
+                    new, L = derived(("gstay", id(ph)), found_source)
+                    ch = hy.child(hy.logw + pf + _logsumexp(stay) - _logsumexp(acc) + L)
+                    ch.ghost[seg] = stay
+                    ch.phantom[seg] = new
+                    children.append(ch)
+                else:
+                    new, L = attach(hy.groups[cur])
+                    if L > -math.inf:
+                        ch = hy.child(hy.logw + pf + L)
+                        ch.groups[cur] = new
+                        children.append(ch)
+                    ch = released(hy.child(hy.logw + pf + math.log(m.find_clutter / (2 * math.pi * m.find_radius ** 2))))
+                    ch.kind[seg] = "g"
+                    ch.ghost[seg] = _log(ghost_rates / ghost_rates.sum())
+                    ch.phantom[seg] = source()
+                    children.append(ch)
+                base = pf
+            else:
+                lam = ghost_rates * (self._ghost_rate(si, z) / ghost_rates.sum())
+                lam[0] += m.ghost_echo * walkers[h]
+                if censored:
+                    lam = lam * ghost_life / FRAME  # ghosts there now: born at any time before
+                ch = hy.child(hy.logw + math.log(lam.sum() * last))
+                ch.kind[seg] = "g"
+                ch.ghost[seg] = _log(lam / lam.sum())
+                ch.phantom[seg] = source()
+                children.append(ch)
+                base = 0.0
+            # somebody with tracks (of other sensors, or held ones)
+            for gid, obj in hy.groups.items():
+                if gid == cur or measured_by_si(gid, hy):
+                    continue
+                new, L = attach(obj)
+                if L == -math.inf:
+                    continue
+                ch = released(hy.child(hy.logw + base + L))
+                ch.groups[gid] = new
+                ch.kind[seg] = gid
+                children.append(ch)
+            # somebody without a track: from their raster
+            counts = {}
+            for u in hy.hidden:
+                counts.setdefault(id(u), [u, 0])[1] += 1
+            for u, mult in counts.values():
+                new, L = attach(u)
+                if L == -math.inf:
+                    continue
+                ch = released(hy.child(hy.logw + base + L + math.log(mult)))
+                ch.hidden.remove(u)
+                gid = next(self._gids)
+                ch.groups[gid] = new
+                ch.kind[seg] = gid
+                children.append(ch)
+        if not children:
+            return
+        top = max(c.logw for c in children)
+        self.hyps = [c for c in children if c.logw > top + math.log(m.hyp_floor)] if top > -math.inf else children
+        if refind:
+            info["lost"] = None
+            info["t"] = info["zt"] = info["gt"] = t
+            info["z"] = d.pos.copy()
+        else:
+            self.segs[seg] = {"si": si, "t": t, "zt": t, "var": var, "z": d.pos.copy(), "z0": d.pos.copy(), "born": t,
+                              "lost": None}
+            self._live_by_sensor[si].append(seg)
+        self._merge()
+        self._prune()
+
+    # ------------------------------------------------------- bookkeeping
+
+    @staticmethod
+    def _mix_hidden(parts) -> Hidden:
+        """sum_i w_i * density_i for [(w_i, Hidden)]."""
+        merged = {}
+        for w, u in parts:
+            merged[id(u)] = (merged.get(id(u), (0.0, u))[0] + w, u)
+        vals = list(merged.values())
+        return vals[0][1] if len(vals) == 1 else Hidden.mixture(vals)
+
+    @staticmethod
+    def _pair(base: list, other: list) -> list:
+        """other reordered so that other[j] is the person most like base[j]: people without a track
+        are exchangeable, so the pairing with the least summed L1 distance (MODEL.md 5.6)."""
+        if len(base) <= 1 or len(base) > 6:  # more than six never happens in a household
+            return list(other)
+        cost = np.array([[a.distance(b) for b in other] for a in base])
+        best = min(itertools.permutations(range(len(other))), key=lambda p: sum(cost[i, j] for i, j in enumerate(p)))
+        return [other[j] for j in best]
+
+    def _merge(self):
+        """Hypotheses that now say the same about every live track are one: their mixture (MODEL.md
+        5.6). People held by the same object in all of them stay as they are; the others are mixed
+        per person (exact for one, the multi-Bernoulli approximation for more)."""
+        by = {}
+        for hy in self.hyps:
+            by.setdefault(hy.key(), []).append(hy)
+        if len(by) == len(self.hyps):
+            return
+        out = []
+        for hs in by.values():
+            if len(hs) == 1:
+                out.append(hs[0])
+                continue
+            lw = np.array([h.logw for h in hs])
+            tot = _logsumexp(lw)
+            wn = np.exp(lw - tot) if tot > -math.inf else np.full(len(hs), 1.0 / len(hs))
+            base = hs[0]
+            new = base.child(tot)
+            for gid, segs in base.group_segs().items():
+                objs = []
+                for h in hs:
+                    g2 = next(k for k, v in h.group_segs().items() if v == segs)
+                    objs.append(h.groups[g2])
+                if all(o is objs[0] for o in objs):
+                    continue
+                merged = {}
+                for w, o in zip(wn, objs):
+                    merged[id(o)] = (merged.get(id(o), (0.0, o))[0] + w, o)
+                new.groups[gid] = Gauss.mixture(list(merged.values()))
+            for seg_ in base.phantom:
+                merged = {}
+                for w, h in zip(wn, hs):
+                    o = h.phantom[seg_]
+                    merged[id(o)] = (merged.get(id(o), (0.0, o))[0] + w, o)
+                if len(merged) > 1:
+                    new.phantom[seg_] = Gauss.mixture(list(merged.values()))
+            # people without a track: the objects all hold stay, the others are paired and mixed
+            common = list(base.hidden)
+            for h in hs[1:]:
+                rest = list(h.hidden)
+                keep = []
+                for u in common:
+                    if any(u is r for r in rest):
+                        keep.append(u)
+                        rest.remove(next(r for r in rest if r is u))
+                common = keep
+            rests = []
+            for h in hs:
+                rest = list(h.hidden)
+                for u in common:
+                    rest.remove(next(r for r in rest if r is u))
+                rests.append(rest)
+            rests = [rests[0]] + [self._pair(rests[0], r) for r in rests[1:]]
+            mixed = [self._mix_hidden([(w, rest[j]) for w, rest in zip(wn, rests)]) for j in range(len(rests[0]))]
+            new.hidden = common + mixed
+            out.append(new)
+        self.hyps = out
+
+    def _prune(self):
+        """Keep the strongest hypotheses (Vo et al. 2017: cutting by weight minimizes the L1 error)."""
+        self.hyps.sort(key=lambda h: -h.logw)
+        top = self.hyps[0].logw
+        if top == -math.inf:  # nothing explains the data (should not happen): keep them, see _normalize
+            self.hyps = self.hyps[:self.m.max_hyps]
+            return
+        self.hyps = [h for h in self.hyps[:self.m.max_hyps] if h.logw > top + math.log(self.m.hyp_floor)]
+
+    def _normalize(self):
+        total = _logsumexp([h.logw for h in self.hyps])
+        if total == -math.inf:
+            # nothing explains the data (should not happen): keep the hypotheses, equal weights
+            for h in self.hyps:
+                h.logw = -math.log(len(self.hyps))
+            return
+        for h in self.hyps:
+            h.logw -= total
+        self.loglik += total
+
+    def hyp_weights(self) -> np.ndarray:
+        lw = np.array([h.logw for h in self.hyps])
+        w = np.exp(lw - lw.max())
+        return w / w.sum()
+
+    def check(self):
+        """The bookkeeping's invariants (for tests)."""
+        keys = set()
+        for hy in self.hyps:
+            k = hy.key()
+            assert k not in keys, "two hypotheses alike"
+            keys.add(k)
+            assert set(hy.kind) == set(self.segs), "hypothesis and live tracks differ"
+            gs = hy.group_segs()
+            assert set(gs) == set(hy.groups), "a person with tracks and no object, or the reverse"
+            for gid, obj in hy.groups.items():
+                assert isinstance(obj, Gauss), "a person with tracks not as a Gauss"
+                assert gs[gid] <= obj.segs, "a track of a person without its offset"
+            for s, k in hy.kind.items():
+                if k == "g":
+                    assert s in hy.phantom and s in hy.ghost, "a ghost without its source"
+            assert len(hy.groups) + len(hy.hidden) == self.N, "people lost or added"
+
+    # -------------------------------------------------------------- LD2410C
+
+    def _ld_runtime(self, s, rt, t, ld):
+        """LD2410C state for the display (presence with the app's own hold time)."""
+        p = self.p
+        rt.move_gates = ld.get("move_gates")
+        rt.still_gates = ld.get("still_gates")
+        present = bool(ld.get("moving") or ld.get("still"))
+        if present:
+            rt.ld_last_present = t
+            slant = (ld.get("still_distance") or ld.get("moving_distance") or 0) / 1000
+            dh = s.height - p.target_height
+            rt.ld_distance = math.sqrt(max(slant * slant - dh * dh, 0.0))
+        rt.ld_present = present or t - rt.ld_last_present <= p.ld2410_hold
+
+    # -------------------------------------------------------------- outputs
+
+    def _in_view(self, obj) -> np.ndarray:
+        """Mass per raster cell in view (n,)."""
+        if isinstance(obj, Hidden):
+            return obj.in_view()
+        out = (1 - obj.a) * obj.density(self.lat.centers, HC)
+        return out + obj.a * obj.away.in_view() if obj.away is not None else out
+
+    def _room_probs(self, obj) -> np.ndarray:
+        """P(the person is in each scored room), and in view at all (last entry)."""
+        R = len(self.rooms)
+        mass = self._in_view(obj)
+        ok = self.lat.room >= 0
+        out = np.bincount(self.lat.room[ok], weights=mass[ok], minlength=R) if R else np.zeros(0)
+        return np.concatenate([out, [mass.sum()]])
+
+    def _place_probs(self, obj) -> np.ndarray:
+        if isinstance(obj, Hidden):
+            return obj.places()
+        out = np.zeros(len(self.world.places))
+        out[OBSERVED] = 1.0 - obj.a
+        return out + obj.a * obj.away.places() if obj.away is not None else out
+
+    @staticmethod
+    def _poisson_binomial(ps) -> np.ndarray:
+        dist = np.array([1.0])
+        for q in ps:
+            dist = np.convolve(dist, [1 - q, q])
+        return dist
+
+    def _counts(self, per_object) -> np.ndarray:
+        """(columns, N + 1): count distributions per column of per_object(obj), mixed over the
+        hypotheses."""
+        hw = self.hyp_weights()
+        cache = {}
+        out = None
+        for w, hy in zip(hw, self.hyps):
+            probs = []
+            for obj in hy.objects():
+                if id(obj) not in cache:
+                    cache[id(obj)] = per_object(obj)
+                probs.append(cache[id(obj)])
+            probs = np.array(probs).reshape(len(probs), -1)
+            dists = np.array([np.pad(self._poisson_binomial(probs[:, k]), (0, self.N + 1 - len(probs) - 1))
+                              for k in range(probs.shape[1])])
+            out = w * dists if out is None else out + w * dists
+        return out
+
+    def count_distribution(self) -> dict:
+        """room id -> [P(0 people), P(1), ...] over the observed rooms, and "_observed"."""
+        c = self._counts(self._room_probs)
+        out = {rid: c[k].tolist() for k, rid in enumerate(self.rooms)}
+        out["_observed"] = c[-1].tolist()
+        return out
+
+    def place_distribution(self) -> dict:
+        """place name -> [P(0 people), P(1), ...]."""
+        c = self._counts(self._place_probs)
+        return {name: c[k].tolist() for k, name in enumerate(self.world.places)}
+
+    def present_count(self) -> int:
+        """The most probable number of people in view."""
+        return int(np.argmax(self.count_distribution()["_observed"]))
+
+    def persons(self) -> list:
+        """The people of the most probable hypothesis, for the display: those with a track first."""
+        hy = self.hyps[int(np.argmax([h.logw for h in self.hyps]))]
+        return [self._display(k + 1, obj) for k, obj in enumerate(hy.objects())]
+
+    def _display(self, pid, obj) -> dict:
+        """Where to draw a person: with a measuring track the mean of the mixture (it moves as
+        smoothly as the estimate does); on the raster the densest cell of the most probable place."""
+        pr = self._place_probs(obj)
+        best = int(np.argmax(pr))
+        out = {"id": pid, "places": {self.world.places[i]: round(float(v), 3) for i, v in enumerate(pr) if v >= 0.005},
+               "lost": isinstance(obj, Hidden), "obj": obj}
+        if best != OBSERVED:
+            out.update({"x": None, "y": None, "vx": 0.0, "vy": 0.0, "sigma": 0.0, "walk": 0.0})
+            return out
+        if isinstance(obj, Hidden):
+            mass = obj.in_view()
+            c = int(np.argmax(mass))
+            x, y = self.lat.centers[c]
+            out.update({"x": round(float(x), 3), "y": round(float(y), 3), "vx": 0.0, "vy": 0.0,
+                        "sigma": round(math.sqrt(float(mass @ ((self.lat.centers - [x, y]) ** 2).sum(axis=1)) / max(mass.sum(), 1e-12)), 3),
+                        "walk": round(float(obj.walking().sum() / max(mass.sum(), 1e-12)), 3)})
+            return out
+        w = obj.weights()
+        pos = w @ obj.pos
+        vel = w @ obj.mean[:, :, 1]
+        spread = w @ (((obj.pos - pos) ** 2).sum(axis=1) + obj.pos_var().sum(axis=1))
+        out.update({"x": round(float(pos[0]), 3), "y": round(float(pos[1]), 3), "vx": round(float(vel[0]), 3),
+                    "vy": round(float(vel[1]), 3), "sigma": round(math.sqrt(float(spread)), 3),
+                    "walk": round(float(w[WALK]), 3)})
+        return out
+
+    def _heat(self, obj) -> list:
+        """[[x, y, mass]] of a person in view, on the raster."""
+        mass = self._in_view(obj)
+        k = np.flatnonzero(mass > 0.002)
+        return [[round(float(self.lat.centers[i, 0] - HC / 2), 2), round(float(self.lat.centers[i, 1] - HC / 2), 2),
+                 round(float(mass[i]), 3)] for i in k]
+
+    def zone_states(self) -> dict:
+        """Per zone: the most probable number of people (observed rooms: from all hypotheses),
+        moving / still and "about to be entered" from the most probable hypothesis' people."""
+        from .zones import ZoneState
+        p = self.p
+        states = {}
+        region_of = {room: rid for rid, r in self.config.regions.items() for room in r["rooms"]}
+        counts = self.count_distribution()
+        places = self.place_distribution()
+        for z in self.config.zones_of("room"):
+            st = ZoneState()
+            rid = region_of.get(z.id)
+            if rid is None:
+                st.count = int(np.argmax(counts[z.id])) if z.id in counts else 0
+            else:
+                dist = places.get(rid, [1.0])
+                st.count = int(np.argmax(dist)) if len(self.config.regions[rid]["rooms"]) == 1 else 0
+                st.probability = 1 - float(dist[0])
+            states[z.id] = st
+        total = ZoneState()
+        zones = [z for z in self.config.zones if z.kind in ("room", "area")]
+        for z in zones:
+            states.setdefault(z.id, ZoneState())
+        total.count = int(np.argmax(places["outside"][::-1]))
+        for d in self.persons():
+            if d["x"] is None:
+                continue
+            x, y, vx, vy = d["x"], d["y"], d["vx"], d["vy"]
+            moving = not d["lost"] and d["walk"] > 0.5 and math.hypot(vx, vy) > 0.15
+            total.moving += moving
+            total.still += not moving
+            for z in zones:
+                st = states[z.id]
+                if z.kind == "area" and z.contains(x, y):
+                    st.count += 1
+                if z.contains(x, y):
+                    st.moving += moving
+                    st.still += not moving
+                elif moving and math.hypot(vx, vy) >= p.approach_min_speed:
+                    steps = max(1, int(p.lead_time / 0.1))
+                    for k in range(1, steps + 1):
+                        tau = p.lead_time * k / steps
+                        if z.contains(x + vx * tau, y + vy * tau):
+                            st.approaching = True
+                            st.eta = tau if st.eta is None else min(st.eta, tau)
+                            break
+        for st in (*states.values(), total):
+            st.moving = min(st.moving, st.count)
+            st.still = min(st.still, st.count - st.moving)
+        states["_total"] = total
+        return states
+
+    def snapshot(self) -> dict:
+        """For the web UI: the people of the most probable hypothesis at their most probable place,
+        their densities as heat maps, the sensors' raw data, the places without a sensor."""
+        t = self.now
+        tracks, clouds = [], []
+        for d in self.persons():
+            obj = d.pop("obj")
+            room = None if d["x"] is None else next(
+                (z.id for z in self.config.zones_of("room") if z.contains(d["x"], d["y"])), None)
+            tracks.append({**d, "room": room})
+            clouds.append({"id": d["id"], "cell": HC, "cells": self._heat(obj)})
+        sensors = {}
+        for sid, rt in self.runtime.items():
+            sensors[sid] = {
+                "online": t - rt.last_frame < 15,
+                "detections": [{"x": round(float(d.pos[0]), 3), "y": round(float(d.pos[1]), 3),
+                                "lx": round(d.local[0], 3), "ly": round(d.local[1], 3),
+                                "speed": round(d.speed, 2), "hidden": d.hidden or d.stale}
+                               for d in rt.detections] if t - rt.last_frame < 1.0 else [],
+                "ld2410": {"present": rt.ld_present, "distance": round(rt.ld_distance, 2),
+                           "move_gates": rt.move_gates, "still_gates": rt.still_gates},
+            }
+        places = self.place_distribution()
+        regions = {}
+        for rid, r in self.config.regions.items():
+            dist = places.get(rid, [1.0])
+            regions[rid] = {"name": r["name"], "rooms": r["rooms"], "open": r["open"],
+                            "count": int(np.argmax(dist)),
+                            "probabilities": [round(1 - dist[0], 3)] if 1 - dist[0] >= 0.005 else [],
+                            "dwell": self.dwell.stats(rid)}
+        return {"t": t, "tracks": tracks, "clouds": clouds, "sensors": sensors, "regions": regions}
+
+    # ------------------------------------------------------------- learned
+
+    def learned(self) -> dict:
+        return {"sensor_model": self.sensor_model.to_dict(), "dwell": self.dwell.dwell,
+                "ghost_map": self.ghost_map.to_dict()}
+
+    def load_learned(self, data: dict):
+        self.sensor_model.load_dict(data.get("sensor_model", {}))
+        self.dwell.dwell = {k: list(v) for k, v in data.get("dwell", {}).items()}
+        self.lat._region_rates = None
+        if data.get("ghost_map"):  # learned offline (tools/ghostmap.py), used if the sensors are where they were
+            from .ghostmap import GhostMap
+            self.use_ghost_map(GhostMap.from_dict(data["ghost_map"]))

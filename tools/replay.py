@@ -33,13 +33,13 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(a.tracker))
-    from presence_tracker.crowd import Crowd
+    from presence_tracker.filter import Tracker
     from presence_tracker.frames import SensorClock
     from presence_tracker.model import Config
 
     db = json.load(open(os.path.join(a.db, "episodes.json")))
     config = Config.from_dict(json.load(open(os.path.join(a.db, "configs", a.config))))
-    crowd = Crowd(config, seed=a.seed)
+    crowd = Tracker(config, seed=a.seed)
     if a.learned:
         crowd.load_learned(json.load(open(os.path.join(a.db, "learned", a.learned))))
     rooms = [z.id for z in config.zones_of("room") if not any(z.id in r["rooms"] for r in config.regions.values())]
@@ -75,14 +75,12 @@ def main():
             st = crowd.zone_states()
             line = time.strftime("%H:%M:%S", time.localtime(tt)) + " " + " ".join(
                 f"{names.get(z, z)}={st[z].count}" for z in rooms if z in st)
-            for p in crowd.people:
-                d = crowd._display(p)
-                c = p.cloud
-                w = c.weights()
-                unseen = "/".join(f"{tt - float(w @ c.last_hit[:, i]):.0f}" for i in range(len(crowd.sensors)))
+            dist = crowd.count_distribution()
+            line += " [" + " ".join(f"{names.get(z, z)[:4]} " + "/".join(f"{q:.2f}" for q in dist[z]) for z in rooms) + f"] H{len(crowd.hyps)}"
+            for d in crowd.persons():
                 where = max(d["places"].items(), key=lambda kv: kv[1])
                 pos = "" if d["x"] is None else f" ({d['x']:.1f},{d['y']:.1f}){' unseen' if d['lost'] else ''}"
-                line += f" | P{p.pid} {where[0]} {where[1]:.2f}{pos} τ {unseen}"
+                line += f" | P{d['id']} {where[0]} {where[1]:.2f}{pos}"
             print(line, flush=True)
 
 

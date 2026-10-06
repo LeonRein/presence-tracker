@@ -1,6 +1,7 @@
 """From an LD2450 frame to detections in the house frame (MODEL.md 4.1, preprocessing): the
 targets turned into floor positions with their measurement error, and marked where they can't be a
-person: behind a wall, frozen (bit-identical repeats)."""
+person: behind a wall or outside all rooms. Which of them are measurements at all (coasted, frozen)
+decides sensortracks.py."""
 
 import math
 from dataclasses import dataclass, field
@@ -20,7 +21,7 @@ class Detection:
     speed: float  # radial speed on the floor, m/s, negative = approaching
     local: tuple  # raw LD2450 x, y in meters (sensor frame), for calibration
     hidden: bool = False  # behind a wall or outside all rooms: a reflection
-    stale: bool = False  # frozen or held: the LD2450 repeats itself, nothing new about the spot
+    stale: bool = False  # coasted or frozen: the LD2450 holds a lost target, no measurement
 
 
 @dataclass
@@ -29,7 +30,6 @@ class SensorRuntime:
     detections: list = field(default_factory=list)
     frame: dict | None = None
     frames: int = 0
-    repeats: dict = field(default_factory=dict)  # slot -> ((x, y) in mm, frames in a row)
     # LD2410C, for the display: present (with the app's hold time), distance on the floor
     ld_present: bool = False
     ld_distance: float = 0.0
@@ -87,19 +87,3 @@ def detections(config: Config, s: SensorConfig, frame: dict) -> list:
         out.append(Detection(s.id, target.get("slot", 0), pos, R, u, speed, (lx, ly),
                              config.hidden(s, pos, u, p.wall_margin)))
     return out
-
-
-def mark_stale(config: Config, rt: SensorRuntime, frame: dict, dets: list):
-    """The LD2450 sometimes keeps reporting a target with bit-identical coordinates for up to
-    ~35 s after the person left. A real person, even sitting still, changes the millimeter
-    values in nearly every frame (99 % of identical runs are at most 2 frames long)."""
-    repeats = {}
-    by_slot = {d.slot: d for d in dets}
-    for target in frame.get("targets", []):
-        slot, xy = target.get("slot", 0), (target["x"], target["y"])
-        last = rt.repeats.get(slot)
-        n = last[1] + 1 if last and last[0] == xy else 1
-        repeats[slot] = (xy, n)
-        if n >= config.params.stale_frames and slot in by_slot:
-            by_slot[slot].stale = True
-    rt.repeats = repeats

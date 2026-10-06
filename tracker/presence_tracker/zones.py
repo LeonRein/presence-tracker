@@ -1,4 +1,4 @@
-"""Zone states: what goes to Home Assistant (computed by Crowd.zone_states)."""
+"""Zone states: what goes to Home Assistant (computed by Tracker.zone_states)."""
 
 from dataclasses import dataclass
 

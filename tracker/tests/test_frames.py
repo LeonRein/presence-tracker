@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from presence_tracker.frames import SensorClock, SensorRuntime, detections, mark_stale
+from presence_tracker.frames import SensorClock, detections
 from presence_tracker.model import Config, SensorConfig, ZoneConfig
 from presence_tracker.sensormodel import SensorModel
 from presence_tracker.sim import SimSensor
@@ -72,19 +72,6 @@ def test_detections_behind_a_wall_are_reflections():
         {"slot": 3, "x": 0, "y": 2000, "speed": 0},  # in front of it
     ]}
     assert [d.hidden for d in detections(config, config.sensors[0], frame)] == [True, False, False]
-
-
-def test_frozen_ld2450_target_is_stale():
-    # the LD2450 keeps reporting the last position bit-identically after the person left; a real
-    # target changes its millimeters
-    config = room_config()
-    s, rt = config.sensors[0], SensorRuntime()
-    for k in range(10):
-        frame = {"targets": [{"slot": 1, "x": 300, "y": 2000, "speed": 0},
-                             {"slot": 2, "x": 1000 + k % 3, "y": 2500, "speed": 0}]}
-        dets = detections(config, s, frame)
-        mark_stale(config, rt, frame, dets)
-    assert [d.stale for d in dets] == [True, False]
 
 
 def test_a_moved_sensor_forgets_what_was_learned():

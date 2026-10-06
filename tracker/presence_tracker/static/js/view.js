@@ -327,7 +327,7 @@ export class MapView {
         }
       }
     }
-    // where each person may be: the superposition of their particles, per 20 cm cell
+    // where each person may be: their probability per 20 cm cell
     for (const cl of live.clouds || []) {
       const top = Math.max(...cl.cells.map(c => c[2]), 1e-9);
       const size = cl.cell * this.s;

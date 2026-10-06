@@ -8,38 +8,27 @@ betreten wird. Wer wer ist, spielt keine Rolle.
 
 Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht in [MODEL.md](MODEL.md).
 
-- **Jede Person ist eine Wolke möglicher Aufenthaltsorte** (Partikel), keine einzelne Spur. Ein Teil der
-  Wolke kann im Raum sitzen, ein anderer auf dem Balkon sein: Das ist die *Superposition*. Jede Messung
-  gewichtet die Möglichkeiten neu. Die Karte im Tab *Live* zeigt die Wolke jeder Person als Wärmekarte,
-  den Punkt am wahrscheinlichsten Ort.
+- **Gemessen wird an den Spuren des LD2450.** Der Sensor ist selbst ein Tracker: Er beginnt Spuren, hält sie
+  eine Weile, wenn er sein Ziel verliert, und lässt sie fallen. Ausgewertet wird, wann eine Spur beginnt,
+  wo sie liegt und ob sie wiedergefunden wird, nicht jeder Frame als neue Messung.
+- **Jede Person ist eine Wahrscheinlichkeitsverteilung**, keine einzelne Spur. Wer gerade eine Spur hat, ist
+  eine Mischung aus „steht“ und „geht“, jede mit Position, Geschwindigkeit und Unsicherheit. Wer keine hat,
+  ist eine Dichte über den Grundriss, hinter Türen und außer Haus. Nichts davon ist zufällig gezogen:
+  Gleiche Daten ergeben immer dasselbe Ergebnis. Die Karte im Tab *Live* zeigt die Verteilung jeder Person
+  als Wärmekarte, den Punkt am wahrscheinlichsten Ort.
 - **Niemand taucht aus dem Nichts auf und niemand verschwindet einfach.** Personen kommen und gehen nur
-  durch Türen. Eine Messung mitten im Raum, zu der niemand von einer Tür hätte kommen können, ohne gesehen
-  zu werden, ist ein Geist.
-- **Wer durch eine Tür geht, ist dahinter** (Küche, Balkon, Flur-Bereich mit Schlafzimmer und Treppe) und
-  wird dort angezeigt, nicht als Punkt an der Tür. Wer herauskommt, ist dieselbe Person mit derselben
-  Nummer. Wie lange Besuche hinter einer Tür üblicherweise dauern, wird gelernt. Die Schätzung bleibt breit,
-  wer länger bleibt, bleibt plausibel.
-- **Nicht gesehen werden**: Still Sitzende verliert der LD2450 oft lange, an manchen Stellen (Sofalehne) mehr
-  als an anderen. Die Wahrscheinlichkeit, unbemerkt am selben Ort zu bleiben, kommt aus der Erkennung je
-  Stelle und der gemessenen Dauer solcher Aussetzer. Wer an einer gut sichtbaren Stelle länger nicht
-  gesehen wird, ist wahrscheinlich gegangen; an einer schlecht sichtbaren Stelle ist er wahrscheinlich
-  noch da. Friert der LD2450 ein (bit-identische Werte), sagt das nichts über die Stelle.
-- **Zwei Körper stehen nicht am selben Fleck.** Zwei Personen dicht nebeneinander (Sofa) bleiben zwei.
-- **Gelernt** werden je Sensor die Geisterdichte je Ort (nur wo ein zweiter Sensor gut hinsieht und nichts
-  meldet), die LD2410C-Energie je Entfernungsstufe mit und ohne Person und, wie lange Besuche hinter einer
-  Tür dauern. Die Erkennungswahrscheinlichkeit je Ort zu lernen brachte im Testdurchlauf nichts (entfernt in
-  0.6.7). Verhalten (wo man stehen bleibt, losgeht) wird
-  bewusst nicht gelernt: Messlücken würden sonst als Verhalten gedeutet und verstärkt.
-- **Geister**: Ein Ziel, das ein Sensor meldet, kann ein Geist sein (Echo, nachgeführtes Ziel). Ein Geist
-  lebt etwa 1,5 s, behält seine Geschwindigkeit und rückt mit seinen Zielen mit; so wird aus einer
-  Geisterspur keine Person.
-- Der **LD2410C** gewichtet alle 3 s jede mögliche Lage einer Person mit der Energie in ihrer
-  Entfernungsstufe: Viel Energie spricht für jemanden dort, keine dagegen. So wird auch eine verdeckte
-  Sitzende gestützt und eine vermeintlich versteckte Person, die längst gegangen ist, widerlegt.
-- **Reichweite**: Hinter der eingestellten Reichweite fällt die angenommene Erkennung weich ab statt auf 0.
+  durch Türen. Wer durch eine Tür geht, ist dahinter (Küche, Balkon, Flur-Bereich mit Schlafzimmer und
+  Treppe), wie lange Besuche dort dauern, wird gelernt.
+- **Wer geht, wird schnell gesehen; wer sitzt, nicht immer.** Wie gut ein Sitzender erfasst wird, hängt von
+  Haltung und Platz ab und wird für jeden Aufenthalt mitgeschätzt: Wer am Tisch oft erfasst wurde und lange
+  nicht mehr, ist wahrscheinlich gegangen; wer auf dem Sofa selten erfasst wird, nicht.
+- **Geister**: Eine Spur, die zu keiner Person gehört. Wo jeder Sensor Geister sieht und wie lange sie leben,
+  **lernt die App selbst** (Geisterkarte). Wird ein Sensor verschoben, hinzugefügt oder entfernt, beginnt
+  die Karte neu, weil sich die Sensoren gegenseitig stören können. Bis sie ein paar Stunden gelernt hat,
+  werden Geister an festen Stellen (Möbel, Ladestation) leichter für Personen gehalten.
+- Der **LD2410C** wird in 0.8.0 nur angezeigt, nicht ausgewertet.
 - **Wände**: Die Radare sehen nicht durch die Betonwände. Ein Messpunkt hinter einer Wand oder außerhalb aller
-  Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*). Was ein Sensor durch eine offene Tür in
-  einem Raum ohne Sensor sieht (z. B. jemand in der Küche), zählt als Messung dort.
+  Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*).
 - **Personen**: Verfolgt werden die *Bewohner*. Jede kann auch außer Haus sein (über den Flur-Bereich mit der
   Treppe) und wird dann nirgends angezeigt. Noch nicht gebaut: unbekannte Neuankömmlinge (Gäste).
 
