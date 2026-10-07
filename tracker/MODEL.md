@@ -765,7 +765,12 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   LD2410C über Sigma-Punkte 1,79 / −524 (nicht übernommen). Ein Fenster (Wohnzimmer 21:24) kippt
   zwischen den Varianten ganz; die Log-Evidenz ist das stabilere Maß. Rechenzeit: +10 % (CPU-Zeit,
   6.10. 21:00–21:20, 5 Sensoren, je dreimal: 33,9 → 37,1 s), verteilt auf die Sigma-Punkte bei den
-  Raten, Spiegeln in der Vorhersage, Masse hinter Wänden und Wiederfinden.
+  Raten, Spiegeln in der Vorhersage, Masse hinter Wänden und Wiederfinden. Mehr Punkte für die Raten
+  (7.10., Stand 0.11.0): statt der 5 Punkte die Gauß-Hermite-Produktregel mit 3×3 = 9 (Grad 5 je
+  Achse, mit gemischten Termen) oder 5×5 = 25 Punkten (Grad 9). Licht in allen Fenstern gleich
+  (Meldungen bis 6.10.: an 0 von 41, aus 1,17 von 15; 7.10.: 0 von 13 / 0 von 7, Küche und Flur
+  unverändert); Log-Evidenz bis 6.10. −42 / −11, 7.10. +9 / +0,5 (im Rauschen der Hypothesen-Grenze,
+  5.1); Rechenzeit +1–2 %. Der Fehler der Näherung ist nicht, was fehlt: 5 Punkte bleiben.
 - **Die gemeldete Entfernung des LD2410C erfindet Personen** (0.9.3): Sie ist der Ring, in dem die
   Energie gerade über ihrer Schwelle liegt. Leon allein am Schreibtisch in 1,5 m (Arbeitszimmer
   6.10. 22:20–22:50): in 27 % der Ruhig-Frames 2,6–6 m. Das Modell brauchte dafür eine zweite Person
