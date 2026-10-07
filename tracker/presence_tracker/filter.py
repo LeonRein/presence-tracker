@@ -32,7 +32,7 @@ from .gauss import Gauss
 from .hidden import Hidden, Undetected
 from . import destination
 from .sensormodel import PD_MAX, SensorModel
-from .sensortracks import SensorTracks
+from .sensortracks import LOST, SensorTracks
 from .tiling import Tiling
 from .unobserved import Dwell
 from .world import CELL, OBSERVED, World
@@ -576,6 +576,7 @@ class Tracker:
                 d.hidden = True
         rt.detections = dets
         self._ld_runtime(sensor, rt, t, frame.get("ld2410") or {})
+        self._end_silent(t)  # this sensor's own tracks too, if its last frame is too long ago
         ev = self.tracks[sensor_id].update(t, frame, dets) if sensor_id in self.tracks else None
         measured = {id(d) for _, d in ev.born + ev.measured} if ev else set()
         for d in dets:
@@ -602,6 +603,7 @@ class Tracker:
         all of them, _evidence); a measured track moves its owners alone (_measured)."""
         if self.start is None or t <= self.now:
             return
+        self._end_silent(t)
         self.now = t
         if t - self._flushed >= MAX_STEP - 1e-9:
             self._flush(t)
@@ -612,6 +614,25 @@ class Tracker:
             # the walks counted into the destination map (MODEL.md 6 "Ziel"): reads the hypotheses only
             self._dest_t = t
             self._dest_learner.observe(self, self.dest_geo, self.dest_map)
+
+    def _end_silent(self, t: float):
+        """A sensor without a frame for more than LOST s has lost its data: its tracks are over
+        (MODEL.md 4.1, 4.4), at its last frame + LOST, as its next frame would end them - without
+        waiting for that frame. Until 0.18 they lived on while it was silent: a board that died while
+        tracking somebody held them as a person with a track (existence 1, not fading) for hours, the
+        room occupied after they had left."""
+        for si, sid in enumerate(self.sensors):
+            tracks = self.tracks.get(sid)
+            if not self._live_by_sensor[si] or tracks is None or t - tracks.last <= LOST:
+                continue
+            t_end = max(tracks.last + LOST, self.now)
+            self._flush(t_end)  # the end weighs and releases everybody: all at its time
+            self._version += 1
+            for seg in list(self._live_by_sensor[si]):
+                self._end(si, seg, t_end, True)
+            tracks.raw = []  # its next frame is a start (lost data, _evidence)
+            self._merge()
+            self._normalize()
 
     def _flush(self, t: float):
         """Move everybody to time t: the people without a track all from the last flush, each

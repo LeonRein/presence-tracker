@@ -147,7 +147,8 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 - Die drei Plätze rücken auf; Ziele werden über die Nähe verknüpft (≤ 0,6 m je Frame).
 - Gehaltene Frames sind keine Messung: ≥ 3 Frames mit derselben Geschwindigkeit ≠ 0 (der Sensor lässt
   ein verlorenes Ziel weiterlaufen) oder bitgleiche Koordinaten (eingefroren).
-- Mehr als 6 s ohne Frame: Datenverlust, alle Spuren enden.
+- Mehr als 6 s ohne Frame: Datenverlust, alle Spuren enden, 6 s nach dem letzten Frame, ohne auf den
+  nächsten zu warten (bis 0.18 erst mit ihm: Ein ausgefallenes Board hielt seine Spuren stundenlang).
 
 **Erfassung (neue Spur)** einer Person ohne messende Spur dieses Sensors mit der Rate
 `ρ_m · P_m(r) · g_s(x) · q(x)`, je Betriebsart m:

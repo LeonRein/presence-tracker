@@ -283,3 +283,34 @@ def test_the_silence_before_a_frame_belongs_to_the_frame_before_it():
     crowd.process_frame("a", 1.0, frame(5))
     crowd.process_frame("a", 8.0, frame(60))
     assert np.allclose(crowd._ld_stats[si].t_e, 5 * f + 60 * f)
+
+
+def test_the_tracks_of_a_sensor_that_died_end():
+    """A board dies while it tracks somebody (MODEL.md 4.1, 4.4: more than 6 s without a frame is
+    lost data, its tracks are over). Its tracks end without waiting for its next frame; the person
+    goes to the tiles and fades as anybody unseen does, instead of holding the room occupied for
+    hours after they left (until 0.18)."""
+    config = flat_config(entry=True)
+    c = config.params.light_cost / (config.params.light_cost + 1.0)
+    # walks in, sits at (4.5, 1) until about 130 s, then walks out through the flat's door
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), FLUR_DOOR, (-1.0, 4.0), start=1, pauses={2: 120}))
+    frames = list(simulate([a], sim_sensors(config), 300, walls=config.wall_segments))
+    for dead in (("a", "b"), ("a",)):
+        crowd = Tracker(config, start=0.0, people=["outside"])
+        p = {}
+        for t, sid, frame in frames:
+            if sid in dead and t >= 60.0:
+                crowd.step(t)  # the others' frames, or the app's ticks, go on
+            else:
+                crowd.process_frame(sid, t, frame)
+            crowd.check()
+            p.setdefault(int(t), 1 - crowd.count_distribution()["wohn"][0])
+            if 50.0 <= t < 60.0:
+                assert any(crowd.segs[s]["si"] == crowd.sidx["a"] for s in crowd.segs)
+            if t >= 67.0:  # its last frame + LOST: no track of a dead sensor is left
+                assert all(crowd.sensors[crowd.segs[s]["si"]] not in dead for s in crowd.segs), (t, dead)
+        for t in (600.0, 1800.0, 3600.0):
+            crowd.step(t)
+            p[int(t)] = 1 - crowd.count_distribution()["wohn"][0]
+        assert p[55] > 0.99
+        assert all(p[t] < c for t in p if t >= 200), (dead, {t: round(v, 3) for t, v in p.items() if t >= 200 and v >= c})
