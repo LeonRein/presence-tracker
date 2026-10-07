@@ -238,6 +238,23 @@ Das Modell, je Sensor:
   Person nichts, 0.6.13). Die unbekannten Personen: höchstens eine von ihnen im Blick (Poisson nach
   einer abgeschnitten, danach wieder per Momentenabgleich); wer hinter einer Tür oder außer Haus ist,
   gibt nichts hinein.
+- **Echoquellen** (`ld2410.Echoes`): Energie, die von keiner Person kommt (7.10. 01:07:52–01:08:34 in
+  der leeren Küche: bewegt Ring 0–1 Schübe bis 100, ruhig Ring 2–4 bis 60–90, kein LD2450-Ziel, niemand
+  ging). Wie die Geister des LD2450 (4.2) unterscheidet sie, wie sie beginnt und endet: Je Sensor aus
+  oder eine Quelle an – das Profil einer Stehenden auf der Achse in 0,75–6,5 m (Schritt 0,5 m) mal
+  0,3 / 1 / 3 –, Beginn mit der Rate ρ (gleich über die Quellen), Lebensdauer Erlang(2) mit Mittel 20 s.
+  Gemessen in der leeren Nacht 22:56–02:15 (3,3 h, Ruhig-Energie über 3× ihrem Pegel ≥ 3 s, ohne
+  LD2450-Ziel ±60 s): Küche 3,6 je Stunde (Dauer Median 10 s, Mittel 15 s, bis 59 s), die anderen vier
+  Sensoren keine. ρ lernt die App je Sensor mit dem Hintergrund (erwartete Zahl begonnener Quellen
+  je Beobachtungszeit; Prior 1 je 3 h mit dem Gewicht von 3 h, angenommen).
+  Verrechnung: Die Personen wie oben, die Echoquellen zuletzt (für die Gewichte der Hypothesen). Eine
+  Person ohne Spur und eine Echoquelle sind Alternativen (beide selten): Die Dichte einer Person
+  bekommt im Blick `P(keine Quelle) · ℓ(Person)`, außerhalb `P(keine Quelle) + Σ P(Quelle) ℓ(Quelle)`.
+  Die Echoquellen selbst werden gegen die Personen mit Spur und die übrigen so, wie sie vor diesen
+  Frames waren, gewichtet (sonst erklärt eine von der Energie hereingezogene Person die Quelle weg).
+  Exakt gerechnet (Prototyp `tools/ld2410/clutter_hmm.py`) spricht das Ereignis von 01:08 gegen eine
+  Person (log Bayes-Faktor Person + Quelle / Quelle −5,0 über 56 s, höchstens +2,5 zwischendurch), eine
+  Sitzende im Esszimmer (21:03) dafür (+9,0 nach 40 s, +17,3 nach 2 min).
 - Alles in Log-Größen; Verhältnisse auf e^600 begrenzt.
 
 ### 4.4 Lücken zwischen Frames
@@ -376,7 +393,9 @@ Lebensdauer der Geister geschätzt (4.2).
   `tools/ghostmap.py` (Geisterkarte offline).
 
 ## 9. Bekannte Schwächen und Offenes
-Offen beim LD2410C (4.3): ob und wie stark er durch Wände und Türen sieht (bisher: gar nicht; die zweite Person im
+Offen beim LD2410C (4.3): Die Echoquellen schlucken auch, was eine Person mit Spur über das mittlere
+Profil hinaus abgibt (Flur 21:35 und 21:56: Eintretende zu 0,5 statt 0,9 im Flur); eine Amplitude je
+Aufenthalt (wie κ beim LD2450) wäre die Form dafür. Ob und wie stark er durch Wände und Türen sieht (bisher: gar nicht; die zweite Person im
 Bad erscheint im Arbeitszimmer, wenn doch); die Amplitude einzelner Aufenthalte streut um einen Faktor
 2–4 um das Profil (eine Erkennbarkeit wie κ beim LD2450 wäre die Form dafür); δ ist gegen teils
 unkalibrierte LD2450 gemessen (0,07–0,5 m je nach Sensor); die Addition mehrerer Personen ist nicht an
@@ -479,6 +498,16 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Teil hinter der Wand ging und blieb (Licht an ohne Person in 3,3 von 41 leeren Raum-Fenstern).
   Mit der Verzögerung 2,3; mit dem gemeinsamen Pegel je Sekunde 0 (Schübe und gleichmäßig erhöhte
   Ringe nachts im Arbeitszimmer hatten Personen am Rand des Strahls erklärt).
+- **Textur je Ring statt Echoquellen** (7.10.): Ein langsam veränderlicher Gamma-Pegel je Ring
+  (Compound-Gauß- / K-verteiltes Clutter, Ward 1981; Ward, Tough & Watts 2006; als Markov-Kette mit
+  30–120 s, Verteilung aus der leeren Nacht) trennt das Ereignis von 01:08 nicht von Personen: log
+  Bayes-Faktor Person / niemand mit Textur +14–18 für das Ereignis (56 s), +18–39 für echte Personen
+  (40–60 s); eine Person in 0,75 m in der Küche (22:15) nur noch +3 statt +1877. Eine Textur, die
+  das Ereignis erklärt, erklärt jede Person. Auch eine Textur je Sekunde (ohne Gedächtnis) half
+  nicht. Die Echoquellen haben eine Form (ein Profil) und eine Lebensdauer; daran trennen sie.
+- **Echoquellen zuerst, gegen die Personen, wie sie vorher waren** (7.10.): nahmen eintretenden
+  Personen mit und ohne Spur ihre Energie (Licht zu spät aus in 5,3 von 15 Fenstern statt 2,0).
+  Jetzt sind sie Alternative nur zu Personen ohne Spur und zuletzt in der Kette: 3,0.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

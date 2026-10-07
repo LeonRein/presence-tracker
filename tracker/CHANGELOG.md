@@ -8,6 +8,10 @@
   (im Schlafzimmer) 25 Minuten lang zu 100 % ins Arbeitszimmer. Jetzt erklärt das gemessene Profil einer
   Person über alle Ringe (mit Mehrwege-Schweif) die Energie in den fernen Ringen; die Ruhig-Energien
   folgen mit 2 s Verzögerung; gleichmäßige Schwankungen aller Ringe (Schübe) zählen nicht als Person.
+- **Echoquellen:** Energie, die von keiner Person kommt (nachts in der Küche 3–4-mal je Stunde für
+  10–60 s), erklärt eine Echoquelle mit Profil und kurzer Lebensdauer statt einer Person, die niemand
+  hereinkommen sah. Wie oft sie beginnen, lernt die App je Sensor. Im leeren Raum war das Licht
+  dadurch 0 statt 8,1 Minuten (7 Mal) fälschlich an (6.10. 18:00 bis 7.10. 02:17).
 - Was jeder LD2410C ohne Personen sieht, **lernt die App selbst** (gespeichert in `ld2410.json` neben der
   Geisterkarte); wird ein Sensor verschoben, beginnt es für ihn neu.
 - `tools/ld2410/`: Messungen der Energien, die Prüfung „Licht an im leeren Raum“ (`phantom.py`) und eine

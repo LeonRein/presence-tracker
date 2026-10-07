@@ -67,3 +67,20 @@ def test_the_background_is_learned_per_sensor_and_starts_over_when_moved(tmp_pat
     moved = Config.from_dict({"sensors": [{"id": "a", "x": 1, "y": 0, "heading": 0, "placed": True}], "zones": []})
     other.use(moved)
     assert np.allclose(other.b("a"), ld2410.prior(m))
+
+
+def test_echo_sources_begin_live_end_and_are_counted():
+    m = Model()
+    e = ld2410.Echoes(m)
+    e.predict(1.0, m, 0.001)
+    assert abs(e.on() - 0.001) < 1e-6
+    e.weigh(np.full(len(e.p) - 1, 5.0))  # the energies fit any source much better than none
+    assert e.on() > 0.1
+    assert abs(e.began() - e.on()) < 1e-9  # all of it began just now
+    for _ in range(int(10 * m.ld_echo_life)):
+        e.predict(1.0, m, 0.0)
+    assert e.on() < 0.01  # and it ends
+    bg = ld2410.Background(ld2410.prior(m), m.ld_prior_time, m.ld_forget, 1e-4, 3600.0)
+    bg.learn("a", np.ones(ld2410.CELLS), _stats(ld2410.prior(m), n=1, dt=3600.0))
+    bg.learn_echoes("a", 10.0)
+    assert abs(bg.rate("a") - (0.36 + 10) / 7200) < 1e-9

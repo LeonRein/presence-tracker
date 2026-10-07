@@ -64,6 +64,7 @@ class SimSensor:
     _bias: dict = field(default_factory=dict)
     _coast: dict = field(default_factory=dict)  # person -> (local x, y, vx, vy, raw speed, frames left)
     _ld_block: tuple = (-1.0, 1.0, 1.0)  # until when, the common gain of the moving / still cells
+    _ld_echo: tuple = (-1.0, None)  # an echo source: until when, what it puts in (MODEL.md 4.3)
     _ld_lag: object = None  # what the people put into the still cells lately (they lag)
     _ld_gain: list | None = None  # per cell: the Ornstein-Uhlenbeck processes of its energy's Gamma factor
 
@@ -169,6 +170,15 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
         walking = math.hypot(*person.velocity(t)) > 0.3
         s_still, s_walk = ld2410.expected(m, [angle], [slant], [True])
         put = put + (s_walk if walking else s_still)[0]
+    # echo sources: begin at the model's prior rate, live Erlang(stages), the profile of a standing
+    # person on the axis at a random slant, times a random amplitude
+    if t >= s._ld_echo[0] and rng.random() < m.ld_echo_rate * dt:
+        life = sum(rng.expovariate(m.ld_echo_stages / m.ld_echo_life) for _ in range(m.ld_echo_stages))
+        lo, hi, _ = m.ld_echo_ranges
+        src = ld2410.expected(m, [0.0], [rng.uniform(lo, hi)], [True])[0][0] * rng.choice(m.ld_echo_amps)
+        s._ld_echo = (t + life, src)
+    if t < s._ld_echo[0]:
+        put = put + s._ld_echo[1]
     # the still energies follow with the time constant ld_memory, the moving ones at once
     k = math.exp(-dt / m.ld_memory)
     s._ld_lag = put if s._ld_lag is None else k * s._ld_lag + (1 - k) * put

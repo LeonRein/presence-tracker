@@ -190,6 +190,64 @@ class Likelihood:
             self.kinds.append((cells, comps))
 
 
+class Echoes:
+    """The LD2410C's echo sources (MODEL.md 4.3): energy that is not a person's (on 7.10. at 01:08 in
+    the empty kitchen 40 s of near moving bursts and still energies up to 90 in gates 2-4). Per sensor
+    off, or one source on - the profile of a standing person on the axis at slant r, times an
+    amplitude - in one of K stages: it begins at rate ld_echo_rate (uniform over the sources), lives
+    an Erlang(K) time with mean ld_echo_life and ends. Like the LD2450's ghosts (4.2), what tells it
+    from a person is how it begins and ends: a person must come in, and stays."""
+
+    def __init__(self, m):
+        lo, hi, step = m.ld_echo_ranges
+        rs = np.arange(lo, hi + 1e-9, step)
+        prof = expected(m, np.zeros(len(rs)), rs, np.ones(len(rs), bool))[STILL]
+        self.src = np.concatenate([amp * prof for amp in m.ld_echo_amps])  # (J, 16)
+        self.K = m.ld_echo_stages
+        self.S = np.tile(self.src, (self.K, 1))  # (K J, 16): the states that are on
+        self.p = np.zeros(1 + len(self.S))  # [off, (stage, source)...]
+        self.p[0] = 1.0
+
+    def predict(self, dt: float, m, rate: float):
+        """Move on by dt: sources begin with rate (per s), age, end."""
+        J = len(self.src)
+        p, q = self.p, np.zeros_like(self.p)
+        on = p[0] * -math.expm1(-rate * dt)
+        q[0] = p[0] - on
+        q[1:1 + J] += on / J
+        self._fresh = on / J  # per source: what began just now (for learning the rate)
+        go = -math.expm1(-self.K / m.ld_echo_life * dt)
+        for k in range(self.K):
+            part = p[1 + k * J:1 + (k + 1) * J]
+            q[1 + k * J:1 + (k + 1) * J] += part * (1 - go)
+            if k + 1 < self.K:
+                q[1 + (k + 1) * J:1 + (k + 2) * J] += part * go
+            else:
+                q[0] += float(part.sum()) * go
+        self.p = q
+        self._first = q[1:1 + J].copy()
+
+    def began(self) -> float:
+        """After weigh: the expected number of sources that began in the last step."""
+        first = self._first
+        share = np.divide(self._fresh, first, out=np.zeros_like(first), where=first > 0)
+        return float(self.p[1:1 + len(self.src)] @ share)
+
+    def points(self, scale: np.ndarray) -> tuple:
+        """(masses of the states that are on, what each puts into the cells x scale)."""
+        return self.p[1:], self.S * scale
+
+    def weigh(self, logf: np.ndarray):
+        """Multiply the states that are on by exp(logf) (off by 1) and normalize."""
+        top = max(float(logf.max()), 0.0)
+        on = self.p[1:] * np.exp(logf - top)
+        z = self.p[0] * math.exp(-top) + float(on.sum())
+        self.p = np.concatenate([[self.p[0] * math.exp(-top)], on]) / z
+
+    def on(self) -> float:
+        return float(1.0 - self.p[0])
+
+
 def prior(m) -> np.ndarray:
     """(16,) the background before anything is learned (Model.ld_background)."""
     g0, g1, rest, still = m.ld_background
@@ -209,13 +267,16 @@ class Background:
     of prior_time s of the measured means; forgotten with forget s. Per sensor it holds only while
     the sensor is where it was (pose_of): moved, it starts over."""
 
-    def __init__(self, prior: np.ndarray, prior_time: float, forget: float):
+    def __init__(self, prior: np.ndarray, prior_time: float, forget: float, echo_rate: float = 1 / 10800,
+                 echo_time: float = 10800.0):
         self.prior = np.asarray(prior, dtype=float)
         self.prior_time = prior_time
         self.forget = forget
         self.num = {}  # sensor id -> (16,) s x the background's share of the energy
         self.den = {}  # sensor id -> s watched
+        self.echoes = {}  # sensor id -> expected number of echo sources begun (forgotten like den)
         self.poses = {}
+        self.echo_rate, self.echo_time = echo_rate, echo_time  # prior of the echo rate: per s, weight s
 
     def b(self, sid: str) -> np.ndarray:
         n = self.num.get(sid)
@@ -223,8 +284,19 @@ class Background:
             return self.prior.copy()
         return (self.prior * self.prior_time + n) / (self.prior_time + self.den[sid])
 
+    def rate(self, sid: str) -> float:
+        """Echo sources begun per s at this sensor: the prior (Model) with what was counted."""
+        T = self.den.get(sid, 0.0)
+        n = self.echoes.get(sid, 0.0)
+        return (self.echo_rate * self.echo_time + n) / (self.echo_time + T)
+
+    def learn_echoes(self, sid: str, began: float):
+        self.echoes[sid] = self.echoes.get(sid, 0.0) + began
+
     def learn(self, sid: str, share: np.ndarray, st: Stats):
         k = math.exp(-st.time / self.forget)
+        if sid in self.echoes:
+            self.echoes[sid] *= k
         energy = st.t_e + 100.0 * st.t_cens
         self.num[sid] = self.num.get(sid, np.zeros(CELLS)) * k + share * energy
         self.den[sid] = self.den.get(sid, 0.0) * k + st.time
@@ -236,17 +308,20 @@ class Background:
             if self.poses.get(s.id) != pose:
                 self.num.pop(s.id, None)
                 self.den.pop(s.id, None)
+                self.echoes.pop(s.id, None)
                 self.poses[s.id] = pose
 
     def to_dict(self) -> dict:
         return {"poses": {k: list(v) for k, v in self.poses.items()},
                 "num": {k: [round(float(x), 4) for x in v] for k, v in self.num.items()},
-                "den": {k: round(float(v), 3) for k, v in self.den.items()}}
+                "den": {k: round(float(v), 3) for k, v in self.den.items()},
+                "echoes": {k: round(float(v), 4) for k, v in self.echoes.items()}}
 
     def load_dict(self, d: dict):
         self.poses = {k: tuple(v) for k, v in d.get("poses", {}).items()}
         self.num = {k: np.array(v, dtype=float) for k, v in d.get("num", {}).items() if len(v) == CELLS}
         self.den = {k: float(v) for k, v in d.get("den", {}).items() if k in self.num}
+        self.echoes = {k: float(v) for k, v in d.get("echoes", {}).items() if k in self.num}
 
     def save(self, path):
         tmp = str(path) + ".tmp"

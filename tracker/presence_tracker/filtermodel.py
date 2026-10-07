@@ -84,6 +84,17 @@ class Model:
                      # comes, fall when one leaves; measured on two cases, then capped at 100)
     # background per sensor and cell, learned by the app (ld2410.Background): prior = the measured
     # means without anybody (moving gate 0, gate 1, gates 2-8, still), its weight, forgetting
+    # echo sources: energy that is no person's (ld2410.Echoes). How often they begin is learned per
+    # sensor with the background (measured on the empty night 6./7.10.: kitchen 3.6 per hour, the
+    # other sensors none in 3.3 h); prior one per 3 h with the weight of 3 h (assumed). They live
+    # Erlang(stages) with this mean (kitchen: median 10 s, mean 15 s, up to 59 s), with the profile
+    # of a standing person at slant lo..hi step m, times one of the amplitudes
+    ld_echo_rate = 1 / (3 * 3600.0)
+    ld_echo_prior_time = 3 * 3600.0
+    ld_echo_life = 20.0
+    ld_echo_stages = 2
+    ld_echo_ranges = (0.75, 6.5, 0.5)
+    ld_echo_amps = (0.3, 1.0, 3.0)
     ld_background = (13.0, 9.0, 4.5, 5.0)
     ld_prior_time = 600.0  # s
     ld_forget = 6 * 3600.0  # s

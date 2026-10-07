@@ -119,7 +119,8 @@ class Tracker:
         self._gids = itertools.count(1)
         self.ghost_map = None  # where each sensor starts ghost tracks (ghostmap.py)
         # what each LD2410C sees without anybody (ld2410.py, learned online, MODEL.md 4.3)
-        self.ld_background = ld2410.Background(ld2410.prior(self.m), self.m.ld_prior_time, self.m.ld_forget)
+        self.ld_background = ld2410.Background(ld2410.prior(self.m), self.m.ld_prior_time, self.m.ld_forget,
+                                               self.m.ld_echo_rate, self.m.ld_echo_prior_time)
         self.ld_background.use(config)
         self.learn_ghosts = True  # learn the map online (MODEL.md 4.2); off for the offline EM tool
         self._build()
@@ -167,6 +168,7 @@ class Tracker:
         self._out_cache = {}
         self._ld_stats = {}  # sensor index -> the LD2410C's frames since they were last weighed (ld2410.Stats)
         self._ld_memory = {}  # sensor index -> what the people put into its cells lately (the still ones lag)
+        self._ld_echo = {}  # sensor index -> its echo sources (ld2410.Echoes)
         self._version = 0  # counts the moves of everybody and the events (for the outputs' cache)
         self.segs = {}  # seg id -> dict(si, t, zt, var, z, born, lost, ...)
         self._live_by_sensor = {si: [] for si in range(len(self.sensors))}
@@ -1131,18 +1133,25 @@ class Tracker:
             pts[id(o)] = (mm, S * now)
         seen = {i for i, (mm, _) in pts.items() if len(mm) and mm.sum() > 1e-12}
         prior_w = self.hyp_weights()
-        # the background learns from the people as the filter saw them before these frames
+        echo = self._ld_echo.get(si)
+        if echo is None:
+            echo = self._ld_echo[si] = ld2410.Echoes(m)
+        echo.predict(st.time, m, self.ld_background.rate(sid))
+        e_pts = echo.points(now)
+        # the background learns from the people (and echoes) as the filter saw them before these frames
         share = np.zeros(ld2410.CELLS)
+        prior_people = []
         for h, hy in enumerate(self.hyps):
             P = sum((pts[id(o)][0] @ pts[id(o)][1] for o in hy.objects() if id(o) in seen), np.zeros(ld2410.CELLS))
-            share += prior_w[h] * b / (b0 + P)
+            prior_people.append(P)
+            share += prior_w[h] * b / (b0 + P + e_pts[0] @ e_pts[1])
         if self.learn_ghosts:
             self.ld_background.learn(sid, share, st)
-        # per hypothesis, one person after the other
+        # per hypothesis the people one after the other, the echo sources last
         memo = {}
         cache = {}  # (object, what the others put in) -> its ratio and normalizer
         logf = np.zeros(len(self.hyps))
-        totals, owns = [], []
+        totals, owns, tracked = [], [], []
         for h, hy in enumerate(self.hyps):
             R = np.zeros(ld2410.CELLS)
             prefix = ()
@@ -1162,8 +1171,18 @@ class Tracker:
                 own.append((o, hit[1], R))
                 R = R + hit[1]
                 prefix += (id(o),)
+            key = ("echo", R.tobytes())
+            hit = memo.get(key)
+            if hit is None:
+                hit = memo[key] = self._ld_ratio(echo, e_pts, b0 + R, st, lik)[1]
+            logf[h] += hit
             totals.append(R)
             owns.append(own)
+            # what the people with tracks put in, and the others as they were before these frames
+            # (the echo sources compete with the unseen people, 4.3)
+            tracked.append(sum((p for o, p, _ in own if isinstance(o, Gauss)), np.zeros(ld2410.CELLS))
+                           + sum((pts[id(o)][0] @ pts[id(o)][1] for o in hy.hidden + [hy.ppp] if id(o) in seen),
+                                 np.zeros(ld2410.CELLS)))
         base = st.loglik(b0, lik)
         for h, hy in enumerate(self.hyps):
             hy.logw += base + logf[h]
@@ -1171,6 +1190,7 @@ class Tracker:
         post_w = np.exp(lw - lw.max())
         current = (post_w / post_w.sum()) @ np.array(totals) / np.maximum(now, 1e-9)
         self._ld_memory[si] = current if M is None else a * M + (1 - a) * current
+        log_off = math.log(max(float(echo.p[0]), 1e-300))
         # each person given the others, mixed over the hypotheses holding them (the last one in a
         # hypothesis: the same as above)
         for obj, refs in objs:
@@ -1190,15 +1210,41 @@ class Tracker:
                 if hit is None:
                     hit = cache[key] = self._ld_ratio(obj, pts[id(obj)], b0 + rest, st, lik)
                 lr, norm = hit
+                # an unseen person and an echo source are alternatives (both rare): where the person
+                # is not, an echo may explain the energies - the person's view weighed against that
+                key = ("echo", rest.tobytes())
+                ze = cache.get(key)
+                if ze is None:
+                    ze = cache[key] = self._ld_ratio(echo, e_pts, b0 + rest, st, lik)[1]
                 lq = math.log(max(qh, 1e-300)) - norm
-                parts.append(lq + lr)
-                outs.append(lq)
+                # in view (no echo source) against out of view (an echo source or none)
+                if isinstance(obj, Undetected):
+                    parts.append(lq + lr + log_off - ze)  # an intensity: outside stays as it is
+                else:
+                    parts.append(lq + lr + log_off)
+                    outs.append(lq + ze)
             parts = np.array(parts)
             top = parts.max(axis=0)
             logf_pts = top + np.log(np.exp(parts - top).sum(axis=0))
             if not isinstance(obj, Undetected):
                 logf_pts -= _logsumexp(outs)  # a person: only the shape changes (outside: 1)
             self._ld_apply(si, obj, np.clip(logf_pts, -700.0, ld2410.LOG_CAP))
+        # the echo sources given the people with tracks and the unseen ones as they were, mixed over
+        # the hypotheses
+        q = post_w / post_w.sum()
+        parts, outs = [], []
+        for qh, h in zip(q, range(len(self.hyps))):
+            if qh < 1e-12:
+                continue
+            lr, norm = self._ld_ratio(echo, e_pts, b0 + tracked[h], st, lik)
+            lq = math.log(qh) - norm
+            parts.append(lq + lr)
+            outs.append(lq)
+        parts = np.array(parts)
+        top = parts.max(axis=0)
+        echo.weigh(np.clip(top + np.log(np.exp(parts - top).sum(axis=0)) - _logsumexp(outs), -700.0, ld2410.LOG_CAP))
+        if self.learn_ghosts:
+            self.ld_background.learn_echoes(sid, echo.began())
         self._normalize()
 
     def _ld_apply(self, si: int, obj, logf: np.ndarray):
