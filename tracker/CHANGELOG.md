@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.13.0
+
 - **Kalibrierung neu: alle Sensoren gemeinsam, auch wenn sie sich nur in einer Tür überschneiden**
   (MODEL.md 10, `calibration.py`). Die alte Rechnung schlug nach einem Gang am 7.10. vor, das
   Arbeitszimmer zu spiegeln (294°), das Esszimmer auf Maßstab 1,27 und den Flur um 15° zu drehen.
