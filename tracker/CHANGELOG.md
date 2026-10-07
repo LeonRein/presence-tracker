@@ -2,6 +2,13 @@
 
 ## Unveröffentlicht
 
+## 0.11.0
+
+Gemessen mit `tools/report_eval.py`: Meldungen bis 6.10. (5 Sensoren, config5) Licht fälschlich an 0 von
+41, aus 1,17 von 15 (0.10.0: 0 / 3,00); Meldungen vom 7.10. ab 07:44 (config7) an 0 von 13, aus 0 von 7
+(0.10.0 nachgespielt 0,07 / 1,00; live hing der Küchengeist über eine Stunde); leere Räume nachts 0 min.
+Rechenzeit auf derselben Stunde, je Lauf ein Kern, Median aus drei: 32,8 s gegen 33,5 s (0.10.0).
+
 - **Keine erfundenen Personen mehr, die sich ohne Messung halten** (MODEL.md 1, 4.1, 4.2, 5.5, 10).
   Am 7.10. hing über eine Stunde eine zweite Person in der Küche, obwohl nur eine zu Hause war, und
   über den Tag sammelten sich bekannte Personen an (nachgespielt bis zu 6, im Haus erwartet 4,7 statt
