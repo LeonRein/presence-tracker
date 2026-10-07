@@ -48,9 +48,14 @@ Quelle.
 ### 3.1 Stehen
 - Position zittert: Diffusion 0,02 m/√s (gemessen).
 - Aufenthaltsdauer: Überleben `S(t) = (5,6 s / (t + 5,6 s))^0,58` (Lomax, gemessen 5.10.). Als
-  Mischung von 7 Exponentialverteilungen (Feldmann & Whitt 1998): Jeder Aufenthalt hat seine eigene
-  Rate λ_l des Aufstehens. Wer weitersteht, verschiebt sich zu den langsamen Arten:
-  `p_l ← p_l e^(−λ_l Δt) / Σ` (Hidden-Semi-Markov als HMM, D_Yu2010 Abschn. 3.2).
+  Mischung von 5 Exponentialverteilungen (Feldmann & Whitt 1998, angepasst an Punkten in gleichen
+  log-Abständen von 2 s bis 1 Tag): Jeder Aufenthalt hat seine eigene Rate λ_l des Aufstehens. Wer
+  weitersteht, verschiebt sich zu den langsamen Arten: `p_l ← p_l e^(−λ_l Δt) / Σ` (Hidden-Semi-Markov
+  als HMM mit parallelen Phasen, D_Yu2010 Abschn. 3.2, 4.1.3). Fehler der Anpassung zwischen 1 s und
+  1 Tag: höchstens 0,024 in S, 16 % relativ, 42 % in der Rate des Aufstehens (mit 7 Arten 0,004 /
+  2 % / 18 %). Die Evidenz (7) unterscheidet das nicht: 6.10. 19:28 bis 7.10. 06:15 (11 h, 5 Sensoren,
+  Neustarts und Nacht) mit 7 Arten +3 (6 Arten +3), 4 Arten −9, 3 Arten −51 gegenüber 5; Lichtfehler
+  gleich, mit 3 Arten mehr (10).
 - Ein Aufenthalt, der zu einem zufälligen Zeitpunkt beobachtet wird (Start), ist nach
   Erneuerungstheorie länger: Gewichte ∝ w_l / λ_l.
 - Nach dem Aufstehen geht man in eine gleichverteilte Richtung.
@@ -120,9 +125,9 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   gehaltenen Ziel stattdessen `1 − exp(−d²/(2·0,7²))` (dort würde es wiedergefunden).
 - **Erkennbarkeit κ** einer stehenden Person in diesem Aufenthalt (Haltung, Platz): dieselbe Person
   wird am Tisch alle halbe Minute erfasst, auf dem Sofa minutenlang nicht. κ ~ Gamma(α, α), Mittel 1,
-  in 5 gleich wahrscheinlichen Stufen; neu bei jedem Stehenbleiben, innerhalb eines Aufenthalts mit
-  1/(600 s) neu gezogen (D_Mahler2011 Gl. 49–52; D_Wilthil2019 Gl. 2). α = 1 (angenommen).
-  Gehende: κ = 1.
+  in 3 gleich wahrscheinlichen Stufen (Mittel 0,19 / 0,71 / 2,10); neu bei jedem Stehenbleiben,
+  innerhalb eines Aufenthalts mit 1/(600 s) neu gezogen (D_Mahler2011 Gl. 49–52; D_Wilthil2019 Gl. 2).
+  α = 1 (angenommen; über die Evidenz nicht zu bestimmen, 10). Gehende: κ = 1.
 - Wer keine Spur bekommt, wird mit `exp(−Rate·Δt)` gewichtet; das gilt für jede Person, die von einem
   Sensor nicht schon gemessen wird.
 

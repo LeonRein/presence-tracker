@@ -15,13 +15,16 @@ class Model:
     # 3.1 standing (measured 5.10. on LD2450 tracks)
     still_noise = 0.02  # m per sqrt(s): a standing person sways
     # how long one stands: survival (go_time / (t + go_time))^go_share (measured, Lomax), as a
-    # mixture of exponentials (Feldmann & Whitt 1998): every stay has its own rate of getting up
+    # mixture of exponentials (Feldmann & Whitt 1998): every stay has its own rate of getting up.
+    # Five kinds, matched at points spaced evenly in log time from 2 s to a day; more explained the
+    # data no better (MODEL.md 3.1)
     go_share, go_time = 0.58, 5.6
+    stay_points = (86400, 5993, 416, 29, 2)  # s
     # 4.1 detectability of a still person in this stay (posture, place): kappa ~ Gamma(shape, shape),
     # mean 1, in equally probable levels; drawn anew at each stop and now and then within a stay
     # (Mahler, Vo & Vo 2011; Wilthil et al. 2019: detectability modes as a Markov chain)
     kappa_shape = 1.0  # assumed until estimated over the evidence (MODEL.md 7)
-    kappa_levels = 5
+    kappa_levels = 3  # 5 levels explained the data no better (MODEL.md 4.1)
     kappa_switch = 1 / 600  # 1/s (assumed, as in the 0.7.0 draft)
     # 3.2 walking: a velocity-jump process (measured 6.10. on 8.7 h of LD2450 tracks, walks of >= 2 s)
     speed = 0.85  # m/s
@@ -108,7 +111,7 @@ class Model:
     hyp_floor = 1e-7  # hypotheses with less weight are dropped
 
 
-def stay_rates(share: float, scale: float, points=(86400, 14400, 2400, 400, 60, 10, 2), ratio=2.0) -> tuple:
+def stay_rates(share: float, scale: float, points=Model.stay_points, ratio=2.0) -> tuple:
     """A mixture of exponentials (weights, rates) for the heavy-tailed standing durations with
     survival (scale / (t + scale))^share: Feldmann & Whitt (1998), matching at the points."""
     def surv(t):
@@ -139,7 +142,7 @@ class Shapes:
     draws its rate of getting up go_l with weight go_w_l."""
 
     def __init__(self, m: Model):
-        self.go_w, self.go = stay_rates(m.go_share, m.go_time)
+        self.go_w, self.go = stay_rates(m.go_share, m.go_time, m.stay_points)
         # a stay seen at a random moment is longer than a fresh one (renewal theory): its rate of
         # getting up weighted by its mean duration
         w = self.go_w / self.go
