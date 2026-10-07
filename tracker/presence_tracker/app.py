@@ -73,8 +73,14 @@ class App:
         """An error in the model must not stop the app: 0.9.3 died on one LD2410C frame (7.10.,
         between 22:52 and 2:07), the MQTT client said goodbye cleanly, so its last will never went
         out, and Home Assistant kept the last states for hours. Logged with the traceback; the model
-        starts over from what was learned and saved."""
+        starts over from what was learned and saved, about the people from what it knew just before
+        (if that is still sound, else from the last save)."""
         log.exception("model failed on %s: starting over", where)
+        try:
+            if not self.replay:
+                self._save_people()
+        except Exception:  # noqa: BLE001 - the failed model may be broken: then the last save holds
+            log.warning("the people could not be saved, starting from the last save")
         self._reset_tracker()
 
     def _reset_tracker(self):
@@ -97,6 +103,16 @@ class App:
                 self.tracker.ld_background.use(self.config)
             except (ValueError, KeyError, TypeError):
                 log.warning("ld2410.json unreadable, starting from the prior")
+        # what was known about the people when the app stopped (MODEL.md 5.3), moved on over the
+        # time it did not run; without it (first start, another floor plan) nothing is known
+        people_path = self.data_dir / "people.json"
+        if not self.replay and people_path.exists():
+            try:
+                state = json.loads(people_path.read_text())
+            except (OSError, ValueError):
+                state = None
+            if not self.tracker.restore_people(state):
+                log.info("people.json unreadable or made for another floor plan: nothing known about the people")
         self._model_started(None)  # at its first frame
         self.last_model_save = time.monotonic()
         self.clocks = defaultdict(SensorClock)
@@ -106,12 +122,14 @@ class App:
         self.tracker.listeners.append(self._on_tracker_event)
 
     def _model_started(self, t: float | None):
-        """The model starts from nothing known (app start, model failure, reset, new config): when
-        (None: at its first frame) and what it had learned then, for an error report. Replayed from
+        """The model starts (app start, model failure, reset, new floor plan): when (None: at its
+        first frame), what it had learned then and the people's state it started from, for an error
+        report. Replayed from
         there with what was learned at the report instead, the replay was up to 0.12 off from what the
         app believed (6.10., 21:22); with this copy it is the same."""
         self.model_start = t
         self.start_learned = json.loads(json.dumps(self.tracker.learned()))
+        self.start_people = self.tracker.started_from  # the saved state it started from (None: nothing known)
 
     def _on_tracker_event(self, event, data):
         if event == "frame":
@@ -208,6 +226,16 @@ class App:
     def _save_learned(self):
         self.tracker.ghost_map.save(self.data_dir / "ghostmap.json")
         self.tracker.ld_background.save(self.data_dir / "ld2410.json")
+        self._save_people()
+
+    def _save_people(self):
+        """What is known about the people, for the next start (MODEL.md 5.3)."""
+        if self.tracker.start is None:  # nothing happened since the start: what it started from holds
+            return
+        path = self.data_dir / "people.json"
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.tracker.people_state(), allow_nan=False))
+        tmp.replace(path)
 
     def shown_now(self) -> dict:
         """What Home Assistant and the map show, for an error report: per room [count, P(somebody
@@ -326,7 +354,7 @@ class App:
         except (TypeError, ValueError, KeyError) as e:
             return web.json_response({"error": str(e)}, status=400)
         self.config = config
-        # a new floor plan: the model starts over; only sensors recalibrated: the people stay (MODEL.md 5.3)
+        # only sensors recalibrated: the people stay; else the model starts over as after a restart (MODEL.md 5.3)
         if self.tracker.reconfigure(config):
             self._model_started(self.tracker.now)
         self.calibrator.config = config
@@ -415,8 +443,8 @@ class App:
 
     async def h_report(self, request):
         """Something looked wrong: what (room, kind, how long ago, a note), saved with the config,
-        when the model last started from nothing known and what it had learned then (ghost map,
-        LD2410C background), the code, and the sensor data of the last REPORT_WINDOW s in the recordings' format, with
+        when the model last started and what it had learned then (ghost map, LD2410C background)
+        and knew about the people (the saved state it started from, None: nothing), the code, and the sensor data of the last REPORT_WINDOW s in the recordings' format, with
         what the app showed per second in between (topic "app/shown"): the moment can be replayed and
         compared with what the app believed. These are the truth data of the evaluation (MODEL.md 8)."""
         body = await request.json()
@@ -427,14 +455,15 @@ class App:
         ago = min(max(float(body.get("minutes_ago") or 0), 0.0), REPORT_WINDOW / 60)
         now = self.clock()  # the wall clock, or the recording's time in a replay
         start = self.model_start or self.tracker.start
-        # what was learned when the model started, if that is in the report (the replay starts there,
+        # what was learned and known when the model started, if that is in the report (the replay starts there,
         # as the app did); else now: started from nothing known 15 min back, the replay forgets the
         # difference (6.10. 22:40 and 22:42, 20 min after the start: |dP| < 0.01; MODEL.md 8)
         covered = start is not None and start >= (self.recent[0][0] if self.recent else now) - 1
         meta = {"report": {"t": now, "t_event": now - 60 * ago, "room": room, "kind": kind,
                            "text": str(body.get("text") or "")[:2000], "version": __version__, "code": CODE,
                            "model_start": start, "learned_at": start if covered else now},
-                "config": self.config.to_dict(), **(self.start_learned if covered else self.tracker.learned())}
+                "config": self.config.to_dict(), **(self.start_learned if covered else self.tracker.learned()),
+                "people": self.start_people if covered else None}
         self.reports.mkdir(parents=True, exist_ok=True)
         name = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{re.sub(r'[^a-z0-9_]', '', room.lower()) or 'haus'}-{kind}"
         lines = [json.dumps(meta)]

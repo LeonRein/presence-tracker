@@ -40,7 +40,7 @@ def test_model_error_does_not_stop_the_app(tmp_path):
 def test_a_report_replays_to_what_the_app_showed(tmp_path):
     """An error report holds what the replay needs (config, what was learned, when the model
     started, the frames) and what the app showed; replayed, the model believes what the app did."""
-    config = flat_config(entry=True, people=2)
+    config = flat_config(entry=True)
     config.save(tmp_path / "tracker.json")
     app = App(tmp_path, publish=False)
     bg = app.tracker.ld_background  # learned beyond the prior before the start,
@@ -105,7 +105,7 @@ def test_a_report_without_the_model_start_has_what_was_learned_at_the_report(tmp
     """The model started before the report's data: the replay starts from nothing known at its first
     frame, with what was learned at the report (the copy from the start may be days old)."""
     monkeypatch.setattr(app_module, "REPORT_WINDOW", 20.0)
-    config = flat_config(entry=True, people=2)
+    config = flat_config(entry=True)
     config.save(tmp_path / "tracker.json")
     app = App(tmp_path, publish=False)
     app.clock = lambda: 1040.0

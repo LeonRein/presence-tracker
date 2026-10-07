@@ -23,7 +23,9 @@ Undetected (below) is the same as an intensity: the people nobody knows of yet (
 Poisson point process - the undetected part of a PMBM.
 """
 
+import base64
 import math
+import zlib
 
 import numpy as np
 
@@ -82,6 +84,36 @@ class Hidden:
         h.out, h.clock = self.out, self.clock
         return h
 
+    def to_dict(self) -> dict:
+        """For saving (Tracker.people_state): the masses as float32, zlib, base64; masses below
+        1e-12 of the whole as 0 (they compress to nothing)."""
+        tiny = 1e-12 * max(self.total(), 1e-300)
+        if not (math.isfinite(self.total()) and min(self.walk.min(initial=0), self.still.min(initial=0),
+                                                     self.region.min(initial=0), self.out) >= 0):
+            raise ValueError("a density that is no density")
+
+        def pack(a):
+            a = np.where(a < tiny, 0.0, a).astype("<f4")
+            return base64.b64encode(zlib.compress(a.tobytes(), 9)).decode()
+        return {"walk": pack(self.walk), "still": pack(self.still), "region": pack(self.region), "out": float(self.out)}
+
+    @classmethod
+    def from_dict(cls, tiles, d: dict) -> "Hidden":
+        """The inverse of to_dict, on tiles of the same fingerprint; ValueError if it does not fit."""
+        h = cls(tiles)
+
+        def unpack(s, like):
+            a = np.frombuffer(zlib.decompress(base64.b64decode(s)), dtype="<f4").astype(float)
+            if a.size != like.size or not np.all(np.isfinite(a)) or (a < 0).any():
+                raise ValueError("saved density does not fit the tiles")
+            return a.reshape(like.shape)
+        h.walk, h.still, h.region = unpack(d["walk"], h.walk), unpack(d["still"], h.still), unpack(d["region"], h.region)
+        h.out = float(d["out"])
+        if not (math.isfinite(h.out) and h.out >= 0) or (cls is Hidden and not h.total() > 0):
+            raise ValueError("saved density is empty or broken")  # a person is somewhere; nobody unknown may be
+        h._normalize()  # a person's masses sum to 1 (float32 keeps 7 digits)
+        return h
+
     @staticmethod
     def mixture(parts) -> "Hidden":
         """sum_i w_i * density_i for [(w_i, Hidden)], weights summing to 1."""
@@ -132,6 +164,36 @@ class Hidden:
                 self.walk = tl.T_walk @ self.walk
         if tl.R:
             self._regions(dt)
+        self._arrive(dt)
+
+    def leap(self, dt: float):
+        """The motion over a step dt much longer than a walk (a data gap of minutes to days, MODEL.md
+        5.3): standing people get up as in move; every walk is taken whole, wherever it ends
+        (Tiling.walk_end) - stopped in a tile, beginning a new stay, or gone into a region. What is
+        lost: a short stay begun within the step ends no earlier than the next step (fresh stays
+        last 26 min on average; the slow kinds of stay make that). The last minutes of a gap are
+        moved with move, so the fast parts (walking, short stays) are as in move afterwards."""
+        tl = self.tiles
+        m, sh = tl.tr.m, tl.sh
+        if tl.n:
+            up = -np.expm1(-sh.go * dt)
+            s = self.still.sum(axis=1)
+            rise = up[:, None] * s
+            q = -math.expm1(-m.kappa_switch * dt)
+            self.still *= ((1 - up) * (1 - q))[:, None, None]
+            self.still += sh.kappa_w[None, :, None] * (q * (s - rise))[:, None, :]
+            self.walk += rise.sum(axis=0)
+        if tl.R:
+            self._regions(dt)
+        self._arrive(dt)
+        if tl.n:
+            end = tl.walk_end() @ self.walk
+            self.walk = np.zeros(tl.n)
+            self.still += sh.stay_prior()[:, :, None] * end[None, None, :tl.n]
+            self.region[:, 0] += end[tl.n:]
+
+    def _arrive(self, dt: float):
+        """Newcomers (only the unknown people have them)."""
 
     def _regions(self, dt: float):
         tl = self.tiles
@@ -210,8 +272,7 @@ class Undetected(Hidden):
         self.region += person.region
         self.out += person.out
 
-    def move(self, dt: float):
-        super().move(dt)
+    def _arrive(self, dt: float):
         tl, m = self.tiles, self.tiles.tr.m
         self.out *= math.exp(-m.forget_rate * dt)
         if len(tl.open) + len(tl.entries):

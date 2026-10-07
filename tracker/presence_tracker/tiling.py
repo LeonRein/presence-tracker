@@ -118,6 +118,8 @@ class Tiling:
         self.T_walk = np.ascontiguousarray(T[:n])
         self.T_in = np.ascontiguousarray(T[n:])
         self.tick = TICK
+        self.Q = Q
+        self._walk_end = None
         # where somebody coming out of a region appears; the ways in from outside straight into view
         self.doors = {r: [] for r in range(self.R)}
         for place, watch, _ in w.portals:
@@ -211,6 +213,30 @@ class Tiling:
                     out[r, a] = math.log(max(s0, 1e-12) / max(s1, 1e-12)) / self.widths[a]
             self._region_rates = out
         return self._region_rates
+
+    def walk_end(self) -> np.ndarray:
+        """(n + R, n): where a walk that begins in a tile ends - stopped in a tile, or gone into a
+        region - whatever its length: int mu e^(-mu s) e^(Q s) ds = mu (mu I - Q)^-1 (the walk
+        stops at the rate mu, MODEL.md 3.2). For steps much longer than a walk (Hidden.leap)."""
+        if self._walk_end is None:
+            m = self.tr.m
+            mu = m.speed / m.walk_length
+            N = self.n + self.R
+            self._walk_end = np.linalg.solve(mu * np.eye(N) - self.Q, mu * np.eye(N)[:, :self.n]) if self.n else np.zeros((N, 0))
+            self._walk_end[self._walk_end < 1e-12] = 0.0
+        return self._walk_end
+
+    def fingerprint(self) -> str:
+        """What a density over these tiles depends on: the tiles (where, how big, which room), the
+        places behind the doors and the kinds of stay and detectability. A saved state (Tracker.
+        people_state) fits only tiles with the same fingerprint."""
+        import hashlib
+        h = hashlib.sha1()
+        for a in (np.round(self.centers, 3), np.round(self.area, 4), self.room, np.array(self.open),
+                  np.round(self.sh.go, 12), np.round(self.sh.kappa, 9), self.age_edges):
+            h.update(np.ascontiguousarray(a, dtype=float).tobytes())
+        h.update("|".join(self.world.places).encode())
+        return h.hexdigest()[:16]
 
     def region_start(self, r: int) -> np.ndarray:
         """Age distribution of a stay in region r seen at a random time: proportional to its

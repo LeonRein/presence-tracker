@@ -1,16 +1,18 @@
 """Replay recordings through the tracker and print what it shows, for looking into a situation.
 
 usage: python tools/replay.py --config FILE --from "YYYY-MM-DD HH:MM:SS" --to "..." [--show FROM]
-                              [--every S] [--seed N] [--learned FILE] [--recordings DIR] [--tracker DIR]
+                              [--every S] [--seed N] [--learned FILE] [--people FILE] [--recordings DIR]
+                              [--tracker DIR]
        python tools/replay.py --report FILE.jsonl.gz [--from ...] [--to ...] [--show ...] [--every S]
 
-The model starts at --from with nothing known (like after a restart). From --show on (default: --from)
+The model starts at --from with nothing known, or with --people (the app's people.json, moved on from
+the time it was saved, like after a restart). From --show on (default: --from)
 it prints every --every seconds the count per observed room and per person where it most probably is
 (room or place, probability) and the time each sensor has not seen them. --config: the app's config
 (private: it holds the floor plan); --learned: what the app had learned. --report: an error report
 of the app ("Fehler melden"): its config, what was learned and the sensor data; shown from 2 min before
-the reported moment unless --show says otherwise. The replay starts where the app's model last started
-from nothing known, with what it had learned then, if that is in the report; else at the report's first
+the reported moment unless --show says otherwise. The replay starts where the app's model last started,
+with what it had learned and knew about the people then, if that is in the report; else at the report's first
 frame with what was learned at the report (what the model knew before is not in the report; 15 min
 from nothing known forget it: 6.10., |dP| < 0.01). Below each line what the app showed then ("app"), and at the end how far
 the replay is from it.
@@ -39,6 +41,7 @@ def main():
     ap.add_argument("--tracker", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tracker"))
     ap.add_argument("--config")
     ap.add_argument("--learned")
+    ap.add_argument("--people")
     ap.add_argument("--report")
     ap.add_argument("--from", dest="start")
     ap.add_argument("--to", dest="end")
@@ -71,8 +74,12 @@ def main():
     crowd = Tracker(config, seed=a.seed)
     if a.report:
         crowd.load_learned(meta)  # its ghost map and LD2410C background when its model started
+        if meta.get("people") and not crowd.restore_people(meta["people"]):  # and what it knew about the people
+            print("the people's state in the report does not fit its floor plan: starting with nothing known")
     if a.learned:
         crowd.load_learned(json.load(open(a.learned)))
+    if a.people and not crowd.restore_people(json.load(open(a.people))):
+        print("--people does not fit the floor plan: starting with nothing known")
     rooms = [z.id for z in config.zones_of("room") if not any(z.id in r["rooms"] for r in config.regions.values())]
     names = {z.id: z.name for z in config.zones}
     if a.report:
@@ -83,7 +90,8 @@ def main():
             if rep.get("model_start") is None:
                 print(f"the report does not say when the app's model started: the replay starts at {hm} with nothing known")
             elif rep["model_start"] >= first - 1:
-                print(f"the app's model started from nothing known at {hm}, as the replay does")
+                print(f"the app's model started at {hm} ({'from its saved state' if meta.get('people') else 'with nothing known'}), "
+                      "as the replay does")
             else:
                 print(f"the app's model ran since before the report's data: the replay starts at {hm} with "
                       "nothing known and what was learned at the report, and may differ from it at first (MODEL.md 8)")

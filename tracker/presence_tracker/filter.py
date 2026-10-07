@@ -17,8 +17,10 @@ Objects are shared by the hypotheses with the same history and updated once; wha
 hypotheses makes new objects (copy on write).
 """
 
+import binascii
 import itertools
 import math
+import zlib
 
 import numpy as np
 
@@ -41,6 +43,8 @@ MOUNT_RADIUS = 0.3  # m: targets this close to a sensor come from its mount
 GIVE_UP = 0.01  # a known person in the house with less probability joins the unknown ones with all
                 # of their mass: only P(several of them come back) changes, by <= GIVE_UP^2 / 2
 RECYCLE_EVERY = 1.0  # s
+GAP_EXACT = 120.0  # s: the end of a gap in the data is moved as always, what lies before in leaps
+LEAP = 15.0  # s   (_predict_gap; 8 h from a seat: in view 0.917 instead of 0.910 moving all as always)
 
 
 _LGAMMA = np.zeros(0)
@@ -159,23 +163,34 @@ class Tracker:
             self._g(si, np.zeros((1, 2)))
 
     def reset_people(self, people=None):
-        """Start over: nothing known - start_people people, each anywhere (MODEL.md 5.3); or people
-        at the given places ("anywhere" or a place name). Nobody unknown: newcomers arrive from
-        then on (3.4). A Poisson start instead keeps expecting more people however many were found
-        (its counts are independent), and the house then never looks complete."""
+        """Start over: nothing known about the people (MODEL.md 5.3, unknown_start); or people at
+        the given places ("anywhere" or a place name), nobody unknown (for tests and tools)."""
         if people is None:
-            people = ["anywhere"] * max(int(round(self.p.start_people)), 0)
-        anywhere = None
-        hidden = []
-        for where in people:
-            if where == "anywhere":
-                anywhere = anywhere or Hidden.anywhere(self.tiles)
-                hidden.append(anywhere)
-            else:
-                hidden.append(Hidden.at_place(self.tiles, self.world.index[where]))
-        self.hyps = [Hyp(0.0, {}, {}, {}, hidden, Undetected.none(self.tiles))]
+            hidden, ppp = [], self.unknown_start()
+        else:
+            anywhere = None
+            hidden = []
+            for where in people:
+                if where == "anywhere":
+                    anywhere = anywhere or Hidden.anywhere(self.tiles)
+                    hidden.append(anywhere)
+                else:
+                    hidden.append(Hidden.at_place(self.tiles, self.world.index[where]))
+            ppp = Undetected.none(self.tiles)
+        self.hyps = [Hyp(0.0, {}, {}, {}, hidden, ppp)]
+        self._clear()
+        self.started_from = None  # the saved state the people were restored from (restore_people)
+
+    def unknown_start(self) -> Undetected:
+        """Nothing known (MODEL.md 5.3): no known people, the unknown ones (3.4) as the model
+        expects them."""
+        return Undetected.none(self.tiles)
+
+    def _clear(self):
+        """No live tracks, no data of the sensors gathered yet."""
         self._recycled = self.now
         self._flushed = self.now
+        self._gap_from = None  # time of a restored state: the gap to the first frame is still to predict
         self._out_cache = {}
         self._ld_stats = {}  # sensor index -> the LD2410C's frames since they were last weighed (ld2410.Stats)
         self._ld_memory = {}  # sensor index -> what the people put into its cells lately (the still ones lag)
@@ -184,14 +199,91 @@ class Tracker:
         self.segs = {}  # seg id -> dict(si, t, zt, var, z, born, lost, ...)
         self._live_by_sensor = {si: [] for si in range(len(self.sensors))}
 
+    def people_state(self) -> dict:
+        """What is known about the people, to start from after a restart (MODEL.md 5.3): per
+        hypothesis its weight, its known people and the unknown ones, as densities over the tiles.
+        Live tracks do not survive a restart (the sensors' next frames are a start, 4.1): the
+        people with tracks go to the tiles as when their last track ends (5.4), ghost tracks end,
+        and the hypotheses that then say the same are merged (5.6) - one per number of known
+        people. The time is that of the last move of everybody. Changes nothing here."""
+        cache = {}
+        hyps = []
+        for hy in self.hyps:
+            people = list(hy.hidden)
+            for g in hy.groups.values():
+                if id(g) not in cache:
+                    cache[id(g)] = g.to_tiles(self.tiles)
+                people.append(cache[id(g)])
+            hyps.append(Hyp(hy.logw, {}, {}, {}, people, hy.ppp))
+        hyps = self._merged(hyps)
+        total = _logsumexp([hy.logw for hy in hyps])
+        index = {}
+        for hy in hyps:
+            for o in hy.hidden + [hy.ppp]:
+                index.setdefault(id(o), (len(index), o))
+        return {"t": self._flushed, "tiles": self.tiles.fingerprint(),
+                "densities": [o.to_dict() for _, o in sorted(index.values(), key=lambda v: v[0])],
+                "hyps": [{"logw": hy.logw - total, "people": [index[id(o)][0] for o in hy.hidden],
+                          "unknown": index[id(hy.ppp)][0]} for hy in hyps]}
+
+    def restore_people(self, state: dict | None) -> bool:
+        """Start from a saved state (people_state): the posterior then is the prior now (the PMBM
+        recursion goes on from it, B_GarciaFernandez2018), moved on over the time between (a gap in
+        the data says nothing, MODEL.md 4.4) - at the first frame if the model has not started yet.
+        False, and nothing changed, if there is none or it does not fit the tiles (another floor
+        plan)."""
+        if not state or state.get("tiles") != self.tiles.fingerprint():
+            return False
+        try:
+            unknown = {int(h["unknown"]) for h in state["hyps"]}
+            objs = [(Undetected if k in unknown else Hidden).from_dict(self.tiles, d)
+                    for k, d in enumerate(state["densities"])]
+            hyps = [Hyp(float(h["logw"]), {}, {}, {}, [objs[int(i)] for i in h["people"]], objs[int(h["unknown"])])
+                    for h in state["hyps"]]
+            t = float(state["t"])
+        except (KeyError, ValueError, TypeError, IndexError, zlib.error, binascii.Error):
+            return False
+        if (not hyps or not math.isfinite(t) or not all(math.isfinite(hy.logw) for hy in hyps)
+                or any(type(hy.ppp) is not Undetected or any(type(u) is not Hidden for u in hy.hidden) for hy in hyps)):
+            return False
+        total = _logsumexp([hy.logw for hy in hyps])
+        for hy in hyps:
+            hy.logw -= total
+        self.hyps = hyps
+        self._clear()
+        self.started_from = state
+        if self.start is None:
+            self._gap_from = t
+        else:
+            self._predict_gap(self.now - t)
+        return True
+
+    def _predict_gap(self, gap: float):
+        """Everybody moves on over a gap in the data (MODEL.md 4.4, 5.3): its last GAP_EXACT s as
+        always (Hidden.move), what lies before in steps of LEAP s (Hidden.leap)."""
+        if gap <= 0:
+            return
+        lead = max(gap - GAP_EXACT, 0.0)
+        leaps = int(math.ceil(lead / LEAP - 1e-9))
+        parts = int(math.ceil((gap - lead) / MAX_STEP - 1e-9))
+        for obj, _ in self._objects():
+            for _ in range(leaps):
+                obj.leap(lead / leaps)
+            for _ in range(parts):
+                obj.move((gap - lead) / parts)
+        self._version += 1
+
     def reconfigure(self, config):
         """A new configuration. If only sensors changed (turned, moved, recalibrated, switched on
         or off) and the world the people live in stays the same, what is known about the people
         stays: a recalibration tells something about a sensor, nothing about them. The changed
         sensors start over as after lost data (MODEL.md 4.1, 5.3): their tracks end without
         information, their next frame is a start. Otherwise (walls, rooms, doors, parameters, the
-        set of sensors, the observed area) everything starts over. Returns whether it started over."""
+        set of sensors, the observed area) the model starts over as after a restart: from what it
+        knew (people_state) if the tiles stay the same, else from nothing known. Returns whether it
+        started over."""
         changed = self._changed_sensors(self.config, config)
+        state = self.people_state() if changed is None else None
         self.config = config
         self.p = config.params
         self.sensor_model.config = config
@@ -204,7 +296,10 @@ class Tracker:
         self.use_ghost_map(self.ghost_map)  # it holds only while the sensors are where they were
         self.ld_background.use(config)
         if changed is None:
-            self.reset_people()
+            if not self.restore_people(state):
+                self.reset_people()
+            for rt in self.runtime.values():
+                rt.last_frame = -math.inf  # the tracks start anew: the next frame is a start (_evidence)
         return changed is None
 
     def _changed_sensors(self, old, new):
@@ -374,7 +469,10 @@ class Tracker:
     def process_frame(self, sensor_id: str, t: float, frame: dict):
         if self.start is None:
             self.start = self.now = self._flushed = self._recycled = t
-        sensor = self.config.sensor_by_id.get(sensor_id)
+            if self._gap_from is not None:  # restored: from the saved state's time to now
+                self._predict_gap(t - self._gap_from)
+                self._gap_from = None
+        sensor =self.config.sensor_by_id.get(sensor_id)
         rt = self.runtime.setdefault(sensor_id, SensorRuntime())
         prev = rt.last_frame
         rt.frame = frame
@@ -988,15 +1086,18 @@ class Tracker:
         return [other[j] for j in best]
 
     def _merge(self):
+        self._version += 1  # the hypotheses change: cached per-hypothesis values are void
+        self.hyps = self._merged(self.hyps)
+
+    def _merged(self, hyps: list) -> list:
         """Hypotheses that now say the same about every live track are one: their mixture (MODEL.md
         5.6). People held by the same object in all of them stay as they are; the others are mixed
         per person (exact for one, the multi-Bernoulli approximation for more)."""
-        self._version += 1  # the hypotheses change: cached per-hypothesis values are void
         by = {}
-        for hy in self.hyps:
+        for hy in hyps:
             by.setdefault(hy.key(), []).append(hy)
-        if len(by) == len(self.hyps):
-            return
+        if len(by) == len(hyps):
+            return hyps
         out = []
         for hs in by.values():
             if len(hs) == 1:
@@ -1046,7 +1147,7 @@ class Tracker:
             new.hidden = common + mixed
             new.ppp = self._mix_hidden([(w, h.ppp) for w, h in zip(wn, hs)])
             out.append(new)
-        self.hyps = out
+        return out
 
     def _prune(self):
         """Keep the strongest hypotheses (Vo et al. 2017: cutting by weight minimizes the L1 error)."""

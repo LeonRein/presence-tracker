@@ -11,7 +11,7 @@ from test_filter import flat_config
 def place_mass(gaps):
     """One person, somewhere in the room or on the balcony, nothing seen; frames of both sensors
     after each gap."""
-    config = flat_config(people=1)
+    config = flat_config()
     tr = Tracker(config, start=0.0, seed=3, people=["anywhere"])
     t = 0.0
     empty = {"targets": []}

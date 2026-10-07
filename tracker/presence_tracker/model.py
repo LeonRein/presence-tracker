@@ -124,7 +124,6 @@ class TrackerParams:
     dwell_spread: float = 1.5  # spread of ln(duration), wide: long stays stay possible
     dwell_median_open: float = 1800.0  # s, the same for an open region (bedroom, the way out): hours are normal
     dwell_spread_open: float = 2.0
-    start_people: int = 2  # people to start with when nothing is known, each anywhere (MODEL.md 5.3)
     # LD2410C
     ld2410_hold: float = 1.5  # s, gaps in the LD2410C presence up to this long are bridged (display)
     # outputs

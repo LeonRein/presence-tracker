@@ -1,10 +1,15 @@
 """Score the tracker against the truth taken from error reports (MODEL.md 8): the recordings replayed
 the way the app ran them (a fresh model at every start of the app, the ghost map and the LD2410C
-background learned on from the first one), and per reported moment and room P(somebody there) and P(the reported number) against what the report
+background learned on from the first one, the people's state saved when the app stopped and restored at
+its start, MODEL.md 5.3), and per reported moment and room P(somebody there) and P(the reported
+number) against what the report
 says.
 
 usage: python tools/report_eval.py --config FILE --truth FILE [--recordings DIR] [--patch FILE.py]...
-                                   [--only NAME] [--every S] [--trace]
+                                   [--only NAME] [--every S] [--trace] [--downtime S] [--forget]
+
+--downtime: the app did not run for this long before each start (the recorder did: those frames are
+skipped). --forget: every start with nothing known about the people (as before people.json).
 
 The truth file (private: it describes who was where) holds the app's starts and per report a window
 (from the event to the report) and counts per room or region without a sensor, only where the
@@ -40,6 +45,8 @@ def main():
     ap.add_argument("--patch", action="append", default=[])
     ap.add_argument("--only")
     ap.add_argument("--every", type=float, default=1.0)
+    ap.add_argument("--downtime", type=float, default=0.0)
+    ap.add_argument("--forget", action="store_true")
     ap.add_argument("--trace", action="store_true", help="print the rooms' P(somebody there) and the people of the "
                                                         "most probable hypothesis in the windows")
     a = ap.parse_args()
@@ -81,16 +88,23 @@ def main():
                 continue
             if m["t"] > end:
                 break
+            if next_start < len(starts) and starts[next_start] - a.downtime <= m["t"] < starts[next_start]:
+                continue  # the app is down
             while next_start < len(starts) and m["t"] >= starts[next_start]:
-                # the app starts: a fresh model with what was learned so far
+                # the app starts: a fresh model with what was learned so far and what was known about
+                # the people when it stopped
+                people = None
                 if tracker is not None:
                     loglik += tracker.loglik
                     gm, ldb = tracker.ghost_map, getattr(tracker, "ld_background", None)
+                    people = None if a.forget else json.loads(json.dumps(tracker.people_state()))
                 tracker = Tracker(config)
                 if gm is not None:
                     tracker.use_ghost_map(gm)
                 if ldb is not None:
                     tracker.use_ld_background(ldb)
+                if people is not None and not tracker.restore_people(people):
+                    print("the saved people do not fit: nothing known")
                 clocks.clear()
                 next_start += 1
             sid = m["topic"].split("/")[1]
