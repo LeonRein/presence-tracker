@@ -14,8 +14,9 @@ of the app ("Fehler melden"): its config, what was learned and the sensor data; 
 the reported moment unless --show says otherwise. The replay starts where the app's model last started,
 with what it had learned and knew about the people then, if that is in the report; else at the report's first
 frame with what was learned at the report (what the model knew before is not in the report; 15 min
-from nothing known forget it: 6.10., |dP| < 0.01). Below each line what the app showed then ("app"), and at the end how far
-the replay is from it.
+from nothing known forget it: 6.10., |dP| < 0.01). Configurations the app took over meanwhile without
+starting its model over (a sensor recalibrated: "config_changes") are taken over at the same times. Below
+each line what the app showed then ("app"), and at the end how far the replay is from it.
 """
 
 import argparse
@@ -117,6 +118,9 @@ def main():
             if os.path.exists(path):
                 yield (json.loads(line) for line in open(path) if line.strip())
 
+    # configurations the app took over without starting its model over (a sensor recalibrated): at the
+    # same model times here
+    changes = [(t, Config.from_dict(c)) for t, c in meta.get("config_changes", []) if t is not None] if a.report else []
     for source in sources():
         for m in source:
             if not m["topic"].endswith("/frame") or m["t"] < start:
@@ -125,6 +129,12 @@ def main():
                 break
             sid = m["topic"].split("/")[1]
             tt = clocks[sid](m["t"], m["payload"].get("uptime_ms"))
+            while changes and tt > changes[0][0]:
+                t_c, cfg = changes.pop(0)
+                crowd.step(t_c)
+                restarted = crowd.reconfigure(cfg)
+                print(time.strftime("%H:%M:%S", time.localtime(t_c)) + " the app took over a new configuration"
+                      + (" (and started over)" if restarted else ""))
             crowd.process_frame(sid, tt, m["payload"])
             if tt >= next_step:
                 crowd.step(tt)

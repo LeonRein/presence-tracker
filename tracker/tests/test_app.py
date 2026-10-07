@@ -178,3 +178,68 @@ def test_a_restarted_app_keeps_the_people_and_reports_from_where(tmp_path):
             diff = max(diff, abs(1 - replay.count_distribution()["wohn"][0] - shown[k][1]["zones"]["wohn"][1]))
             k += 1
     assert k >= len(shown) - 1 and diff < 0.002, diff
+
+
+def test_a_report_after_a_live_recalibration_replays_to_what_the_app_showed(tmp_path):
+    """A sensor recalibrated between the model's start and the report ("Übernehmen": the model goes on,
+    the people stay). Replayed with the configuration at the report, the replay was up to 0.12 off
+    (BUGS 6): the report holds the one at the start and each one taken over since, with its time, and
+    the replay takes them over as the app did (tools/replay.py)."""
+    config = flat_config(entry=True)
+    config.save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), (4.5, 1.0), (1.0, 1.0), (1.02, 1.0), start=5,
+                    pauses={2: 20, 4: 200}))
+
+    class Request:
+        def __init__(self, body):
+            self.body = body
+
+        async def json(self):
+            return self.body
+
+    done = False
+    next_tick = 0.0
+    for t, sid, frame in simulate([a], sim_sensors(config, idle=0.0), 120.0, walls=config.wall_segments):
+        if t >= 40 and not done:
+            d = app.config.to_dict()
+            d["sensors"][0]["heading"] += 8.0  # sensor a recalibrated by 8 degrees
+            r = asyncio.run(app.h_put_config(Request(d)))
+            assert json.loads(r.text)["restarted"] is False
+            done = True
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
+        if t >= next_tick:
+            assert app.tick(1000.0 + t)
+            next_tick = t + 0.1
+    app.clock = lambda: 1120.0
+    asyncio.run(app.h_report(Request({"kind": "ghost", "room": "wohn"})))
+    path, = (tmp_path / "reports").glob("*.jsonl.gz")
+    lines = [json.loads(x) for x in gzip.open(path, "rt").read().splitlines()]
+    meta, messages = lines[0], lines[1:]
+    assert meta["config"]["sensors"][0]["heading"] == 45 and len(meta["config_changes"]) == 1
+    t_change, changed = meta["config_changes"][0]
+    assert 1039.5 < t_change <= 1040.1 and changed["sensors"][0]["heading"] == 53
+
+    # replayed like tools/replay.py --report
+    shown = [(m["t"], m["payload"]) for m in messages if m["topic"] == "app/shown"]
+    replay = Tracker(Config.from_dict(meta["config"]))
+    replay.load_learned(meta)
+    changes = [(t, Config.from_dict(c)) for t, c in meta["config_changes"]]
+    clocks = collections.defaultdict(SensorClock)
+    k, diff = 0, 0.0
+    for m in messages:
+        if not m["topic"].endswith("/frame") or m["t"] < meta["report"]["model_start"]:
+            continue
+        sid = m["topic"].split("/")[1]
+        t = clocks[sid](m["t"], m["payload"].get("uptime_ms"))
+        while changes and t > changes[0][0]:
+            t_c, cfg = changes.pop(0)
+            replay.step(t_c)
+            assert not replay.reconfigure(cfg)
+        replay.process_frame(sid, t, m["payload"])
+        replay.step(t)
+        while k < len(shown) and shown[k][0] <= t:
+            diff = max(diff, abs(1 - replay.count_distribution()["wohn"][0] - shown[k][1]["zones"]["wohn"][1]))
+            k += 1
+    assert not changes and k >= len(shown) - 1
+    assert diff < 0.002, diff  # what the app showed is rounded to 0.001

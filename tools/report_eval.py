@@ -7,9 +7,12 @@ says.
 
 usage: python tools/report_eval.py --config FILE --truth FILE [--recordings DIR] [--patch FILE.py]...
                                    [--only NAME] [--every S] [--trace] [--downtime S] [--forget]
+                                   [--config-at "YYYY-mm-dd HH:MM:SS=FILE"]...
 
 --downtime: the app did not run for this long before each start (the recorder did: those frames are
 skipped). --forget: every start with nothing known about the people (as before people.json).
+--config-at: from then on the app ran with this configuration, taken over as the app does
+(Tracker.reconfigure: only sensors recalibrated, the people stay; else the model starts over).
 
 The truth file (private: it describes who was where) holds the app's starts and per report a window
 (from the event to the report) and counts per room or region without a sensor, only where the
@@ -47,6 +50,7 @@ def main():
     ap.add_argument("--every", type=float, default=1.0)
     ap.add_argument("--downtime", type=float, default=0.0)
     ap.add_argument("--forget", action="store_true")
+    ap.add_argument("--config-at", action="append", default=[], help='"YYYY-mm-dd HH:MM:SS=FILE": from then on')
     ap.add_argument("--trace", action="store_true", help="print the rooms' P(somebody there) and the people of the "
                                                         "most probable hypothesis in the windows")
     a = ap.parse_args()
@@ -58,6 +62,14 @@ def main():
     from presence_tracker.model import Config
 
     config = Config.from_dict(json.load(open(a.config)))
+    configs = [(-float("inf"), config)]
+    for item in a.config_at:
+        when, path = item.split("=", 1)
+        configs.append((parse_time(when), Config.from_dict(json.load(open(path)))))
+    configs.sort(key=lambda x: x[0])
+
+    def config_of(t):
+        return [c for tc, c in configs if tc <= t][-1]
     truth = json.load(open(a.truth))
     reports = [r for r in truth["reports"] if not a.only or a.only in r["name"]]
     starts = sorted(parse_time(s) for s in truth["app_starts"])
@@ -102,7 +114,7 @@ def main():
                     gm, ldb = tracker.ghost_map, getattr(tracker, "ld_background", None)
                     dm = getattr(tracker, "dest_map", None)
                     people = None if a.forget else json.loads(json.dumps(tracker.people_state()))
-                tracker = Tracker(config)
+                tracker = Tracker(config_of(m["t"]))
                 if gm is not None:
                     tracker.use_ghost_map(gm)
                 if ldb is not None:
@@ -113,6 +125,8 @@ def main():
                     print("the saved people do not fit: nothing known")
                 clocks.clear()
                 next_start += 1
+            if config_of(m["t"]) is not tracker.config:
+                tracker.reconfigure(config_of(m["t"]))
             sid = m["topic"].split("/")[1]
             tt = clocks[sid](m["t"], m["payload"].get("uptime_ms"))
             tracker.process_frame(sid, tt, m["payload"])

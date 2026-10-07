@@ -231,6 +231,17 @@ class App:
         self.model_start = t
         self.start_learned = json.loads(json.dumps(self.tracker.learned()))
         self.start_state = self.tracker.started_from  # the saved state it started from (None: nothing known)
+        # the configuration it started with, and each one taken over since without a restart (sensors
+        # recalibrated, outputs): [(model time, config)]. Replayed with the one at the report, a
+        # recalibration 40 s in put the replay up to 0.12 off from what the app believed (BUGS 6)
+        self.configs = [(t, self.config.to_dict())]
+
+    def _config_changed(self):
+        """A configuration taken over while the model goes on: when, for an error report."""
+        if self.tracker.start is None:  # not started yet: it starts with this one
+            self.configs = [(self.model_start, self.config.to_dict())]
+        else:
+            self.configs.append((self.tracker.now, self.config.to_dict()))
 
     # ------------------------------------------------------------------ input
 
@@ -565,6 +576,8 @@ class App:
         self.config = config
         if restarted:
             self._model_started(self.tracker.now)
+        else:
+            self._config_changed()
         self.calibrator.config = config
         if self.client is not None:
             await self.discovery.sync(config.zones)
@@ -662,25 +675,38 @@ class App:
     async def h_report(self, request):
         """Something looked wrong: what (room, kind, how long ago, a note), saved with the config,
         when the model last started and what it had learned then (ghost map, LD2410C background)
-        and knew about the people (the saved state it started from, None: nothing), the code, and the sensor data of the last REPORT_WINDOW s in the recordings' format, with
-        what the app showed per second in between (topic "app/shown"): the moment can be replayed and
-        compared with what the app believed. These are the truth data of the evaluation (MODEL.md 8)."""
+        and knew about the people (the saved state it started from, None: nothing), the code, and the
+        sensor data of the last REPORT_WINDOW s in the recordings' format, with what the app showed per
+        second in between (topic "app/shown"): the moment can be replayed and compared with what the
+        app believed. These are the truth data of the evaluation (MODEL.md 8). "config" is the
+        configuration the replay starts with, "config_changes" [[model time, config], ...] the ones
+        taken over later without a restart (a sensor recalibrated): the replay takes them over at the
+        same times (tools/replay.py)."""
         body = await request.json()
         kind = body.get("kind")
         if kind not in REPORT_KINDS:
             return web.json_response({"error": "Art des Fehlers fehlt."}, status=400)
         room = str(body.get("room") or "")
-        ago = min(max(float(body.get("minutes_ago") or 0), 0.0), REPORT_WINDOW / 60)
+        try:
+            ago = min(max(float(body.get("minutes_ago") or 0), 0.0), REPORT_WINDOW / 60)
+        except (TypeError, ValueError):
+            return web.json_response({"error": "Die Minuten sind keine Zahl."}, status=400)
         now = self.clock()  # the wall clock, or the recording's time in a replay
         start = self.model_start or self.tracker.start
         # what was learned and known when the model started, if that is in the report (the replay starts there,
         # as the app did); else now: started from nothing known 15 min back, the replay forgets the
         # difference (6.10. 22:40 and 22:42, 20 min after the start: |dP| < 0.01; MODEL.md 8)
-        covered = start is not None and start >= (self.recent[0][0] if self.recent else now) - 1
+        first = self.recent[0][0] if self.recent else now
+        covered = start is not None and start >= first - 1
+        # the configuration at the replay's start (the model's, else the report's first frame), and the
+        # ones taken over after it without a restart, with their model times
+        begin = start if covered else first
+        k = max([i for i, (t, _) in enumerate(self.configs) if t is None or t <= begin], default=0)
         meta = {"report": {"t": now, "t_event": now - 60 * ago, "room": room, "kind": kind,
                            "text": str(body.get("text") or "")[:2000], "version": __version__, "code": CODE,
                            "model_start": start, "learned_at": start if covered else now},
-                "config": self.config.to_dict(), **(self.start_learned if covered else self.tracker.learned()),
+                "config": self.configs[k][1], "config_changes": [[t, c] for t, c in self.configs[k + 1:]],
+                **(self.start_learned if covered else self.tracker.learned()),
                 "people": self.start_state if covered else None}
         self.reports.mkdir(parents=True, exist_ok=True)
         name = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{re.sub(r'[^a-z0-9_]', '', room.lower()) or 'haus'}-{kind}"
