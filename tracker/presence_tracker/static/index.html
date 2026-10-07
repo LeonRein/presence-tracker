@@ -20,12 +20,13 @@
     <button data-tab="calibration">Kalibrierung</button>
     <button data-tab="settings">Einstellungen</button>
   </nav>
-  <div id="status" class="status"></div>
+  <div id="status" class="status" role="status" aria-live="polite"></div>
 </header>
 <main>
   <section id="map-wrap">
     <svg id="map" tabindex="0"></svg>
     <div id="hint" class="hint" hidden></div>
+    <div id="stale" class="stale-bar" role="alert" hidden></div>
     <div class="map-tools">
       <button id="undo" title="Rückgängig (Strg+Z)" aria-label="Rückgängig" hidden>↶</button>
       <button id="redo" title="Wiederholen (Strg+Y)" aria-label="Wiederholen" hidden>↷</button>

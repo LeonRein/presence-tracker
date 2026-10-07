@@ -32,6 +32,11 @@
   „Stunden mit Gehenden x/3“. Vorher und nachher dieselbe Zahl: *Punkte in Bewegung*, wie die Berechnung
   sie zählt (`Calibrator.status()` liefert `points`, `hours`, `min_hours`; `solve` je Sensor `few`,
   `walk_more`). *bleibt* ist grau statt rot, die Paarliste ist eingeklappt.
+- **Layout:** Jeder Tab beginnt oben (das Panel behielt die Scrollposition des vorigen Tabs). Bei
+  1024 px (Home Assistant mit Seitenleiste) sind alle Tabs ganz zu sehen: Unter 1150 px entfällt der
+  Schriftzug, und der Kopf bricht um statt abzuschneiden. Am Handy steht der Verbindungszustand über den
+  Tabs. Veraltete Daten (getrennt oder 3 s ohne Nachricht) sind markiert: Karte grau, Listen blass, roter
+  Balken mit dem Alter des Stands. CPU im Kopf als „Modell 12,3 % CPU“ mit Erklärung (% eines Kerns).
 
 ## 0.17.0
 

@@ -26,6 +26,9 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   Wahrscheinlichkeit, dass *diese Person* dort ist. *wird betreten* und *Ziel* (mit Wahrscheinlichkeit und
   Quelle *Bewegung* oder *Karte*) stehen nur an Räumen, die noch nicht besetzt sind, und bleiben 2 s
   sichtbar, auch wenn sie nur kurz an waren.
+- **Verbindung:** Oben rechts stehen Sensoren und Personen, auch am Handy. Kommen 3 s lang keine Daten
+  oder ist die Verbindung getrennt, wird die Karte grau, die Listen blass, und ein roter Balken sagt, seit
+  wann der Stand alt ist.
 - **Niemand taucht aus dem Nichts auf und niemand verschwindet einfach.** Personen kommen und gehen nur
   durch Türen. Wer durch eine Tür in einen Bereich ohne Sensor geht, ist dahinter (Balkon, Schlafzimmer),
   wie lange Besuche dort dauern, ist angenommen. Wer durch die Wohnungstür ins Treppenhaus geht, ist
