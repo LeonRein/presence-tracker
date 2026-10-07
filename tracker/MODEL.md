@@ -43,9 +43,17 @@ sprechen, senken sie, wie sie die Dichte formen; und ohne Messungen, die sie st�
 
 Aus dem Grundriss (`model.py`, `world.py`):
 - **Beobachteter Bereich:** Räume, die die Sensoren zu mindestens 60 % sehen.
-- **Bereiche ohne Sensor *Rₖ*:** übrige Räume, über Türen zusammengefasst. *Offen*, wenn man von dort
-  das Haus verlassen kann (Eingang, Treppe), sonst *geschlossen* (Balkon).
-- **Außer Haus.**
+- **Bereiche ohne Sensor *Rₖ*:** übrige Räume der Wohnung, über Türen zusammengefasst. *Offen*, wenn
+  eine Tür von dort nach draußen führt oder eine Eingangszone darin liegt, sonst *geschlossen* (Balkon,
+  Schlafzimmer).
+- **Außer Haus:** alles jenseits der Wohnungstür. Ein Raum mit dem Haken *Eingang* (das Treppenhaus)
+  ist kein Raum der Wohnung, sondern öffentlicher Raum, den auch andere Hausbewohner nutzen (Leon,
+  7.10.: „Die Personenzahl hinter Treppe macht keinen Sinn, da dies öffentlicher Raum ist.“). Seine
+  Fläche gehört zu *außer Haus*; die Tür dorthin ist die Wohnungstür, eine Tür nach draußen wie eine
+  in einer Außenwand. Wer hindurchgeht, hat die Wohnung verlassen; wer hereinkommt, kommt von draußen.
+  Was ein Sensor dort misst, gehört zu niemandem der Wohnung und wird wie in einem geschlossenen Raum
+  ohne Sensor verworfen (4.1: keine Information). Der gezeichnete Raum bleibt, weil er die Tür
+  festlegt.
 - Wände trennen (Personen gehen nicht hindurch, Radar sieht nicht hindurch); Türen sind Lücken.
 
 **Zustand:** die bekannten Personen (ihre Zahl gehört zum Zustand, 3.4) und die unbekannten (eine
@@ -92,16 +100,24 @@ Prozess wie eine Diffusion aus, je Achse mit `D = E[s²] / (2 λ_d) = (s² + Str
 (ballistisch); das geht auf den Kacheln verloren.
 
 ### 3.3 Türen, Bereiche ohne Sensor, außer Haus
-- Aufenthalt in *Rₖ*: log-normal, Median 2 min / Streuung von ln(Dauer) 1,5 (geschlossen) bzw.
-  30 min / 2,0 (offen) (angenommen; `unobserved.py`). Nicht gelernt: Wann jemand hinein- und
-  herausging, kennt der Filter nur als Wahrscheinlichkeit; seine Urteile als Dauern zu zählen, lernte
-  seine Fehler. Zu schätzen über die Evidenz (7). Heraus kommt man gehend an einer Tür des Bereichs.
-- Aus einem offenen Bereich nach außer Haus mit 1/(2 h); zurück mit 1/(4 h) je Weg hinein (offene
-  Bereiche und Eingänge im beobachteten Bereich) (angenommen).
+- Aufenthalt in *Rₖ*: log-normal, Median 2 min / Streuung von ln(Dauer) 1,5, für jeden Bereich gleich
+  (angenommen; `unobserved.py`). Nicht gelernt: Wann jemand hinein- und herausging, kennt der Filter
+  nur als Wahrscheinlichkeit; seine Urteile als Dauern zu zählen, lernte seine Fehler. Zu schätzen
+  über die Evidenz (7). Endet der Aufenthalt, geht man durch eine der Türen des Bereichs, jede gleich
+  wahrscheinlich: gehend in den beobachteten Bereich oder durch eine Tür nach draußen außer Haus.
+- **Hinaus** geht man nur durch Türen: aus dem beobachteten Bereich gehend durch die Wohnungstür (die
+  Diffusion aus 3.2 über die Tür, wie in einen Bereich ohne Sensor), aus einem offenen Bereich am
+  Ende eines Aufenthalts (oben). Eine eigene Rate des Weggehens gibt es nicht mehr.
+- **Zurück** mit 1/(4 h) je Weg hinein (Türen nach draußen, Eingangszonen) (angenommen); man erscheint
+  gehend an der Tür (beobachteter Bereich) bzw. beginnt einen Aufenthalt im offenen Bereich.
+- Bis 0.12.0 war das Treppenhaus ein offener Bereich *Rₖ* mit eigenem Aufenthalt (Median 30 min,
+  Streuung 2,0) und eigener Rate nach außer Haus (1/(2 h)); die Anzeige und Home Assistant bekamen dort
+  eine Personenzahl, die nichts bedeutet (wer dort war, war fort oder ein Nachbar).
 
 ### 3.4 Neuankömmlinge, Personenzahl
-- Neue Personen kommen als Poisson-Prozess an jedem Weg hinein an (offene Bereiche, Eingänge), mit
-  ν = 1/(2 Tage) je Weg (angenommen); danach verhalten sie sich wie alle (3.1–3.3).
+- Neue Personen kommen als Poisson-Prozess an jedem Weg hinein an (Türen nach draußen,
+  Eingangszonen; in der Wohnung 6.10. nur die Wohnungstür zum Treppenhaus), mit ν = 1/(2 Tage) je Weg
+  (angenommen); danach verhalten sie sich wie alle (3.1–3.3).
 - Wer außer Haus ist, wird mit 1/Tag vergessen (angenommen): Kommt er danach wieder, ist er ein
   Neuankömmling. So bleibt die Zahl der Personen, die man erwartet, endlich.
 - „Selten ein Dritter“ folgt aus ν und den Daten, nicht aus einer Regel.
@@ -454,7 +470,8 @@ ein gleichmäßiges Raster:
   2 s … 36 h), `außer Haus`.
 - **Gehen** zwischen Kacheln als Diffusion (3.2) in finiten Volumen: von Kachel i zum Nachbarn j mit
   `D · L_ij / (A_i · d_ij)` (gemeinsame Kante L, Fläche A, Abstand der Schwerpunkte d), durch eine
-  Tür in einen Bereich ohne Sensor ebenso, mit d = doppelter Abstand zur Tür. Wände sind keine
+  Tür in einen Bereich ohne Sensor oder nach draußen (ins Treppenhaus, 2) ebenso, mit d = doppelter
+  Abstand zur Tür. Wände sind keine
   Kante. Exakt diskretisiert als Matrixexponential je Takt von 0,1 s. Anhalten mit μ, Aufstehen mit
   λ_l wie in 3.1/3.2. Eine Tür zwischen zwei Räumen mit Sensor ist eine Kante wie jede andere.
 - Nicht-Erfassung, Nicht-Wiederfinden und die Rate einer neuen Spur sind exakte Summen über die
@@ -607,6 +624,10 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
   `light_cost` = K_an / K_dunkel = 2 (angenommen: Licht ohne Person ist der schlimmste Fehler), also
   c = 2/3. Das verzögerte Ausschalten bleibt in Home Assistant.
 - **Bereiche ohne Sensor:** P(jemand dort); belegt wie oben, wenn der Bereich nur ein Raum ist.
+- **Außer Haus** (auch das Treppenhaus): keine Zahl, kein Zustand, keine Entität in Home Assistant und
+  in der Anzeige. Die Zahl im Haus (`presence_haus_count`) zählt alles außer *außer Haus*. Entitäten, die
+  der Broker von früher hält (etwa die alten der Treppe), löscht die App beim Verbinden (`ha.py`: leere
+  Konfiguration und leerer Zustand, beibehalten).
 - **Bewegt / ruhig, „wird gleich betreten“:** aus den Personen der wahrscheinlichsten Hypothese
   (geht-Gewicht > 0,5 und > 0,15 m/s; Vorausschau 1 s ab 0,3 m/s).
 - Anzeige: Personen der wahrscheinlichsten Hypothese, die eher existieren als nicht (r ≥ 0,5, 5.5),
@@ -671,8 +692,10 @@ Näherungen, die man prüfen oder ersetzen kann:
   „niemand“ am Ende). Jede neue Spur kann auch „unbekannt“ sein:
   Solange Spuren laufen, gibt es mehr Hypothesen (Simulation, zwei kommen herein: etwa doppelte
   Rechenzeit gegenüber fester Personenzahl).
-- Wer ins Schlafzimmer oder zur Treppe geht, bleibt wegen des breiten Aufenthalts-Priors lange
-  „bekannt“ (6 h nach dem Gehen noch zu 21 % im Haus) und kostet so lange Rechenzeit.
+- Wer aus dem beobachteten Bereich durch eine Tür nach draußen geht, die nicht in einen gezeichneten
+  Raum führt (Tür in einer Außenwand ohne Raum dahinter) oder durch eine Eingangszone, verlässt das Haus
+  nicht: Das Gehen über die Kacheln braucht Zellen hinter der Tür. Hereinkommen geht dort. Abhilfe:
+  den Raum dahinter zeichnen und *Eingang* setzen.
 - ν, das Vergessen und `start_unknown` sind angenommen.
 - **Bekannte Personen sammelten sich an** (bis 7.10., behoben, 10): Nachgespielt ab 6.10. 19:28 mit den
   App-Starts bis 7.10. 13:30 (e0e26e8 → jetzt), im Haus erwartet je volle Stunde: 22 Uhr 3,9 → 2,1
@@ -1145,6 +1168,16 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   hier nicht; eine Karte, die nicht lernt, wäre die einfachere Form – die Evidenz spricht dagegen).
   Am Ende des Abends (10,8 h) stehen die stärksten Stellen je Sensor bei 1,2–2,8-mal statt
   2,1–17,6-mal der Prior-Rate (Esszimmer (4,2; 3,0) 1,9 statt 7,3; der Platz 2,8 statt 17,6).
+- **Das Treppenhaus war ein Bereich der Wohnung** (bis 0.12.0): ein offener Bereich ohne Sensor mit
+  Aufenthalt 30 min / 2,0 und 1/(2 h) nach außer Haus. Wer hinausging, blieb dort minutenlang „im
+  Haus“; die Anzeige und Home Assistant bekamen eine Personenzahl für öffentlichen Raum (Leon, 7.10.:
+  „Die Personenzahl hinter Treppe macht keinen Sinn, da dies öffentlicher Raum ist.“). Jetzt außer
+  Haus (2, 3.3): Licht gleich (bis 6.10. an 0 / aus 1,68; 7.10. 0 / 0), Log-Evidenz −5 bzw. −35
+  (davon +1 durch das Verwerfen der Messungen dort, also fast alles aus der Dynamik: kein eigener
+  Aufenthalt mehr, zurück mit 1/(4 h) je Weg statt nach einem Aufenthalt im Treppenhaus). Weggehen
+  7.10. 8:57 (zweite Person; Telefon „not_home“ 9:06:59): im Haus erwartet 8:57:00 1,10 statt 1,99,
+  8:58:31 1,20 statt 1,85; angezeigt 1 statt 2 bis 8:59. Ab 9:01 verblasst die gebliebene Person in
+  beiden Fassungen hinter Türen (Bad, mit config7 ohne Sensor; 9, 5.5). Leere Nacht 0 min.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

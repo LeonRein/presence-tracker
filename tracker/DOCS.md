@@ -18,8 +18,10 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   Gleiche Daten ergeben immer dasselbe Ergebnis. Die Karte im Tab *Live* zeigt die Verteilung jeder Person
   als Wärmekarte, den Punkt am wahrscheinlichsten Ort.
 - **Niemand taucht aus dem Nichts auf und niemand verschwindet einfach.** Personen kommen und gehen nur
-  durch Türen. Wer durch eine Tür in einen Bereich ohne Sensor geht, ist dahinter (Balkon, Flur-Bereich mit
-  Schlafzimmer und Treppe), wie lange Besuche dort dauern, ist angenommen.
+  durch Türen. Wer durch eine Tür in einen Bereich ohne Sensor geht, ist dahinter (Balkon, Schlafzimmer),
+  wie lange Besuche dort dauern, ist angenommen. Wer durch die Wohnungstür ins Treppenhaus geht, ist
+  außer Haus: Das Treppenhaus ist öffentlicher Raum und gehört nicht zur Wohnung; dort wird niemand
+  gezählt.
 - **Wer geht, wird schnell gesehen; wer sitzt, nicht immer.** Wie gut ein Sitzender erfasst wird, hängt von
   Haltung und Platz ab und wird für jeden Aufenthalt mitgeschätzt: Wer am Tisch oft erfasst wurde und lange
   nicht mehr, ist wahrscheinlich gegangen; wer auf dem Sofa selten erfasst wird, nicht.
@@ -73,8 +75,12 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
    Die **Räume** entstehen automatisch als geschlossene Flächen zwischen Wänden, Türen und Raumgrenzen.
    Auch Räume ohne Sensor einzeichnen (Balkon, Küche, Flur): Daraus weiß die App, wo Personen
    herkommen können.
-   Sie werden nur benannt. *Eingang* markiert Räume, in denen Personen auftauchen und verschwinden dürfen
-   (Treppenhaus). Beim Verschieben von Wänden behält jeder Raum seinen Namen und damit seine Entitäten.
+   Sie werden nur benannt. *Eingang* markiert den öffentlichen Raum vor der Wohnungstür (Treppenhaus):
+   Er gehört nicht zur Wohnung, die Tür dorthin ist die Wohnungstür. Wer hindurchgeht, ist außer Haus;
+   wer hereinkommt, kommt von draußen. Für ihn gibt es keine Personenzahl und keine Entitäten, und was ein
+   Sensor durch die offene Tür dort sieht (Nachbarn), zählt nicht. Den Raum trotzdem zeichnen: Er legt
+   die Wohnungstür fest. Beim Verschieben von Wänden behält jeder Raum seinen Namen und damit seine
+   Entitäten.
 3. **Zonen** (Tab *Zonen*), frei gezeichnet als Rechteck, Kreis oder Polygon:
    - *Bereich*: z. B. Sofa, Esstisch, für Home Assistant
    - *Eingang*: kleine Bereiche, wo Personen von außen kommen oder das Haus verlassen (Haustür im
@@ -112,7 +118,9 @@ Gerät **Presence Tracker**, für jeden Raum und Bereich:
 | `binary_sensor.presence_<zone>_moving` | Mindestens eine Person bewegt sich |
 | `binary_sensor.presence_<zone>_approaching` | Jemand geht auf die Zone zu und ist in etwa 1 s drin (*Vorausschau* in den Einstellungen) |
 
-Dazu `presence_haus_*` für das ganze Haus. Mit *wird betreten* kann das Licht schon angehen, bevor jemand den Raum betritt.
+Dazu `presence_haus_*` für das ganze Haus (ohne *außer Haus*). Ein Raum mit *Eingang* (Treppenhaus)
+bekommt keine Entitäten; hatte er von einer früheren Version welche, entfernt die App sie beim nächsten
+Verbinden mit dem Broker. Mit *wird betreten* kann das Licht schon angehen, bevor jemand den Raum betritt.
 
 ## Optionen
 

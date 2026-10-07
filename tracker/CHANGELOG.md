@@ -2,6 +2,35 @@
 
 ## Unveröffentlicht
 
+## 0.15.0
+
+- **Das Treppenhaus ist außer Haus** (MODEL.md 2, 3.3, 3.4, 6, 10). Ein Raum mit dem Haken *Eingang*
+  gehört nicht mehr zur Wohnung: Er ist öffentlicher Raum vor der Wohnungstür, den auch andere
+  Hausbewohner nutzen. Bisher war er ein Bereich ohne Sensor mit eigener Personenzahl, Aufenthaltsdauer
+  (Median 30 min) und Rate nach draußen (1/(2 h)); Anzeige und Home Assistant zeigten dort eine Zahl,
+  die nichts bedeutete, und die Zahl im Haus zählte ihn mit. Jetzt:
+  - Die Tür zum Treppenhaus ist die Wohnungstür. Wer hindurchgeht, ist außer Haus (gehend über die
+    Tür wie in jeden Bereich ohne Sensor); wer zurückkommt oder neu ist, erscheint gehend an ihr.
+  - Für das Treppenhaus gibt es keine Zahl, keinen Zustand und keine Entitäten mehr; `presence_haus_*`
+    zählt nur die Wohnung. Was ein Sensor durch die offene Tür im Treppenhaus misst, wird wie im Balkon
+    verworfen.
+  - Alte Entitäten, die der Broker noch hält (`presence_treppe_*`), löscht die App beim Verbinden:
+    Sie liest die beibehaltenen Discovery-Konfigurationen ihres Geräts und leert, was sie nicht mehr
+    veröffentlicht, mit dem Zustand.
+  - Ein Bereich ohne Sensor ist *offen*, wenn eine Tür von dort nach draußen führt; endet ein
+    Aufenthalt dort, geht man durch eine seiner Türen, auch nach draußen. Die Parameter
+    `dwell_median_open`, `dwell_spread_open` und die Rate `leave_rate` entfallen.
+  - Im Editor ist nichts zu ändern: Der Raum *Treppe* behält seinen Haken *Eingang*; der gezeichnete
+    Raum legt die Wohnungstür fest. `people.json` passt danach nicht mehr (andere Orte): Die App beginnt
+    einmal ohne Wissen über die Personen.
+
+  Gemessen (12 Hypothesen): Meldungen bis 6.10. Licht fälschlich an 0 von 41, aus 1,68 von 15 (wie
+  0.12.0), Log-Evidenz −1121544 (−5); Meldungen vom 7.10. an 0 von 13, aus 0 von 7 (wie 0.12.0),
+  −449356 (−35; ohne das Verwerfen der Messungen im Treppenhaus −449357). Wertungen fürs Treppenhaus in
+  der Wahrheitstabelle (7.10. 08:29) werden nicht mehr bewertet. Leere Nacht 6./7.10. 0 min Licht an.
+  Weggehen 7.10. um 8:57 (zweite Person, Telefon „not_home“ erst 9:06:59): im Haus erwartet 1,10
+  statt 1,99 um 8:57:00, Anzeige 1 statt 2 bis 8:59.
+
 ## 0.14.0
 
 - **Die Geisterkarte lernt keinen Sitzplatz mehr als Geisterquelle** (MODEL.md 4.2, 9, 10). Am 6.10.
