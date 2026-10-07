@@ -3,6 +3,7 @@ targets turned into floor positions with their measurement error, and marked whe
 person: behind a wall or outside all rooms. Which of them are measurements at all (coasted, frozen)
 decides sensortracks.py."""
 
+import json
 import math
 from dataclasses import dataclass, field
 
@@ -64,6 +65,47 @@ class SensorClock:
             self.offset = min(candidate, self.offset + 0.001 * (up - self.last_up))
         self.last_up = up
         return up + self.offset
+
+
+def _number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def parse_frame(payload: bytes) -> dict:
+    """A frame as MQTT brings it (presence/<id>/frame), checked before anything uses it: an object;
+    uptime_ms a number (or missing); targets a list of objects with numbers x, y (speed, slot if
+    there); ld2410 an object (or missing) with its gates lists of numbers. ValueError (why) for
+    anything else - a wrong payload under the prefix (another device, a test, a firmware error)
+    stopped the app until 0.18."""
+    try:
+        frame = json.loads(payload)
+    except ValueError as e:
+        raise ValueError(f"no JSON ({e})") from None
+    if not isinstance(frame, dict):
+        raise ValueError(f"no object but {type(frame).__name__}")
+    up = frame.get("uptime_ms")
+    if up is not None and not (_number(up) and up >= 0):
+        raise ValueError(f"uptime_ms {up!r}")
+    targets = frame.get("targets", [])
+    if not isinstance(targets, list):
+        raise ValueError(f"targets {targets!r}")
+    for tg in targets:
+        if not isinstance(tg, dict) or not (_number(tg.get("x")) and _number(tg.get("y"))):
+            raise ValueError(f"target {tg!r}")
+        if not _number(tg.get("speed", 0)) or isinstance(tg.get("slot", 0), bool) or not isinstance(tg.get("slot", 0), int):
+            raise ValueError(f"target {tg!r}")
+    ld = frame.get("ld2410")
+    if ld is not None:
+        if not isinstance(ld, dict):
+            raise ValueError(f"ld2410 {ld!r}")
+        for k in ("move_gates", "still_gates"):
+            gates = ld.get(k)
+            if gates is not None and not (isinstance(gates, list) and all(_number(g) for g in gates)):
+                raise ValueError(f"ld2410 {k} {gates!r}")
+        for k in ("moving_distance", "still_distance"):
+            if ld.get(k) is not None and not _number(ld[k]):
+                raise ValueError(f"ld2410 {k} {ld[k]!r}")
+    return frame
 
 
 def detections(config: Config, s: SensorConfig, frame: dict) -> list:

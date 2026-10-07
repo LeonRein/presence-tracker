@@ -50,10 +50,21 @@ async def mqtt_source(settings: dict, prefix: str, on_message, on_client):
                 await client.subscribe(f"{prefix}/+/status")
                 await on_client(client)
                 async for msg in client.messages:
-                    on_message(str(msg.topic), msg.payload, time.time())
+                    try:
+                        on_message(str(msg.topic), msg.payload, time.time())
+                    except Exception:  # noqa: BLE001 - one message must not end the connection
+                        log.exception("MQTT message on %s not handled", msg.topic)
         except aiomqtt.MqttError as e:
             log.warning("MQTT: %s, reconnecting in 5 s", e)
             await on_client(None)
+            await asyncio.sleep(5)
+        except Exception:  # noqa: BLE001 - whatever it was, the app must stay connected (Node-RED keeps
+            # a light's last state while it is gone)
+            log.exception("MQTT loop failed, reconnecting in 5 s")
+            try:
+                await on_client(None)
+            except Exception:  # noqa: BLE001
+                log.exception("MQTT: disconnect not handled")
             await asyncio.sleep(5)
 
 

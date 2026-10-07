@@ -28,7 +28,8 @@ from .filter import Tracker
 from .destination import DestinationMap
 from .ghostmap import GhostMap
 from .sources import Clock, ReplayClock, mqtt_source, replay_source
-from .frames import SensorClock
+from .frames import SensorClock, parse_frame
+from .util import Throttled
 
 log = logging.getLogger(__name__)
 STATIC = (pathlib.Path(__file__).parent / "static").resolve()
@@ -104,6 +105,7 @@ class App:
         self.reports = data_dir / "reports"
         self.recent = collections.deque()  # (receive time, topic, payload) of the last REPORT_WINDOW s
         self.shown = collections.deque()  # (model time, what the app showed) per second, as long back
+        self.throttled = Throttled(log)  # log lines about bad input: at most one a minute per kind and sensor
         self._reset_tracker()
         self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
 
@@ -187,23 +189,34 @@ class App:
     # ------------------------------------------------------------------ input
 
     def on_message(self, topic: str, payload: bytes, recv: float):
+        """One MQTT message. Never raises: whatever comes in must not stop the app (Node-RED keeps a
+        light's last state while it is gone)."""
+        try:
+            self._on_message(topic, payload, recv)
+        except Exception:  # noqa: BLE001 - logged; the next message is handled as always
+            self.throttled(("message", topic), logging.ERROR, "message on %s not handled", topic, exc_info=True)
+
+    def _on_message(self, topic: str, payload: bytes, recv: float):
         if self.discovery.retained(topic, payload):  # our own entities as the broker keeps them
             return
         parts = topic.split("/")
         if len(parts) != 3 or parts[0] != self.prefix:
             return
+        sensor_id, kind = parts[1], parts[2]
+        if kind == "frame":
+            try:
+                frame = parse_frame(payload)
+            except ValueError as e:  # dropped like a frame lost on the way (and not in a report)
+                self.throttled(("frame", sensor_id), logging.WARNING, "frame of %s dropped: %s (%r)",
+                               sensor_id, e, bytes(payload[:200]))
+                return
         self.recent.append((recv, topic, payload))
         while self.recent and self.recent[0][0] < recv - REPORT_WINDOW:
             self.recent.popleft()
-        sensor_id, kind = parts[1], parts[2]
         if kind == "status":
             self.sensor_status[sensor_id] = payload.decode(errors="replace")
             return
         if kind != "frame":
-            return
-        try:
-            frame = json.loads(payload)
-        except ValueError:
             return
         start = time.process_time()
         t = self.clocks[sensor_id](recv, frame.get("uptime_ms"))
@@ -212,7 +225,11 @@ class App:
             self._reset_tracker()
             self.calibrator.reset()
             t = self.clocks[sensor_id](recv, frame.get("uptime_ms"))
-        self.calibrator.on_frame(sensor_id, t, frame)
+        try:
+            self.calibrator.on_frame(sensor_id, t, frame)
+        except Exception:  # noqa: BLE001 - the calibration's data, not the model: logged only
+            self.throttled(("calibration", sensor_id), logging.ERROR, "calibration: frame of %s not taken",
+                           sensor_id, exc_info=True)
         try:
             self.tracker.process_frame(sensor_id, t, frame)
         except Exception:  # noqa: BLE001 - see _model_failed

@@ -4,6 +4,7 @@ stops it or freezes its outputs leaves a light that is on burning."""
 
 import asyncio
 import base64
+import json
 import os
 import socket
 import time
@@ -69,3 +70,87 @@ def test_a_browser_that_stops_reading_holds_up_nothing(tmp_path, monkeypatch):
         await runner.cleanup()
 
     asyncio.run(main())
+
+
+BAD_FRAMES = {  # valid JSON, but no frame (BUGS 3): each of these stopped the app until 0.18
+    "null": b"null",
+    "list": b"[]",
+    "number": b"5",
+    "uptime_ms a string": b'{"uptime_ms": "x", "targets": [], "ld2410": {}}',
+    "a target without y": b'{"uptime_ms": 1100, "targets": [{"x": 100, "slot": 1}], "ld2410": {}}',
+    "x null": b'{"uptime_ms": 1200, "targets": [{"x": null, "y": 1000, "slot": 1}], "ld2410": {}}',
+    "targets null": b'{"uptime_ms": 1300, "targets": null, "ld2410": {}}',
+    # caught before, but by a restart of the model (seconds of CPU each)
+    "x NaN": b'{"uptime_ms": 1400, "targets": [{"x": NaN, "y": 1000, "slot": 1}]}',
+    "ld2410 a list": b'{"uptime_ms": 1500, "targets": [], "ld2410": []}',
+    "a gate a string": b'{"uptime_ms": 1600, "targets": [], "ld2410": {"move_gates": ["a"], "still_gates": []}}',
+    "a target a list": b'{"uptime_ms": 1700, "targets": [[1]]}',
+    "no JSON": b"{",
+}
+
+
+def test_no_payload_stops_the_app_or_restarts_the_model(tmp_path, caplog):
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    tracker = app.tracker
+    good = {"uptime_ms": 1000, "targets": [], "ld2410": {}}
+    app.on_message("presence/a/frame", json.dumps(good).encode(), 1000.0)
+    for name, payload in BAD_FRAMES.items():
+        app.on_message("presence/a/frame", payload, 1001.0)  # must not raise
+        assert app.tracker is tracker, name  # dropped, not a model failure
+    assert app.tracker.runtime["a"].frames == 1
+    assert sum("dropped" in r.message for r in caplog.records) == 1  # once a minute per sensor
+    app.on_message("presence/a/frame", json.dumps({**good, "uptime_ms": 2000}).encode(), 1001.0)
+    assert app.tracker.runtime["a"].frames == 2 and app.tracker is tracker
+    assert [json.loads(p)["uptime_ms"] for _, topic, p in app.recent] == [1000, 2000]  # not in a report
+
+
+def test_the_mqtt_loop_survives_whatever_a_message_does(monkeypatch):
+    """Even if handling a message failed, the MQTT connection goes on."""
+    import aiomqtt
+
+    from presence_tracker import sources
+
+    class Msg:
+        def __init__(self, n):
+            self.topic, self.payload = "presence/a/frame", str(n).encode()
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def subscribe(self, topic):
+            pass
+
+        @property
+        def messages(self):
+            async def gen():
+                for n in range(3):
+                    yield Msg(n)
+                raise ValueError("anything")
+            return gen()
+
+    monkeypatch.setattr(aiomqtt, "Client", Client)
+    seen, clients = [], []
+
+    def on_message(topic, payload, recv):
+        seen.append(payload)
+        raise RuntimeError("bad")
+
+    async def on_client(c):
+        clients.append(c)
+
+    async def main():
+        task = asyncio.create_task(sources.mqtt_source({"host": "x"}, "presence", on_message, on_client))
+        await asyncio.sleep(0.1)
+        assert not task.done()  # reconnecting
+        task.cancel()
+
+    asyncio.run(main())
+    assert seen == [b"0", b"1", b"2"] and clients[-1] is None  # all messages, then reconnecting
