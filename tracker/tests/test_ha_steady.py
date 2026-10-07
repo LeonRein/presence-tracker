@@ -1,6 +1,7 @@
 """What goes to Home Assistant (ha.Discovery.steady): the states exactly as they are, the attributes held
 so that the recorder writes a row only now and then."""
 
+import asyncio
 import random
 
 from presence_tracker import ha
@@ -61,3 +62,24 @@ def test_the_states_are_never_held():
         sent = d.steady("z", raw, t=k * rnd.choice((0.1, 0.2, 5.0)))
         for key in ("count", "occupied", "moving", "still", "approaching", "target"):
             assert sent[key] == raw[key]
+
+
+def test_a_deleted_zone_takes_its_retained_state_along():
+    """Until 0.18 only the discovery topic of a zone deleted while the app runs was cleared; its state
+    stayed retained in the broker."""
+    sent = []
+
+    async def publish(topic, payload, retain):
+        sent.append((topic, payload, retain))
+
+    d = ha.Discovery(publish)
+    asyncio.run(d.states({"wohn": ZoneState(count=1), "bad": ZoneState()}, t=0.0))
+    assert {t for t, _, _ in sent} == {"presence-tracker/zone/wohn/state", "presence-tracker/zone/bad/state"}
+    sent.clear()
+    asyncio.run(d.sync([]))  # the zones as edited (sync clears what was sent: all goes out again)
+    sent.clear()
+    asyncio.run(d.states({"wohn": ZoneState(count=1)}, t=1.0))
+    assert ("presence-tracker/zone/bad/state", "", True) in sent
+    sent.clear()
+    asyncio.run(d.states({"wohn": ZoneState(count=1)}, t=2.0))
+    assert not sent

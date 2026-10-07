@@ -537,11 +537,16 @@ class App:
         return web.FileResponse(path, headers={"Cache-Control": "max-age=31536000, immutable"})
 
     async def h_image(self, request):
+        """An uploaded image. Served from the ingress origin, that is Home Assistant's: an SVG opened
+        directly could run a script there. The policy forbids any (as an <img> or <image> it can't run
+        one anyway), and the type is the one of the name, never sniffed."""
         name = request.match_info["name"]
         path = self.images / name
         if "/" in name or not path.is_file():
             raise web.HTTPNotFound()
-        return web.FileResponse(path, headers={"Cache-Control": "max-age=3600"})
+        return web.FileResponse(path, headers={
+            "Cache-Control": "max-age=3600", "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox"})
 
     async def h_get_config(self, request):
         known = sorted(set(self.tracker.runtime) | set(self.config.sensor_by_id))

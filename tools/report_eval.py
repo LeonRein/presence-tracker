@@ -150,9 +150,10 @@ def main():
             p = {z: counts[z] for z in rooms}
             p.update({rid: places[rid] for rid in config.regions})
             for r in inside:
+                q = p
                 if r.get("walks"):  # nobody stays: where an LD2450 measures somebody, they walk through
-                    p = {z: v for z, v in p.items() if m["t"] - seen.get(z, -1e9) > r["walks"]}
-                samples[r["name"]].append((m["t"], p))
+                    q = {z: v for z, v in p.items() if m["t"] - seen.get(z, -1e9) > r["walks"]}
+                samples[r["name"]].append((m["t"], q))  # (not p: the next window would get the filter too)
             if a.trace:
                 print(time.strftime("%H:%M:%S", time.localtime(m["t"])) + " "
                       + " ".join(f"{z[:5]} {1 - v[0]:.2f}" for z, v in p.items()) + f" H{len(tracker.hyps)}"

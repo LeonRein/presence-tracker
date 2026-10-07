@@ -78,6 +78,7 @@ class Discovery:
         self.stale: set[str] = set()  # retained topics of entities no longer wanted, to be cleared
         self.sent: dict[str, dict] = {}  # zone id -> the last payload (steady)
         self.stamps: dict[str, dict] = {}  # zone id -> entity state -> when its attributes last changed
+        self.state_zones: set[str] = set()  # zones whose state this run published (retained)
 
     def steady(self, zone_id: str, d: dict, t: float | None = None) -> dict:
         """The payload to publish for Home Assistant (GROUPS): the states as they are, each entity's
@@ -159,8 +160,15 @@ class Discovery:
             self.stale.discard(topic)
             if topic not in self.wanted and topic not in wanted_states:
                 await self.publish(topic, "", True)
+        # a zone deleted (or made the stairwell) while the app runs: its retained state goes too
+        for zone_id in sorted(self.state_zones - set(states)):
+            await self.publish(f"{PREFIX}/zone/{zone_id}/state", "", True)
+            self.state_zones.discard(zone_id)
+            for d in (self.last_state, self.sent, self.stamps):
+                d.pop(zone_id, None)
         for zone_id, st in states.items():
             payload = json.dumps(self.steady(zone_id, st.to_dict(), t))
             if force or self.last_state.get(zone_id) != payload:
                 await self.publish(f"{PREFIX}/zone/{zone_id}/state", payload, True)
                 self.last_state[zone_id] = payload
+                self.state_zones.add(zone_id)

@@ -406,3 +406,24 @@ def test_reset_tracks_sees_whoever_sits_there_again(tmp_path):
     now = app.tracker.ld_background.to_dict()
     assert now["num"] == bg["num"] and now["den"] == bg["den"]  # learned nothing since the reset
     assert app.start_learned["ld_background"]["held"] == bg["held"]  # in a report: the replay holds too
+
+
+def test_an_uploaded_svg_runs_no_script(tmp_path):
+    """Served from Home Assistant's origin (ingress), an SVG with a script opened directly ran it there."""
+    from aiohttp.test_utils import TestClient, TestServer
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><rect width="1" height="1"/></svg>'
+
+    async def main():
+        async with TestClient(TestServer(app.web_app())) as client:
+            r = await client.post("/api/background", json={"filename": "plan.svg", "data": base64.b64encode(svg).decode()})
+            url = (await r.json())["url"]
+            r = await client.get("/" + url)
+            return r.status, r.headers, await r.read()
+
+    status, headers, body = asyncio.run(main())
+    assert status == 200 and body == svg and headers["Content-Type"] == "image/svg+xml"
+    csp = headers["Content-Security-Policy"]
+    assert "default-src 'none'" in csp and "sandbox" in csp and "script-src" not in csp
+    assert headers["X-Content-Type-Options"] == "nosniff"
