@@ -27,15 +27,17 @@
     <svg id="map" tabindex="0"></svg>
     <div id="hint" class="hint" hidden></div>
     <div class="map-tools">
-      <button id="zoom-fit" title="Alles zeigen">⤢</button>
-      <button id="zoom-in" title="Vergrößern">+</button>
-      <button id="zoom-out" title="Verkleinern">−</button>
+      <button id="undo" title="Rückgängig (Strg+Z)" aria-label="Rückgängig" hidden>↶</button>
+      <button id="redo" title="Wiederholen (Strg+Y)" aria-label="Wiederholen" hidden>↷</button>
+      <button id="zoom-fit" title="Alles zeigen" aria-label="Alles zeigen">⤢</button>
+      <button id="zoom-in" title="Vergrößern" aria-label="Vergrößern">+</button>
+      <button id="zoom-out" title="Verkleinern" aria-label="Verkleinern">−</button>
     </div>
     <div id="cursor" class="cursor"></div>
   </section>
   <aside id="panel"></aside>
 </main>
-<div id="toast" class="toast" hidden></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 <script type="module" src="static/{{v}}/js/main.js"></script>
 </body>
 </html>

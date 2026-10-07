@@ -107,7 +107,14 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
 aus dem Betrieb gelernt) und wo er Geister meldet, dazu der gelernte Messfehler nach Abstand. Die App lernt das
 nebenbei; das Tracking nutzt es in dieser Version noch nicht.
 
-Rückgängig mit Strg+Z, Wiederholen mit Strg+Y. Alles wird automatisch gespeichert (`/data/tracker.json`).
+Alles wird sofort gespeichert (`/data/tracker.json`); eine kurze Meldung sagt *Gespeichert* und, wenn
+das Modell dabei neu startet, *Modell neu gestartet* (bei fast jeder Änderung an Grundriss, Zonen, Sensoren
+und Einstellungen, nicht bei den Schwellen „Ziel“). Rückgängig und Wiederholen mit den Knöpfen ↶ ↷ unten
+rechts auf der Karte oder mit Strg+Z / Strg+Y. Sie wirken nur auf Änderungen im aktuellen Tab; liegt die
+letzte Änderung in einem anderen Tab, sagt die App, in welchem, statt sie unsichtbar zurückzunehmen.
+Löschen mit Entf oder Rücktaste, *Von Karte nehmen*, *Neu sammeln* (Kalibrierung) und *Neu beginnen*
+(Live) fragen vorher nach. Ein Element bewegt sich erst, wenn es schon ausgewählt war und dann gezogen
+wird; einen eigenen Bearbeiten-Modus gibt es nicht.
 
 Zahlenfelder nehmen nur Werte in ihren Grenzen an. Ein leeres Feld oder ein Wert außerhalb (etwa
 *Kosten: Licht ohne Person* = 0, was jeden Raum besetzt und jedes Licht eingeschaltet hätte) wird nicht

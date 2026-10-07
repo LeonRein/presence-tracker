@@ -1,5 +1,5 @@
 import { refreshCoverage, renderPanel, seenTotal, updateLive } from './panels.js';
-import { emit, loadConfig, onChange, redo, select, setTool, state, undo } from './store.js';
+import { TAB_NAMES, emit, loadConfig, onChange, redo, redoState, select, setTool, state, undo, undoState } from './store.js';
 import { AlignTool, DoorTool, PlaceSensorTool, SelectTool, WallTool, ZoneTool } from './tools.js';
 import { esc, toast } from './util.js';
 import { MapView } from './view.js';
@@ -40,7 +40,23 @@ function updateHint() {
   hint.textContent = text || '';
 }
 
+// undo / redo as buttons on the map (also for touch); they act only on the edits of this tab
+const undoBtn = document.getElementById('undo');
+const redoBtn = document.getElementById('redo');
+undoBtn.onclick = () => undo();
+redoBtn.onclick = () => redo();
+function updateUndo() {
+  const editing = state.tab !== 'live';
+  undoBtn.hidden = redoBtn.hidden = !editing;
+  for (const [btn, st, verb] of [[undoBtn, undoState(), 'Rückgängig'], [redoBtn, redoState(), 'Wiederholen']]) {
+    btn.disabled = !st.can;
+    btn.title = st.can ? `${verb} (${verb === 'Rückgängig' ? 'Strg+Z' : 'Strg+Y'})`
+      : st.other ? `${verb}: Die letzte Änderung war im Tab „${TAB_NAMES[st.other]}“` : `${verb}: nichts da`;
+  }
+}
+
 onChange(what => {
+  updateUndo();
   if (what === 'tool' || what === 'tab') makeController();
   if (what === 'selection') view.renderOverlay();
   if ((what === 'config' || what === 'rooms') && state.showCoverage) refreshCoverage(view);

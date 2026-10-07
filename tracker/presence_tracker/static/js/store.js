@@ -53,6 +53,7 @@ const redoStack = [];
 const saveSoon = debounce(save, 500);
 
 let saving = Promise.resolve();
+let saveNote = '';  // what the toast after the next save says first
 
 async function save() {
   // one request at a time, so that an older answer never overwrites a newer state
@@ -60,6 +61,9 @@ async function save() {
     try {
       const r = await api('api/config', { method: 'PUT', body: JSON.stringify(state.config) });
       mergeRooms(r.rooms);
+      // the model starts over for most edits (walls, rooms, parameters): say so, it changes the live view
+      toast([saveNote, 'Gespeichert', r.restarted ? 'Modell neu gestartet' : ''].filter(Boolean).join(' · '));
+      saveNote = '';
     } catch (e) {
       // refused (a value out of its limits): back to what the server has, so that the next edit
       // doesn't send the refused value again
@@ -84,14 +88,18 @@ function mergeRooms(rooms) {
   if (JSON.stringify(merged.map(z => [z.id, z.points])) !== before) emit('rooms');
 }
 
+export const TAB_NAMES = { live: 'Live', plan: 'Grundriss', sensors: 'Sensoren', zones: 'Zonen', calibration: 'Kalibrierung', settings: 'Einstellungen' };
+
 export function edit(fn, { merge = null } = {}) {
   const before = JSON.stringify(state.config);
-  // consecutive edits with the same merge key (e.g. dragging) form one undo step
+  // consecutive edits with the same merge key (e.g. dragging) form one undo step; each step remembers
+  // its tab: undo acts only there, never on something out of sight
   if (!(merge && undoStack.length && undoStack[undoStack.length - 1].merge === merge)) {
-    undoStack.push({ snapshot: before, merge });
+    undoStack.push({ snapshot: before, merge, tab: state.tab });
     if (undoStack.length > 100) undoStack.shift();
   }
   redoStack.length = 0;
+  saveNote = '';
   fn(state.config);
   saveSoon();
   emit('config');
@@ -101,23 +109,30 @@ export function endMerge() {
   if (undoStack.length) undoStack[undoStack.length - 1].merge = null;
 }
 
-export function undo() {
-  const step = undoStack.pop();
-  if (!step) return;
-  redoStack.push(JSON.stringify(state.config));
-  state.config = JSON.parse(step.snapshot);
+// what undo / redo would do in the current tab: {can, other} (other: the tab of the next step elsewhere)
+export function undoState(stack = undoStack) {
+  const top = stack[stack.length - 1];
+  return { can: !!top && top.tab === state.tab, other: top && top.tab !== state.tab ? top.tab : null };
+}
+export const redoState = () => undoState(redoStack);
+
+function step(from, to, what) {
+  const top = from[from.length - 1];
+  if (!top) { toast(`Nichts ${what === 'undo' ? 'rückgängig zu machen' : 'zu wiederholen'}.`); return; }
+  if (top.tab !== state.tab) {
+    toast(`Die letzte Änderung war im Tab „${TAB_NAMES[top.tab] || top.tab}“. Dort ${what === 'undo' ? 'rückgängig machen' : 'wiederholen'}.`, 4000);
+    return;
+  }
+  from.pop();
+  to.push({ snapshot: JSON.stringify(state.config), merge: null, tab: top.tab });
+  state.config = JSON.parse(top.snapshot);
+  saveNote = what === 'undo' ? 'Rückgängig gemacht' : 'Wiederholt';
   saveSoon();
   emit('config');
 }
 
-export function redo() {
-  const snap = redoStack.pop();
-  if (!snap) return;
-  undoStack.push({ snapshot: JSON.stringify(state.config), merge: null });
-  state.config = JSON.parse(snap);
-  saveSoon();
-  emit('config');
-}
+export function undo() { step(undoStack, redoStack, 'undo'); }
+export function redo() { step(redoStack, undoStack, 'redo'); }
 
 export function select(sel) {
   state.selection = sel;

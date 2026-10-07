@@ -103,10 +103,13 @@ aside {
   width: 34px; height: 34px; border-radius: var(--radius); border: 1px solid var(--line);
   background: var(--surface); box-shadow: var(--shadow); cursor: pointer; font-size: 16px;
 }
+.map-tools button:disabled { opacity: .45; cursor: default; }
+.map-tools #redo { margin-bottom: 8px; }
 .hint {
   position: absolute; left: 50%; top: 12px; transform: translateX(-50%); max-width: calc(100% - 24px);
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 8px 12px; font-size: 13px; text-align: center;
+  pointer-events: none; /* never in the way of a wall or handle under it */
 }
 .cursor { position: absolute; left: 12px; bottom: 12px; font: 12px ui-monospace, monospace; color: var(--muted); }
 

@@ -11,6 +11,12 @@
   `SENSOR_LIMITS`, `Config.from_dict(check=True)`) und lehnt Werte außerhalb, `NaN` und leere Werte mit
   400 und einer deutschen Meldung ab; die Oberfläche lädt dann den gespeicherten Stand neu. Eine
   gespeicherte Konfiguration lädt wie bisher ohne Prüfung.
+- **Bearbeiten sicherer:** Nach jedem Speichern sagt eine Meldung *Gespeichert* und, wenn das Modell
+  neu startet, *Modell neu gestartet* (`PUT /api/config` antwortet mit `restarted`). Rückgängig und
+  Wiederholen gibt es als Knöpfe auf der Karte, auch am Handy. Strg+Z wirkt nur noch im Tab der Änderung;
+  sonst sagt die App, in welchem Tab sie war, statt still etwas Unsichtbares zurückzunehmen. Löschen per
+  Entf/Rücktaste, *Von Karte nehmen*, *Neu sammeln* und *Neu beginnen* fragen nach. Die Hinweisbox über
+  der Karte fängt keine Klicks mehr ab (eine Wand unter ihr lässt sich ziehen).
 
 ## 0.17.0
 

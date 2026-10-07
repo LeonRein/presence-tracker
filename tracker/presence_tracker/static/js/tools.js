@@ -569,9 +569,24 @@ export class SelectTool {
   key(ev) {
     const sel = state.selection;
     if (!sel || !['Delete', 'Backspace'].includes(ev.key)) return false;
+    // a key is easily hit by accident (Backspace): ask first
+    const what = selectionText(sel);
+    if (what && !isFixedRoom(sel) && !confirm(`${what} ${sel.kind === 'sensor' ? 'von der Karte nehmen' : 'löschen'}? Das Modell startet dabei neu.`)) return true;
     deleteSelection();
     return true;
   }
+}
+
+// "Wand", "Tür", "Zone „Sofa“" ... for questions and messages
+export function selectionText(sel) {
+  const c = state.config;
+  if (!sel) return '';
+  if (sel.kind === 'wall') return c.walls[sel.id]?.kind === 'divider' ? 'Diese Raumgrenze' : 'Diese Wand';
+  if (sel.kind === 'door') return 'Diese Tür';
+  if (sel.kind === 'zone') return `Die Zone „${c.zones.find(z => z.id === sel.id)?.name ?? ''}“`;
+  if (sel.kind === 'layer') return `Das Bild „${c.background.layers.find(l => l.id === sel.id)?.name ?? ''}“`;
+  if (sel.kind === 'sensor') return `Den Sensor „${sensorById(sel.id)?.name || sel.id}“`;
+  return '';
 }
 
 export function deleteSelection() {

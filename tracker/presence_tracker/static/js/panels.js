@@ -198,7 +198,11 @@ function livePanel(panel, view) {
     <p class="note">Das Modell vergisst, wo wer ist: Jeder Bewohner kann wieder überall sein, auch außer Haus. Die nächsten Messungen entscheiden neu.</p>
   </div>`));
   panel.querySelector('#raw').onchange = e => { state.showRaw = e.target.checked; view.render(); };
-  panel.querySelector('#reset').onclick = async () => { await api('api/tracks/reset', { method: 'POST' }); toast('Neu begonnen'); };
+  panel.querySelector('#reset').onclick = async () => {
+    if (!confirm('Neu beginnen? Das Modell vergisst, wo wer ist. Bis die Sensoren wieder jemanden sehen, können Räume als leer gelten und Lichter ausgehen.')) return;
+    await api('api/tracks/reset', { method: 'POST' });
+    toast('Neu begonnen');
+  };
   reportForm(panel.querySelector('#report'));
 }
 
@@ -262,7 +266,7 @@ function planPanel(panel, view) {
   if (sel?.kind === 'wall' && c.walls[sel.id]) wallDetail(detail, sel.id);
   else if (sel?.kind === 'door') doorDetail(detail, sel.id);
   else if (sel?.kind === 'room') { const z = c.zones.find(z => z.id === sel.id); if (z) roomDetail(detail, z); }
-  else detail.append(h('<p class="note">Wand, Tür oder Raum anklicken zum Bearbeiten. Rückgängig: Strg+Z.</p>'));
+  else detail.append(h('<p class="note">Wand, Tür oder Raum anklicken zum Bearbeiten. Jede Änderung wird sofort gespeichert; Rückgängig und Wiederholen mit ↶ ↷ unten rechts auf der Karte (oder Strg+Z / Strg+Y).</p>'));
 
   const roomList = panel.querySelector('#rooms');
   for (const z of rooms) {
@@ -506,7 +510,9 @@ function sensorDetail(el, s) {
     showSensorMap(el.querySelector('#smap-info'), s.id);
   };
   showSensorMap(el.querySelector('#smap-info'), s.id);
-  el.querySelector('#unplace')?.addEventListener('click', deleteSelection);
+  el.querySelector('#unplace')?.addEventListener('click', () => {
+    if (confirm(`„${s.name || s.id}“ von der Karte nehmen? Er zählt dann nicht mehr für die Verfolgung, das Modell startet neu.`)) deleteSelection();
+  });
 }
 
 let mapView = null;
@@ -660,6 +666,10 @@ function calibrationPanel(panel, view) {
   </div>`));
   panel.querySelector('#mirror').onchange = e => { state.calibMirror = e.target.checked; };
   panel.querySelector('#reset').onclick = async () => {
+    const cal = state.live?.calibration;
+    const hours = cal?.since && state.live?.t ? Math.max(0, (state.live.t - cal.since) / 3600) : null;
+    if (!confirm(`Neu sammeln? Das verwirft alle gesammelten Messungen in Bewegung${hours != null ? ` (${fmt(hours, 1)} h)` : ''}. `
+      + 'Für einen Vorschlag braucht es danach wieder Gehende aus mindestens 3 verschiedenen Stunden. Nur nach dem Drehen oder Versetzen eines Sensors nötig.')) return;
     await api('api/calibration/reset', { method: 'POST' });
     state.calibResult = null;
     toast('Gesammelte Messungen verworfen. Die App sammelt neu.');
@@ -770,7 +780,7 @@ function targetRooms(p) {
 
 function settingsPanel(panel) {
   const p = state.config.params;
-  const root = h('<div><h2>Einstellungen</h2><p class="note">Änderungen wirken sofort.</p></div>');
+  const root = h('<div><h2>Einstellungen</h2><p class="note">Änderungen wirken sofort. Dabei startet das Modell neu (außer bei den Schwellen „Ziel“): Es behält, was es über die Personen weiß, wenn der Grundriss gleich bleibt.</p></div>');
   const experts = h(`<details style="margin-top:16px"><summary><b>Experten: Werte des Modells</b></summary>
     <p class="note">Gemessen oder aus Messungen abgeleitet. Wer sie ändert, ändert das Modell; die Auswertung mit
     bekannter Wahrheit gilt dann nicht mehr. Nur zum Ausprobieren.</p></details>`);
