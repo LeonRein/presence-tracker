@@ -260,7 +260,8 @@ Das Modell, je Sensor:
   hineingeben (exakt für Personen an bekanntem Ort). Jede Person (Kacheln bzw. Komponenten an ihrem
   Mittel) wird dann mit `ℓ(e | Rest + S(x)) / ℓ(e | Rest)` gewichtet, der Rest = alle anderen, gemischt
   über die Hypothesen, die sie halten (Marginale wie bei JIPDA; was andere erklären, sagt über diese
-  Person nichts, 0.6.13). Die unbekannten Personen: höchstens eine von ihnen im Blick (Poisson nach
+  Person nichts, 0.6.13). Eine zweite Person am selben Ort bekommt so nur, was die erste nicht erklärt;
+  gekappte Werte (100) sprechen dabei nur für mehr Energie, nie dagegen (geprüft 7.10., 10). Die unbekannten Personen: höchstens eine von ihnen im Blick (Poisson nach
   einer abgeschnitten, danach wieder per Momentenabgleich); wer hinter einer Tür oder außer Haus ist,
   gibt nichts hinein.
 - **Echoquellen** (`ld2410.Echoes`): Energie, die von keiner Person kommt (7.10. 01:07:52–01:08:34 in
@@ -446,7 +447,9 @@ Lebensdauer der Geister geschätzt (4.2).
 Offen beim LD2410C (4.3): Flur 21:35 und 21:56 (Eintretende zu 0,5 statt 0,9 im Flur) liegen nicht
 am LD2410C: ohne seine Echoquellen im Flur 0,54 / 0,46, ganz ohne den Flur-LD2410C 0,51 / 0,62
 (sonst 0,52 / 0,40). Die Person steht in der Tür zum Arbeitszimmer (−1,5 / 5,0), und welche Seite,
-entscheiden 0,2 m. Ob und wie stark er durch Wände und Türen sieht (bisher: gar nicht; die zweite Person im
+entscheiden 0,2 m. Dass eine Person ohne Spur und eine Echoquelle Alternativen sind, die Quelle selbst aber gegen
+die Personen ohne Spur gewichtet wird, als wären sie da, ist nicht konsistent (10, „Energie aufteilen“).
+Ob und wie stark er durch Wände und Türen sieht (bisher: gar nicht; die zweite Person im
 Bad erscheint im Arbeitszimmer, wenn doch); die Amplitude einzelner Aufenthalte streut um einen Faktor
 1,3–1,6 um das Profil, der Schweif je Raum um bis zu 3 (4.3), das Modell nimmt das mittlere; δ ist gegen teils
 unkalibrierte LD2450 gemessen (0,07–0,5 m je nach Sensor); die Addition mehrerer Personen ist nicht an
@@ -649,6 +652,52 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   κ ist zu stark (gemessen Spearman 0,4, nicht 1): Sie zieht über die Energie κ und damit das Urteil
   des LD2450. Keine Variante macht weniger Lichtfehler; (e) ist die einzige ohne neuen Fehler und ist drin (Branch
   `ld-amplitude-2-s1`).
+- **Energie auf mehrere Personen aufteilen?** (7.10., Leons Frage zur Meldung 08:52 „zwei im
+  Schlafzimmer, eine geht ins Arbeitszimmer, gemeldet werden beide dort“; am Modell nichts geändert.)
+  Die Überlagerung teilt schon: Das Mittel ist die Summe, jede Person wird gegeben das gewichtet, was
+  die anderen hineingeben; eine zweite am selben Ort bekommt nur, was die erste nicht erklärt.
+  Gekappte Werte (100) können nur für mehr Energie sprechen (P(e ≥ 100) wächst mit dem Mittel); eine
+  zweite Person kostet in den übrigen Ringen. Eine Regel „wo schon jemand ist, bestätigt die Energie
+  niemanden“ wäre keine Wahrscheinlichkeit und hätte um 08:43–08:45 geschadet, als wirklich zwei im
+  Arbeitszimmer waren (der LD2410C sprach mit +1 bis +3 je Sekunde für die zweite). Die drei Meldungen
+  des Morgens, nachgerechnet (Aufnahmen ab 6.10. 19:28 abgespielt wie in der App, mit Neustarts und
+  der Umkalibrierung um 07:44):
+  - 08:52: (1) Der LD2450 im Arbeitszimmer begann um 08:51:31,6 eine Spur auf Leon im Flur, 0,6 m neben
+    dessen Vorhersage. Am Mittel der Vorhersage sieht dieser Sensor nichts (1 bzw. 6 % der beiden
+    Komponenten liegen in seiner Sicht), die Rate am Mittel ist 0 (9: am Mittel statt über die
+    Verteilung), „die Spur ist Leons“ hatte das Gewicht 0. Sie ging an die zweite Person (zu 0,97 in
+    Schlafzimmer und Bad, 0,64) oder einen Geist (0,35); mit dem Wiederfinden der Flur-Spur tauschten
+    die Personen, und die zweite lag ohne Spur dicht bei Leon (Arbeitszimmer 0,40). Die Auflösung q
+    trug dazu kaum bei (ohne sie 0,43 statt 0,47). Mit der Rate über die Verteilung (5 Sigma-Punkte,
+    Prototyp) gehört die Spur zu 0,999 Leon, im Arbeitszimmer sind 08:51:40–08:55:10 im Mittel 1,03
+    statt 1,96 Personen. (2) Der LD2410C hielt die zweite Person dort (1,00 nach 30 s, bis 08:55;
+    ohne seine Energien 0,18, ohne die gekappten Werte 0,91). Leon allein am Schreibtisch
+    (08:50:05–08:50:55, 08:52:15–08:56:05) gab mehr zurück als das mittlere Profil: bewegt Ring 1–3
+    1,5–1,9-fach, ruhig Ring 5–8 (3,75–6,75 m) 2–2,5-fach. Eine ruhende zweite Person irgendwo im Raum:
+    log-Bayes-Faktor +86 (die gekappten Werte allein +109); mit seinem Gewinn auf dem Profil (ML 2,3,
+    log-Likelihood +87 gegenüber 1) noch +14. Am selben Platz am 6.10. 22:22–22:50: Gewinn 0,8, eine
+    zweite −71 (`tools/ld2410/second.py`). Ob der ferne Überschuss am Morgen von Leon kommt oder von
+    der zweiten Person hinter der Wand (das Bad liegt in 4–7 m, 35° neben der Achse, 9), ist offen.
+  - 08:45 (zwei im Arbeitszimmer, eine im Bad gezeigt): Der Überschuss über die beiden Profile schaltete
+    ab 08:42:56 eine Echoquelle ein (0,10 → 0,98 bis 08:43:06). Mit der Quelle an zählt die zweite
+    Person im Blick nur mit P(keine Quelle) und ging ins Bad (08:43–08:45 im Mittel 1,04 Personen im
+    Arbeitszimmer; ohne Echoquellen 2,12, ohne diesen LD2410C 1,72). Das ist nicht konsistent: Die
+    Quelle wird gegen die Personen ohne Spur gewichtet, als wären sie da, die Person dann, als nähme
+    die Quelle ihren Platz ein. Geprüft und verworfen: (a) Person und Quelle addieren sich wie zwei
+    Personen, die Person gegeben die Quellen als Mischung über deren Zustände (exakt für das Paar):
+    08:45 richtig (2,00); Licht fälschlich aus 2,67 statt 3,00 von 15, an 0 von 41, Log-Evidenz +809;
+    aber im leeren Raum 71 statt 0 Minuten Licht an (Küche 6.10. 19:10–20:15), Personen ohne Spur
+    bleiben (Arbeitszimmer 08:46 25 s nach dem Gehen), Rechenzeit 3,7 statt 2,7 %. (b) Dasselbe mit
+    dem Mittel der Quellen statt der Mischung, und (c) die Quellen auch in ihrer eigenen Gewichtung
+    gegen die Personen ohne Spur als Alternative: die unbekannten Personen wuchsen auf 1,4 bzw. 5,7 im
+    Blick. Der Ausschluss unterdrückt Geister, solange eine Person mehr zurückgibt als ihr Profil.
+  - 08:29 (die zweite Person „durch die Wand ins Treppenhaus“): Sie saß 1 m vor dem Esszimmersensor
+    und gab weniger zurück als das Profil (Gewinn 0,6, ruhig fern 0,2–0,3-fach); der LD2410C sprach je
+    Sekunde mit −0,4 bis −1,7 gegen sie, und als ihre Spur riss, ging sie durch die Tür (08:29:22–29
+    Treppenhaus 0,99). Ohne diesen LD2410C blieb sie (1,00).
+  Alle drei kommen aus der Amplitude einer Person je Aufenthalt (4.3: 10–90 % 0,14–2,3), die das
+  Modell bis 0.10.0 nicht hatte (seitdem drin, siehe den Eintrag davor): zu groß erklären eine zweite Person oder eine Echoquelle den Rest, zu klein schiebt
+  die Energie die Person hinaus.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

@@ -21,6 +21,11 @@
   08:05–08:06 P(belegt) 0,000 bis 08:08). Jetzt beginnen nur die Spuren des geänderten Sensors neu wie
   nach einer Datenlücke; ohne Wissen beginnt das Modell nur bei neuem Grundriss oder neuen Parametern
   (MODEL.md 5.3, 10). `tools/report_eval.py` unverändert (Licht fälschlich an 0 von 41, aus 3,0 von 15).
+- `tools/ld2410/second.py`: Will der LD2410C eine zweite Person, wo eine Person mit Spur allein ist?
+  Log-Bayes-Faktor einer ruhenden zweiten Person im Raum, der Anteil der gekappten Werte und dasselbe
+  mit dem Gewinn der Person auf dem Profil (MODEL.md 10, „Energie aufteilen“: die Energien werden
+  schon richtig aufgeteilt; die Meldungen vom 7.10. 08:29, 08:45 und 08:52 kommen aus der Amplitude
+  je Aufenthalt und, um 08:52, aus der Erfassungsrate am Mittel einer Gauß-Komponente).
 
 ## 0.10.0
 
