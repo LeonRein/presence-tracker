@@ -67,6 +67,14 @@ class App:
         self._reset_tracker()
         self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
 
+    def _model_failed(self, where: str):
+        """An error in the model must not stop the app: 0.9.3 died on one LD2410C frame (7.10.,
+        between 22:52 and 2:07), the MQTT client said goodbye cleanly, so its last will never went
+        out, and Home Assistant kept the last states for hours. Logged with the traceback; the model
+        starts over from what was learned and saved."""
+        log.exception("model failed on %s: starting over", where)
+        self._reset_tracker()
+
     def _reset_tracker(self):
         self.tracker = Tracker(self.config)
         # where the sensors start ghost tracks (learned online, MODEL.md 4.2): it holds only while the
@@ -123,7 +131,10 @@ class App:
             log.info("replay restarted, resetting tracker")
             self._reset_tracker()
             t = self.clocks[sensor_id](recv, frame.get("uptime_ms"))
-        self.tracker.process_frame(sensor_id, t, frame)
+        try:
+            self.tracker.process_frame(sensor_id, t, frame)
+        except Exception:  # noqa: BLE001 - see _model_failed
+            self._model_failed(f"frame of {sensor_id}")
         self.last_frame_t = t
         self.stats["frames"] += 1
         self.stats["cpu"] += time.process_time() - start
@@ -155,8 +166,12 @@ class App:
             if self.tracker.start is None:
                 continue
             start = time.process_time()
-            self.tracker.step(self.clock())
-            self.zone_states = self.tracker.zone_states()
+            try:
+                self.tracker.step(self.clock())
+                self.zone_states = self.tracker.zone_states()
+            except Exception:  # noqa: BLE001 - see _model_failed
+                self._model_failed("step")
+                continue
             if not self.replay and time.monotonic() - self.last_model_save > 600:
                 self.last_model_save = time.monotonic()
                 self._save_learned()

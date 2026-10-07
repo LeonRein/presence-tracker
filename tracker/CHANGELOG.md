@@ -25,7 +25,11 @@ Arbeitszimmer, obwohl im Schlafzimmer“ (22:40, 22:42) kommen jetzt richtig her
   Diagnose (`diag.py`).
 - `tools/report_eval.py`: spielt die Aufnahmen so ab, wie die App lief (Neustarts, gelernte Karten), und
   bewertet je Raum gegen eine Wahrheitstabelle aus Meldungen, Lichtschaltungen und Nächten.
-- Behoben: Der alte LD2410C-Code konnte bei langem „an“ abstürzen (`log(0)`).
+- Behoben: Der alte LD2410C-Code konnte bei langem „an“ abstürzen (`log(0)`). Das ist in der Nacht zum 7.10.
+  passiert: Die App lag bis zum nächtlichen Neustart von Home Assistant (2:07) still, und weil sich der
+  MQTT-Client dabei sauber abmeldete, ging ihr „offline“ nie raus; Home Assistant zeigte stundenlang die
+  letzten Zustände. Jetzt hält ein Fehler im Modell die App nicht mehr an: Er wird mit Traceback
+  protokolliert, und das Modell beginnt neu mit dem, was gelernt und gespeichert ist.
 - Rechenzeit: Zählverteilungen aller Räume auf einmal und die Bewegung der Kacheldichten in zwei statt sechs
   Durchgängen (−4 %, gleiche Ergebnisse); OpenBLAS auf einem Thread (−7 % CPU, die Threads warteten nur).
   Insgesamt etwa so viel wie 0.9.3 (3-Sensor-Bezugsstunde 2,6 % eines Kerns, 0.6.21: 4,4 %).
