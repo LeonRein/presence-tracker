@@ -11,9 +11,6 @@
 
 substitutions:
   mqtt_prefix: presence
-  # Minimum time between two frames. The LD2450 sends one about every 90 ms;
-  # 50 ms passes every frame on, raise it to thin out the stream.
-  frame_interval_ms: "50"
   # While nothing is detected, only send a heartbeat frame this often
   idle_interval_ms: "5000"
 
@@ -85,6 +82,13 @@ mqtt:
   log_topic: null
   # Keep running for Home Assistant if the broker is down
   reboot_timeout: 0s
+  # Publish from a separate task: the main loop only puts the frame into a
+  # queue (29 messages, ~2.6 s of frames). Without it a WiFi/TCP stall blocks
+  # the loop in the publish call (network timeout 10 s, retried once), the
+  # radar frames pile up in the UART and are lost, and after 5 s the task
+  # watchdog reboots the board. If the queue is full, the frame is dropped
+  # and shows up as a gap in `seq`.
+  idf_send_async: true
 
 uart:
   - id: uart_ld2450
@@ -93,12 +97,17 @@ uart:
     baud_rate: 256000
     parity: NONE
     stop_bits: 1
+    # ~6 s of LD2450 frames (30 B at ~11 Hz) instead of 0.8 s (default 256 B),
+    # so a stalled main loop does not lose radar frames
+    rx_buffer_size: 2048
   - id: uart_ld2410
     tx_pin: GPIO9
     rx_pin: GPIO8
     baud_rate: 256000
     parity: NONE
     stop_bits: 1
+    # Several seconds of LD2410C engineering frames, as for the LD2450
+    rx_buffer_size: 2048
 
 ld2410:
   id: ld2410_radar
@@ -108,7 +117,8 @@ ld2450:
   id: ld2450_radar
   uart_id: uart_ld2450
   # Called after every LD2450 frame. Builds the tracking frame from the raw
-  # (unfiltered, internal) sensors below and publishes it via MQTT.
+  # (unfiltered, internal) sensors below and publishes it via MQTT. Every
+  # frame is sent, also the ones read in one go after the loop was held up.
   on_data:
     - lambda: |-
         static uint32_t last_publish = 0;
@@ -116,7 +126,6 @@ ld2450:
         static bool last_empty = true;
 
         const uint32_t now = millis();
-        if (now - last_publish < ${frame_interval_ms}) return;
 
         sensor::Sensor *xs[3] = {id(t1_x), id(t2_x), id(t3_x)};
         sensor::Sensor *ys[3] = {id(t1_y), id(t2_y), id(t3_y)};

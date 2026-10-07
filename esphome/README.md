@@ -63,9 +63,16 @@ Topic `presence/<name>/frame`, QoS 0, nicht retained:
 | `ld2410` | Statusdaten des LD2410C, Abstände in mm, Energie 0–100 |
 | `move_gates`, `still_gates` | Energie 0–100 je Entfernungsstufe (0,75 m, Stufe 0 = 0–0,75 m). Der Engineering Mode ist dafür immer an |
 
-Wann gesendet wird: bei jedem LD2450-Frame (etwa alle 90 ms), höchstens alle `frame_interval_ms` (50 ms, also jeder Frame).
+Wann gesendet wird: bei jedem LD2450-Frame (etwa alle 90 ms).
 Ist nichts erkannt (kein Ziel, LD2410C ohne Präsenz), kommt einmal ein leerer Frame und danach
-nur alle `idle_interval_ms` (5 s) ein Lebenszeichen. Beides lässt sich in der Gerätedatei per `substitutions` ändern.
+nur alle `idle_interval_ms` (5 s) ein Lebenszeichen. Das lässt sich in der Gerätedatei per `substitutions` ändern.
+
+Gesendet wird aus einer eigenen Task (`mqtt: idf_send_async: true`): Die Hauptschleife legt den Frame nur
+in eine Warteschlange (29 Nachrichten, etwa 2,6 s). Hängt das WLAN, liest sie die Radare weiter, statt im
+Publish zu blockieren (ohne die Option: Frames verloren, nach 5 s Neustart durch den Task-Watchdog).
+Die UART-Puffer (`rx_buffer_size: 2048`) fassen einige Sekunden Radar-Frames. Eine Lücke in `seq` heißt:
+Frame in der Warteschlange verworfen (voll) oder unterwegs verloren; ein Sprung in `uptime_ms` bei
+fortlaufendem `seq` heißt: Frame schon vor dem Senden verloren.
 
 Ob der Sensor online ist, steht retained in `presence/<name>/status` (`online` / `offline`, per Last Will).
 Zusätzlich veröffentlicht ESPHome alle nicht-internen Entitäten unter `presence/<name>/…`.
