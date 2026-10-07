@@ -715,9 +715,6 @@ const PARAMS = [
     ['lateral_sigma_slope', 'Messfehler seitlich, Anstieg', 'm/m', '', 0.005],
     ['wall_margin', 'Toleranz an Wänden', 'm', 'Messpunkte weiter hinter einer Wand oder außerhalb aller Räume sind Reflexionen und werden verworfen.', 0.05],
   ]],
-  ['Personen', [
-    ['start_people', 'Personen beim Start', '', 'Mit so vielen Personen beginnt das Modell, wenn es nichts weiß (nach einem Neustart), jede irgendwo im Haus oder außer Haus. Keine feste Zahl: Neuankömmlinge kommen über die Wege nach draußen dazu, wer sicher außer Haus ist, wird vergessen.', 1],
-  ]],
   ['Räume ohne Sensor', [
     ['dwell_median', 'Typischer Aufenthalt', 's', 'Annahme für Räume ohne Sensor und ohne Ausgang.', 10],
     ['dwell_spread', 'Streuung des Aufenthalts', '', 'Streuung von ln(Dauer): breit, damit lange Aufenthalte möglich bleiben.', 0.1],
