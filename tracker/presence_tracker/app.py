@@ -225,7 +225,7 @@ class App:
                 self.last_model_save = time.monotonic()
                 self._save_learned()
             self.stats["cpu"] += time.process_time() - start
-            await self.discovery.states(self.zone_states)
+            await self.discovery.states(self.zone_states, t=self.tracker.now)
             now = time.monotonic()
             if self.ws_clients and now - last_push >= 0.12:
                 last_push = now

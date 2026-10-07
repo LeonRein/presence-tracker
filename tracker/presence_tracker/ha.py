@@ -3,6 +3,7 @@ and a fifth ("Ziel") per room (not for an entry room: the stairwell is outside, 
 
 import json
 import re
+import time
 
 PREFIX = "presence-tracker"
 AVAILABILITY = f"{PREFIX}/status"
@@ -33,7 +34,7 @@ def _entities(zone_id: str, name: str, room: bool = False) -> list:
         ("sensor", "count", {**base, "name": f"{name} Personen", "icon": "mdi:account-multiple",
                               "state_class": "measurement", "value_template": "{{ value_json.count }}",
                               "json_attributes_topic": state,
-                              "json_attributes_template": "{{ {'moving': value_json.moving, 'still': value_json.still, 'probability': value_json.probability | default(none)} | tojson }}"}),
+                              "json_attributes_template": "{{ {'moving': value_json.count_moving | default(value_json.moving), 'still': value_json.count_still | default(value_json.still), 'probability': value_json.probability | default(none)} | tojson }}"}),
         ("binary_sensor", "moving", {**base, "name": f"{name} Bewegung", "device_class": "motion",
                                       "value_template": "{{ 'ON' if value_json.moving > 0 else 'OFF' }}"}),
         # MODEL.md 6: P(somebody walking enters within the look-ahead) above its threshold; the
@@ -46,11 +47,19 @@ def _entities(zone_id: str, name: str, room: bool = False) -> list:
 
 
 DISCOVERY = "homeassistant/+/presence_tracker/+/config"  # every discovery config of this device
-# the on/off states and counts: published whenever they change
-FLAGS = ("count", "occupied", "moving", "still", "approaching", "target")
-# attributes kept until they move by this much (two steps of their quantization, ZoneState.to_dict)
-STEADY = {"probability": 0.1, "p_enter": 0.1, "p_target": 0.1, "eta": 1.0, "distance": 1.0,
-          "target_eta": 1.0, "target_distance": 1.0, "target_weight": 0.2, "target_walks": 2.0}
+# Each change of an entity's state or attributes is a row in Home Assistant's recorder. The states go
+# out whenever they change; the attributes of each entity (a group of the payload) are held
+# (Discovery.steady): new with every flip of the entity's state, else only when one moved by more than
+# its tolerance and the group's last change is at least GAP s old. With "wird betreten" / "Ziel" off they
+# are one steady payload (probability 0, the rest empty).
+GROUPS = {
+    # entity state -> (its attributes {key: tolerance (None: any change)}, GAP s, quiet while off)
+    "count": ({"probability": 0.1, "count_moving": None, "count_still": None}, 60.0, False),
+    "approaching": ({"p_enter": 0.1, "eta": 1.0, "distance": 1.0, "person": None}, 10.0, True),
+    "target": ({"p_target": 0.1, "target_from": None, "target_distance": 1.0, "target_eta": 1.0, "target_person": None,
+                "target_walks": 2.0, "target_source": None, "target_weight": 0.2}, 10.0, True),
+}
+QUIET = {"p_enter": 0.0, "p_target": 0.0}  # the rest None
 
 
 class Discovery:
@@ -68,19 +77,40 @@ class Discovery:
         self.wanted: dict[str, str] = {}  # discovery topic -> payload, as of the last sync
         self.stale: set[str] = set()  # retained topics of entities no longer wanted, to be cleared
         self.sent: dict[str, dict] = {}  # zone id -> the last payload (steady)
+        self.stamps: dict[str, dict] = {}  # zone id -> entity state -> when its attributes last changed
 
-    def steady(self, zone_id: str, d: dict) -> dict:
-        """The payload to publish: an attribute that moved by less than its tolerance (STEADY) keeps
-        its last published value, unless an on/off state of the zone changed (then all are new).
-        Each change of an attribute is a new row in Home Assistant's recorder; the states flip
-        exactly when they do."""
+    def steady(self, zone_id: str, d: dict, t: float | None = None) -> dict:
+        """The payload to publish for Home Assistant (GROUPS): the states as they are, each entity's
+        attributes held. The count sensor's own copies of moving / still (count_moving, count_still)
+        are held with it; the moving sensor's state uses the live moving."""
+        t = time.monotonic() if t is None else t
+        d = dict(d, count_moving=d.get("moving"), count_still=d.get("still"))
         last = self.sent.get(zone_id)
-        if last is not None and all(d.get(k) == last.get(k) for k in FLAGS):
-            d = dict(d)
-            for k, tol in STEADY.items():
+        stamps = self.stamps.setdefault(zone_id, {})
+        for flag, (keys, gap, quiet) in GROUPS.items():
+            if flag not in d:
+                continue
+            if quiet and not d[flag]:
+                for k in keys:
+                    if k in d:
+                        d[k] = QUIET.get(k)
+                continue
+            if last is None or last.get(flag) != d[flag] or flag not in stamps:
+                stamps[flag] = t
+                continue
+            moved = False
+            for k, tol in keys.items():
                 a, b = d.get(k), last.get(k)
-                if a and b is not None and abs(a - b) < tol - 1e-9:  # 0: nothing about to happen, at once
-                    d[k] = b
+                if a == b:
+                    continue
+                if a is None or b is None or tol is None or isinstance(a, str) or abs(a - b) >= tol - 1e-9:
+                    moved = True
+            if moved and not 0.0 <= t - stamps[flag] < gap:  # (a clock gone back: as passed)
+                stamps[flag] = t
+            else:
+                for k in keys:
+                    if k in last:
+                        d[k] = last[k]
         self.sent[zone_id] = d
         return d
 
@@ -122,14 +152,15 @@ class Discovery:
                 self.published[topic] = payload
         self.last_state.clear()
 
-    async def states(self, states: dict, force: bool = False):
+    async def states(self, states: dict, force: bool = False, t: float | None = None):
+        """Publish the zones' states (held, steady); t: the model's time (default: the clock)."""
         wanted_states = {f"{PREFIX}/zone/{zone_id}/state" for zone_id in states}
         for topic in sorted(self.stale):
             self.stale.discard(topic)
             if topic not in self.wanted and topic not in wanted_states:
                 await self.publish(topic, "", True)
         for zone_id, st in states.items():
-            payload = json.dumps(self.steady(zone_id, st.to_dict()))
+            payload = json.dumps(self.steady(zone_id, st.to_dict(), t))
             if force or self.last_state.get(zone_id) != payload:
                 await self.publish(f"{PREFIX}/zone/{zone_id}/state", payload, True)
                 self.last_state[zone_id] = payload

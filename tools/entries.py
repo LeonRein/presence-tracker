@@ -32,7 +32,10 @@ Per hour since the start of the replay (the learning curve) the same in short.
 usage: python tools/entries.py --from "2026-10-06 18:00:00" --to "2026-10-07 20:00:00"
            --config FILE [--config-at "YYYY-mm-dd HH:MM:SS=FILE"]... [--start "YYYY-mm-dd HH:MM:SS"]...
            [--truth-config FILE] [--log OUT.npz] [--from-log IN.npz] [--learned FILE] [--no-learning]
-           [--prior WALKS] [--threshold C] [--room-threshold ROOM=C]...
+           [--prior WALKS] [--threshold C] [--room-threshold ROOM=C]... [--hourly]
+           [--score-from "YYYY-mm-dd HH:MM:SS"] [--score-to "..."]
+Entries into a room before it had a sensor (only inferred from a track ending at its door) are not
+scored; their number is printed.
 --from-log scores a replay logged before (--log) again, e.g. with another --prior or thresholds: the
 decision of "Ziel" is recomputed from what was logged (p_enter, the map's probability and its walks).
 """
@@ -383,13 +386,15 @@ def bridge(sig, t, hold=HOLD):
     return out
 
 
-def score(log, cross, rows, plan, signals, starts, warmup, lead_time):
+def score(log, cross, rows, plan, signals, starts, warmup, lead_time, window=None):
     t = log["t"]
     rooms = list(log["rooms"])
     observed = ~np.isnan(log["p"])  # (N, R): the model observed the room then
     valid = np.ones(len(t), bool)
     for s in starts:
         valid &= ~((t >= s) & (t < s + warmup))
+    if window is not None:  # only this period is scored
+        valid &= (t >= window[0]) & (t < window[1])
     gap = np.diff(t, prepend=t[0])
     hours = float(np.sum(gap[(gap <= 5) & valid])) / 3600
     base = {z: np.nan_to_num(log["occ"][:, j]) > 0.5 for j, z in enumerate(rooms)}
@@ -399,10 +404,13 @@ def score(log, cross, rows, plan, signals, starts, warmup, lead_time):
     any_entry = {k: np.array(sorted(v)) for k, v in any_entry.items()}
     idx = lambda tq: min(int(np.searchsorted(t, tq)), len(t) - 1)
     fresh = []
+    unseen = collections.Counter()  # entries into a room before it had a sensor (not scored)
     for c in cross:
         if c["to"] not in rooms or c["how"] not in RELIABLE or not (t[0] + 60 < c["t"] < t[-1] - 30):
             continue
         i0, j = idx(c["t"]), rooms.index(c["to"])
+        if valid[i0] and not observed[i0, j]:
+            unseen[c["to"]] += 1
         if not (valid[i0] and valid[idx(c["t"] - 20)] and observed[i0, j]):
             continue
         a, b = np.searchsorted(t, [c["t"] - 6, c["t"] - 4])
@@ -468,7 +476,7 @@ def score(log, cross, rows, plan, signals, starts, warmup, lead_time):
             cal.append((pz[sel], nxt <= t[sel] + 5.0))
         res[name] = {"leads": leads, "dists": dists, "false": false,
                      "cal": (np.concatenate([c[0] for c in cal]), np.concatenate([c[1] for c in cal]))}
-    return fresh, res, hours, valid
+    return fresh, res, hours, valid, unseen
 
 
 def report(log, cross, rows, plan, a, starts):
@@ -488,7 +496,9 @@ def report(log, cross, rows, plan, a, starts):
     col = lambda arr: {z: np.nan_to_num(arr[:, j]) > 0.5 for j, z in enumerate(rooms)}
     pcol = lambda arr: {z: arr[:, j] for j, z in enumerate(rooms)}
     signals = {"wird betreten": (col(log["app"]), pcol(log["pe"])), "Ziel": (col(on), pcol(prob))}
-    fresh, res, hours, valid = score(log, cross, rows, plan, signals, starts, a.warmup, lead_time)
+    window = (parse_time(a.score_from) if a.score_from else -math.inf, parse_time(a.score_to) if a.score_to else math.inf)
+    fresh, res, hours, valid, unseen = score(log, cross, rows, plan, signals, starts, a.warmup, lead_time,
+                                             window if a.score_from or a.score_to else None)
     t = log["t"]
     print(f"\n{hhmm(t[0])} - {hhmm(t[-1])}: {hours:.1f} h scored; {len(fresh)} entries into dark rooms "
           f"(lead_time {lead_time:g} s, approach threshold {c_v:.3f}, prior {prior:g} walks, thresholds "
@@ -508,6 +518,16 @@ def report(log, cross, rows, plan, a, starts):
                 f"mean {np.mean([f[2] for f in fl]) if fl else 0:4.1f} s")
     for name in signals:
         print(f"  {name:14s} {line(name)}")
+    if unseen:
+        print("not scored: entries into rooms the model did not observe then (a sensor came later; inferred from a "
+              "track ending at the door): " + ", ".join(f"{z} {n}" for z, n in sorted(unseen.items())))
+    # where the map knows nothing for the walkers (weight 0), "Ziel" is "wird betreten" (MODEL.md 6)
+    obs = ~np.isnan(log["pe"])
+    _, _, lam = decide(log, prior, thr, c_v)
+    blind = obs & (np.nan_to_num(lam) == 0)
+    differ = blind & ((np.nan_to_num(on) > 0.5) != (np.nan_to_num(log["app"]) > 0.5))
+    print(f"\nroom-steps where the map's weight is 0: {blind.sum()} of {obs.sum()}; "
+          f"Ziel differs from wird betreten in {differ.sum()} of them")
     print("\nper room (entries into it; false ons there):")
     for z in rooms:
         sel = np.array([c["to"] == z for c in fresh], dtype=bool)
@@ -528,7 +548,7 @@ def report(log, cross, rows, plan, a, starts):
         print(f"  {name:14s} " + " ".join(f"[{bins[q]:.2f},{min(bins[q + 1], 1):.2f}) {100 * y[b == q].mean() if (b == q).any() else 0:3.0f}% ({int((b == q).sum())})"
                                          for q in range(len(bins) - 1)))
     if a.hourly:
-        print("\nper hour since the start (learning curve): entries, lead >= 1 s / >= 2 s, false ons")
+        print("\nper hour since the start (learning curve): entries, lead >= 1 s / >= 2 s / >= 1 m, false ons")
         t0 = t[0]
         h_of = lambda tq: int((tq - t0) // 3600)
         H = h_of(t[-1]) + 1
@@ -541,9 +561,10 @@ def report(log, cross, rows, plan, a, starts):
             in_h = (t >= t0 + 3600 * h) & (t < t0 + 3600 * (h + 1))
             parts = []
             for name in signals:
-                L = res[name]["leads"][sel]
+                L, D = res[name]["leads"][sel], res[name]["dists"][sel]
                 nf = sum(1 for f in res[name]["false"] if h_of(f[0]) == h)
-                parts.append(f"{name} {100 * np.mean(L >= 1) if len(L) else 0:3.0f}/{100 * np.mean(L >= 2) if len(L) else 0:3.0f} %, "
+                pc = lambda m: 100 * np.mean(m) if len(m) else 0
+                parts.append(f"{name} {pc(L >= 1):3.0f}/{pc(L >= 2):3.0f}/{pc(D >= 1):3.0f} %, "
                              f"{nf / max(hrs[h], 1e-9):5.2f}/h")
             busy = lam[in_h & (lam > 0)]
             print(f"  {h:3d} {hhmm(t0 + 3600 * h)} {hrs[h]:4.2f} h, {sel.sum():3d} entries | " + " | ".join(parts)
@@ -573,6 +594,8 @@ def main():
     ap.add_argument("--room-threshold", action="append", default=[], help="ROOM=C (recomputes Ziel)")
     ap.add_argument("--warmup", type=float, default=60.0, help="s after each start not scored")
     ap.add_argument("--hourly", action="store_true", help="the learning curve per hour")
+    ap.add_argument("--score-from", help="score only from this time on (YYYY-mm-dd HH:MM:SS); the replay is the same")
+    ap.add_argument("--score-to", help="score only up to this time")
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(a.tracker))
     from presence_tracker.model import Config

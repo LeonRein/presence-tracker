@@ -7,10 +7,8 @@ def _q(x: float | None, step: float):
     return None if x is None else round(round(x / step) * step, 2)
 
 
-def _p(p: float, c: float | None) -> float:
-    """A probability in 5-% steps, near its threshold c (within 0.1) in 1-% steps."""
-    if c is not None and abs(p - c) < 0.1:
-        return round(p, 2)
+def _p(p: float) -> float:
+    """A probability in 5-% steps."""
     return round(round(p * 20) / 20, 2)
 
 
@@ -44,21 +42,21 @@ class ZoneState:
 
     def to_dict(self) -> dict:
         # coarse, so that Home Assistant records a new row only now and then (every change of an
-        # attribute is one): probabilities in 5-% steps (1 % near the threshold), times in 0.5 s,
-        # distances in 0.5 m; with nobody about to come (off, the probability below half its
-        # threshold) one steady payload: 0 and the rest empty
+        # attribute is one): probabilities in 5-% steps, times in 0.5 s, distances in 0.5 m; with
+        # nobody about to come (off, the probability below half its threshold) 0 and the rest empty.
+        # What Home Assistant gets is held further (ha.Discovery.steady)
         enter = self.p_enter is not None and (self.approaching or self.p_enter >= 0.5 * (self.c_enter or 0.0)
                                                and self.p_enter >= 0.01)
         tgt = self.p_target is not None and (self.target or self.p_target >= 0.5 * (self.c_target or 0.0)
                                               and self.p_target >= 0.01)
         return {"count": self.count, "occupied": self.occupied, "moving": self.moving,
                 "still": self.still, "approaching": self.approaching,
-                "p_enter": None if self.p_enter is None else _p(self.p_enter, self.c_enter) if enter else 0.0,
+                "p_enter": None if self.p_enter is None else _p(self.p_enter) if enter else 0.0,
                 "eta": _q(self.eta, 0.5) if enter else None,
                 "distance": _q(self.distance, 0.5) if enter else None,
                 "person": self.person if enter else None,
                 "target": self.target,
-                "p_target": None if self.p_target is None else _p(self.p_target, self.c_target) if tgt else 0.0,
+                "p_target": None if self.p_target is None else _p(self.p_target) if tgt else 0.0,
                 "target_from": self.target_from if tgt else None,
                 "target_distance": _q(self.target_distance, 0.5) if tgt else None,
                 "target_eta": _q(self.target_eta, 0.5) if tgt else None,
@@ -66,4 +64,4 @@ class ZoneState:
                 "target_walks": round(self.target_walks) if tgt else None,
                 "target_source": (("karte" if self.target_weight >= 0.5 else "bewegung") if tgt else None),
                 "target_weight": _q(self.target_weight, 0.1) if tgt else None,
-                **({} if self.probability is None else {"probability": _p(self.probability, None)})}
+                **({} if self.probability is None else {"probability": _p(self.probability)})}

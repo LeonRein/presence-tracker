@@ -6,6 +6,7 @@ import json
 
 import numpy as np
 
+from presence_tracker import ha
 from presence_tracker.destination import DestinationMap
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
@@ -48,9 +49,13 @@ def test_untrained_ziel_is_wird_betreten():
     a = Person(walk((1.0, 2.5), (1.0, 2.5), (8.5, 2.5), start=1.0, pauses={0: 4}))
     tr, out = run(a, a.waypoints[-1][0] + 1)
     assert any(st.approaching for _, st, _, _ in out)
-    for _, st, _, _ in out:
+    disc = ha.Discovery(None)
+    for t, st, _, _ in out:
         assert st.target == st.approaching
         assert st.target_weight == 0.0
+        # and so in what Home Assistant gets: binary_sensor..._ziel is binary_sensor..._approaching
+        sent = disc.steady("b", st.to_dict(), t)
+        assert sent["target"] == sent["approaching"] == st.approaching
     # on the room's scale: at its threshold exactly where p_enter is at approach_cost's
     on = [st for _, st, _, _ in out if st.approaching]
     assert all(st.p_target >= st.c_target for st in on)

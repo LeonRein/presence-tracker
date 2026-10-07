@@ -48,7 +48,7 @@ GIVE_UP = 0.01  # a known person who exists with less probability (wherever they
 RECYCLE_EVERY = 1.0  # s
 ENTER_MIN_WALK = 0.02  # "wird betreten" (MODEL.md 6): a person walking with less probability can raise no
                        # zone's p_enter by more than this; not moved on
-OUTPUT_PARAMS = ("light_cost", "lead_time", "approach_cost", "target_threshold", "target_thresholds")
+OUTPUT_PARAMS = ("target_threshold", "target_thresholds")  # "Ziel" only (MODEL.md 6)
 GAP_EXACT = 120.0  # s: the end of a gap in the data is moved as always, what lies before in leaps
 LEAP = 15.0  # s   (_predict_gap; 7.10. 08:06, 8 people, 3 h: rooms within 0.022 of moving all as always)
 MAX_LEAPS = 2000  # longer gaps in longer leaps (8 h of 8 people: 1.7 s CPU; a week in leaps of 5 min,

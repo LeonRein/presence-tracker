@@ -752,7 +752,7 @@ function roomName(id) {
 
 // the threshold of "Ziel" per room: empty = the default above
 function targetRooms(p) {
-  const el = h(`<div><h3>Schwelle „Ziel“ je Raum</h3><p class="note">Leer: die Schwelle oben. Vorschlag aus der Untersuchung (MODEL.md 6): Esszimmer und Küche 0,7, sonst 0,8.</p></div>`);
+  const el = h(`<div><h3>Schwelle „Ziel“ je Raum</h3><p class="note">Leer: die Schwelle oben. Gemessen (MODEL.md 10): 0,8 halbiert die vergeblichen Lichter gegenüber „wird betreten“, kommt aber seltener früh; 0,5 kommt öfter früh und ist trotzdem seltener vergeblich.</p></div>`);
   for (const z of roomsWithSensor(state.config, state.live)) {
     const v = (p.target_thresholds || {})[z.id];
     const row = h(`<div class="param"><label class="field">${esc(z.name)}
