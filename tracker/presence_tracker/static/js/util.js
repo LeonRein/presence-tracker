@@ -42,6 +42,55 @@ export function fmt(v, digits = 2) {
   return Number.isFinite(v) ? v.toFixed(digits).replace('.', ',') : '–';
 }
 
+// A number from an input field against its limits [low, high, low excluded, high excluded] (from the
+// server, model.PARAM_LIMITS): the error text, or '' if it is fine. Empty is an error: "" became 0
+// before, and light_cost 0 switched every light on.
+export function numberError(raw, lim) {
+  const text = String(raw ?? '').trim();
+  if (text === '') return 'Leer: bitte eine Zahl eingeben.';
+  const v = Number(text);
+  if (!Number.isFinite(v)) return 'Keine Zahl.';
+  if (!lim) return '';
+  const [lo, hi, loOpen, hiOpen] = lim;
+  const n = x => String(x).replace('.', ',');
+  if (v < lo || v > hi || (loOpen && v === lo) || (hiOpen && v === hi)) {
+    return `Erlaubt: ${loOpen ? 'größer als' : 'mindestens'} ${n(lo)} und ${hiOpen ? 'kleiner als' : 'höchstens'} ${n(hi)}.`;
+  }
+  return '';
+}
+
+// Binds a number field: a valid value goes to apply(value); an empty or invalid one keeps the previous
+// value, marks the field and says why. allowEmpty: empty is valid and gives apply(null).
+export function bindNumber(input, lim, apply, { allowEmpty = false } = {}) {
+  let prev = input.value;
+  if (lim) {
+    const [lo, hi, loOpen, hiOpen] = lim;
+    if (!loOpen) input.min = lo;
+    if (!hiOpen) input.max = hi;
+  }
+  const label = input.closest('label');
+  const showError = text => {
+    let el = label?.querySelector('.field-error');
+    if (text && !el && label) { el = document.createElement('span'); el.className = 'field-error'; el.setAttribute('role', 'alert'); label.append(el); }
+    if (el) { if (text) el.textContent = text; else el.remove(); }
+    input.classList.toggle('invalid', !!text);
+    input.toggleAttribute('aria-invalid', !!text);
+  };
+  input.onchange = () => {
+    const raw = input.value.trim();
+    if (raw === '' && allowEmpty) { prev = ''; showError(''); apply(null); return; }
+    const err = numberError(raw, lim);
+    if (err) {
+      input.value = prev;
+      showError(`${err} Der alte Wert bleibt.`);
+      return;
+    }
+    showError('');
+    prev = input.value;
+    apply(Number(raw));
+  };
+}
+
 export function toast(text, ms = 2500) {
   const el = document.getElementById('toast');
   el.textContent = text;

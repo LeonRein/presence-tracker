@@ -2,6 +2,14 @@
 
 ## Unveröffentlicht
 
+- **Zahlenfelder abgesichert:** Ein geleertes Feld wurde als 0 gespeichert; bei *Kosten: Licht ohne
+  Person* galt dann jeder Raum als besetzt, im Live-System wären alle Lichter angegangen. Jetzt behält
+  ein leeres oder ungültiges Feld seinen alten Wert und zeigt, was erlaubt ist (Grenzen je Einstellung,
+  Sensorwert, Türbreite und Bildlage). `PUT /api/config` prüft dieselben Grenzen (`model.PARAM_LIMITS`,
+  `SENSOR_LIMITS`, `Config.from_dict(check=True)`) und lehnt Werte außerhalb, `NaN` und leere Werte mit
+  400 und einer deutschen Meldung ab; die Oberfläche lädt dann den gespeicherten Stand neu. Eine
+  gespeicherte Konfiguration lädt wie bisher ohne Prüfung.
+
 ## 0.17.0
 
 - **Ziel** (MODEL.md 6, 10 „Ziel“): neue Entität `binary_sensor.presence_<raum>_ziel` je Raum, neben *wird

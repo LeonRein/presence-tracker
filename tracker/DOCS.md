@@ -109,6 +109,11 @@ nebenbei; das Tracking nutzt es in dieser Version noch nicht.
 
 Rückgängig mit Strg+Z, Wiederholen mit Strg+Y. Alles wird automatisch gespeichert (`/data/tracker.json`).
 
+Zahlenfelder nehmen nur Werte in ihren Grenzen an. Ein leeres Feld oder ein Wert außerhalb (etwa
+*Kosten: Licht ohne Person* = 0, was jeden Raum besetzt und jedes Licht eingeschaltet hätte) wird nicht
+gespeichert: Der alte Wert bleibt, das Feld wird rot markiert und sagt, was erlaubt ist. Der Server prüft
+dieselben Grenzen und lehnt solche Änderungen mit einer Meldung ab.
+
 ## Entitäten in Home Assistant
 
 Gerät **Presence Tracker**, für jeden Raum und Bereich:

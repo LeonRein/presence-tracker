@@ -2,7 +2,7 @@
 import { computeCoverage } from './coverage.js';
 import { api, edit, emit, select, sensorById, sensorColor, setTool, state } from './store.js';
 import { AlignTool, PlaceSensorTool, WallTool, ZoneTool, autoFitImage, deleteSelection } from './tools.js';
-import { ZONE_KINDS, dist, esc, fmt, h, regionOfRoom, roomsWithSensor, toast, uid, zoneOutline } from './util.js';
+import { ZONE_KINDS, bindNumber, dist, esc, fmt, h, regionOfRoom, roomsWithSensor, toast, uid, zoneOutline } from './util.js';
 import { loadSize } from './view.js';
 
 let skipRender = false;
@@ -325,7 +325,7 @@ function doorDetail(el, id) {
     <p class="note">Entlang der Wand ziehen verschiebt die Tür, die Griffe an den Enden ändern die Breite. Für die Räume ist die Tür zu, für Radar und Personen offen.</p>
   </div>`));
   el.querySelector('#del').onclick = deleteSelection;
-  el.querySelector('#width').onchange = e => panelEdit(c => { c.doors.find(d => d.id === id).width = Math.max(0.3, +e.target.value); });
+  bindNumber(el.querySelector('#width'), [0.3, 20, false, false], v => panelEdit(c => { c.doors.find(d => d.id === id).width = v; }));
 }
 
 // name and entry flag of a room; its outline comes from the walls
@@ -374,11 +374,12 @@ function layerEditor(el, view, id) {
   el.querySelector('#del').onclick = deleteSelection;
   el.querySelector('#opacity').oninput = e => panelEdit(c => { c.background.layers.find(x => x.id === id).opacity = +e.target.value; }, { merge: 'opacity' + id });
   for (const input of el.querySelectorAll('[data-k]')) {
-    input.onchange = () => edit(c => {
-      const layer = c.background.layers.find(x => x.id === id);
-      const v = +input.value;
-      layer[input.dataset.k] = input.dataset.k === 'scale' ? v / 1000 : v;
-    });
+    const k = input.dataset.k;
+    const lim = state.limits.layer?.[k];
+    // the scale is entered in mm per pixel
+    bindNumber(input, k === 'scale' && lim ? [lim[0] * 1000, lim[1] * 1000, lim[2], lim[3]] : lim, v => edit(c => {
+      c.background.layers.find(x => x.id === id)[k] = k === 'scale' ? v / 1000 : v;
+    }));
   }
   el.querySelector('#align').onclick = () => setTool({ name: 'align', layer: id });
   el.querySelector('#fit')?.addEventListener('click', () => {
@@ -494,11 +495,10 @@ function sensorDetail(el, s) {
     <p class="note">ID: ${esc(s.id)}</p>
   </div>`));
   for (const input of el.querySelectorAll('[data-k]')) {
-    input.onchange = () => panelEdit(c => {
-      const t = c.sensors.find(x => x.id === s.id);
-      const k = input.dataset.k;
-      t[k] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? +input.value : input.value;
-    });
+    const k = input.dataset.k;
+    const set = v => panelEdit(c => { c.sensors.find(x => x.id === s.id)[k] = v; });
+    if (input.type === 'number') bindNumber(input, state.limits.sensor?.[k], set);
+    else input.onchange = () => set(input.type === 'checkbox' ? input.checked : input.value);
   }
   el.querySelector('#replace').onclick = () => setTool({ name: 'place', id: s.id });
   el.querySelector('#smap').onchange = e => {
@@ -757,11 +757,12 @@ function targetRooms(p) {
     const v = (p.target_thresholds || {})[z.id];
     const row = h(`<div class="param"><label class="field">${esc(z.name)}
       <input type="number" step="0.05" min="0" max="1" placeholder="${p.target_threshold}" value="${v ?? ''}"></label></div>`);
-    row.querySelector('input').onchange = e => panelEdit(c => {
+    // empty: the default above
+    bindNumber(row.querySelector('input'), state.limits.params?.target_threshold, v => panelEdit(c => {
       const t = { ...(c.params.target_thresholds || {}) };
-      if (e.target.value === '') delete t[z.id]; else t[z.id] = +e.target.value;
+      if (v == null) delete t[z.id]; else t[z.id] = v;
       c.params.target_thresholds = t;
-    });
+    }), { allowEmpty: true });
     el.append(row);
   }
   return el;
@@ -779,7 +780,7 @@ function settingsPanel(panel) {
     for (const [key, label, unit, desc, step] of items) {
       const el = h(`<div class="param"><label class="field">${label}${unit ? ` (${unit})` : ''}
         <input type="number" step="${step}" value="${p[key]}"></label>${desc ? `<div class="desc">${desc}</div>` : ''}</div>`);
-      el.querySelector('input').onchange = e => panelEdit(c => { c.params[key] = +e.target.value; });
+      bindNumber(el.querySelector('input'), state.limits.params?.[key], v => panelEdit(c => { c.params[key] = v; }));
       target.append(el);
     }
   }

@@ -23,7 +23,7 @@ from aiohttp import web
 from . import __version__, code_hash, ha
 from . import calibration
 from .calibration import Calibrator
-from .model import Config
+from .model import Config, limits_dict
 from .filter import Tracker
 from .destination import DestinationMap
 from .ghostmap import GhostMap
@@ -374,24 +374,33 @@ class App:
         known = sorted(set(self.tracker.runtime) | set(self.config.sensor_by_id))
         return web.json_response({"config": self.config.to_dict(), "sensors_seen": known,
                                   "status": self.sensor_status, "replay": bool(self.replay),
-                                  "ha": bool(self.ha_url)})
+                                  "ha": bool(self.ha_url), "limits": limits_dict()})
 
     async def h_put_config(self, request):
-        data = await request.json()
+        """An edit in the web UI. Values outside the limits (model.check_config) are refused with
+        400 and a message: an emptied field must not switch every light on."""
         try:
-            config = Config.from_dict(data)
-        except (TypeError, ValueError, KeyError) as e:
+            data = await request.json()
+        except ValueError:
+            return web.json_response({"error": "Keine gültige Konfiguration (JSON)."}, status=400)
+        try:
+            config = Config.from_dict(data, check=True)
+        except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
+        except (TypeError, KeyError, AttributeError) as e:
+            return web.json_response({"error": f"Konfiguration unvollständig oder falsch: {e}"}, status=400)
         self.config = config
         # only sensors recalibrated: the people stay; else the model starts over as after a restart (MODEL.md 5.3)
-        if self.tracker.reconfigure(config):
+        restarted = self.tracker.reconfigure(config)
+        if restarted:
             self._model_started(self.tracker.now)
         self.calibrator.config = config
         config.save(self.config_path)
         if self.client is not None:
             await self.discovery.sync(config.zones)
         # rooms are derived from the walls here; the editor takes them over
-        return web.json_response({"ok": True, "rooms": [z.to_dict() for z in config.zones_of("room")]})
+        return web.json_response({"ok": True, "restarted": restarted,
+                                  "rooms": [z.to_dict() for z in config.zones_of("room")]})
 
     async def h_live(self, request):
         ws = web.WebSocketResponse(heartbeat=30)

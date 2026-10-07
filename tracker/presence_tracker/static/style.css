@@ -10,6 +10,7 @@
   --ok: #1f9d55;
   --warn: #d48806;
   --bad: #d64545;
+  --bad-text: #b42318;
   --still: #8b5cf6;
   --moving: #2f6fde;
   --lost: #8a94a3;
@@ -32,6 +33,7 @@
     --ok: #3ccf7a;
     --warn: #f0b429;
     --bad: #f06464;
+    --bad-text: #f47a7a;
     --still: #a78bfa;
     --moving: #5b93f5;
     --lost: #6b7480;
@@ -44,7 +46,7 @@
 :root[data-theme="dark"] {
   --bg: #111418; --surface: #1a1e24; --surface-2: #232830; --line: #2e343d; --text: #e6e9ee;
   --muted: #9099a6; --accent: #5b93f5; --accent-soft: #5b93f533; --ok: #3ccf7a; --warn: #f0b429;
-  --bad: #f06464; --still: #a78bfa; --moving: #5b93f5; --lost: #6b7480; --wall: #d6dbe2; --map-bg: #15181d;
+  --bad: #f06464; --bad-text: #f47a7a; --still: #a78bfa; --moving: #5b93f5; --lost: #6b7480; --wall: #d6dbe2; --map-bg: #15181d;
   color-scheme: dark;
 }
 
@@ -119,6 +121,8 @@ input[type=text], input[type=number], select {
   width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2);
 }
 input:focus, select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+input.invalid { border-color: var(--bad); outline-color: color-mix(in srgb, var(--bad) 30%, transparent); }
+.field-error { color: var(--bad-text); font-size: 12px; }
 input[type=range] { width: 100%; accent-color: var(--accent); }
 .btn {
   border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 6px 12px; cursor: pointer;

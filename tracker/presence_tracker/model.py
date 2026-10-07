@@ -141,6 +141,125 @@ class TrackerParams:
     target_threshold: float = 0.8
     target_thresholds: dict = field(default_factory=dict)
 
+# What the web UI may set (PUT /api/config, Config.from_dict(check=True)) and what its fields accept:
+# key -> (label, low, high, low excluded, high excluded). A value outside is a typo, not a setting:
+# light_cost 0 (an emptied field) put every room above its threshold, every light on.
+PARAM_LIMITS = {
+    "target_height": ("Höhe des Oberkörpers", 0.0, 2.5, False, False),
+    "range_sigma_base": ("Messfehler in Blickrichtung, Grundwert", 0.0, 2.0, True, False),
+    "range_sigma_slope": ("Messfehler in Blickrichtung, Anstieg", 0.0, 1.0, False, False),
+    "lateral_sigma_base": ("Messfehler seitlich, Grundwert", 0.0, 2.0, True, False),
+    "lateral_sigma_slope": ("Messfehler seitlich, Anstieg", 0.0, 1.0, False, False),
+    "wall_margin": ("Toleranz an Wänden", 0.0, 2.0, False, False),
+    "dwell_median": ("Typischer Aufenthalt", 0.0, 7 * 86400.0, True, False),  # ln(dwell_median)
+    "dwell_spread": ("Streuung des Aufenthalts", 0.0, 10.0, True, False),  # divides
+    "ld2410_hold": ("Haltezeit LD2410C", 0.0, 60.0, False, False),
+    "light_cost": ("Kosten: Licht ohne Person", 0.0, 1000.0, True, False),  # threshold c / (c + 1) > 0
+    "lead_time": ("Vorausschau „wird betreten“", 0.0, 5.0, True, False),
+    "approach_cost": ("Kosten: Einschalten auf Verdacht", 0.0, 1000.0, True, False),
+    "target_threshold": ("Schwelle „Ziel“", 0.0, 1.0, True, True),
+}
+SENSOR_LIMITS = {
+    "x": ("x", -1000.0, 1000.0, False, False),
+    "y": ("y", -1000.0, 1000.0, False, False),
+    "heading": ("Blickrichtung", -720.0, 720.0, False, False),
+    "height": ("Montagehöhe", 0.1, 4.0, False, False),
+    "fov": ("Öffnungswinkel", 0.0, 180.0, True, False),
+    "range": ("Reichweite", 0.0, 20.0, True, False),
+    "scale": ("Maßstab", 0.25, 4.0, False, False),
+}
+DOOR_LIMITS = {"width": ("Breite der Tür", 0.0, 20.0, True, False)}
+LAYER_LIMITS = {
+    "x": ("x des Bildes", -1e4, 1e4, False, False),
+    "y": ("y des Bildes", -1e4, 1e4, False, False),
+    "scale": ("Maßstab des Bildes", 0.0, 1.0, True, False),
+    "rotation": ("Drehung des Bildes", -3600.0, 3600.0, False, False),
+    "opacity": ("Deckkraft des Bildes", 0.0, 1.0, False, False),
+}
+
+
+def limits_dict() -> dict:
+    """The limits for the web UI: per group key -> [low, high, low excluded, high excluded]."""
+    groups = {"params": PARAM_LIMITS, "sensor": SENSOR_LIMITS, "door": DOOR_LIMITS, "layer": LAYER_LIMITS}
+    return {g: {k: list(v[1:]) for k, v in lim.items()} for g, lim in groups.items()}
+
+
+def _num(v) -> str:
+    return f"{v:g}".replace(".", ",") if isinstance(v, (int, float)) and not isinstance(v, bool) else repr(v)
+
+
+def _finite(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _check_value(where: str, v, lim):
+    label, lo, hi, lo_open, hi_open = lim
+    if v is None or v == "":
+        raise ValueError(f"{where}{label}: leer, eine Zahl fehlt.")
+    if not _finite(v):
+        raise ValueError(f"{where}{label}: keine Zahl ({_num(v)}).")
+    if v < lo or v > hi or (lo_open and v == lo) or (hi_open and v == hi):
+        low = f"größer als {_num(lo)}" if lo_open else f"mindestens {_num(lo)}"
+        high = f"kleiner als {_num(hi)}" if hi_open else f"höchstens {_num(hi)}"
+        raise ValueError(f"{where}{label} muss {low} und {high} sein, nicht {_num(v)}.")
+
+
+def _check_points(where: str, pts):
+    if not isinstance(pts, list) or not all(isinstance(p, (list, tuple)) and len(p) == 2
+                                            and all(_finite(c) for c in p) for p in pts):
+        raise ValueError(f"{where}: Punkte sind keine endlichen Koordinaten.")
+
+
+def check_config(d: dict):
+    """Rejects what the model can't run with (ValueError with a German message for the UI): the
+    parameters and sensor values outside PARAM_LIMITS / SENSOR_LIMITS, coordinates that are no finite
+    numbers. Only what is present is checked; what is missing takes its default."""
+    if not isinstance(d, dict):
+        raise ValueError("Konfiguration ist kein Objekt.")
+    params = d.get("params") or {}
+    if not isinstance(params, dict):
+        raise ValueError("Einstellungen sind kein Objekt.")
+    for k, lim in PARAM_LIMITS.items():
+        if k in params:
+            _check_value("", params[k], lim)
+    per_room = params.get("target_thresholds") or {}
+    if not isinstance(per_room, dict):
+        raise ValueError("Schwelle „Ziel“ je Raum ist kein Objekt.")
+    for room, v in per_room.items():
+        _check_value(f"Raum {room}: ", v, PARAM_LIMITS["target_threshold"])
+    for s in d.get("sensors") or []:
+        if not isinstance(s, dict) or not isinstance(s.get("id"), str) or not s["id"]:
+            raise ValueError("Sensor ohne ID.")
+        where = f"Sensor {s.get('name') or s['id']}: "
+        for k, lim in SENSOR_LIMITS.items():
+            if k in s:
+                _check_value(where, s[k], lim)
+        for k in ("mirror", "enabled", "placed"):
+            if k in s and not isinstance(s[k], bool):
+                raise ValueError(f"{where}{k} ist nicht ja/nein.")
+    for i, w in enumerate(d.get("walls") or []):
+        _check_points(f"Wand {i + 1}", w.get("points") if isinstance(w, dict) else None)
+    for door in d.get("doors") or []:
+        if not isinstance(door, dict) or not (_finite(door.get("x")) and _finite(door.get("y"))):
+            raise ValueError("Tür ohne endliche Position.")
+        if "width" in door:
+            _check_value("", door["width"], DOOR_LIMITS["width"])
+    for z in d.get("zones") or []:
+        if not isinstance(z, dict):
+            raise ValueError("Zone ist kein Objekt.")
+        name = z.get("name") or z.get("id")
+        if "points" in z:
+            _check_points(f"Zone {name}", z["points"])
+        if z.get("center") is not None:
+            _check_points(f"Zone {name}", [z["center"]])
+        if "radius" in z and not (_finite(z["radius"]) and z["radius"] >= 0):
+            raise ValueError(f"Zone {name}: Radius ist keine Zahl ≥ 0.")
+    for layer in (d.get("background") or {}).get("layers") or []:
+        for k, lim in LAYER_LIMITS.items():
+            if k in layer:
+                _check_value("", layer[k], lim)
+
+
 @dataclass
 class Config:
     sensors: list = field(default_factory=list)
@@ -339,7 +458,12 @@ class Config:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Config":
+    def from_dict(cls, d: dict, check: bool = False) -> "Config":
+        """check: reject values outside the limits (check_config), as for an edit in the web UI; a
+        stored configuration loads as it is."""
+        if check:
+            check_config(d)
+
         def pick(dc, data):
             names = {f.name for f in fields(dc)}
             return dc(**{k: v for k, v in data.items() if k in names})

@@ -17,6 +17,7 @@ export const state = {
   sensorMap: null,      // {sensor, layer: 'prior' | 'clutter'} shown on the map
   showRaw: true,
   calibResult: null,
+  limits: {},           // allowed values of the number fields, from the server (model.PARAM_LIMITS)
 };
 
 export function onChange(fn) { listeners.add(fn); }
@@ -29,7 +30,7 @@ export async function api(path, options = {}) {
   });
   const ctype = r.headers.get('Content-Type') || '';
   const data = ctype.includes('json') ? await r.json() : await r.text();
-  if (!r.ok) throw new Error(typeof data === 'string' ? data : (data.error || r.statusText));
+  if (!r.ok) throw Object.assign(new Error(typeof data === 'string' ? data : (data.error || r.statusText)), { status: r.status });
   return data;
 }
 
@@ -41,6 +42,7 @@ export async function loadConfig() {
   state.sensorsSeen = data.sensors_seen;
   state.replay = data.replay;
   state.haAvailable = data.ha;
+  state.limits = data.limits || {};
   emit('config');
 }
 
@@ -59,7 +61,10 @@ async function save() {
       const r = await api('api/config', { method: 'PUT', body: JSON.stringify(state.config) });
       mergeRooms(r.rooms);
     } catch (e) {
-      toast('Speichern fehlgeschlagen: ' + e.message, 5000);
+      // refused (a value out of its limits): back to what the server has, so that the next edit
+      // doesn't send the refused value again
+      toast('Nicht gespeichert: ' + e.message + ' Es gilt der zuletzt gespeicherte Stand.', 8000);
+      if (e.status === 400) await loadConfig().catch(() => {});
     }
   });
   return saving;
