@@ -36,8 +36,8 @@ dürfen sich ohne Belege in den Messwerten nicht halten können!“
 *Anmerkung zu 3 (Umsetzung):* Wer nie da war (eine Spur, die ein Geist war, oder dieselbe Person
 doppelt), verschwindet nicht „im Raum“, er hat nie existiert. Das Modell trägt deshalb für jede
 bekannte Person ohne Spur die Wahrscheinlichkeit, dass es sie gibt (5.5); Messungen, die gegen sie
-sprechen, senken sie, wie sie die Dichte formen. Eine wirkliche Person verschwindet weiter nur über
-Türen.
+sprechen, senken sie, wie sie die Dichte formen; und ohne Messungen, die sie stützen, verblasst sie
+(5.5). Wo sie ist, ändert sich weiter nur über Türen und Wege.
 
 ## 2. Die Welt
 
@@ -113,6 +113,7 @@ Prozess wie eine Diffusion aus, je Achse mit `D = E[s²] / (2 λ_d) = (s² + Str
   Person, bleibt diese Möglichkeit als r < 1 erhalten, und was danach nicht zu ihr passt (keine neue
   Spur, wo sie gesehen würde; kein Herauskommen aus einem Bereich ohne Sensor; die Energien des
   LD2410C), senkt r. Das ist keine Regel: dieselbe Rechnung wie für ihre Dichte (1.3, Anmerkung).
+  Ohne stützende Messungen klingt r mit 30 min ab (5.5).
 
 ## 4. Messmodell
 
@@ -509,12 +510,31 @@ Ankünfte und das Vergessen aus 3.4.
   verschiedener Personenzahl; wurde die mit weniger Personen abgeschnitten (höchstens 12, 5.1), kam
   sie nie zurück, und die erfundene Person blieb mit r = 1 (9, 10). Ausgaben zählen r × Dichte; die
   Anzeige zeigt Personen mit r ≥ 0,5 (Schätzer der Literatur, B_GarciaFernandez2018 Abschn. VI).
+- **Existenz klingt ab** (`record_life` = 30 min, angenommen; `Tracker._fade`): Ohne Spur existiert
+  eine bekannte Person mit `e^(−t/30 min)` weiter, wie die Existenz einer Spur als Markov-Kette
+  (IPDA; D_MusickiEvans2005 Gl. 6, p₁₁ < 1). Messungen, die sie stützen, heben r wieder an (die
+  Energien des LD2410C bei Sitzenden, eine neue Spur macht r = 1); wo nichts sie messen kann (ein
+  Raumteil ohne Sicht, ein Bereich ohne Sensor), verblasst sie. Grund (7.10., 10): Eine Person, deren
+  Spur einmal r = 1 gab, war sonst nie mehr zu widerlegen, wo kein Sensor hinsieht – die Vorratsecke der
+  Küche (x 3,4–4,6, y 7,7–9,2: Sicht 0 für jeden LD2450 und das LD2410C) hielt 75 min lang eine
+  doppelte Person (Küche 0,98 → 0,71), weil die schweren Ausläufer der Aufenthaltsdauer (3.1) dort
+  nur das langsame Aufstehen ließen. Die Personenzahl hinter Türen zählt nur für das Herauskommen
+  (wer dort lange ist, verblasst und kommt notfalls als neue Person heraus, 5 s Bestätigung genügen,
+  1); Schlafende sind nach einigen Stunden „unbekannt“. Gemessen (report_eval, Meldungen bis 6.10.,
+  12 Hypothesen): ohne 0 / 1,17, Log-Evidenz −1121966,9; 60 min −1121939,4; 30 min 0 / 1,17,
+  −1121952,2. Meldungen 7.10. (truth_0710b, 13 leere / 7 belegte Fenster): ohne 3,14 / 0 (Küche
+  0,94 / 0,80 / 0,71); 60 min 0,31 / 0 (0,49 / 0,10 / 0,02); 30 min 0 / 0 (0,08 / 0,02 / 0,01).
 - **Zurückgeben:** Eine bekannte Person ohne Spur, die zu weniger als 1 % existiert und im Haus ist
   (r × P(im Haus) < 0,01), geht mit r × ihrer Dichte in die Intensität (Bernoulli → Poisson). Das
   ändert nur P(mehrere davon kommen zurück), um höchstens 0,01²/2. Sonst würde jeder Gast für immer
   verfolgt. (Die Literatur verwirft Bernoulli-Teile unter 10⁻⁵, B_GarciaFernandez2018 Abschn. VII,
-  oder r < 10⁻³, B_Reuter2017 S. 166; hier geht keine Masse verloren.) Mit 5 % statt 1 %: report_eval
-  gleich, Log-Evidenz −8.
+  oder r < 10⁻³, B_Reuter2017 S. 166; hier geht keine Masse verloren.) Die Intensität ist eine für alle
+  Hypothesen wie im PMBM (B_GarciaFernandez2018 Gl. 7–10): Was die Hypothesen zurückgeben, kommt nach
+  ihrem Gewicht hinzu. Vorher trug jede Hypothese ihre eigene Kopie; mit den vielen kleinen Bernoullis
+  (r von wenigen %, aus „vielleicht eine neue Person“ jeder Spur, solange beim Start ohne Wissen
+  Intensität in Sicht ist) kostete das Rechenzeit (10). 5 % statt 1 %: 14 % weniger Rechenzeit, aber
+  Licht fälschlich aus 1,67 statt 1,17 von 15 (Arbeitszimmer 21:36 knapp unter der Schwelle),
+  Log-Evidenz −49.
 
 ### 5.6 Zusammenlegen
 Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
@@ -577,7 +597,8 @@ Bad erscheint im Arbeitszimmer, wenn doch); die Amplitude einzelner Aufenthalte 
 unkalibrierte LD2450 gemessen (0,07–0,5 m je nach Sensor); die Addition mehrerer Personen ist nicht an
 Zwei-Personen-Zeiten geprüft; α, τ, κ, die Verzögerung und das Vergessen des Hintergrunds sind über die
 Evidenz (7) zu schätzen; das Bewegt-Flag ist ohne Ablation weggelassen. Ein Raumteil, den kein Sensor
-sieht (Küche hinter der Wand bei y = 7,7 m), kann Personen halten, die niemand ausschließt.
+sieht (die Vorratsecke der Küche hinter der Wand bei y = 7,7 m, x 3,4–4,6), hält eine Person nur noch so
+lange, wie ihre Existenz abklingt (5.5, 30 min); wer dort wirklich länger steht, verblasst ebenso.
 
 Näherungen, die man prüfen oder ersetzen kann:
 - Auf den Kacheln ist Gehen eine Diffusion: Kurzzeitig gerades Gehen und die Richtung gehen verloren,
@@ -595,8 +616,8 @@ Näherungen, die man prüfen oder ersetzen kann:
   angenommen, nicht über die Evidenz geschätzt. Das Kostenverhältnis `light_cost` ist zu klären.
 - Die Geisterkarte lernt weiter aus dem Urteil des Filters, nur ohne ihren eigenen Beitrag an der
   Stelle. Ein reines Urteil bei der Geburt war zu früh (Hereinkommende an der Tür: P(Geist) 0,56).
-- Höchstens 12 Hypothesen; Paarung beim Zusammenlegen bis 6 Personen. Hypothesen mit verschieden
-  vielen bekannten Personen werden nicht zusammengelegt. Jede neue Spur kann auch „unbekannt“ sein:
+- Höchstens 12 Hypothesen; Paarung beim Zusammenlegen bis 6 Personen (darüber in der Reihenfolge,
+  „niemand“ am Ende). Jede neue Spur kann auch „unbekannt“ sein:
   Solange Spuren laufen, gibt es mehr Hypothesen (Simulation, zwei kommen herein: etwa doppelte
   Rechenzeit gegenüber fester Personenzahl).
 - Wer ins Schlafzimmer oder zur Treppe geht, bleibt wegen des breiten Aufenthalts-Priors lange

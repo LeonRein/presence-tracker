@@ -96,3 +96,29 @@ def _without_spread():
     m = Model()
     m.sight_spread = False
     return m
+
+
+def test_nobody_stays_for_an_hour_where_no_sensor_sees():
+    # a nook of the room behind a wall stub (x 3.5-6, y 4-5) that neither sensor sees, nor its
+    # LD2410C; somebody known is there, and for an hour no sensor measures anything. Without the
+    # existence fading (MODEL.md 5.5) nothing could contradict them and the room would stay occupied
+    from presence_tracker.filtermodel import Model
+    d = flat_config().to_dict()
+    d["walls"].append({"points": [[3.0, 4.0], [6.0, 4.0]], "kind": "wall"})
+    config = Config.from_dict(d)
+
+    def run(life):
+        m = Model()
+        m.record_life = life
+        crowd = Tracker(config, start=0.0, people=["outside"], model=m)
+        h = crowd.hyps[0].hidden[0]
+        tile = crowd.tiles.cell_near((5.5, 4.5))
+        assert all(crowd.tiles.seen(si)[0][tile] == 0 for si in range(len(crowd.sensors)))
+        h.out = 0.0
+        h.still[:, :, tile] = crowd.shapes.stay_prior(ongoing=True)
+        h._normalize()
+        for t, sid, frame in simulate([], sim_sensors(config), 3600, rate=2.0, walls=config.wall_segments):
+            crowd.process_frame(sid, t, frame)
+        return 1 - crowd.count_distribution()["wohn"][0]
+    assert run(None) > 0.5  # held by nothing but the long stays
+    assert run(1800.0) < 0.2

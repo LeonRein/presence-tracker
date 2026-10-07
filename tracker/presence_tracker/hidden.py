@@ -321,10 +321,15 @@ class Undetected(Hidden):
     def add(self, person: Hidden):
         """A person given up on (almost surely out of the house or not existing) joins the unknown
         ones with r x their density."""
-        self.walk += person.r * person.walk
-        self.still += person.r * person.still
-        self.region += person.r * person.region
-        self.out += person.r * person.out
+        self.add_scaled(person, 1.0)
+
+    def add_scaled(self, other: Hidden, k: float):
+        """+ k x r x the density of other (a person, or another intensity: r = 1)."""
+        k = k * other.r
+        self.walk += k * other.walk
+        self.still += k * other.still
+        self.region += k * other.region
+        self.out += k * other.out
 
     def _arrive(self, dt: float):
         tl, m = self.tiles, self.tiles.tr.m

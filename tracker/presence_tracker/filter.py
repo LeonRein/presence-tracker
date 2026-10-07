@@ -40,8 +40,9 @@ __all__ = ["Model", "Tracker"]
 
 MAX_STEP = 0.2  # s: motion is cut into parts no longer than this
 MOUNT_RADIUS = 0.3  # m: targets this close to a sensor come from its mount
-GIVE_UP = 0.01  # a known person in the house with less probability joins the unknown ones with all
-                # of their mass: only P(several of them come back) changes, by <= GIVE_UP^2 / 2
+GIVE_UP = 0.01  # a known person who exists and is in the house with less probability joins the
+                # unknown ones with r x their density: only P(several of them come back) changes, by
+                # <= GIVE_UP^2 / 2 (0.05: 14 % less computing time, light wrongly off 1.67 instead of 1.17)
 RECYCLE_EVERY = 1.0  # s
 GAP_EXACT = 120.0  # s: the end of a gap in the data is moved as always, what lies before in leaps
 LEAP = 15.0  # s   (_predict_gap; 7.10. 08:06, 8 people, 3 h: rooms within 0.022 of moving all as always)
@@ -660,27 +661,37 @@ class Tracker:
 
     def _recycle(self):
         """Known people almost surely out of the house or not existing join the unknown ones (MODEL.md
-        5.5): otherwise every guest who ever came would be followed forever."""
-        cache = {}
-        changed = False
-        for hy in self.hyps:
-            gone = [u for u in hy.hidden if u.in_house() < GIVE_UP]
-            if not gone:
-                continue
-            key = (id(hy.ppp),) + tuple(sorted(id(u) for u in gone))
-            if key not in cache:
-                new = hy.ppp.copy()
-                for u in gone:
-                    new.add(u)
-                cache[key] = new
-            hy.ppp = cache[key]
-            for u in gone:
+        5.5): otherwise every guest who ever came would be followed forever. The unknown ones are one
+        Poisson process for all hypotheses, as in the PMBM (B_GarciaFernandez2018 eq. 7-10): what the
+        hypotheses give back is added to it weighted by their probability (otherwise every hypothesis
+        would carry its own copy of the density, a third of the computing time at a start with
+        nothing known, MODEL.md 10)."""
+        gone = [[u for u in hy.hidden if u.in_house() < GIVE_UP] for hy in self.hyps]
+        if not any(gone):
+            return
+        w = self.hyp_weights()
+        parts = {}
+        for wi, hy, g in zip(w, self.hyps, gone):
+            parts.setdefault(id(hy.ppp), [0.0, hy.ppp, []])[0] += wi
+            parts[id(hy.ppp)][2].append((wi, g))
+        new = None
+        for wp, ppp, given in parts.values():
+            part = ppp.copy()
+            part.scale(wp)
+            for wi, g in given:
+                for u in g:
+                    part.add_scaled(u, wi)
+            if new is None:
+                new = part
+            else:
+                new.add_scaled(part, 1.0)
+        for hy, g in zip(self.hyps, gone):
+            hy.ppp = new
+            for u in g:
                 hy.hidden.remove(u)
-            changed = True
-        if changed:
-            self._flush(self.now)
-            self._merge()
-            self._version += 1
+        self._flush(self.now)
+        self._merge()
+        self._version += 1
 
     def _objects(self, phantoms=False) -> list:
         """The distinct objects of all hypotheses (people; with phantoms: also the sources of ghost
