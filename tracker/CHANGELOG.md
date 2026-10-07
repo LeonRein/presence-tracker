@@ -28,8 +28,8 @@
   `start_people` 1, blieb eine von ihnen ein Geist, auch wenn der LD2450 sie minutenlang maß und der
   LD2410C bei 100 lag (Meldung 7.10. 08:07, Arbeitszimmer; nachgespielt in 4 von 6 Neubeginnen um
   08:05–08:06 P(belegt) 0,000 bis 08:08). Jetzt beginnen nur die Spuren des geänderten Sensors neu wie
-  nach einer Datenlücke; ohne Wissen beginnt das Modell nur bei neuem Grundriss oder neuen Parametern
-  (MODEL.md 5.3, 10). `tools/report_eval.py` unverändert (Licht fälschlich an 0 von 41, aus 3,0 von 15).
+  nach einer Datenlücke; ohne Wissen beginnt das Modell nur bei neuem Grundriss (MODEL.md 5.3, 10).
+  `tools/report_eval.py` unverändert (Licht fälschlich an 0 von 41, aus 3,0 von 15).
 - `tools/ld2410/second.py`: Will der LD2410C eine zweite Person, wo eine Person mit Spur allein ist?
   Log-Bayes-Faktor einer ruhenden zweiten Person im Raum, der Anteil der gekappten Werte und dasselbe
   mit dem Gewinn der Person auf dem Profil (MODEL.md 10, „Energie aufteilen“: die Energien werden
@@ -40,6 +40,22 @@
   6./7.10. erklärt das die Messungen gleich gut und schaltet das Licht gleich; Rechenzeit 3,0 statt
   3,3 % eines Kerns (MODEL.md 3.1, 4.1). Die Zahl der Hypothesen (höchstens 12) bleibt; wie stark die
   Ergebnisse davon abhängen, steht in MODEL.md 5.1.
+- **Ein Neustart der App vergisst die Personen nicht mehr; *Personen beim Start* gibt es nicht mehr**
+  (mal ist einer zuhause, mal zwei, mal keiner, mal ein Gast). Die App speichert alle 10 Minuten und beim
+  Beenden, was sie über die Personen weiß (`people.json`, 27–40 kB), und macht nach dem Neustart damit
+  weiter, über die Pause mit dem Bewegungsmodell vorgerückt; ebenso nach einem Fehler des Modells und bei
+  neuen Parametern (MODEL.md 5.3). Laufende Spuren beginnen nach dem Neustart neu. Ohne gespeicherten
+  Zustand (erste Installation, neuer Grundriss, *Spuren zurücksetzen*) weiß das Modell nichts: keine feste
+  Zahl, sondern unbekannte Personen, je ein Drittel in Sicht, hinter Türen und außer Haus (1 erwartet);
+  wer in Sicht ist, wird gefunden, auch wenn es mehrere sind. Eine Fehlermeldung enthält den Zustand, mit
+  dem das Modell begann, wenn der Start in ihren 15 Minuten liegt, und `tools/replay.py --report` sowie
+  `tools/report_eval.py` beginnen damit wie die App. Gemessen mit `tools/report_eval.py` (Wahrheit
+  6.10.): Licht fälschlich an 0,88 statt 0 von 41 leeren Fenstern, eine Episode von etwa 20 s um 21:28
+  (mit 30 s Pause vor jedem App-Start 0,14), fälschlich aus 1,67 von 15 wie vorher (mit Pause 1,17).
+  Meldung 7.10. 08:07 mit einem Neustart um 08:06: Arbeitszimmer durchgehend 1,000, mit dem gespeicherten
+  Zustand und ohne. Bekannt: Personen, die das Modell irrtümlich hinter Türen vermutet, verschwanden
+  bisher bei jedem Neustart der App; jetzt bleiben sie, bis sie herauskommen oder vergessen werden (am
+  7.10. um 08:06 sechs, MODEL.md 9, 10).
 
 ## 0.10.0
 

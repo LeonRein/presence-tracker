@@ -142,7 +142,7 @@ def test_a_restarted_app_keeps_the_people_and_reports_from_where(tmp_path):
         app.tick(1000.0 + t)
     app._save_learned()  # as at the exit
     again = App(tmp_path, publish=False)  # 20 s later
-    assert again.tracker.started_from is not None and again.start_people is again.tracker.started_from
+    assert again.tracker.started_from is not None and again.start_state is again.tracker.started_from
     for t, sid, frame in frames:
         if t < 80:
             continue
@@ -159,7 +159,7 @@ def test_a_restarted_app_keeps_the_people_and_reports_from_where(tmp_path):
     path, = (tmp_path / "reports").glob("*.jsonl.gz")
     lines = [json.loads(x) for x in gzip.open(path, "rt").read().splitlines()]
     meta, messages = lines[0], lines[1:]
-    assert meta["people"] == json.loads(json.dumps(again.start_people))
+    assert meta["people"] == json.loads(json.dumps(again.start_state))
     shown = [(m["t"], m["payload"]) for m in messages if m["topic"] == "app/shown"]
     replay = Tracker(Config.from_dict(meta["config"]))
     replay.load_learned(meta)

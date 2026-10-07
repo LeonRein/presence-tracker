@@ -44,7 +44,9 @@ GIVE_UP = 0.01  # a known person in the house with less probability joins the un
                 # of their mass: only P(several of them come back) changes, by <= GIVE_UP^2 / 2
 RECYCLE_EVERY = 1.0  # s
 GAP_EXACT = 120.0  # s: the end of a gap in the data is moved as always, what lies before in leaps
-LEAP = 15.0  # s   (_predict_gap; 8 h from a seat: in view 0.917 instead of 0.910 moving all as always)
+LEAP = 15.0  # s   (_predict_gap; 7.10. 08:06, 8 people, 3 h: rooms within 0.022 of moving all as always)
+MAX_LEAPS = 2000  # longer gaps in longer leaps (8 h of 8 people: 1.7 s CPU; a week in leaps of 5 min,
+                  # 8 h in leaps of 4 min put the rooms up to 0.12 off)
 
 
 _LGAMMA = np.zeros(0)
@@ -265,11 +267,11 @@ class Tracker:
 
     def _predict_gap(self, gap: float):
         """Everybody moves on over a gap in the data (MODEL.md 4.4, 5.3): its last GAP_EXACT s as
-        always (Hidden.move), what lies before in steps of LEAP s (Hidden.leap)."""
+        always (Hidden.move), what lies before in steps of LEAP s (Hidden.leap), at most MAX_LEAPS."""
         if gap <= 0:
             return
         lead = max(gap - GAP_EXACT, 0.0)
-        leaps = int(math.ceil(lead / LEAP - 1e-9))
+        leaps = min(int(math.ceil(lead / LEAP - 1e-9)), MAX_LEAPS)
         parts = int(math.ceil((gap - lead) / MAX_STEP - 1e-9))
         for obj, _ in self._objects():
             for _ in range(leaps):
@@ -477,7 +479,7 @@ class Tracker:
             if self._gap_from is not None:  # restored: from the saved state's time to now
                 self._predict_gap(t - self._gap_from)
                 self._gap_from = None
-        sensor =self.config.sensor_by_id.get(sensor_id)
+        sensor = self.config.sensor_by_id.get(sensor_id)
         rt = self.runtime.setdefault(sensor_id, SensorRuntime())
         prev = rt.last_frame
         rt.frame = frame

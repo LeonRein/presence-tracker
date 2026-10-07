@@ -28,10 +28,9 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   die Karte neu, weil sich die Sensoren gegenseitig stören können. Bis sie ein paar Stunden gelernt hat,
   werden Geister an festen Stellen (Möbel, Ladestation) leichter für Personen gehalten.
 - **Sensor drehen oder neu kalibrieren** (gleicher Grundriss): Was über die Personen bekannt ist, bleibt.
-  Nur die Spuren dieses Sensors beginnen neu, wie nach einer Datenlücke. Ein geänderter Grundriss
-  (Wände, Räume, Türen) oder andere Parameter lassen das Modell ohne Wissen neu beginnen; dann sollte
-  *Personen beim Start* die Zahl der Bewohner sein, sonst kann das Modell eine von ihnen nur für einen
-  Geist halten.
+  Nur die Spuren dieses Sensors beginnen neu, wie nach einer Datenlücke. Andere Parameter: Das Modell
+  beginnt neu mit dem, was es über die Personen wusste. Ein geänderter Grundriss (Wände, Räume, Türen):
+  Es beginnt ohne Wissen (siehe *Personen*).
 - Der **LD2410C** zählt mit seinen Energien je 0,75-m-Entfernungsring (bewegt und ruhig): Wo eine Person
   Energie machen müsste und keine ist, ist niemand; Energie, die niemand erklärt, spricht für jemanden in
   diesem Ring, auch wenn der LD2450 ihn verloren hat. Was eine andere Person schon erklärt, sagt über die
@@ -39,8 +38,12 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   Sensor verschoben, beginnt das für ihn neu. Seine Flags und die gemeldete Entfernung zählen nicht mehr.
 - **Wände**: Die Radare sehen nicht durch die Betonwände. Ein Messpunkt hinter einer Wand oder außerhalb aller
   Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*).
-- **Personen**: Mit *Personen beim Start* beginnt das Modell, wenn es nichts weiß. Weitere (Gäste) kommen über
-  die Wege nach draußen dazu; wer sicher außer Haus ist, wird vergessen.
+- **Personen**: Wie viele es sind, wird nirgends eingestellt. Nach einem Neustart der App macht das Modell
+  mit dem weiter, was es vorher über die Personen wusste (gespeichert alle 10 Minuten und beim Beenden
+  in `/data/people.json`, über die Pause vorgerückt); nur die laufenden Spuren beginnen neu. Ohne das
+  (erste Installation, neuer Grundriss, *Spuren zurücksetzen*) weiß es nichts: Wer in Sicht ist, wird
+  gefunden, gleich wie viele; wer hinter einer Tür oder außer Haus ist, wenn er herauskommt. Weitere
+  (Gäste) kommen über die Wege nach draußen dazu; wer sicher außer Haus ist, wird vergessen.
 - **Fehler melden** (Tab *Live*): Wenn etwas nicht stimmt (Person verloren, Geist, Person am falschen Ort,
   ungenaues Tracking, hohe Latenz), den Raum und die Art des Fehlers wählen. Die App
   speichert dazu die Sensordaten der letzten 15 Minuten mit der Konfiguration, dem Gelernten
@@ -49,8 +52,9 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   entsteht die Wahrheitstabelle für die Bewertung; `tools/replay.py --report DATEI` spielt eine Meldung
   nach und zeigt, wie weit das Nachspiel von der Anzeige der App abweicht. Begann das Modell innerhalb der
   15 Minuten (Start der App, *Spuren zurücksetzen*, neuer Grundriss), beginnt das Nachspiel dort mit dem
-  damals Gelernten und glaubt genau, was die App glaubte; sonst beginnt es ohne Wissen am Anfang der
-  Daten und hat das bis zum gemeldeten Moment vergessen.
+  damals Gelernten und dem Zustand der Personen, mit dem das Modell begann (etwa 30 kB mehr), und glaubt
+  genau, was die App glaubte; sonst beginnt es ohne Wissen am Anfang der Daten und hat das bis zum
+  gemeldeten Moment vergessen.
 
 ## Einrichten
 

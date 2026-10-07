@@ -94,6 +94,9 @@ Prozess wie eine Diffusion aus, je Achse mit `D = E[s²] / (2 λ_d) = (s² + Str
 - Wer außer Haus ist, wird mit 1/Tag vergessen (angenommen): Kommt er danach wieder, ist er ein
   Neuankömmling. So bleibt die Zahl der Personen, die man erwartet, endlich.
 - „Selten ein Dritter“ folgt aus ν und den Daten, nicht aus einer Regel.
+- Wie viele Personen da sind, ist nirgends fest eingestellt (mal einer, mal zwei, mal keiner, mal ein
+  Gast). Ein Neustart der App setzt das Wissen über sie fort (5.3); weiß das Modell nichts, sind die
+  unbekannten eine Poisson-Intensität ohne feste Zahl (5.3, 5.5).
 
 ## 4. Messmodell
 
@@ -293,7 +296,8 @@ Das Modell, je Sensor:
 
 ### 4.4 Lücken zwischen Frames
 Die Firmware sendet leere Frames nur alle 5 s. Eine Lücke bis 6 s zählt als beobachtet und leer;
-eine längere sagt nichts.
+eine längere sagt nichts. Ein Neustart der App ist eine solche Lücke für alle Sensoren: Die Personen
+werden über sie nur vorgerückt, nicht gewichtet (5.3).
 
 ## 5. Inferenz
 
@@ -395,17 +399,43 @@ ein gleichmäßiges Raster:
 - Nicht-Erfassung, Nicht-Wiederfinden und die Rate einer neuen Spur sind exakte Summen über die
   Kacheln.
 
-Start („nichts bekannt“): `start_people` = 2 bekannte Personen, je 1/3 im beobachteten Bereich
-(stehend, gleichverteilt nach Fläche), 1/3 in den Bereichen ohne Sensor, 1/3 außer Haus; keine
-unbekannten. Ein Poisson-Start erwartet auch nach zwei gefundenen Personen noch genauso viele weitere
-(seine Zahlen sind unabhängig): Simulation, zwei kommen herein, danach P(3 im Haus) = 0,35.
+**Neustart der App:** Was über die Personen bekannt ist, speichert die App alle 10 Minuten und beim
+Beenden (`people.json`, `Tracker.people_state`): je Hypothese ihr Gewicht, die bekannten und die
+unbekannten Personen als Dichten über den Kacheln. Laufende Spuren überleben den Neustart nicht (die
+nächsten Frames der Sensoren sind ein Start, 4.1): Personen mit Spur gehen auf die Kacheln wie am Ende
+ihrer letzten Spur (5.4), Geisterspuren enden, und Hypothesen, die danach dasselbe sagen, werden eine
+(5.6; eine je Zahl bekannter Personen). Beim Start ist dieser Zustand der Prior, die PMBM-Rekursion
+geht von ihm aus weiter (B_GarciaFernandez2018). Die Zeit dazwischen ist eine Datenlücke (4.4): Alle
+werden mit der Dynamik aus 3 vorgerückt, nichts gewichtet; die letzten 120 s wie immer, davor in
+Sprüngen von 15 s (höchstens 2000, `Hidden.leap`): Wer aufsteht, geht seinen Weg in einem Sprung ganz,
+bis er anhält oder durch eine Tür geht (wo ein Weg endet: `μ (μI − Q)⁻¹`, Q die Gehmatrix, eigene
+Herleitung aus 3.2); ein kurzer Aufenthalt, der in einem Sprung beginnt, endet frühestens im nächsten.
+Gegen 3 h in Takten liegen die Räume damit bis 0,022 daneben (7.10. 08:06, 8 Personen); 8 h kosten
+1,7 s CPU. Gespeichert werden die Massen als Anteile in float16 (unter 10⁻⁶ als 0), zlib, base64:
+27–40 kB für 8 Personen (7.10. 08:00 und 08:06; als float32 0,7–1,3 MB). Passt der Zustand nicht zu den
+Kacheln (anderer Grundriss) oder fehlt er, weiß das Modell nichts. Nach einem Fehler des Modells beginnt
+es aus dem Zustand unmittelbar davor, wenn der sich noch speichern lässt, sonst aus dem letzten
+gespeicherten.
 
-Neu beginnt das Modell nur, wenn sich die Welt der Personen ändert (Wände, Räume, Türen, Parameter,
-welche Sensoren es gibt, der beobachtete Bereich). Wird nur ein Sensor gedreht, verschoben oder neu
-kalibriert, bleibt, was über die Personen bekannt ist (die Konfiguration sagt etwas über den Sensor,
-nichts über sie); seine Spuren beginnen neu wie nach einer Datenlücke (4.1). Ein Neubeginn mit
-`start_people` unter der Zahl der Anwesenden kann eine von ihnen nur als Geist erklären (10, Meldung
-7.10. 08:07).
+**Nichts bekannt** (erster Start, anderer Grundriss, *Spuren zurücksetzen*): keine bekannten Personen;
+die unbekannten (5.5) als Poisson-Intensität mit `start_unknown` = 1 erwarteten Person (angenommen),
+je ein Drittel im beobachteten Bereich (stehend, gleichverteilt nach Fläche, ein laufender Aufenthalt
+zu zufälliger Zeit gesehen), in den Bereichen ohne Sensor und außer Haus. Keine feste Zahl: Wer in
+Sicht ist, wird über seine Spur zur bekannten Person (5.5), gleich wie viele es sind; wo niemand
+erfasst wird, schwindet die Intensität mit der Nicht-Erfassung. Ohne Anteil in Sicht könnte, wer beim
+Start in Sicht sitzt, nur ein Geist sein (wie mit der früheren festen Zahl `start_people` unter der
+Zahl der Anwesenden, 10, Meldung 7.10. 08:07). Der Preis: Hinter Türen und außer Haus bleibt die
+Intensität, wie viele auch gefunden werden (die Zahlen eines Poisson-Prozesses sind unabhängig), bis
+dort niemand herauskommt oder sie vergessen wird (3.4). 0,3 / 1 / 3 Personen ändern die Lichtfehler
+nicht (bei jedem App-Start ohne Wissen, 6./7.10.: 0,14 von 41 fälschlich an), die Log-Evidenz steigt
+mit der Zahl (−279 / 0 / +265).
+
+Neu beginnt das Modell, wenn sich die Welt der Personen ändert (Wände, Räume, Türen, Parameter,
+welche Sensoren es gibt, der beobachtete Bereich), wie nach einem Neustart: aus dem Zustand davor,
+solange die Kacheln dieselben bleiben (etwa nur andere Parameter), sonst ohne Wissen. Wird nur ein
+Sensor gedreht, verschoben oder neu kalibriert, bleibt, was über die Personen bekannt ist, ganz (die
+Konfiguration sagt etwas über den Sensor, nichts über sie); seine Spuren beginnen neu wie nach einer
+Datenlücke (4.1).
 
 ### 5.4 Wechsel der Darstellung
 - **Kacheln → Gauß**, wenn eine Spur auf der Person beginnt oder wiedergefunden wird: je Kachel
@@ -510,7 +540,16 @@ Näherungen, die man prüfen oder ersetzen kann:
   Rechenzeit gegenüber fester Personenzahl).
 - Wer ins Schlafzimmer oder zur Treppe geht, bleibt wegen des breiten Aufenthalts-Priors lange
   „bekannt“ (6 h nach dem Gehen noch zu 21 % im Haus) und kostet so lange Rechenzeit.
-- ν, das Vergessen und `start_people` sind angenommen.
+- ν, das Vergessen und `start_unknown` sind angenommen.
+- **Bekannte Personen sammeln sich an.** Eine Spur, die an einer Tür endet, kann eine Person werden,
+  die dahinter verschwindet; ist die Alternative (Geist) abgeschnitten (höchstens 12 Hypothesen),
+  kommt sie nicht wieder, und wer nicht herauskommt, bleibt nach dem breiten Aufenthalts-Prior lange
+  drin. Bisher räumte das jeder Neustart der App ab, seit dem gespeicherten Zustand (5.3) nicht mehr.
+  Nachgespielt ab 6.10. 19:28 mit den App-Starts: drei bekannte Personen ab 20:56 (auch mit der
+  früheren festen Zahl), 5–6 um 22:19 und 2:07, 8 um 7.10. 08:06, davon 6 zu 0,7–0,98 in den Bereichen
+  ohne Sensor (im Haus erwartet 6,9 statt 2). In den beobachteten Räumen fiel das bisher kaum auf (Nacht
+  0 s, `phantom.py` 0,0 min; 21:28, 10), die Rechenzeit von `report_eval.py` verdoppelt sich aber
+  (634 statt 333 s).
 - Eine neue Kalibrierung (Richtung, Maßstab) lässt weiterhin die Geisterkarte aller Sensoren und den
   LD2410C-Hintergrund dieses Sensors neu beginnen, obwohl sich der Sensor selbst nicht bewegt hat (die
   App kann Drehen und Kalibrieren nicht unterscheiden). Für die Meldung 7.10. 08:07 war das nicht die
@@ -761,6 +800,25 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Alle drei kommen aus der Amplitude einer Person je Aufenthalt (4.3: 10–90 % 0,14–2,3), die das
   Modell bis 0.10.0 nicht hatte (seitdem drin, siehe den Eintrag davor): zu groß erklären eine zweite Person oder eine Echoquelle den Rest, zu klein schiebt
   die Energie die Person hinaus.
+- **Neustart mit dem gespeicherten Zustand statt `start_people`** (7.10., 5.3). `report_eval.py`
+  gegen die Wahrheit vom 6.10. (41 leere, 15 belegte Fenster), wie die App gelaufen ist (App-Starts
+  19:28, 21:02, 21:14, 21:18, 22:19, 2:07): vorher (b3669ff, bei jedem Start `start_people` = 1)
+  Licht fälschlich an 0 von 41, aus 1,67 von 15, Log-Evidenz −1187179,8, CPU 333 s; mit dem
+  gespeicherten Zustand 0,88 / 1,67, −1186965,1 (+215), 634 s; dasselbe mit 30 s Pause vor jedem Start
+  (die App lief nicht, die Aufnahme schon) 0,14 / 1,17; bei jedem Start ohne Wissen 0,14 / 1,67.
+  Durchgehend ohne Neustart: Start ohne Wissen 0,88 / 1,67 (−1192861,3), mit `start_people` = 1
+  0 / 1,67 (−1193001,8). Die 0,88 sind eine Episode von etwa 20 s in zwei Meldungen (21:28:14 und
+  21:28:36): Leon geht aus dem Wohnzimmer in die Küche, das Modell hält dort noch jemanden (0,98 → 0,26
+  in 20 s), durchgehend mit `start_people` = 1 sofort 0. Sie hängt an der dritten bekannten Person seit
+  20:56 (9), die alle Varianten haben; ob jemand im Wohnzimmer zurückbleibt, kippt mit Kleinigkeiten
+  (Spuren, die der Neustart beendet; 30 s Pause; der Start um 19:28), auch mit der Intensität nur in
+  Sicht oder halb in Sicht, halb hinter Türen (je 0,88). Vorher verschwand die dritte Person beim Start
+  um 21:02. Die oben verworfene Intensität beim Start ist jetzt der Start ohne Wissen; ihr Fehler um 21:28
+  war diese Episode. Meldung 7.10. 08:07 nachgespielt (Gelerntes und Zustand ab 6.10. 19:28 mit den
+  App-Starts, neue Kalibrierung 07:44:30 mit config6, Neustart 08:06:00): mit dem Zustand von 08:06 und
+  mit dem gespeicherten von 08:00:17 Arbeitszimmer und Esszimmer ab 10 s nach dem Start durchgehend
+  1,000 bis 08:09, ohne Wissen ebenso (die Intensität in Sicht nimmt beide); die Küche dabei
+  mindestens 0,34 / 0,95 / 0,01 (wer dort war, ist nicht bekannt). `phantom.py` 18:00–6:15 0,0 min.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

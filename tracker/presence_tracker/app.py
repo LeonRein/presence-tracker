@@ -129,7 +129,7 @@ class App:
         app believed (6.10., 21:22); with this copy it is the same."""
         self.model_start = t
         self.start_learned = json.loads(json.dumps(self.tracker.learned()))
-        self.start_people = self.tracker.started_from  # the saved state it started from (None: nothing known)
+        self.start_state = self.tracker.started_from  # the saved state it started from (None: nothing known)
 
     def _on_tracker_event(self, event, data):
         if event == "frame":
@@ -463,7 +463,7 @@ class App:
                            "text": str(body.get("text") or "")[:2000], "version": __version__, "code": CODE,
                            "model_start": start, "learned_at": start if covered else now},
                 "config": self.config.to_dict(), **(self.start_learned if covered else self.tracker.learned()),
-                "people": self.start_people if covered else None}
+                "people": self.start_state if covered else None}
         self.reports.mkdir(parents=True, exist_ok=True)
         name = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{re.sub(r'[^a-z0-9_]', '', room.lower()) or 'haus'}-{kind}"
         lines = [json.dumps(meta)]
