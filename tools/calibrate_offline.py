@@ -476,6 +476,59 @@ def checks(prob, phi, eps_plan=None):
     return out
 
 
+def track_ends(prob):
+    """Per sensor and LD2450 track: first and last measured point beyond MIN_RANGE (t, z) and the
+    points of its last second (for the velocity at the end)."""
+    out = {}
+    for sid, a in prob.data.items():
+        if not len(a):
+            continue
+        s = prob.config.sensor_by_id[sid]
+        z = ground(s, a[:, 2], a[:, 3], prob.mirror[sid], prob.th)
+        ok = np.abs(z) >= MIN_RANGE
+        t, seg, z = a[ok, 0], a[ok, 1], z[ok]
+        order = np.lexsort((t, seg))
+        t, seg, z = t[order], seg[order], z[order]
+        cut = np.flatnonzero(np.diff(seg)) + 1
+        first, last = np.r_[0, cut], np.r_[cut, len(seg)] - 1
+        out[sid] = SimpleNamespace(t=t, z=z, first=first, last=last, seg=seg)
+    return out
+
+
+def handovers(prob, phi, ends, window=2.0):
+    """Someone leaving one sensor's view and entering another's (Rahimi et al. 2004: the path goes
+    on through the gap): per track end of sensor a, the track start of sensor b within `window`
+    s nearest to where the end's velocity leads. Per sensor pair: how many within 1 m, their
+    median distance."""
+    world = {sid: prob.world(phi, sid, e.z) for sid, e in ends.items()}
+    vel = {}
+    for sid, e in ends.items():
+        w, v = world[sid], []
+        for j in e.last:
+            k = j
+            while k > 0 and e.seg[k - 1] == e.seg[j] and e.t[j] - e.t[k - 1] <= 1.0:
+                k -= 1
+            v.append((w[j] - w[k]) / (e.t[j] - e.t[k]) if e.t[j] - e.t[k] > 0.3 else 0j)
+        vel[sid] = np.array(v)
+    out = {}
+    for a_id, b_id in itertools.combinations(sorted(ends), 2):
+        res = []
+        for x, y in ((a_id, b_id), (b_id, a_id)):
+            ex, ey = ends[x], ends[y]
+            ts = ey.t[ey.first]
+            for n, j in enumerate(ex.last):
+                te = ex.t[j]
+                lo, hi = np.searchsorted(ts, te), np.searchsorted(ts, te + window)
+                if hi <= lo:
+                    continue
+                cand = world[y][ey.first[lo:hi]] - (world[x][j] + vel[x][n] * (ts[lo:hi] - te))
+                res.append(np.abs(cand).min())
+        res = np.array(res)
+        good = res < 1.0
+        out[f"{a_id}|{b_id}"] = (len(res), int(good.sum()), float(np.median(res[good])) if good.any() else float("nan"))
+    return out
+
+
 def short(sid):
     return sid.replace("presence-", "")
 
@@ -562,6 +615,8 @@ def main():
               f"{s.x:5.2f}->{r['x']:5.2f} {s.y:5.2f}->{r['y']:5.2f}")
 
     before, after = checks(prob, phi0), checks(prob, phi)
+    ends = track_ends(prob)
+    h0, h1 = handovers(prob, phi0, ends), handovers(prob, phi, ends)
     print("\nwalking points out of sight (> 0.3 m / > 1 m from what the sensor can see), drawn -> fitted:")
     for sid in prob.points:
         (b3, b1), (a3, a1) = before["outside"][sid], after["outside"][sid]
@@ -572,6 +627,13 @@ def main():
         a_, b_ = k.split("|")
         print(f"  {short(a_) + '|' + short(b_):26s} n={n:5d}  {g0:5d} ({m0.real:5.2f},{m0.imag:5.2f}) {d0:.2f}"
               f"  ->  {g1:5d} ({m1.real:5.2f},{m1.imag:5.2f}) {d1:.2f}")
+    print("handovers (a track ends, another sensor's starts within 2 s where the walk leads): "
+          "ends with a start within 1 m, median distance; drawn -> fitted:")
+    for k in h0:
+        (n, g0, d0), (_, g1, d1) = h0[k], h1[k]
+        if max(g0, g1) >= 5:
+            a_, b_ = k.split("|")
+            print(f"  {short(a_) + '|' + short(b_):26s} n={n:5d}  {g0:4d} {d0:.2f}  ->  {g1:4d} {d1:.2f}")
 
     if a.mirrors:
         print("\nmirrored x axis, best of several start headings (log posterior; higher is better):")
