@@ -23,10 +23,12 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
 - **Wer geht, wird schnell gesehen; wer sitzt, nicht immer.** Wie gut ein Sitzender erfasst wird, hängt von
   Haltung und Platz ab und wird für jeden Aufenthalt mitgeschätzt: Wer am Tisch oft erfasst wurde und lange
   nicht mehr, ist wahrscheinlich gegangen; wer auf dem Sofa selten erfasst wird, nicht.
-- **Geister**: Eine Spur, die zu keiner Person gehört. Wo jeder Sensor Geister sieht und wie lange sie leben,
-  **lernt die App selbst** (Geisterkarte). Wird ein Sensor verschoben, hinzugefügt oder entfernt, beginnt
-  die Karte neu, weil sich die Sensoren gegenseitig stören können. Bis sie ein paar Stunden gelernt hat,
-  werden Geister an festen Stellen (Möbel, Ladestation) leichter für Personen gehalten.
+- **Geister**: Eine Spur, die zu keiner Person gehört. Wo jeder Sensor Geister sieht, **lernt die App
+  selbst** (Geisterkarte); wie lange Geister leben, ist fest (daran unterscheidet das Modell sie von
+  Sitzenden). Wird ein Sensor verschoben, hinzugefügt oder entfernt, beginnt die Karte neu, weil sich die
+  Sensoren gegenseitig stören können. Eine Stelle wird erst nach vielen Geistern zur Geisterquelle (ein
+  Platz, an dem jemand sitzt, soll nicht durch ein paar Fehlurteile dazu werden); bis die Karte einige
+  Tage gelernt hat, werden Geister an festen Stellen (Möbel, Ladestation) leichter für Personen gehalten.
 - **Sensor drehen oder neu kalibrieren** (gleicher Grundriss): Was über die Personen bekannt ist, bleibt.
   Nur die Spuren dieses Sensors beginnen neu, wie nach einer Datenlücke. Andere Parameter: Das Modell
   beginnt neu mit dem, was es über die Personen wusste. Ein geänderter Grundriss (Wände, Räume, Türen):

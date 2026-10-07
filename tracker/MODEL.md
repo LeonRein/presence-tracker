@@ -197,11 +197,14 @@ Eine Spur, die zu keiner Person gehört.
 - **Entstehen** je Sensor mit `λ_s(x) + λ_e · (erwartete Gehende im Blickfeld)` je m² und s.
   - `λ_s(x)`: **Geisterkarte** (`ghostmap.py`), je Sensor und Zelle (0,4 m) ein Poisson-Prozess mit
     Gamma-Prior (J_Luber2014 Kap. 6, Gl. 6.8–6.13). Prior-Mittel 1,8·10⁻⁵ /m²/s (geschätzt 6.10. per
-    EM auf 21 h), Gewicht 4 h Beobachtung je Zelle. Zählungen mit 0,3 m verschmiert (Versatz des
-    Sensors; J_Park2020 Abschn. 1).
+    EM auf 21 h), Gewicht ein Geist je Zelle (die Form α = 1 der Gamma-Verteilung wie J_Luber2014
+    Gl. 6.13; bei dieser Rate entspricht das 96 h Beobachtung, bis 0.12.0 waren es 4 h = 0,04 Geister,
+    10). Zählungen mit 0,3 m verschmiert (Versatz des Sensors; J_Park2020 Abschn. 1).
   - `λ_e` = 3·10⁻⁴: Mehrwegeechos laufen mit Gehenden mit (angenommen).
-- **Lebensdauer:** Mischung zweier Exponentialverteilungen, Startwert 40 % mit 3 s, 60 % mit 39 s
-  (geschätzt per EM 6.10.); wird mit der Karte weitergelernt.
+- **Lebensdauer:** Mischung zweier Exponentialverteilungen, 40 % mit 3 s, 60 % mit 39 s (geschätzt
+  per EM 6.10. offline, `tools/ghostmap.py`). Fest: Die App lernt sie nicht weiter (bis 0.12.0 tat
+  sie das mit der Karte, 10). Die Lebensdauer ist, was Geister von Sitzenden trennt; aus dem eigenen
+  Urteil gelernt, folgte sie den Personen, die der Filter für Geister hielt.
 - **Ende der Spur** (`Tracker._ghost_end`): Der Sensor gibt eine gehaltene Spur auf, wenn er sie nicht
   wiederfindet (4.1). Bei einer Person ist das „u s nicht wiedergefunden“, S(u). Beim Geist ist die
   Quelle entweder noch da und nicht wiedergefunden, S_D(u) S(u), oder sie verschwand bei τ < u, bevor
@@ -214,15 +217,22 @@ Eine Spur, die zu keiner Person gehört.
   unterscheiden sich durch Entstehungsort, Lebensdauer und Verhalten der Spur, nicht durch ein anderes
   Rauschen.
 - **Lernen in der App** (online-EM, I_Kantas2015 Abschn. 5): Endet eine Spur, zählt sie an ihrem
-  Startpunkt mit P(Geist) des Filters; die Beobachtungszeit jedes Sensors ist die Belichtung; die
-  Lebensdauern werden gleich gewichtet. P(Geist) wird am Ende der Spur beurteilt (Bewegung, andere
-  Sensoren, Lebensdauer zählen mit), aber ohne das, was die Karte selbst an dieser Stelle sagte: Ihr
-  Faktor bei der Geburt wird aus den Odds herausgerechnet, als hätte dort die Prior-Rate gegolten
-  (J_Park2020 Gl. 37–41: Clutter-Wahrscheinlichkeit ohne die Clutter-Schätzung). Sonst bestätigt
-  sich die Karte selbst (Simulation: Sitzplatz mit vorgegebener Karte, alt bis 0,34 je Spur gelernt,
-  jetzt < 0,01). Vergessen mit Zeitkonstante 14 Tage. Wird ein Sensor
+  Startpunkt mit P(Geist) des Filters; die Beobachtungszeit jedes Sensors ist die Belichtung.
+  P(Geist) wird am Ende der Spur beurteilt (Bewegung, andere Sensoren, Lebensdauer zählen mit), aber
+  ohne das, was die Karte selbst an dieser Stelle sagte: Ihr Faktor bei der Geburt wird aus den Odds
+  herausgerechnet, als hätte dort die Prior-Rate gegolten (J_Park2020 Gl. 37–41:
+  Clutter-Wahrscheinlichkeit ohne die Clutter-Schätzung). Sonst bestätigt sich die Karte selbst
+  (Simulation: Sitzplatz mit vorgegebener Karte, alt bis 0,34 je Spur gelernt, jetzt < 0,01).
+  Grenze dieser Korrektur: Am Ende einer Spur ist P(Geist) oft genau 1, weil die Hypothesen, in
+  denen sie einer Person gehörte, unter die Schwelle 10⁻⁷ gefallen sind (6.10. am Sitzplatz der
+  zweiten Person 15 von 20 Spuren); was abgeschnitten ist, rechnet keine Korrektur zurück, die
+  Zählung ist dann ein hartes Urteil. Deshalb wiegt der Prior einen Geist je Zelle: Wenige solche
+  Urteile machen eine Stelle nicht zur Quelle (Test: drei Geister in 2,5 h 1,8-mal statt 13-mal die
+  Prior-Rate; eine Reflexion mit 30 Spuren an einem Tag 7,6-mal statt 29-mal). Vergessen mit
+  Zeitkonstante 14 Tage. Wird ein Sensor
   verschoben, gedreht, anders kalibriert (Höhe, Spiegelung, Maßstab), hinzugefügt oder entfernt,
-  beginnt die Karte neu. Die Oberfläche zeigt sie je Sensor. `tools/ghostmap.py` rechnet dasselbe
+  beginnt die Karte neu, ebenso eine mit einem anderen Prior gelernte. Die Oberfläche zeigt sie je
+  Sensor. `tools/ghostmap.py` rechnet dasselbe
   offline auf gewählten Zeitfenstern.
 - Begründung: Wiederkehrende Reflexionen (Möbel, Ladestation des Saugroboters) stehen an festen
   Stellen. Mit gleichverteilter Dichte erklärt das Modell sie als Person.
@@ -559,7 +569,8 @@ Ankünfte und das Vergessen aus 3.4.
   Form, die die Daten tragen: ein τ überall. 2 min ist die kürzeste ohne fälschlich an in beiden
   Sätzen; eine Sitzende behält in ihrer längsten gemessenen Lücke r ≥ e^(−18,2/120) = 0,86. Was kürzer
   als 30 min mehr „aus“ kostet, ist ein einziges 6-s-Fenster (Arbeitszimmer 21:36: die zweite Person an
-  ihrem Platz (−2,3; 8,6), dessen Spuren die Geisterkarte als Geisterquelle gelernt hat, 9); mit der
+  ihrem Platz (−2,3; 8,6), deren Spuren dort der Filter für Geister hält, 9; an der Geisterkarte liegt
+  es nicht, mit der Prior-Rate überall ebenso, 10); mit der
   Quadratur kostet es das auch bei 30 min. Mit 16 Hypothesen: bis 6.10. 0 / 1,68, −1121540; 7.10.
   0,11 / 0 (Flur 9:49 0,10), −449289. Meldungen 7.10. früh (Start 06:50): Esszimmer 8:29 1,00, Arbeitszimmer
   8:52 genau eine Person 1,00, Schreibtisch 8:07 1,00; leere Nacht (`phantom.py`) 0 min.
@@ -671,12 +682,24 @@ Näherungen, die man prüfen oder ersetzen kann:
   statt 2); morgens kommen beide als neue Personen heraus. Die Zahl hinter Türen zählt nur fürs
   Herauskommen (Leon), das Licht der beobachteten Räume ist davon nicht berührt (report_eval,
   `phantom.py`). Wer im Bad ist, verblasst dort ebenso (P(Bad) sinkt).
-- **Ein Sitzplatz, den die Geisterkarte als Geisterquelle gelernt hat:** Die zweite Person saß am
-  6.10. abends im Arbeitszimmer bei (−2,3; 8,6); ihre Spuren dort hielt der Filter anfangs für Geister
-  (Karte dort 9–23-mal die Prior-Rate). Mit kurzem Abklingen (≤ 10 min) oder der Quadratur für κ
-  ist ihre bekannte Person verblasst, bevor die nächste Spur dort beginnt, und die wird ein Geist:
-  21:36 Arbeitszimmer 0,43–0,58 statt 0,84 (ein 6-s-Fenster, „aus“ 1,68 statt 1,17 von 15). Ursache
-  ist das Sensormodell an diesem Platz, nicht das Abklingen.
+- **Ein Sitzplatz, dessen Spuren der Filter für Geister hält:** Die zweite Person saß am 6.10. von
+  etwa 19:25 bis 22:05 im Arbeitszimmer bei (−2,3; 8,6) (aus den Daten: LD2450-Ziel dort, Energie des
+  LD2410C im Ring 3,75–4,5 m im Median 29–33 statt 16–19, wenn Leon allein am Schreibtisch saß; allein
+  20:51–20:55, 21:08–21:11, 21:36–22:00, 22:03–22:06). Von ihren 20 Spuren dort hielt der Filter 19
+  für Geister (P > 0,5), mit der Prior-Rate überall statt der Karte 15 (bis 21:20 alle). Das kommt
+  nicht von der Karte und nicht vom Abschneiden: Bei der Geburt ist sie unbekannt (P(Geist)
+  0,81–0,9999), und danach sprechen die Frames des Arbeitszimmer-Sensors gegen eine Person dort (bis
+  zu 7 log je Frame, die großen Sprünge mit denen der LD2410C-Energie im Ring 3–3,75 m; die erste
+  Spur mit 466 s Leben endete bei P(Person) ≈ e⁻³⁷, obwohl ihr Leben allein 12 log für eine Person
+  gab). Die Geisterkarte verstärkte das bis 0.12.0 (10): Die Stelle wurde 21-mal die Prior-Rate, und
+  die Person war in den Fenstern, in denen sie allein dort saß (33 min), zu 0 im Arbeitszimmer; jetzt
+  1,9-mal, 21:37–22:00 zu 0,97, 20:51 0,55, 21:08 und 22:03 weiter 0.
+  Das Fenster 21:36 der Meldungen („aus“ 1,50 statt 1,17 von 15 mit 30 min Abklingen) bleibt: Es hängt
+  nicht an der Karte (mit der Prior-Rate überall ebenso 0,46), sondern daran, dass ihre bekannte Person
+  verblasst, bevor die neue Spur dort beginnt. Offen: das Messmodell des LD2410C an diesem Platz
+  (4.3); solange der Filter ihre Spuren für Geister hält, zählt die Karte sie auch. Der Prior bremst
+  das nur: Säße sie jeden Abend so, stünde die Stelle im Gleichgewicht mit 14 Tagen Vergessen bei
+  etwa 7-mal der Prior-Rate (mit dem alten Prior etwa 10-mal; nach einem Abend 2,8- statt 17,6-mal).
 - **Doppelte Personen bleiben möglich** (10, Fälle 2 und 5): Bekommt eine Spur die „falsche“ bekannte
   Person (eine überzählige, die näher an der Tür ist, als die wirkliche ungesehen hätte gehen können),
   ist dieselbe Person zweimal da; die überzählige verblasst jetzt binnen etwa einer halben Stunde,
@@ -699,8 +722,8 @@ Näherungen, die man prüfen oder ersetzen kann:
   sin(Azimut) je Sensor (Phasen-Monopuls) machte die Fenster nicht einheitlicher.
 
 Nicht geprüft (Ablationen ausstehend): λ_d = 0,85 gegen langsamere Richtungswechsel; OU-Näherung
-gegen weißes Rauschen in der Beschleunigung; Swerling-I gegen logistisch; Geisterkarte gegen globale
-Rate; Form der Erkennbarkeit.
+gegen weißes Rauschen in der Beschleunigung; Swerling-I gegen logistisch; Form der Erkennbarkeit.
+(Geisterkarte gegen globale Rate: 10.)
 
 ## 10. Erfahrungen
 Was frühere Versionen gezeigt haben. Die Zahlen stammen von gelöschten Wahrheitsdaten oder anderen
@@ -1082,6 +1105,46 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Messung der Lücken echter Sitzender 2 min). Nicht geändert:
   die Zuordnung, die eine Person verdoppelt (2, 5: eine Spur auf der „falschen“ bekannten Person), und
   der Start ohne Wissen. Zahlen in 5.5 und im CHANGELOG.
+- **Die Geisterkarte lernte einen Sitzplatz als Geisterquelle** (bis 0.12.0; nachgespielt ab 6.10.
+  19:28 mit den App-Starts, je endende Spur P(Geist) bei der Geburt und am Ende, was die Karte zählte,
+  `p_spy.py` im Arbeitsordner). Zwei Schleifen, beide aus dem eigenen Urteil des Filters (wie das
+  Verhaltenslernen in 0.6.0, unten):
+  1. *Ort:* Der Prior wog 4 h Beobachtung, bei 1,8·10⁻⁵ /m²/s 0,04 Geister je Zelle; eine ganz
+     gezählte Spur (davon 0,28 in ihrer Zelle) machte die Stelle schon 5–8-mal so wahrscheinlich.
+     Die Korrektur nach J_Park2020 (der Faktor der Karte bei der Geburt herausgerechnet) half nicht,
+     weil P(Geist) am Ende meist genau 1 war (15 von 20 Spuren am Platz): die Hypothesen mit der
+     Person waren unter 10⁻⁷ gefallen. Am Platz (−2,3; 8,6) 1,1-mal die Prior-Rate um 19:37, 4,2 um
+     20:44, 9,1 um 20:51, 12,7 um 21:48, 21 um 22:09; die Spuren dort wurden bei der Geburt mit bis zu
+     33-mal der Prior-Rate gewogen.
+  2. *Lebensdauer:* Die Arten der Geister wurden mit derselben Gewichtung online weitergelernt. Die
+     erste Spur am Platz (466 s, P(Geist) 1) hob die lange Art von 39 auf 72 s, bis 20:51 auf 148 s
+     (am Morgen 101 s). Damit sprach ein langes Leben kaum noch gegen einen Geist – das Merkmal, an
+     dem Sitzende von Geistern zu trennen sind. Auch Spuren am Schreibtisch (bis 744 s) zählten als
+     Geister.
+  Nicht die Ursache des Fensters 21:36: Mit der Prior-Rate überall (Karte nicht gelernt) hielt der
+  Filter 15 der 20 Spuren am Platz ebenso für Geister (9). Geändert: Prior ein Geist je Zelle (Form
+  α = 1 wie J_Luber2014 Gl. 6.13), Lebensdauern fest (4.2). Nicht übernommen: P(Geist) für die Karte
+  aus den Odds bei der Geburt (alle Alternativen, ohne die Karte) mal dem Überleben der Geister über
+  das Leben der Spur, das kein Abschneiden verliert – am Platz zählte das 11,9 statt 15,7 der 20
+  Spuren (die Odds bei der Geburt sind schon 10³–10⁴), in den Sitzfenstern keine Änderung (3,78 von 4
+  „aus“ wie ohne). Nachgespielt (report_eval, 12 Hypothesen; Meldungen bis 6.10. / 7.10.; dazu die
+  vier Fenster aus den Daten, in denen sie allein am Platz saß, 33 min):
+
+  | Karte | bis 6.10.: an / aus, Evidenz | 7.10.: an / aus, Evidenz | allein am Platz: aus von 4 | leere Nacht |
+  |---|---|---|---|---|
+  | 0.12.0 (0,04 Geister, Leben gelernt) | 0 / 1,68, −1121539 | 0 / 0, −449321 | 4,00 | 0 min |
+  | Leben fest | 0 / 1,50, −1121619 | | 3,78 | |
+  | **Leben fest, ein Geist je Zelle** | **0 / 1,50, −1121544** | **0 / 0, −449405** | **2,64** | **0 min** |
+  | nicht gelernt (Prior-Rate überall) | 0 / 1,50, −1149617 | 0 / 0, −458489 | 2,88 | 0 min |
+
+  Küche 7.10. 11:39–12:55 unverändert 0,04 / 0,01 / 0,00, Flur 9:49 0,07 statt 0,05. Die Lichtfehler
+  bis 6.10.: Flur 21:35 (1,00, wie 0.11.0) und Arbeitszimmer 21:36 (0,50); weg sind Wohnzimmer 21:22
+  (0,17) und Schreibtisch 22:40 (0,02), die die gelernten langen Geister kosteten. Die Karte bleibt
+  nützlich: ohne sie Log-Evidenz −28 073 bis 6.10., −9 084 am 7.10.; Lichtfehler und leere Nacht sind
+  in diesen Fenstern ohne sie gleich (dass ohne Karte Reflexionen zu Personen werden, oben, zeigt sich
+  hier nicht; eine Karte, die nicht lernt, wäre die einfachere Form – die Evidenz spricht dagegen).
+  Am Ende des Abends (10,8 h) stehen die stärksten Stellen je Sensor bei 1,2–2,8-mal statt
+  2,1–17,6-mal der Prior-Rate (Esszimmer (4,2; 3,0) 1,9 statt 7,3; der Platz 2,8 statt 17,6).
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

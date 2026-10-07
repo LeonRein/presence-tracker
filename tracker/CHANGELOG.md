@@ -2,6 +2,34 @@
 
 ## Unveröffentlicht
 
+## 0.14.0
+
+- **Die Geisterkarte lernt keinen Sitzplatz mehr als Geisterquelle** (MODEL.md 4.2, 9, 10). Am 6.10.
+  saß die zweite Person abends lange an ihrem Platz im Arbeitszimmer; der Filter hielt ihre Spuren dort
+  für Geister, und die Karte lernte daraus in 2,5 h eine Geisterquelle mit 21-mal der Prior-Rate. In den
+  33 Minuten, in denen sie allein dort saß, war das Arbeitszimmer im Nachspiel durchgehend leer. Zwei
+  Rückkopplungen, beide behoben:
+  - Der Prior der Karte wog nur 0,04 Geister je Zelle: Schon eine Spur, die der Filter für einen Geist
+    hielt, machte die Stelle 5–8-mal so wahrscheinlich. Die Korrektur, die den Beitrag der Karte aus
+    dem Urteil herausrechnet, griff nicht, weil das Urteil meist genau 1 war (die Alternative „Person“
+    war schon abgeschnitten). Jetzt wiegt der Prior einen Geist je Zelle (wie Luber 2014): drei solche
+    Spuren machen 1,8- statt 13-mal, eine Reflexion mit 30 Spuren am Tag weiter 7,6-mal.
+  - Wie lange Geister leben, lernte die App mit: Lange Spuren von Sitzenden, für Geister gehalten,
+    machten die langlebige Art in einer Stunde von 39 auf 148 s, sodass ein langes Leben nicht mehr
+    gegen einen Geist sprach. Die Lebensdauern sind jetzt fest (offline geschätzt, `tools/ghostmap.py`
+    gibt sie aus).
+  Die gespeicherte Karte beginnt nach dem Update neu (sie ist mit dem alten Prior gelernt).
+  Gemessen (`tools/report_eval.py`, 12 Hypothesen): Meldungen bis 6.10. Licht fälschlich an 0 von 41,
+  aus 1,50 statt 1,68 von 15, Log-Evidenz −5; vom 7.10. an 0 von 13, aus 0 von 7, Küche 0,04 / 0,01 /
+  0,00 wie bisher, Log-Evidenz −84; die vier Fenster, in denen sie allein am Platz saß: das Licht wäre
+  in 2,64 statt 4,00 von 4 aus (21:37–22:00 jetzt zu 0,97 besetzt); leere Nacht 0 min Licht an. Das
+  Fenster 21:36 der Meldungen bleibt falsch: Es liegt nicht an der Karte (ohne gelernte Karte ebenso),
+  sondern daran, wie der Filter ihre Spuren an diesem Platz beurteilt (MODEL.md 9). Ganz ohne gelernte
+  Karte wären die Lichtfehler hier gleich, die Log-Evidenz aber um 28 073 bzw. 9 084 schlechter: Die
+  Karte bleibt. Neue Tests
+  (`test_frames.py`, `test_filter.py`: eine Sitzende, die der Filter erst für Geister hält, macht ihren
+  Platz nicht zur Geisterquelle).
+
 ## 0.13.0
 
 - **Kalibrierung neu: alle Sensoren gemeinsam, auch wenn sie sich nur in einer Tür überschneiden**
