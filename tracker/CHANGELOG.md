@@ -2,6 +2,59 @@
 
 ## Unveröffentlicht
 
+Robustheit (zwei Reviews von 0.18.0). Der Node-RED-Flow behält bei *nicht verfügbar* den letzten
+Zustand: Alles, was die App anhielt oder ihre Ausgaben einfror, ließ ein brennendes Licht brennen.
+
+- **Live-Ansicht hält nichts mehr auf:** Ein Browser, der nicht mehr liest (Handy schläft, Proxy hängt),
+  hielt über den vollen Sendepuffer die Schleife an, die das Modell taktet und die Räume an Home Assistant
+  schickt. Jetzt hat jeder Browser eine eigene Sendeaufgabe, nur die neueste Nachricht wartet; wer 5 s für
+  eine braucht, wird getrennt.
+- **Verstummter Sensor:** Seine Spuren enden 6 s nach seinem letzten Frame (MODEL.md 4.1), nicht erst mit
+  dem nächsten. Ein Board, das ausfiel, während es jemanden verfolgte, hielt den Raum 1–2 h besetzt.
+- **MQTT:** Frames werden beim Eintreffen geprüft; gültiges JSON, das kein Frame ist (`null`, eine Liste,
+  `uptime_ms` als Text, ein Ziel ohne `y`, `x: null`, `targets: null`), beendete die App. Ungültige Frames
+  werden verworfen und höchstens einmal je Minute und Sensor protokolliert; die MQTT-Schleife verbindet
+  sich nach jedem Fehler neu.
+- **Speichern und Laden:** Ein Fehler beim Speichern (volle Platte, ein Zustand, den das Modell nicht
+  speichert) beendete die App; jetzt wird er protokolliert. Das Speichern alle 10 Minuten packt und
+  schreibt in einem Thread, mit `fsync` und atomarem Umbenennen. Eine leere, kaputte oder falsch getypte
+  `calibration.npz`, `people.json`, `ghostmap.json`, `ld2410.json` oder `destinations.json` verhinderte
+  den Start; jetzt gilt sie für ihren Teil als „nichts gelernt“.
+- **NaN:** Ein nicht endliches Gewicht oder eine nicht endliche Wahrscheinlichkeit startet das Modell neu
+  (mit Protokollzeile), statt die App zu beenden oder still „niemand da“ zu zeigen. Ein mögliches
+  `log(0)` im LD2410C-Gewicht (derselbe Fehler wie bei 0.9.3) wird im Log-Raum gerechnet.
+- **Kein Neustart für Ausgabe-Einstellungen:** *Kosten: Licht ohne Person*, *Kosten: Einschalten auf
+  Verdacht*, *Vorausschau*, *Haltezeit LD2410C* und das Umbenennen von Zonen und Sensoren behalten Spuren
+  und Personen (bisher ein voller Neustart, 2,6 s Rechenzeit mit 7 Sensoren).
+- **Konfigurationsprüfung:** abgelehnt werden doppelte Sensor- und Zonen-IDs, Sensor-IDs mit `/ + #`,
+  Wände ohne genau zwei verschiedene Punkte, unbekannte Wand- und Zonenarten und Formen, Rechtecke ohne
+  zwei Ecken, Flächen mit weniger als drei Punkten, Kreise ohne Mittelpunkt (die gingen durch und ließen
+  danach jeden Takt scheitern, auch nach jedem Neustart). Eine Wand mit einem Punkt gibt 400 statt 500.
+  Eine neue Konfiguration gilt erst, wenn das Modell mit ihr läuft; sonst bleibt die alte in App und
+  Modell. Hintergrundbilder dürfen bis 10 m je Pixel haben (SVG-Plan in Metern).
+- **Verfügbarkeit:** *online* erst nach den ersten frischen Zuständen einer Verbindung (vorher zeigte HA
+  die vom Broker gehaltenen Zustände des letzten Laufs als aktuell). Scheitert das Modell dreimal, ohne
+  dazwischen 60 s zu laufen, sind die Entitäten *nicht verfügbar*, im Protokoll steht ein lauter Fehler,
+  und das Modell wird nur noch einmal je Minute neu gebaut (bisher bei jedem Frame, Sekunden Rechenzeit
+  je Versuch). Eine gespeicherte `tracker.json`, die die Prüfung nicht besteht, steht beim Start als
+  Fehler im Protokoll.
+- **Neu beginnen:** lässt auch die laufenden Spuren der Sensoren neu anfangen; wer ruhig saß, war bisher
+  für das Modell dauerhaft weg (P 0,004 nach 5 min), und der LD2410C-Hintergrund lernte ihn als
+  Hintergrund. Der lernt nach *Neu beginnen* 5 Minuten lang nichts.
+- **Fehlermeldungen nach einer Live-Kalibrierung:** Die Meldung enthält die Konfiguration vom Beginn des
+  Nachspiels und jede seither ohne Neustart übernommene mit ihrer Zeit (`config_changes`);
+  `tools/replay.py --report` übernimmt sie zu denselben Zeiten (vorher bis 0,12 daneben).
+  `tools/report_eval.py --config-at "Zeit=Datei"` spielt Konfigurationswechsel ebenso nach.
+- **LD2410C:** Ein Frame mit allen Energien 0 ist das „kein Wert“ der Firmware, keine Messung (in
+  1,5 Millionen aufgenommenen Frames nie vorgekommen); gewogen überstimmte er zwei LD2450-Spuren eines
+  Sitzenden.
+- **Kleineres:** Gelöschte Zonen nehmen ihren gehaltenen Zustand im Broker mit. Hochgeladene Bilder
+  kommen mit einer Content-Security-Policy, die jedes Skript verbietet (ein SVG lief sonst im Origin von
+  Home Assistant). *Alle auf Standard* wartet aufs Speichern, bevor die Seite neu lädt. Lehnt der Server
+  eine Speicherung ab, geht nur die abgelehnte Änderung zurück, spätere bleiben. `tools/report_eval.py`:
+  Der *walks*-Filter eines Fensters galt auch für gleichzeitige andere Fenster. *Fehler melden* mit einer
+  Minutenangabe, die keine Zahl ist, gibt 400 statt 500.
+
 ## 0.18.0
 
 - **Bearbeiten sicherer:** Nach jedem Speichern sagt eine Meldung *Gespeichert* und, wenn das Modell

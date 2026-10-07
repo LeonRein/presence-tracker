@@ -57,9 +57,14 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
 - **Personen**: Wie viele es sind, wird nirgends eingestellt. Nach einem Neustart der App macht das Modell
   mit dem weiter, was es vorher über die Personen wusste (gespeichert alle 10 Minuten und beim Beenden
   in `/data/people.json`, über die Pause vorgerückt); nur die laufenden Spuren beginnen neu. Ohne das
-  (erste Installation, neuer Grundriss, *Spuren zurücksetzen*) weiß es nichts: Wer in Sicht ist, wird
+  (erste Installation, neuer Grundriss, *Neu beginnen*) weiß es nichts: Wer in Sicht ist, wird
   gefunden, gleich wie viele; wer hinter einer Tür oder außer Haus ist, wenn er herauskommt. Weitere
-  (Gäste) kommen über die Wege nach draußen dazu; wer sicher außer Haus ist, wird vergessen.
+  (Gäste) kommen über die Wege nach draußen dazu; wer sicher außer Haus ist, wird vergessen. *Neu
+  beginnen* lässt auch die Spuren der Sensoren neu anfangen (wer gerade verfolgt wird, zählt sofort
+  wieder), und der LD2410C-Hintergrund lernt danach 5 Minuten lang nichts.
+- **Ausfall eines Sensors**: Kommt von einem Sensor 6 s lang kein Frame (Board ohne Strom, abgestürzt,
+  WLAN weg), enden seine Spuren. Wen er verfolgt hat, der gilt dann als ungesehen und verblasst wie jeder,
+  den kein Sensor sieht; der Raum bleibt nicht stundenlang besetzt.
 - **Fehler melden** (Tab *Live*): Wenn etwas nicht stimmt (Licht fälschlich an oder aus, Licht zu spät,
   Person verloren, Geist, Person am falschen Ort, ungenaues Tracking, hohe Latenz), den Raum (keine
   Vorauswahl) und die Art des Fehlers wählen. Die App
@@ -68,10 +73,12 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   angezeigt hat (unter `/data/reports`, je Meldung etwa 0,2–0,7 MB, in der Liste herunterladbar). Daraus
   entsteht die Wahrheitstabelle für die Bewertung; `tools/replay.py --report DATEI` spielt eine Meldung
   nach und zeigt, wie weit das Nachspiel von der Anzeige der App abweicht. Begann das Modell innerhalb der
-  15 Minuten (Start der App, *Spuren zurücksetzen*, neuer Grundriss), beginnt das Nachspiel dort mit dem
+  15 Minuten (Start der App, *Neu beginnen*, neuer Grundriss), beginnt das Nachspiel dort mit dem
   damals Gelernten und dem Zustand der Personen, mit dem das Modell begann (etwa 30 kB mehr), und glaubt
   genau, was die App glaubte; sonst beginnt es ohne Wissen am Anfang der Daten und hat das bis zum
-  gemeldeten Moment vergessen.
+  gemeldeten Moment vergessen. Die Meldung enthält die Konfiguration vom Beginn des Nachspiels und jede,
+  die die App danach ohne Neustart übernommen hat (ein Sensor kalibriert), mit ihrer Zeit; das Nachspiel
+  übernimmt sie zu denselben Zeiten.
 
 ## Einrichten
 
@@ -125,8 +132,10 @@ aus dem Betrieb gelernt) und wo er Geister meldet, dazu der gelernte Messfehler 
 nebenbei; das Tracking nutzt es in dieser Version noch nicht.
 
 Alles wird sofort gespeichert (`/data/tracker.json`); eine kurze Meldung sagt *Gespeichert* und, wenn
-das Modell dabei neu startet, *Modell neu gestartet* (bei fast jeder Änderung an Grundriss, Zonen, Sensoren
-und Einstellungen, nicht bei den Schwellen „Ziel“). Rückgängig und Wiederholen mit den Knöpfen ↶ ↷ unten
+das Modell dabei neu startet, *Modell neu gestartet* (bei fast jeder Änderung an Grundriss, Zonen und
+Einstellungen; nicht, wenn nur Sensoren kalibriert oder verschoben wurden, nicht bei Einstellungen, die nur
+die Ausgaben betreffen: *Kosten: Licht ohne Person*, *Kosten: Einschalten auf Verdacht*, *Vorausschau*,
+*Haltezeit LD2410C*, die Schwellen „Ziel“, und nicht beim Umbenennen). Rückgängig und Wiederholen mit den Knöpfen ↶ ↷ unten
 rechts auf der Karte oder mit Strg+Z / Strg+Y. Sie wirken nur auf Änderungen im aktuellen Tab; liegt die
 letzte Änderung in einem anderen Tab, sagt die App, in welchem, statt sie unsichtbar zurückzunehmen.
 Löschen mit Entf oder Rücktaste, *Von Karte nehmen*, *Neu sammeln* (Kalibrierung) und *Neu beginnen*
@@ -136,7 +145,11 @@ wird; einen eigenen Bearbeiten-Modus gibt es nicht.
 Zahlenfelder nehmen nur Werte in ihren Grenzen an. Ein leeres Feld oder ein Wert außerhalb (etwa
 *Kosten: Licht ohne Person* = 0, was jeden Raum besetzt und jedes Licht eingeschaltet hätte) wird nicht
 gespeichert: Der alte Wert bleibt, das Feld wird rot markiert und sagt, was erlaubt ist. Der Server prüft
-dieselben Grenzen und lehnt solche Änderungen mit einer Meldung ab.
+dieselben Grenzen und lehnt solche Änderungen mit einer Meldung ab, ebenso doppelte IDs von Sensoren oder
+Zonen, Wände ohne genau zwei Punkte, unbekannte Zonenarten und -formen und Kreise ohne Mittelpunkt; eine
+Konfiguration, mit der das Modell nicht läuft, gilt gar nicht erst (die vorige bleibt). Was während einer
+abgelehnten Speicherung schon weiter geändert wurde, bleibt erhalten und wird danach gespeichert. Ein
+Hintergrundbild darf bis 10 m je Pixel haben (ein SVG-Plan in Metern).
 
 ## Entitäten in Home Assistant
 
@@ -152,7 +165,17 @@ Gerät **Presence Tracker**, für jeden Raum und Bereich:
 
 Dazu `presence_haus_*` für das ganze Haus (ohne *außer Haus*). Ein Raum mit *Außer Haus* (Treppenhaus)
 bekommt keine Entitäten; hatte er von einer früheren Version welche, entfernt die App sie beim nächsten
-Verbinden mit dem Broker.
+Verbinden mit dem Broker. Eine gelöschte Zone nimmt ihren Zustand im Broker mit.
+
+**Verfügbarkeit:** Die Entitäten sind *nicht verfügbar*, solange die App nicht läuft, und nach dem
+(Wieder-)Verbinden, bis sie frische Zustände gesendet hat (vorher zeigte Home Assistant kurz die Zustände
+vom letzten Lauf als aktuell). Scheitert das Modell dreimal, ohne dazwischen eine Minute zu laufen (etwa
+an einer Konfiguration, mit der es nicht rechnen kann), sind sie ebenfalls *nicht verfügbar*, bis es
+wieder eine Minute ohne Fehler läuft; im Protokoll steht dann ein Fehler in Großbuchstaben, und das Modell
+wird nur noch einmal je Minute neu versucht. Der Node-RED-Flow behält bei *nicht verfügbar* den letzten
+Zustand. Kaputte MQTT-Nachrichten, ein Browser, der die Live-Ansicht nicht mehr abholt, ein Fehler beim
+Speichern oder eine leere bzw. kaputte Datei in `/data` (nach einem Stromausfall) halten die App nicht an:
+Sie werden protokolliert, eine kaputte Datei gilt als „nichts gelernt“ für ihren Teil.
 
 **Besetzt** ist an, solange die Wahrscheinlichkeit, dass jemand im Raum ist, über der Schwelle aus
 *Kosten: Licht ohne Person* liegt (bei 2: 67 %, Attribut `probability` am Personenzähler). Es geht im
