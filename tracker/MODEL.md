@@ -113,7 +113,7 @@ Prozess wie eine Diffusion aus, je Achse mit `D = E[s²] / (2 λ_d) = (s² + Str
   Person, bleibt diese Möglichkeit als r < 1 erhalten, und was danach nicht zu ihr passt (keine neue
   Spur, wo sie gesehen würde; kein Herauskommen aus einem Bereich ohne Sensor; die Energien des
   LD2410C), senkt r. Das ist keine Regel: dieselbe Rechnung wie für ihre Dichte (1.3, Anmerkung).
-  Ohne stützende Messungen klingt r mit 30 min ab (5.5).
+  Ohne stützende Messungen klingt r mit 2 min ab (5.5).
 
 ## 4. Messmodell
 
@@ -157,11 +157,18 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   gehaltenen Ziel stattdessen `1 − exp(−d²/(2·0,7²))` (dort würde es wiedergefunden).
 - **Erkennbarkeit κ** einer stehenden Person in diesem Aufenthalt (Haltung, Platz): dieselbe Person
   wird am Tisch alle halbe Minute erfasst, auf dem Sofa minutenlang nicht. κ ~ Gamma(α, α), Mittel 1,
-  in 3 gleich wahrscheinlichen Stufen (Mittel 0,19 / 0,71 / 2,10); neu bei jedem Stehenbleiben,
+  als 3 Punkte der verallgemeinerten Gauß-Laguerre-Quadratur (Golub & Welsch 1969; exakt bis zum
+  5. Moment, wie die Sigma-Punkte der Position, 5.2): 0,42 / 2,29 / 6,29 mit 0,71 / 0,28 / 0,01 (bis
+  7.10. gleich wahrscheinliche Stufen an ihren Mitteln, 0,19 / 0,71 / 2,10: Ein Drittel der Masse lag
+  nahe 0, „ungesehen sitzen“ war billig; Log-Evidenz mit der Quadratur +466 / +513 auf den Meldungen
+  bis 6.10. / vom 7.10., Lichtfehler gleich, 5.5); neu bei jedem Stehenbleiben,
   innerhalb eines Aufenthalts mit 1/(600 s) neu gezogen (D_Mahler2011 Gl. 49–52; D_Wilthil2019 Gl. 2).
   5 Stufen (bis 0.10.0) −2, 4 Stufen −0,3 gegenüber 3 (dieselben 11 h wie 3.1), Lichtfehler gleich.
   α = 1 (angenommen). Über die Evidenz dieser 11 h nicht zu bestimmen: α = 0,5 −5, α = 2 +17, mit 24
-  Hypothesen ab 10⁻⁹ aber −82 (5.1). Gehende: κ = 1.
+  Hypothesen ab 10⁻⁹ aber −82 (5.1). Aus den bekannten Aufenthalten (5.5) auch nicht: Der LD2450 im
+  Arbeitszimmer hatte Leon am Schreibtisch fast immer in einer Spur (6.10. abends 233 s ohne Spur in
+  79 min, 7.10. 0–14 s je 10 min), und ohne Spur fand er ihn mit 0,01–0,27 /s wieder (κ ≈ 0,3–8, keine
+  Masse nahe 0, aber zu wenige Fälle für eine Form). Gehende: κ = 1.
 - Wer keine Spur bekommt, wird mit `exp(−Rate·Δt)` gewichtet; das gilt für jede Person, die von einem
   Sensor nicht schon gemessen wird.
 
@@ -283,7 +290,8 @@ Das Modell, je Sensor:
   ohne Wand dazwischen sehen könnte, über ihren Versatz gemittelt wie in 4.1; bis 0.10.0 ja/nein). Ruhig zählt das Verzögerte: M ist, was die Personen
   zuletzt hineingaben (geglättet mit 2 s), w_m sein Anteil im Block; bewegt w_m = 0.
 - **Amplitude je Aufenthalt** (Swerling III: langsam, fest über einen Aufenthalt): Eine Stehende mit
-  Spur gibt g·S ab, g ~ Gamma(6, 6) in 3 gleich wahrscheinlichen Stufen (gemessen β 5–16, s. o.), neu
+  Spur gibt g·S ab, g ~ Gamma(6, 6) als 3 Quadraturpunkte wie κ (0,58 / 1,22 / 2,20 mit 0,41 / 0,54 /
+  0,05; gemessen β 5–16, s. o.), neu
   bei jedem Stehenbleiben, innerhalb mit 1/(600 s) neu gezogen wie κ, aber unabhängig von κ (a priori
   unabhängig und von verschiedenen Sensoren gemessen: als eigener Vektor neben κ an der
   Gauß-Mischung exakt). Gehende und Personen ohne Spur: g = 1 (auf den Kacheln geht g verloren wie die
@@ -510,20 +518,51 @@ Ankünfte und das Vergessen aus 3.4.
   verschiedener Personenzahl; wurde die mit weniger Personen abgeschnitten (höchstens 12, 5.1), kam
   sie nie zurück, und die erfundene Person blieb mit r = 1 (9, 10). Ausgaben zählen r × Dichte; die
   Anzeige zeigt Personen mit r ≥ 0,5 (Schätzer der Literatur, B_GarciaFernandez2018 Abschn. VI).
-- **Existenz klingt ab** (`record_life` = 30 min, angenommen; `Tracker._fade`): Ohne Spur existiert
-  eine bekannte Person mit `e^(−t/30 min)` weiter, wie die Existenz einer Spur als Markov-Kette
+- **Existenz klingt ab** (`record_life` = 2 min; `Tracker._fade`): Ohne Spur existiert eine bekannte
+  Person mit `e^(−t/2 min)` weiter, wo sie auch ist, wie die Existenz einer Spur als Markov-Kette
   (IPDA; D_MusickiEvans2005 Gl. 6, p₁₁ < 1). Messungen, die sie stützen, heben r wieder an (die
   Energien des LD2410C bei Sitzenden, eine neue Spur macht r = 1); wo nichts sie messen kann (ein
   Raumteil ohne Sicht, ein Bereich ohne Sensor), verblasst sie. Grund (7.10., 10): Eine Person, deren
-  Spur einmal r = 1 gab, war sonst nie mehr zu widerlegen, wo kein Sensor hinsieht – die Vorratsecke der
-  Küche (x 3,4–4,6, y 7,7–9,2: Sicht 0 für jeden LD2450 und das LD2410C) hielt 75 min lang eine
-  doppelte Person (Küche 0,98 → 0,71), weil die schweren Ausläufer der Aufenthaltsdauer (3.1) dort
-  nur das langsame Aufstehen ließen. Die Personenzahl hinter Türen zählt nur für das Herauskommen
-  (wer dort lange ist, verblasst und kommt notfalls als neue Person heraus, 5 s Bestätigung genügen,
-  1); Schlafende sind nach einigen Stunden „unbekannt“. Gemessen (report_eval, Meldungen bis 6.10.,
-  12 Hypothesen): ohne 0 / 1,17, Log-Evidenz −1121966,9; 60 min −1121939,4; 30 min 0 / 1,17,
-  −1121952,2. Meldungen 7.10. (truth_0710b, 13 leere / 7 belegte Fenster): ohne 3,14 / 0 (Küche
-  0,94 / 0,80 / 0,71); 60 min 0,31 / 0 (0,49 / 0,10 / 0,02); 30 min 0 / 0 (0,08 / 0,02 / 0,01).
+  Spur einmal r = 1 gab, war sonst nie mehr zu widerlegen, wo kein Sensor hinsieht – die Vorratsecke
+  der Küche (x 3,4–4,6, y 7,7–9,2: Sicht 0 für jeden LD2450 und das LD2410C) hielt 75 min lang eine
+  doppelte Person (Küche 0,98 → 0,71), weil die schweren Ausläufer der Aufenthaltsdauer (3.1) dort nur
+  das langsame Aufstehen ließen. Die Personenzahl hinter Türen zählt nur für das Herauskommen (Leon:
+  Automationen nur für Räume mit Sensor); wer dort ist, verblasst und kommt als neue Person heraus
+  (5 s Bestätigung genügen, 1). *Die Skala, gemessen* (`supp.py` im Arbeitsordner, Aufnahmen
+  nachgespielt wie in der App): bekannte Aufenthalte in Sicht, 5,6 h (Schreibtisch 6.10. 19:31–20:50,
+  22:20–22:50; 7.10. 08:06–08:09, 09:50–10:56, 11:40–12:54; Esszimmer 7.10. 08:15–08:29). Stütze: eine
+  Messung des LD2450 (keine gehaltene) näher als 1 m am Platz oder eine Sekunde LD2410C, deren
+  Energien eine Person am Platz dem gelernten Hintergrund vorziehen. Lücken zwischen Stützen: höchstens
+  18,2 s, 99 % unter 0,3 s, 99,9 % unter 1,1 s (LD2450 allein bis 85 s, LD2410C allein bis 19,3 s). Ein
+  leerer Platz in Sicht wird schnell widerlegt: Das LD2410C spricht dort mit −48 bis −125 log je Minute
+  gegen eine Person (Schreibtisch −78, Esszimmer −125, Küchenstreifen −48, 7.10.); der LD2450 allein
+  mit κ in der untersten Stufe nur etwa −0,4 je Minute. Das Abklingen wirkt also fast nur, wo nichts
+  misst. Untergrenze: Eine Sitzende darf in ihrer längsten Lücke nicht unter die Lichtschwelle c = 2/3
+  fallen, `18,2 s / ln(3/2)` = 45 s. Durchgerechnet (report_eval, 12 Hypothesen; fälschlich an / aus,
+  Log-Evidenz; Küche in den drei Fenstern 7.10.):
+
+  | Form | τ | bis 6.10.: an / aus, Evidenz | 7.10.: an / aus, Evidenz, Küche |
+  |---|---|---|---|
+  | überall, Stufen | 30 min | 0 / 1,17, −1121919 | 0 / 0, −449585, 0,08 / 0,02 / 0,01 |
+  | überall, Stufen | 10 min | 0 / 1,67, −1121915 | 0 / 0, −450136, 0,18 / 0,02 / 0,01 |
+  | überall, Stufen | 5 min | 0 / 1,67, −1121928 | 0 / 0, −450146, 0,10 / 0,01 / 0,01 |
+  | überall, Stufen | 2 min | 0 / 1,68, −1122005 | 0 / 0, −449835, 0,03 / 0,01 / 0,01 |
+  | überall, Stufen | 45 s | 0 / 2,00, −1122043 | 0 / 0, −449827, 0,07 / 0,01 / 0,01 |
+  | **überall, Quadratur** | **2 min** | **0 / 1,68, −1121539** | **0 / 0, −449321, 0,04 / 0,01 / 0,00** |
+  | überall, Quadratur | 45 s / 5 / 30 min | 0 / 1,65–1,67, −1121498…−1121542 | 0,11 / 0,00 / 0,08 an |
+  | nur im beobachteten Bereich, hinter Türen vergessen | 45 s – 30 min | 0 / 2,00–2,59 | 0,18–0,21 an |
+  | nur im beobachteten Bereich, hinter Türen bekannt | 45 s / 2 min | 0 / 1,75 / 1,68 | 0,11 / 0,14 an |
+
+  Vergessen hinter Türen (Bernoulli → Poisson, die Masse bleibt) schadet: Die Intensität nimmt keine
+  Rücksicht darauf, dass genau einer dort war, und nachdem er herauskam, blieb das Bad mit 0,44
+  „besetzt“; neue Personen kamen leichter an Türen heraus (Flur 9:49 0,20 statt 0,05). Die einfachste
+  Form, die die Daten tragen: ein τ überall. 2 min ist die kürzeste ohne fälschlich an in beiden
+  Sätzen; eine Sitzende behält in ihrer längsten gemessenen Lücke r ≥ e^(−18,2/120) = 0,86. Was kürzer
+  als 30 min mehr „aus“ kostet, ist ein einziges 6-s-Fenster (Arbeitszimmer 21:36: die zweite Person an
+  ihrem Platz (−2,3; 8,6), dessen Spuren die Geisterkarte als Geisterquelle gelernt hat, 9); mit der
+  Quadratur kostet es das auch bei 30 min. Mit 16 Hypothesen: bis 6.10. 0 / 1,68, −1121540; 7.10.
+  0,11 / 0 (Flur 9:49 0,10), −449289. Meldungen 7.10. früh (Start 06:50): Esszimmer 8:29 1,00, Arbeitszimmer
+  8:52 genau eine Person 1,00, Schreibtisch 8:07 1,00; leere Nacht (`phantom.py`) 0 min.
 - **Zurückgeben:** Eine bekannte Person ohne Spur, die zu weniger als 1 % existiert und im Haus ist
   (r × P(im Haus) < 0,01), geht mit r × ihrer Dichte in die Intensität (Bernoulli → Poisson). Das
   ändert nur P(mehrere davon kommen zurück), um höchstens 0,01²/2. Sonst würde jeder Gast für immer
@@ -598,7 +637,7 @@ unkalibrierte LD2450 gemessen (0,07–0,5 m je nach Sensor); die Addition mehrer
 Zwei-Personen-Zeiten geprüft; α, τ, κ, die Verzögerung und das Vergessen des Hintergrunds sind über die
 Evidenz (7) zu schätzen; das Bewegt-Flag ist ohne Ablation weggelassen. Ein Raumteil, den kein Sensor
 sieht (die Vorratsecke der Küche hinter der Wand bei y = 7,7 m, x 3,4–4,6), hält eine Person nur noch so
-lange, wie ihre Existenz abklingt (5.5, 30 min); wer dort wirklich länger steht, verblasst ebenso.
+lange, wie ihre Existenz abklingt (5.5, 2 min); wer dort wirklich länger steht, verblasst ebenso.
 
 Näherungen, die man prüfen oder ersetzen kann:
 - Auf den Kacheln ist Gehen eine Diffusion: Kurzzeitig gerades Gehen und die Richtung gehen verloren,
@@ -626,11 +665,17 @@ Näherungen, die man prüfen oder ersetzen kann:
 - **Bekannte Personen sammelten sich an** (bis 7.10., behoben, 10): Nachgespielt ab 6.10. 19:28 mit den
   App-Starts bis 7.10. 13:30 (e0e26e8 → jetzt), im Haus erwartet je volle Stunde: 22 Uhr 3,9 → 2,1
   (wahr 2); 9 Uhr 4,7 → 2,9 (die zweite Person ging um 9:07); 10–13 Uhr 3,1–3,6 → 1,07–1,15 (wahr
-  1); Küche 12/13 Uhr 0,81 / 0,77 → 0,02 / 0,01. Der Preis des Abklingens (5.5): Wer schläft, ist nach
-  einer Stunde nicht mehr bekannt (nachts im Haus erwartet 0,05–0,1 statt 2); morgens kommen beide als
-  neue Personen heraus. Die Zahl hinter Türen zählt nur fürs Herauskommen (Leon), das Licht der
-  beobachteten Räume ist davon nicht berührt (report_eval, `phantom.py`). Wer im Bad länger als eine
-  halbe Stunde bleibt, verblasst dort ebenso (P(Bad) sinkt).
+  1); Küche 12/13 Uhr 0,81 / 0,77 → 0,02 / 0,01 (mit 30 min Abklingen). Der Preis des Abklingens
+  (5.5): Wer schläft, ist nach wenigen Minuten nicht mehr bekannt (nachts im Haus erwartet etwa 0,1
+  statt 2); morgens kommen beide als neue Personen heraus. Die Zahl hinter Türen zählt nur fürs
+  Herauskommen (Leon), das Licht der beobachteten Räume ist davon nicht berührt (report_eval,
+  `phantom.py`). Wer im Bad ist, verblasst dort ebenso (P(Bad) sinkt).
+- **Ein Sitzplatz, den die Geisterkarte als Geisterquelle gelernt hat:** Die zweite Person saß am
+  6.10. abends im Arbeitszimmer bei (−2,3; 8,6); ihre Spuren dort hielt der Filter anfangs für Geister
+  (Karte dort 9–23-mal die Prior-Rate). Mit kurzem Abklingen (≤ 10 min) oder der Quadratur für κ
+  ist ihre bekannte Person verblasst, bevor die nächste Spur dort beginnt, und die wird ein Geist:
+  21:36 Arbeitszimmer 0,43–0,58 statt 0,84 (ein 6-s-Fenster, „aus“ 1,68 statt 1,17 von 15). Ursache
+  ist das Sensormodell an diesem Platz, nicht das Abklingen.
 - **Doppelte Personen bleiben möglich** (10, Fälle 2 und 5): Bekommt eine Spur die „falsche“ bekannte
   Person (eine überzählige, die näher an der Tür ist, als die wirkliche ungesehen hätte gehen können),
   ist dieselbe Person zweimal da; die überzählige verblasst jetzt binnen etwa einer halben Stunde,
@@ -972,7 +1017,8 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
      solcher hielten sie, nur dass sie existierte.
   Geändert: 1. Ende einer Geisterspur als konkurrierende Risiken (4.2); 2./3. Sicht einer Person über
   ihren Versatz (4.1); 4. Bernoulli-Existenz der bekannten Personen ohne Spur und Zusammenlegen über
-  die Personenzahl hinweg (5.5, 5.6); 5. Existenz klingt ohne Stütze ab (5.5, 30 min). Nicht geändert:
+  die Personenzahl hinweg (5.5, 5.6); 5. Existenz klingt ohne Stütze ab (5.5, zuerst 30 min, nach
+  Messung der Lücken echter Sitzender 2 min). Nicht geändert:
   die Zuordnung, die eine Person verdoppelt (2, 5: eine Spur auf der „falschen“ bekannten Person), und
   der Start ohne Wissen. Zahlen in 5.5 und im CHANGELOG.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13

@@ -58,19 +58,24 @@ def test_somebody_back_from_the_balcony_is_who_went_there():
     assert known(crowd) < 1.1, known(crowd)
 
 
-def test_a_sitter_no_ld2450_sees_for_ten_minutes_stays():
-    # nothing known; somebody comes in and sits; ten seconds later neither LD2450 sees them any
-    # more (sitting people are not seen for minutes, MODEL.md 4.1), only the LD2410C's energies
-    # say somebody is there: ten minutes later they still are, as one person
+def test_a_sitter_no_ld2450_sees_for_a_while_stays():
+    # nothing known; somebody comes in and sits; ten seconds later neither LD2450 sees them for 90 s
+    # (longer than any gap of the LD2450 alone on real sitters, 85 s; with the LD2410C at most 18 s,
+    # MODEL.md 5.5), only the LD2410C's energies (4.2 m away) say somebody is there: the light stays
+    # on throughout
     config = flat_config(entry=True)
-    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3.0, 3.0), (3.05, 3.0), start=5, pauses={3: 700}))
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3.0, 3.0), (3.05, 3.0), start=5, pauses={3: 300}))
     sensors = sim_sensors(config)
+    sit = a.waypoints[3][0]
     for s in sensors:
-        s.blind_to, s.blind_after = (0,), a.waypoints[3][0] + 10
+        s.blind_to, s.blind_after, s.blind_until = (0,), sit + 10, sit + 100
     crowd = Tracker(config, start=0.0)
-    for t, sid, frame in simulate([a], sensors, a.waypoints[3][0] + 610, walls=config.wall_segments):
+    low = 1.0
+    for t, sid, frame in simulate([a], sensors, sit + 160, walls=config.wall_segments):
         crowd.process_frame(sid, t, frame)
-    assert 1 - crowd.count_distribution()["wohn"][0] > 0.9
+        if t > sit + 10:
+            low = min(low, 1 - crowd.count_distribution()["wohn"][0])
+    assert low > config.params.light_cost / (config.params.light_cost + 1.0), low  # the light stays on
     assert known(crowd) < 1.1, known(crowd)
 
 

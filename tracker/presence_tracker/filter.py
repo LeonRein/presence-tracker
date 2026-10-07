@@ -286,8 +286,9 @@ class Tracker:
         self._version += 1
 
     def _fade(self, obj, dt: float):
-        """A known person without a track keeps existing with exp(-dt / record_life) (Musicki & Evans
-        2005: the existence of a track as a Markov chain, p11 < 1; MODEL.md 5.5); None: always."""
+        """A known person without a track exists on with exp(-dt / record_life), wherever they are
+        (Musicki & Evans 2005: the existence of a track as a Markov chain, p11 < 1); measurements
+        that support them lift r again (MODEL.md 5.5). None: always."""
         life = self.m.record_life
         if life and type(obj) is Hidden and obj.r > 0:
             obj.r *= math.exp(-dt / life)

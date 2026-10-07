@@ -94,7 +94,10 @@ def test_a_gap_moves_everybody_on():
 
     def after(gap, exact=False):
         from presence_tracker import filter as F
-        tr = Tracker(config)
+        from presence_tracker.filtermodel import Model
+        m = Model()
+        m.record_life = None  # the motion alone (the existence fades over a gap as well, MODEL.md 5.5)
+        tr = Tracker(config, model=m)
         tr.restore_people(state)
         old = F.GAP_EXACT
         F.GAP_EXACT = gap + 1 if exact else old
@@ -102,8 +105,7 @@ def test_a_gap_moves_everybody_on():
             tr.process_frame("a", gap, {"targets": []})
         finally:
             F.GAP_EXACT = old
-        h = tr.hyps[0].hidden[0]
-        return h.places() / h.r  # where, if the person exists (the existence fades as well, MODEL.md 5.5)
+        return tr.hyps[0].hidden[0].places()
 
     short, day = after(60.0), after(86400.0)
     assert short[0] > 0.99

@@ -27,6 +27,9 @@ class Model:
     kappa_shape = 1.0  # assumed until estimated over the evidence (MODEL.md 7)
     kappa_levels = 3  # 5 levels explained the data no better (MODEL.md 4.1)
     kappa_switch = 1 / 600  # 1/s (assumed, as in the 0.7.0 draft)
+    # how the Gamma priors of kappa and of the LD2410C amplitude become levels: "bins" (equally
+    # probable, at their means) or "quadrature" (generalised Gauss-Laguerre, exact moments to 2k - 1)
+    gamma_levels = "quadrature"
     # 3.2 walking: a velocity-jump process (measured 6.10. on 8.7 h of LD2450 tracks, walks of >= 2 s)
     speed = 0.85  # m/s
     speed_spread = 0.36  # m/s: spread of the speed between walks (10-90 % 0.44-1.37 m/s)
@@ -118,11 +121,15 @@ class Model:
     # levels, independent of kappa. Measured 6./7.10. within a sensor: shape 5-16 (MODEL.md 4.3)
     ld_amp_shape = 6.0
     ld_amp_levels = 3
+    # 3.4/5.5 a known person without a track exists on with exp(-t / record_life), wherever they are
+    # (existence as a Markov chain, Musicki & Evans 2005); measurements that support them lift it again.
+    # The scale: a real sitter in view went at most 18.2 s without any supporting measurement
+    # (measured 6./7.10., 5.6 h of known stays at the desk and the dining table), so a sitter keeps
+    # r >= exp(-18.2 / 120) = 0.86 in their longest gap; 2 min is the shortest of 45 s, 2, 5, 10,
+    # 30 min with no light wrongly on in the reports (MODEL.md 5.5). None: until evidence says otherwise
+    record_life = 120.0
     # 5 inference: hypotheses over the tracks' owners, cut by weight (Vo et al. 2017). The evidence
     # is not converged in these two (MODEL.md 5.1): compare model variants at more than one setting
-    # a known person without a track exists on with exp(-t / record_life) (existence as a Markov
-    # chain, Musicki & Evans 2005); None: until evidence says otherwise (MODEL.md 5.5)
-    record_life = 1800.0
     max_hyps = 12
     hyp_floor = 1e-7  # hypotheses with less weight are dropped
 
@@ -156,13 +163,26 @@ class Shapes:
         # getting up weighted by its mean duration
         w = self.go_w / self.go
         self.go_w_ongoing = w / w.sum()
-        self.kappa, self.kappa_w = gamma_levels(m.kappa_shape, m.kappa_levels)
+        levels = gamma_quadrature if m.gamma_levels == "quadrature" else gamma_levels
+        self.kappa, self.kappa_w = levels(m.kappa_shape, m.kappa_levels)
         # 4.3 the amplitude of a standing person on the LD2410C's profile, its own levels
-        self.amp, self.amp_w = gamma_levels(m.ld_amp_shape, m.ld_amp_levels)
+        self.amp, self.amp_w = levels(m.ld_amp_shape, m.ld_amp_levels)
 
     def stay_prior(self, ongoing: bool = False) -> np.ndarray:
         """(L, K) prior of a stay's kind and detectability (independent a priori)."""
         return np.outer(self.go_w_ongoing if ongoing else self.go_w, self.kappa_w)
+
+
+def gamma_quadrature(shape: float, k: int) -> tuple:
+    """Gamma(shape, rate shape) (mean 1) as k points with weights: generalised Gauss-Laguerre
+    quadrature (Golub & Welsch 1969), exact for the moments up to degree 2k - 1, as the sigma points
+    are for the position (MODEL.md 5.2). (nodes, weights)."""
+    a = shape - 1.0
+    i = np.arange(k)
+    J = np.diag(2 * i + a + 1) + np.diag(np.sqrt((i[1:]) * (i[1:] + a)), 1) + np.diag(np.sqrt((i[1:]) * (i[1:] + a)), -1)
+    x, v = np.linalg.eigh(J)
+    w = v[0] ** 2
+    return x / shape, w / w.sum()
 
 
 def gamma_levels(shape: float, k: int) -> tuple:

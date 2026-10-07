@@ -59,6 +59,7 @@ class SimSensor:
     resolution: float = 0.0  # m, people closer than this to each other come out as one target
     blind_to: tuple = ()  # indices of people this sensor doesn't see from blind_after on (hidden behind someone)
     blind_after: float = 0.0
+    blind_until: float = math.inf  # ... until then
     idle: float = 5.0  # s: without anything to report (no target, both LD2410C flags off) the firmware sends
                        # only a heartbeat this often, the first such frame at once (0: every frame)
     seq: int = 0
@@ -99,7 +100,7 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
     c = s.config
     targets = []
     for i, person in enumerate(people):
-        if i in s.blind_to and t >= s.blind_after:
+        if i in s.blind_to and s.blind_after <= t < s.blind_until:
             continue
         pos = person.position(t)
         if pos is None or not c.sees(pos[0], pos[1], walls):
