@@ -106,7 +106,8 @@ class Model:
     # levels, independent of kappa. Measured 6./7.10. within a sensor: shape 5-16 (MODEL.md 4.3)
     ld_amp_shape = 6.0
     ld_amp_levels = 3
-    # 5 inference: hypotheses over the tracks' owners, cut by weight (Vo et al. 2017)
+    # 5 inference: hypotheses over the tracks' owners, cut by weight (Vo et al. 2017). The evidence
+    # is not converged in these two (MODEL.md 5.1): compare model variants at more than one setting
     max_hyps = 12
     hyp_floor = 1e-7  # hypotheses with less weight are dropped
 

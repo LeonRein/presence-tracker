@@ -26,6 +26,11 @@
   mit dem Gewinn der Person auf dem Profil (MODEL.md 10, „Energie aufteilen“: die Energien werden
   schon richtig aufgeteilt; die Meldungen vom 7.10. 08:29, 08:45 und 08:52 kommen aus der Amplitude
   je Aufenthalt und, um 08:52, aus der Erfassungsrate am Mittel einer Gauß-Komponente).
+- **Weniger Rechenarbeit für stehende Personen ohne Spur:** 5 statt 7 Arten, wie lange jemand steht,
+  und 3 statt 5 Stufen der Erkennbarkeit (15 statt 35 Schichten je Kachel). Auf den 11 Stunden vom
+  6./7.10. erklärt das die Messungen gleich gut und schaltet das Licht gleich; Rechenzeit 3,0 statt
+  3,3 % eines Kerns (MODEL.md 3.1, 4.1). Die Zahl der Hypothesen (höchstens 12) bleibt; wie stark die
+  Ergebnisse davon abhängen, steht in MODEL.md 5.1.
 
 ## 0.10.0
 

@@ -54,8 +54,9 @@ Quelle.
   als HMM mit parallelen Phasen, D_Yu2010 Abschn. 3.2, 4.1.3). Fehler der Anpassung zwischen 1 s und
   1 Tag: höchstens 0,024 in S, 16 % relativ, 42 % in der Rate des Aufstehens (mit 7 Arten 0,004 /
   2 % / 18 %). Die Evidenz (7) unterscheidet das nicht: 6.10. 19:28 bis 7.10. 06:15 (11 h, 5 Sensoren,
-  Neustarts und Nacht) mit 7 Arten +3 (6 Arten +3), 4 Arten −9, 3 Arten −51 gegenüber 5; Lichtfehler
-  gleich, mit 3 Arten mehr (10).
+  Neustarts und Nacht), gegenüber 5 Arten mit 7 Arten +1, 6 Arten +2, 4 Arten −11, 3 Arten −53;
+  mit 24 Hypothesen ab 10⁻⁹ (5.1) 7 Arten und 5 Stufen κ (0.10.0) +3, 4 Arten −9, 3 Arten −100.
+  Lichtfehler gleich, mit 3 Arten mehr (fälschlich aus 3,5 statt 3,0 bzw. 2,5 statt 2,0 von 15).
 - Ein Aufenthalt, der zu einem zufälligen Zeitpunkt beobachtet wird (Start), ist nach
   Erneuerungstheorie länger: Gewichte ∝ w_l / λ_l.
 - Nach dem Aufstehen geht man in eine gleichverteilte Richtung.
@@ -127,7 +128,9 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   wird am Tisch alle halbe Minute erfasst, auf dem Sofa minutenlang nicht. κ ~ Gamma(α, α), Mittel 1,
   in 3 gleich wahrscheinlichen Stufen (Mittel 0,19 / 0,71 / 2,10); neu bei jedem Stehenbleiben,
   innerhalb eines Aufenthalts mit 1/(600 s) neu gezogen (D_Mahler2011 Gl. 49–52; D_Wilthil2019 Gl. 2).
-  α = 1 (angenommen; über die Evidenz nicht zu bestimmen, 10). Gehende: κ = 1.
+  5 Stufen (bis 0.10.0) −2, 4 Stufen −0,3 gegenüber 3 (dieselben 11 h wie 3.1), Lichtfehler gleich.
+  α = 1 (angenommen). Über die Evidenz dieser 11 h nicht zu bestimmen: α = 0,5 −5, α = 2 +17, mit 24
+  Hypothesen ab 10⁻⁹ aber −82 (5.1). Gehende: κ = 1.
 - Wer keine Spur bekommt, wird mit `exp(−Rate·Δt)` gewichtet; das gilt für jede Person, die von einem
   Sensor nicht schon gemessen wird.
 
@@ -313,7 +316,30 @@ Frame jedes Sensors alles vorgerückt: etwa 23-mal je Sekunde, ein Hauptteil der
   eine bekannte Person ohne Spur; eine unbekannte (5.5). Eine wiedergefundene: ihr Eigentümer; eine
   andere Person nahe der Stelle; Geist/Reflexion.
 - Behalten werden höchstens 12, solange über 10⁻⁷ des stärksten (Abschneiden nach Gewicht,
-  B_Vo2017).
+  B_Vo2017). Auf den 11 h aus 3.1 greift die Grenze von 12 bei 8 % der Schnitte (461 von 5588), im
+  Mittel bleiben 4,7 Hypothesen. Log-Evidenz gegenüber 12 ab 10⁻⁷ / Lichtfehler (fälschlich an von
+  41, aus von 15) / Rechenzeit (21 Uhr, 5 Sensoren, Anteil eines Kerns):
+
+  | höchstens | ab | Evidenz | an / aus | CPU |
+  |---|---|---|---|---|
+  | 6 | 10⁻⁷ | +53 | 0 / 3,0 | |
+  | 8 | 10⁻⁷ | +67 | 0 / 2,1 | 2,8 % |
+  | 12 | 10⁻⁵ | −367 | 0 / 3,1 | |
+  | **12** | **10⁻⁷** | **0** | **0 / 3,0** | **3,0 %** |
+  | 12 | 10⁻⁹ | +228 | 0,9 / 2,0 | 3,8 % |
+  | 12 | 10⁻¹² | +75 | 0 / 3,0 | |
+  | 16 | 10⁻⁷ | +168 | 0,9 / 2,0 | 3,5 % |
+  | 24 | 10⁻⁷ | +177 | 0,9 / 2,0 | |
+  | 24 | 10⁻⁹ | +275 | 0,9 / 2,0 | 5,9 % |
+  | 24 | 10⁻¹² | +215 | 0,9 / 2,0 | |
+
+  Die Evidenz ist nicht konvergiert und hängt nicht monoton von den Grenzen ab. Der Unterschied
+  zwischen 12 ab 10⁻⁷ und 24 ab 10⁻⁹ entsteht in wenigen Minuten des belebten Abends (22:02 +69,
+  22:10 +93), nachts nicht: Eine Hypothese unter 10⁻⁷ wurde später die beste. Die Lichtfehler kennen
+  zwei Ausgänge; mit mehr Hypothesen verliert das Modell um 21:24 die Person im Wohnzimmer nicht
+  mehr (das war das Abschneiden), lässt sie dafür um 21:28 zu lange dort (Licht an im leeren Raum;
+  das ist das Modell, 12 ab 10⁻⁷ verdeckt es). Vergleiche von Modellvarianten über die Evidenz brauchen deshalb mehr als eine
+  Einstellung der Grenzen; Unterschiede unter etwa 60 über diese 11 h sind nicht sicher (3.1, 4.1).
 - Gegeben eine Hypothese sind die Personen unabhängig. Die Zählverteilung je Raum ist die Faltung
   der Einzelwahrscheinlichkeiten der bekannten (Poisson-Binomial) mit einer Poisson-Verteilung für
   die unbekannten, gemischt über die Hypothesen.
@@ -523,14 +549,21 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   auf einmal und die Bewegung der Kacheldichten in zwei statt sechs Durchgängen über `steht` 2,1 /
   3,3 % (−4 %, Ergebnisse bis auf Rundung gleich). Alle Kacheldichten in gemeinsamen Arrays, gemeinsam
   bewegt und gewichtet (Branch `stack-densities`), sparte darüber hinaus nichts: die Zeit steckt in
-  der Arithmetik über die L·K = 35 Schichten von `steht` und in der Gehmatrix (518 Kacheln, ~20 µs je
-  Dichte und Takt), nicht in den numpy-Aufrufen. Als ein Matrixprodukt über alle Dichten startet
+  der Arithmetik über die L·K = 35 Schichten von `steht` (seit 7.10. 15) und in der Gehmatrix
+  (518 Kacheln, ~20 µs je Dichte und Takt), nicht in den numpy-Aufrufen. Als ein Matrixprodukt über alle Dichten startet
   OpenBLAS ab drei Dichten Threads, deren Warten ein Vielfaches an CPU kostet. Größte Posten danach:
   `Gauss.predict` 22 %, Kacheldichten bewegen 15 % und gewichten 8 %, LD2410C 16 %, Ausgaben 13 %.
   Mit den Energien des LD2410C (7.10., 5 Sensoren, 21 Uhr): 3,8 % statt 2,8 % mit Flag und
   Entfernung. Die Energien selbst kosten etwa ein Sechstel (je Sensor und Sekunde ein Verhältnis je
   Kachel und Person); der Rest kommt von mehr getrennten Dichten über die Hypothesen (im Mittel 8,6
   statt 4,6 Personen auf Kacheln).
+- **Weniger Schichten je Kachel** (7.10., 11 h aus 3.1): 5 statt 7 Arten des Aufenthalts und 3 statt
+  5 Stufen κ, also 15 statt 35 Schichten von `steht`: Evidenz −1 (bei 24 Hypothesen ab 10⁻⁹ −3,
+  ab 10⁻⁷ +56), Lichtfehler gleich, Rechenzeit 3,0 statt 3,3 % (21 Uhr). Mehr spart das nicht,
+  weil Gauß-Mischungen, LD2410C und Ausgaben gleich bleiben. 4 Arten −11
+  bzw. −9, 3 Arten −53 bzw. −100 und mehr Lichtfehler. Die Grenzen der Hypothesen bewegen die
+  Evidenz um Hunderte (5.1); kleine Unterschiede zwischen Varianten sind nur sicher, wenn sie bei
+  mehreren Grenzen dasselbe Vorzeichen haben.
 - **LD2410C ohne Modell seiner Reichweite** (0.9-Entwicklung): Mit fester Reichweite 3,3 m musste das
   lange „an“ des Wohnzimmersensors (Sitzende im Esszimmer in 6,2 m) von einer erfundenen Person nahe
   am Sensor kommen. Daher hält jetzt, wer in der gemeldeten Entfernung ist. Ohne LD2410C blieb in der
