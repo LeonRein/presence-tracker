@@ -126,8 +126,9 @@ def main():
     work = pieces([(parse_time(x), parse_time(y)) for x, y in a.window])
     print(f"{len(work)} pieces, {sum(y - x for x, y in work) / 3600:.1f} h", flush=True)
     m = tr.m
-    gm = GhostMap.for_world(tr.world, sum(rate for rate, _ in m.ghost_types), 4 * 3600.0)
+    gm = GhostMap.for_world(tr.world, sum(rate for rate, _ in m.ghost_types), m.ghost_prior_ghosts)
     gm.poses = {s.id: pose_of(s) for s in config.sensors}
+    kinds = m.ghost_types  # how long ghosts live: printed for the model (filtermodel.ghost_types), not in the map
     for it in range(a.iterations):
         with ProcessPoolExecutor(a.jobs) as ex:
             results = list(ex.map(run, [(a.recordings, a.config, gm.to_dict(), p) for p in work]))
@@ -147,8 +148,8 @@ def main():
         for sid in sorted(new.time):
             n = float(new.count[sid].sum()) if sid in new.count else 0.0
             line += f" {sid}: {n:.1f} ghosts in {new.time[sid] / 3600:.1f} h"
-        new.types = fit_lives(lives, gm.types or m.ghost_types) if lives else gm.types
-        line += " | kinds (share, mean life s): " + ", ".join(f"({s:.2f}, {mu:.1f})" for s, mu in new.types)
+        kinds = fit_lives(lives, kinds) if lives else kinds
+        line += " | kinds (share, mean life s): " + ", ".join(f"({s:.2f}, {mu:.1f})" for s, mu in kinds)
         print(line, flush=True)
         gm = new
     gm.save(a.out)

@@ -204,6 +204,25 @@ def test_the_ghost_map_does_not_confirm_itself():
     assert max(p for _, p in learned) < 0.05, learned  # coming in at the door: a person too
 
 
+def test_a_sitter_taken_for_ghosts_does_not_become_a_ghost_source():
+    # MODEL.md 4.2, 10: somebody already sits at a spot when the filter starts with nobody inside (as
+    # after a start of the app); the LD2450s drop them now and then. Some of their tracks are taken
+    # for ghosts. That must not make the seat a ghost source (with the prior of 4 h of watching and the
+    # lives learned online: 3.6 / 12.6 times the prior after 10 min, the long ghosts 44 s instead of 39)
+    seat = (4.5, 3.5)
+    config = flat_config(entry=True)
+    crowd = Tracker(config, start=0.0, people=["outside", "outside"])
+    learned = _learned(crowd)
+    a = Person([(0.0, *seat), (600.0, seat[0] + 0.05, seat[1])])
+    for t, sid, frame in simulate([a], sim_sensors(config, still_dropout=1 / 60, ld2410=False), 600,
+                                  walls=config.wall_segments):
+        crowd.process_frame(sid, t, frame)
+    gm = crowd.ghost_map
+    assert sum(p for _, p in learned) > 2, learned  # the case: some of them were taken for ghosts
+    assert all(gm.rate(s, np.array([seat]))[0] < 2 * gm.prior_rate for s in ("a", "b"))
+    assert crowd._ghost_types() == crowd.m.ghost_types
+
+
 def test_a_ghost_in_an_empty_house_is_learned_as_one():
     config = flat_config()
     crowd = Tracker(config, start=0.0, people=["outside", "outside"])

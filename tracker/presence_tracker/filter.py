@@ -365,21 +365,22 @@ class Tracker:
         now; else start a new one from the prior (a moved, added or removed sensor changes where
         all of them see ghosts)."""
         from .ghostmap import GhostMap, pose_of
-        ok = gm is not None and gm.matches(self.config)
+        new = GhostMap.for_world(self.world, sum(rate for rate, _ in self.m.ghost_types), self.m.ghost_prior_ghosts)
+        # ... and with the prior it has now (a map learned with another one starts over too)
+        ok = (gm is not None and gm.matches(self.config) and math.isclose(gm.prior_rate, new.prior_rate)
+              and math.isclose(gm.prior_time, new.prior_time))
         if ok:
             self.ghost_map = gm
         else:
-            self.ghost_map = GhostMap.for_world(self.world, sum(rate for rate, _ in self.m.ghost_types),
-                                                self.m.ghost_prior_time)
+            self.ghost_map = new
             self.ghost_map.poses = {s.id: pose_of(s) for s in self.config.sensors}
         self._ghost_total = {}
         return ok
 
     def _ghost_types(self) -> tuple:
-        """The kinds of ghosts ((share or rate, mean life s), ...): learned with the map, else the
-        model's."""
-        if self.ghost_map.types:
-            return self.ghost_map.types
+        """The kinds of ghosts ((rate, mean life s), ...): the model's, not learned online (MODEL.md
+        4.2: how long ghosts live is what tells them from people; learned from the filter's own
+        judgement it followed the people it took for ghosts)."""
         return self.m.ghost_types
 
     def _ghost_rate(self, si: int, pos) -> float:
@@ -895,8 +896,8 @@ class Tracker:
     def _end(self, si, seg, t, data_lost):
         """The sensor dropped the track. For a person this follows from not finding it again
         (counted while it was held); a ghost died: its hazard. A person left without tracks goes
-        to the people without one. The ghost map learns where ghosts begin and how long they live,
-        with P(ghost) as judged now, but without what the map itself said at the birth (MODEL.md 4.2)."""
+        to the people without one. The ghost map learns where ghosts begin, with P(ghost) as
+        judged now, but without what the map itself said at the birth (MODEL.md 4.2)."""
         w = self.hyp_weights()
         p_ghost = float(sum(wi for wi, hy in zip(w, self.hyps) if hy.kind.get(seg) == "g"))
         info = self.segs.pop(seg)
@@ -905,8 +906,6 @@ class Tracker:
         life = (info["lost"]["t"] if info["lost"] else info.get("gt", info["born"])) - info["born"]
         if self.learn_ghosts and p_ghost > 0:
             self.ghost_map.add_birth(self.sensors[si], info["z0"], p_ghost)
-            if not data_lost:
-                self.ghost_map.add_life(life, p_ghost, self.m.ghost_types)
             self._ghost_total.pop(si, None)
         for listener in self.listeners:
             listener("track_end", (self.sensors[si], info["z0"], p_ghost, life, data_lost))

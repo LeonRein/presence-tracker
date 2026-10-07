@@ -1,16 +1,22 @@
 """Where each sensor starts ghost tracks (MODEL.md 4.2): per sensor and raster cell a Poisson process
 with a Gamma prior (Luber, Tipaldi & Arras 2011 = Luber 2014, ch. 6, eq. 6.8-6.13).
 
-The prior has the mean of the global rate (one ghost track in 7 h at night) and the weight of a few
-hours of watching. Learned by EM (Kantas et al. 2015, sec. 5), online in the app: every track that
+The prior has the mean of the global rate (one ghost track in 7 h at night) and in each cell the
+weight of one ghost (the Gamma's shape, Luber eq. 6.13; the watching time follows from the rate,
+about 4 days). Learned by EM (Kantas et al. 2015, sec. 5), online in the app: every track that
 ends counts at the cell where it began, against the time the sensor watched, with the filter's
 probability that it was a ghost - judged at its end, but with the prior's rate at the birth in place
 of the map's (Park et al. 2020, eq. 37-41: the clutter probability without the clutter estimate).
 What the map says at a spot is no evidence for it: else a spot judged "ghost" once is judged so
-more and more, and somebody who always sits where only one sensor sees is learned away; how long ghosts live (a mixture of exponentials) is fitted to the tracks'
-lives weighted the same way (online EM, sufficient statistics). Counts fade with FORGET (furniture,
-the robot's dock move). tools/ghostmap.py runs the same EM offline over recordings, for judging it
-on the truth database without learning from it.
+more and more. That probability is often exactly 1 (the person alternatives fell under the
+hypotheses' floor), so the counts are hard decisions; the prior's weight of one ghost per cell keeps
+a few of them from making a spot a source (MODEL.md 4.2, 10: with the weight of 0.04 ghosts, until
+0.12.0, a seat whose tracks the filter took for ghosts was 21 times the prior after 2.5 h). How long
+ghosts live is not learned here: it is what tells ghosts from people, and learned from the filter's
+own judgement it followed the people taken for ghosts (filtermodel.ghost_types, estimated offline by
+tools/ghostmap.py). Counts fade with FORGET (furniture, the robot's dock move). tools/ghostmap.py
+runs the same EM offline over recordings, for judging it on the truth database without learning
+from it.
 
 A map belongs to the sensors' poses it was learned with: when one is moved, added or removed (they
 disturb each other), all of it starts over from the prior.
@@ -29,7 +35,6 @@ CELL = 0.4  # m
 SPREAD = 0.3  # m
 FORGET = 14 * 86400.0  # s: what was learned fades with this time constant (assumed)
 DECAY_EVERY = 60.0  # s between two fadings
-PRIOR_GHOSTS = 20.0  # weight of the prior over the kinds of ghosts, in ghosts
 
 
 def pose_of(s) -> tuple:
@@ -41,21 +46,21 @@ class GhostMap:
     def __init__(self, x0: float, y0: float, nx: int, ny: int, prior_rate: float, prior_time: float):
         self.x0, self.y0, self.nx, self.ny = x0, y0, nx, ny
         self.prior_rate = prior_rate  # per m^2 and s
-        self.prior_time = prior_time  # s: weight of the prior, as watching time
+        self.prior_time = prior_time  # s: weight of the prior, as watching time (for_world: from its ghosts)
         self.count = {}  # sensor id -> (nx, ny) expected number of ghost births
         self.time = {}  # sensor id -> s watched
         self.poses = {}  # sensor id -> pose it was learned with (see pose_of)
-        self.types = ()  # kinds of ghosts: ((share, mean life s), ...), learned with the map
-        self.life_stats = None  # online EM over the kinds: (weights (k,), weighted lives (k,))
         self.forget = FORGET
         self._smooth = {}
         self._faded = None
 
     @classmethod
-    def for_world(cls, world, prior_rate: float, prior_time: float) -> "GhostMap":
+    def for_world(cls, world, prior_rate: float, prior_ghosts: float) -> "GhostMap":
+        """A map from the prior: rate prior_rate everywhere, in each cell with the weight of
+        prior_ghosts ghosts (the Gamma prior's shape; its watching time follows from the rate)."""
         nx = int(math.ceil(world.nx * 0.1 / CELL))
         ny = int(math.ceil(world.ny * 0.1 / CELL))
-        return cls(world.x0, world.y0, nx, ny, prior_rate, prior_time)
+        return cls(world.x0, world.y0, nx, ny, prior_rate, prior_ghosts / (prior_rate * CELL * CELL))
 
     def _cell(self, pos) -> tuple:
         pos = np.asarray(pos, dtype=float).reshape(-1, 2)
@@ -99,29 +104,7 @@ class GhostMap:
         for sid in self.count:
             self.count[sid] *= f
         self._smooth = {}
-        if self.life_stats is not None:
-            self.life_stats = (self.life_stats[0] * f, self.life_stats[1] * f)
         return True
-
-    def add_life(self, life: float, p_ghost: float, default_types):
-        """Online EM step for how long ghosts live: a track that lived life s and was a ghost with
-        p_ghost (Cappe & Moulines style sufficient statistics, started from default_types)."""
-        types = self.types or tuple(default_types)
-        if self.life_stats is None:
-            share = np.array([s for s, _ in types], dtype=float)
-            share /= share.sum()
-            mean = np.array([m for _, m in types], dtype=float)
-            self.life_stats = (PRIOR_GHOSTS * share, PRIOR_GHOSTS * share * mean)
-        share = np.array([s for s, _ in types], dtype=float)
-        share /= share.sum()
-        mean = np.array([m for _, m in types], dtype=float)
-        x = max(life, 0.089)
-        r = share / mean * np.exp(-x / mean)
-        r /= max(r.sum(), 1e-300)
-        s0, s1 = self.life_stats
-        s0, s1 = s0 + p_ghost * r, s1 + p_ghost * r * x
-        self.life_stats = (s0, s1)
-        self.types = tuple((float(a / s0.sum()), float(b / a)) for a, b in zip(s0, s1))
 
     def add_birth(self, sid: str, pos, p_ghost: float):
         if sid not in self.count:
@@ -147,8 +130,7 @@ class GhostMap:
 
     def to_dict(self) -> dict:
         return {"x0": self.x0, "y0": self.y0, "nx": self.nx, "ny": self.ny, "prior_rate": self.prior_rate,
-                "prior_time": self.prior_time, "time": self.time, "poses": self.poses, "types": self.types,
-                "life_stats": [v.tolist() for v in self.life_stats] if self.life_stats is not None else None,
+                "prior_time": self.prior_time, "time": self.time, "poses": self.poses,
                 "count": {k: v.round(4).tolist() for k, v in self.count.items()}}
 
     @classmethod
@@ -156,9 +138,6 @@ class GhostMap:
         g = cls(d["x0"], d["y0"], d["nx"], d["ny"], d["prior_rate"], d["prior_time"])
         g.time = dict(d["time"])
         g.poses = {k: tuple(v) for k, v in d["poses"].items()}
-        g.types = tuple(tuple(t) for t in d.get("types", ()))
-        if d.get("life_stats"):
-            g.life_stats = tuple(np.array(v) for v in d["life_stats"])
         g.count = {k: np.array(v) for k, v in d["count"].items()}
         return g
 

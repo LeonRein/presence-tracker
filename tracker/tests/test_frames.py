@@ -2,6 +2,7 @@
 
 import math
 
+import numpy as np
 import pytest
 
 from presence_tracker.frames import SensorClock, detections
@@ -72,6 +73,31 @@ def test_detections_behind_a_wall_are_reflections():
         {"slot": 3, "x": 0, "y": 2000, "speed": 0},  # in front of it
     ]}
     assert [d.hidden for d in detections(config, config.sensors[0], frame)] == [True, False, False]
+
+
+def test_a_few_ghosts_do_not_make_a_spot_a_ghost_source_many_do():
+    # MODEL.md 4.2: the prior weighs one ghost per cell. Three tracks taken for ghosts in 2.5 h (a seat
+    # the filter got wrong, 6.10.) made the spot 13 times the prior with the weight of 4 h of watching;
+    # a reflection that shows up 30 times a day is still learned
+    tr = Tracker(room_config())
+    gm = tr.ghost_map
+    spot = np.array([[2.0, 2.0]])
+    for _ in range(3):
+        gm.add_birth("a", spot[0], 1.0)
+    gm.add_watch("a", 2.5 * 3600)
+    assert 1.0 < gm.rate("a", spot)[0] / gm.prior_rate < 2.5
+    for _ in range(27):
+        gm.add_birth("a", spot[0], 1.0)
+    gm.add_watch("a", 21.5 * 3600)
+    assert gm.rate("a", spot)[0] / gm.prior_rate > 5
+
+
+def test_a_map_learned_with_another_prior_starts_over():
+    tr = Tracker(room_config())
+    gm = tr.ghost_map
+    gm.add_birth("a", (2.0, 2.0), 1.0)
+    gm.prior_time /= 24
+    assert not tr.use_ghost_map(gm) and not tr.ghost_map.count
 
 
 def test_a_moved_sensor_starts_the_ghost_map_over():

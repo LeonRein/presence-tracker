@@ -73,7 +73,10 @@ class Model:
     ghost_types = ((0.4 * 1.8e-5, 3.0), (0.6 * 1.8e-5, 39.0))
     ghost_end_exact = True  # a ghost's track ending: died or not found again (Tracker._ghost_end)
     ghost_end_unheld = False  # ... ended without being held: as before, it died in that frame (comparison)
-    ghost_prior_time = 4 * 3600.0  # s: weight of that rate in each cell of a ghost map, as watching time
+    # weight of that rate in each cell of a ghost map, in ghosts: the shape of the cells' Gamma prior
+    # (J_Luber2014 eq. 6.13: 1). With 0.04 (4 h of watching, until 0.12.0) two tracks taken for ghosts
+    # made a spot 10 times as likely a ghost source (MODEL.md 4.2, 10)
+    ghost_prior_ghosts = 1.0
     # 4.3 LD2410C: its energies per 0.75 m gate of slant distance, moving (gates 0-8) and still (2-8),
     # each ~ Gamma(shape, mean background + the people's expected energy), 100 censored. Measured 6.10.
     # (tools/ld2410/fit.py, 4.3 h, 5 sensors, one LD2450 target in the housing, < 30 degrees): what
