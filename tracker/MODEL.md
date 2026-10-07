@@ -546,7 +546,7 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
 - Auch Hypothesen mit verschieden vielen Personen ohne Spur werden eine (seit 7.10.): Wo eine
   Hypothese eine Person weniger hat, steht dort „niemand“ (r = 0); gemischt wird daraus ein
   Bernoulli mit r = Σ Gewicht × r (`Hidden.mixture`). Für genau eine fehlende Person exakt; vorher
-  nicht zusammengelegt (9: „Bekannte Personen sammeln sich an“). Ein Neustart speichert dadurch
+  nicht zusammengelegt (9: „Bekannte Personen sammelten sich an“). Ein Neustart speichert dadurch
   eine Hypothese statt einer je Zahl (5.3).
 
 ## 6. Ausgaben
@@ -623,15 +623,22 @@ Näherungen, die man prüfen oder ersetzen kann:
 - Wer ins Schlafzimmer oder zur Treppe geht, bleibt wegen des breiten Aufenthalts-Priors lange
   „bekannt“ (6 h nach dem Gehen noch zu 21 % im Haus) und kostet so lange Rechenzeit.
 - ν, das Vergessen und `start_unknown` sind angenommen.
-- **Bekannte Personen sammeln sich an.** Eine Spur, die an einer Tür endet, kann eine Person werden,
-  die dahinter verschwindet; ist die Alternative (Geist) abgeschnitten (höchstens 12 Hypothesen),
-  kommt sie nicht wieder, und wer nicht herauskommt, bleibt nach dem breiten Aufenthalts-Prior lange
-  drin. Bisher räumte das jeder Neustart der App ab, seit dem gespeicherten Zustand (5.3) nicht mehr.
-  Nachgespielt ab 6.10. 19:28 mit den App-Starts: drei bekannte Personen ab 20:56 (auch mit der
-  früheren festen Zahl), 5–6 um 22:19 und 2:07, 8 um 7.10. 08:06, davon 6 zu 0,7–0,98 in den Bereichen
-  ohne Sensor (im Haus erwartet 6,9 statt 2). In den beobachteten Räumen fiel das bisher kaum auf (Nacht
-  0 s, `phantom.py` 0,0 min; 21:28, 10), die Rechenzeit von `report_eval.py` verdoppelt sich aber
-  (634 statt 333 s).
+- **Bekannte Personen sammelten sich an** (bis 7.10., behoben, 10): Nachgespielt ab 6.10. 19:28 mit den
+  App-Starts bis 7.10. 13:30 (e0e26e8 → jetzt), im Haus erwartet je volle Stunde: 22 Uhr 3,9 → 2,1
+  (wahr 2); 9 Uhr 4,7 → 2,9 (die zweite Person ging um 9:07); 10–13 Uhr 3,1–3,6 → 1,07–1,15 (wahr
+  1); Küche 12/13 Uhr 0,81 / 0,77 → 0,02 / 0,01. Der Preis des Abklingens (5.5): Wer schläft, ist nach
+  einer Stunde nicht mehr bekannt (nachts im Haus erwartet 0,05–0,1 statt 2); morgens kommen beide als
+  neue Personen heraus. Die Zahl hinter Türen zählt nur fürs Herauskommen (Leon), das Licht der
+  beobachteten Räume ist davon nicht berührt (report_eval, `phantom.py`). Wer im Bad länger als eine
+  halbe Stunde bleibt, verblasst dort ebenso (P(Bad) sinkt).
+- **Doppelte Personen bleiben möglich** (10, Fälle 2 und 5): Bekommt eine Spur die „falsche“ bekannte
+  Person (eine überzählige, die näher an der Tür ist, als die wirkliche ungesehen hätte gehen können),
+  ist dieselbe Person zweimal da; die überzählige verblasst jetzt binnen etwa einer halben Stunde,
+  entsteht aber weiter. Eine Hypothese „diese beiden sind dieselbe“ kennt das Modell nicht.
+- Der Start ohne Wissen kostet Rechenzeit: Solange Intensität in Sicht ist, hat jede neue Spur eine
+  kleine Alternative „neue Person“, und daraus werden nach dem Zusammenlegen viele Bernoullis mit
+  r von wenigen %, je eine Dichte (latency.py 21 Uhr: 30 s statt 18,5 s mit einer bekannten Person
+  „irgendwo“ statt der Intensität; 5 % statt 1 % beim Zurückgeben 26 s, 5.5).
 - Eine neue Kalibrierung (Richtung, Maßstab) lässt weiterhin die Geisterkarte aller Sensoren und den
   LD2410C-Hintergrund dieses Sensors neu beginnen, obwohl sich der Sensor selbst nicht bewegt hat (die
   App kann Drehen und Kalibrieren nicht unterscheiden). Für die Meldung 7.10. 08:07 war das nicht die
@@ -930,6 +937,39 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   statt 13 / 9 / 4,5 / 5): Lichtfehler gleich, Evidenz +17, nicht übernommen. Offen: Der erste leere
   Frame nach einem vollen steht für die Stille danach, obwohl die Ruhig-Energien noch abklingen (ruhig
   bis ×1,07).
+- **Woher erfundene Personen kamen und warum sie blieben** (7.10., Leons Vorgabe in 1; nachgespielt
+  ab 6.10. 19:28 mit den App-Starts, `diag.py` im Arbeitsordner: je neue Spur die Anteile Geist /
+  Person mit Spur / bekannte ohne Spur / neue, je Abschneiden das verworfene Gewicht). Neue Personen
+  aus der Intensität waren selten (über den ganzen Tag zusammen 0,95 neue Personen, davon 0,86 beim
+  Start um 19:28); die überzähligen bekannten Personen entstanden anders:
+  1. *Das Ende einer Geisterspur sprach für eine Person* (4.2, Ende der Spur): bis 26-mal. Im Test
+     „ohne Wissen niemand in Sicht“ (sim mit Herzschlag-Ausdünnung) wurde dadurch eine Geisterspur bei
+     52,8 s zur Hälfte eine Person (P(Geist) am Ende 0,49 statt 0,80), 2,7 s Licht.
+  2. *Harte Schattenkanten* (4.1, Sicht einer Person): 6.10. 20:55:41 begann der Arbeitszimmer-Sensor
+     eine Spur auf Leon im Flur bei (−2,01; 4,50), am Rand des Türschattens; an allen Sigma-Punkten
+     seiner Vorhersage (y ≤ 4,45) war die Sicht 0, „das ist Leon“ hatte das Gewicht 0. Es blieben
+     Geist (0,96) und „neue Person“ (0,0005); der Geist starb, als die Spur durchs Zimmer ging, und Leon
+     war zweimal da – einmal am Schreibtisch, einmal ohne Spur an der Badtür (21:00 im Haus 2,66 statt 2).
+  3. *Unsichtbare Streifen*: Die Küche hatte entlang ihrer Wand (x 2,2–2,4) Kacheln ohne jede Sicht,
+     auch für das LD2410C. Die Person der Live-App vom 7.10. (seit 10:57) stand genau dort (2,29; 7,70);
+     im Nachspiel 7.10. 07:10 Küche 0,76 durch eine Person an dieser Stelle.
+  4. *Abschneiden statt Zusammenlegen* (5.1, 5.6): „Die Spur war ein Geist“ und „sie war eine neue
+     Person“ blieben zwei Hypothesen mit verschiedener Personenzahl; fiel die erste aus den 12, gab es
+     keinen Weg zurück. Nachgespielt (e0e26e8) bekannte Personen 4 ab 22:00, 5 ab 8:00, 6 um 13:00;
+     im Haus erwartet 3,9 um 22:00 und 4,7 um 9:00 statt 2 (Telefone: beide zu Hause bis 9:07, danach
+     eine Person).
+  5. *Doppelte Personen in Ecken ohne Sicht*: Eine überzählige Person (aus dem Zustand von 9:28
+     übernommen) übernahm um 10:58–11:21 Leons Weg durch die Küche, Leon behielt seine; als er ging,
+     blieb die doppelte in der Vorratsecke der Küche (x 3,4–4,6, y 7,7–9,2, Sicht 0 für jeden LD2450 und
+     das LD2410C, auch über den Versatz gemittelt). Sie hatte r = 1 (ihre Spur), keine Messung konnte
+     sie treffen, und die Aufenthaltsdauer (3.1) ließ sie nur langsam aufstehen: Meldungen 11:39–12:55
+     Küche 0,94 / 0,80 / 0,71 (bacc9ce). Weder das LD2410C (Sicht dort 0) noch der Neustart um 9:28 als
+     solcher hielten sie, nur dass sie existierte.
+  Geändert: 1. Ende einer Geisterspur als konkurrierende Risiken (4.2); 2./3. Sicht einer Person über
+  ihren Versatz (4.1); 4. Bernoulli-Existenz der bekannten Personen ohne Spur und Zusammenlegen über
+  die Personenzahl hinweg (5.5, 5.6); 5. Existenz klingt ohne Stütze ab (5.5, 30 min). Nicht geändert:
+  die Zuordnung, die eine Person verdoppelt (2, 5: eine Spur auf der „falschen“ bekannten Person), und
+  der Start ohne Wissen. Zahlen in 5.5 und im CHANGELOG.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

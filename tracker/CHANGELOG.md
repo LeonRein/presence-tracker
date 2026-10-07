@@ -2,6 +2,29 @@
 
 ## Unveröffentlicht
 
+- **Keine erfundenen Personen mehr, die sich ohne Messung halten** (MODEL.md 1, 4.1, 4.2, 5.5, 10).
+  Am 7.10. hing über eine Stunde eine zweite Person in der Küche, obwohl nur eine zu Hause war, und
+  über den Tag sammelten sich bekannte Personen an (nachgespielt bis zu 6, im Haus erwartet 4,7 statt
+  2). Ursachen und Änderungen:
+  - Eine bekannte Person ohne Spur existiert nur noch mit einer Wahrscheinlichkeit (Bernoulli wie im
+    PMBM): „die Spur war ein Geist“ und „sie war eine Person“ werden nach dem Ende der Spur eine
+    Hypothese mit r < 1, statt dass die erste abgeschnitten wird und nie zurückkommt. Ohne Messungen,
+    die sie stützen, klingt r mit 30 min ab (Existenz als Markov-Kette, Musicki & Evans 2005); die
+    Energien des LD2410C bei Sitzenden halten sie. Die Anzeige zeigt Personen ab r = 0,5.
+  - Das Ende einer Geisterspur sprach bis zu 26-mal für eine Person (die Quelle musste sterben *und*
+    nicht wiedergefunden werden); jetzt konkurrierende Risiken.
+  - Die Sicht eines Sensors auf eine Person ist die Sicht auf die Stelle, an der ihre Spur sitzt (über
+    den Versatz gemittelt, nicht durch Wände): Am Rand eines Türschattens war „das ist dieselbe
+    Person“ unmöglich und Leon wurde doppelt; ein Streifen der Küche an ihrer Wand war für jeden Sensor
+    unsichtbar (dort stand die Person der Live-App, 2,29 / 7,70).
+  - Die unbekannten Personen sind eine Intensität für alle Hypothesen, nicht eine Kopie je Hypothese.
+  Gemessen: Meldungen vom 7.10. (13 leere, 7 belegte Raum-Fenster) Licht fälschlich an 3,14 → 0, aus
+  0 → 0; Küche 11:39–12:55 im Mittel 0,97 / 0,96 / 0,96 (e0e26e8) → 0,08 / 0,02 / 0,01, Flur 9:49
+  0,13 → 0,05. Meldungen bis 6.10.: fälschlich an 0 von 41, aus 1,17 von 15 wie bisher, Log-Evidenz +28
+  (12 Hypothesen) bzw. +196 (16); die leere Nacht 0 min Licht an. Im Haus erwartet tagsüber 1,1 statt
+  3,1–3,6 (wahr 1); dafür gelten Schlafende nach einer Stunde als unbekannt (MODEL.md 9). Rechenzeit
+  (latency.py, 21 Uhr, ein Kern) 37,4 → 32,8 s. Neue Tests (`tests/test_existence.py`).
+
 - **Weniger Rechenzeit: die inneren Schleifen sind kompiliert (Numba).** Die meiste Zeit ging nicht in
   die Rechnung, sondern in den Aufwand je numpy-Aufruf auf kleinen Arrays. Die Vorhersage der
   Gauß-Komponenten, die Wände, die Erfassungsraten der Sensoren, die Bewegung der Kacheldichten und
