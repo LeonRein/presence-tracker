@@ -390,6 +390,11 @@ Lebensdauer der Geister geschätzt (4.2).
 ## 8. Prüfung
 - **Wahrheitsdaten:** am 6.10.2026 gelöscht, die Bewertung wird neu aufgebaut. Maßstab sind die
   Lichtfehler aus 1.1 je Raum (keine einzelne Prozentzahl).
+- **Fehlermeldungen** (App, *Fehler melden*): 15 Minuten Sensordaten, die Anzeige der App, der Start
+  des Modells und das Gelernte von diesem Start (sonst vom Moment der Meldung). Das Nachspiel ab dem
+  Start glaubt genau, was die App glaubte; mit dem Gelernten vom Moment der Meldung lag es am 6.10.
+  um bis zu 1,0 daneben. Lag der Start früher, hat ein Nachspiel ohne Wissen nach 15 Minuten vergessen,
+  was es nicht wusste (22:40, 22:42: |ΔP| < 0,01 am gemeldeten Moment, anfangs bis 0,11).
 - **Tests** (`tracker/tests`): bitgleiche Läufe, Unabhängigkeit von der Zeitzerlegung,
   Bewegungsstatistik, Szenen aus `sim.py`, Invarianten der Buchführung (`Tracker.check`).
 - **Geplant:** simulationsbasierte Kalibrierung (0_Talts2018 Alg. 1): Welten aus diesem Modell

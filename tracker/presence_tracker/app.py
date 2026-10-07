@@ -425,10 +425,15 @@ class App:
         room = str(body.get("room") or "")
         ago = min(max(float(body.get("minutes_ago") or 0), 0.0), REPORT_WINDOW / 60)
         now = self.clock()  # the wall clock, or the recording's time in a replay
+        start = self.model_start or self.tracker.start
+        # what was learned when the model started, if that is in the report (the replay starts there,
+        # as the app did); else now: started from nothing known 15 min back, the replay forgets the
+        # difference (6.10. 22:40 and 22:42, 20 min after the start: |dP| < 0.01; MODEL.md 8)
+        covered = start is not None and start >= (self.recent[0][0] if self.recent else now) - 1
         meta = {"report": {"t": now, "t_event": now - 60 * ago, "room": room, "kind": kind,
                            "text": str(body.get("text") or "")[:2000], "version": __version__, "code": CODE,
-                           "model_start": self.model_start or self.tracker.start},
-                "config": self.config.to_dict(), **self.start_learned}
+                           "model_start": start, "learned_at": start if covered else now},
+                "config": self.config.to_dict(), **(self.start_learned if covered else self.tracker.learned())}
         self.reports.mkdir(parents=True, exist_ok=True)
         name = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{re.sub(r'[^a-z0-9_]', '', room.lower()) or 'haus'}-{kind}"
         lines = [json.dumps(meta)]

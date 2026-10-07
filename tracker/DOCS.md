@@ -38,9 +38,14 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   die Wege nach draußen dazu; wer sicher außer Haus ist, wird vergessen.
 - **Fehler melden** (Tab *Live*): Wenn etwas nicht stimmt (Person verloren, Geist, Person am falschen Ort,
   ungenaues Tracking, hohe Latenz), den Raum und die Art des Fehlers wählen. Die App
-  speichert dazu die Sensordaten der letzten 15 Minuten mit der Konfiguration (unter `/data/reports`, in
-  der Liste herunterladbar). Daraus entsteht die Wahrheitstabelle für die Bewertung;
-  `tools/replay.py --report DATEI` spielt eine Meldung nach.
+  speichert dazu die Sensordaten der letzten 15 Minuten mit der Konfiguration, dem Gelernten
+  (Geisterkarte, LD2410C-Hintergrund), dem Stand des Codes und dem, was sie in dieser Zeit sekündlich
+  angezeigt hat (unter `/data/reports`, je Meldung etwa 0,2–0,7 MB, in der Liste herunterladbar). Daraus
+  entsteht die Wahrheitstabelle für die Bewertung; `tools/replay.py --report DATEI` spielt eine Meldung
+  nach und zeigt, wie weit das Nachspiel von der Anzeige der App abweicht. Begann das Modell innerhalb der
+  15 Minuten (Start der App, *Spuren zurücksetzen*, neue Konfiguration), beginnt das Nachspiel dort mit dem
+  damals Gelernten und glaubt genau, was die App glaubte; sonst beginnt es ohne Wissen am Anfang der
+  Daten und hat das bis zum gemeldeten Moment vergessen.
 
 ## Einrichten
 

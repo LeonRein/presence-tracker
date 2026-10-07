@@ -1,5 +1,20 @@
 # Changelog
 
+## Unveröffentlicht
+
+- **Fehlermeldungen lassen sich genau nachspielen.** Eine Meldung speichert jetzt auch, wann das Modell
+  zuletzt ohne Wissen begann, was es da gelernt hatte (Geisterkarte und, neu, den LD2410C-Hintergrund mit
+  den Echoraten), den Stand des Codes und, was die App sekündlich angezeigt hat (Zahl und
+  Wahrscheinlichkeit je Raum, Personen; etwa 12–14 kB mehr je Meldung, 3 %). `tools/replay.py --report`
+  beginnt am Start des Modells, wenn er in der Meldung liegt, und vergleicht mit der Anzeige. Gemessen an
+  den 10 Meldungen vom 6.10. (Aufnahmen, durchgehend seit dem Start der App gegen das Nachspiel aus
+  der Meldung): Mit dem Gelernten vom Moment der Meldung wich das Nachspiel bis zu 1,0 ab, und der
+  gemeldete Fehler von 21:24 verschwand; mit dem Gelernten vom Start des Modells ist es gleich. Lag der
+  Start vor den 15 Minuten (22:40, 22:42), wich das Nachspiel ohne Wissen am gemeldeten Moment um weniger als 0,01 ab; ein
+  längeres Fenster oder ein gespeicherter Zustand des Modells (1,5 MB je Meldung) bringen nichts.
+- Das Herunterladen einer Meldung ist im Test geprüft: Die App schickt sie unverändert als
+  `application/gzip` ohne `Content-Encoding`, so dass auch der Browser hinter Ingress sie nicht entpackt.
+
 ## 0.10.0
 
 Gemessen mit `tools/report_eval.py` gegen eine Wahrheit aus Leons Fehlermeldungen vom 6.10., von Hand

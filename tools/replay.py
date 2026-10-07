@@ -10,8 +10,9 @@ it prints every --every seconds the count per observed room and per person where
 (private: it holds the floor plan); --learned: what the app had learned. --report: an error report
 of the app ("Fehler melden"): its config, what was learned and the sensor data; shown from 2 min before
 the reported moment unless --show says otherwise. The replay starts where the app's model last started
-from nothing known if that is in the report, else at the report's first frame (what the model knew
-before is not in the report). Below each line what the app showed then ("app"), and at the end how far
+from nothing known, with what it had learned then, if that is in the report; else at the report's first
+frame with what was learned at the report (what the model knew before is not in the report; 15 min
+from nothing known forget it: 6.10., |dP| < 0.01). Below each line what the app showed then ("app"), and at the end how far
 the replay is from it.
 """
 
@@ -85,7 +86,7 @@ def main():
                 print(f"the app's model started from nothing known at {hm}, as the replay does")
             else:
                 print(f"the app's model ran since before the report's data: the replay starts at {hm} with "
-                      "nothing known and may differ from it at first (MODEL.md 8)")
+                      "nothing known and what was learned at the report, and may differ from it at first (MODEL.md 8)")
         end = parse_time(a.end) if a.end else messages[-1]["t"]
         show = parse_time(a.show) if a.show else max(start, rep["t_event"] - 120)
     else:

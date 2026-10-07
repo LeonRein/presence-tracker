@@ -8,7 +8,7 @@ import json
 
 from aiohttp.test_utils import TestClient, TestServer
 
-from presence_tracker import code_hash
+from presence_tracker import app as app_module, code_hash
 from presence_tracker.app import App
 from presence_tracker.filter import Tracker
 from presence_tracker.frames import SensorClock
@@ -72,6 +72,7 @@ def test_a_report_replays_to_what_the_app_showed(tmp_path):
     meta, messages = lines[0], lines[1:]
     assert meta["report"]["code"] == code_hash()
     assert 1000.0 <= meta["report"]["model_start"] < 1000.2  # the app's first frame
+    assert meta["report"]["learned_at"] == meta["report"]["model_start"]
     assert meta["ld_background"]["echoes"]["a"] > 0
     # what was learned at the model's start, not at the report: it learned on since
     assert meta["ghost_map"] != json.loads(json.dumps(app.tracker.learned()["ghost_map"]))
@@ -98,3 +99,28 @@ def test_a_report_replays_to_what_the_app_showed(tmp_path):
     assert k >= len(shown) - 1
     assert shown[-1][1]["zones"]["wohn"][2] and shown[-1][1]["persons"][0][1] == "observed"
     assert diff < 0.002, diff  # what the app showed is rounded to 0.001
+
+
+def test_a_report_without_the_model_start_has_what_was_learned_at_the_report(tmp_path, monkeypatch):
+    """The model started before the report's data: the replay starts from nothing known at its first
+    frame, with what was learned at the report (the copy from the start may be days old)."""
+    monkeypatch.setattr(app_module, "REPORT_WINDOW", 20.0)
+    config = flat_config(entry=True, people=2)
+    config.save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    app.clock = lambda: 1040.0
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), start=5, pauses={2: 30}))
+    for t, sid, frame in simulate([a], sim_sensors(config), 40.0, walls=config.wall_segments):
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
+        assert app.tick(1000.0 + t)
+
+    class Request:
+        async def json(self):
+            return {"kind": "ghost", "room": "wohn"}
+
+    asyncio.run(app.h_report(Request()))
+    path, = (tmp_path / "reports").glob("*.jsonl.gz")
+    meta = json.loads(gzip.open(path, "rt").readline())
+    assert meta["report"]["model_start"] < 1001 and meta["report"]["learned_at"] == 1040.0
+    learned = json.loads(json.dumps(app.tracker.learned()))
+    assert meta["ghost_map"] == learned["ghost_map"] != app.start_learned["ghost_map"]
