@@ -1,5 +1,5 @@
 // Application state, server API, auto-save and undo.
-import { debounce, toast } from './util.js';
+import { debounce, rebase, toast } from './util.js';
 
 const listeners = new Set();
 
@@ -86,20 +86,37 @@ let saveNote = '';  // what the toast after the next save says first
 async function save() {
   // one request at a time, so that an older answer never overwrites a newer state
   saving = saving.then(async () => {
+    const body = JSON.stringify(state.config);
     try {
-      const r = await api('api/config', { method: 'PUT', body: JSON.stringify(state.config) });
+      const r = await api('api/config', { method: 'PUT', body });
       mergeRooms(r.rooms);
       // the model starts over for most edits (walls, rooms, parameters): say so, it changes the live view
       toast([saveNote, 'Gespeichert', r.restarted ? 'Modell neu gestartet' : ''].filter(Boolean).join(' · '));
       saveNote = '';
     } catch (e) {
       // refused (a value out of its limits): back to what the server has, so that the next edit
-      // doesn't send the refused value again
+      // doesn't send the refused value again; what was edited meanwhile is kept and saved
       toast('Nicht gespeichert: ' + e.message + ' Es gilt der zuletzt gespeicherte Stand.', 8000);
-      if (e.status === 400) await loadConfig().catch(() => {});
+      if (e.status === 400) {
+        if (JSON.stringify(state.config) === body) await loadConfig().catch(() => {});
+        else await keepEditsOnRefusal(JSON.parse(body)).catch(() => {});
+      }
     }
   });
   return saving;
+}
+
+// save now (not after the debounce) and wait for it, e.g. before reloading the page
+export function saveNow() { return save(); }
+
+async function keepEditsOnRefusal(sent) {
+  const before = state.config;
+  await loadConfig();  // what the server holds
+  state.config = rebase(state.config, sent, before);
+  state.config.background ??= {};
+  state.config.background.layers ??= [];
+  emit('config');
+  saveSoon();
 }
 
 // The server derives the rooms from the walls. Take over their outlines; names and the entry

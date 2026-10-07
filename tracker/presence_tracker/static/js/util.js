@@ -39,6 +39,39 @@ export function debounce(fn, ms) {
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
 }
 
+// An edit the server refused: `base` is what it holds, `sent` what it refused, `now` the editor's state
+// with what was edited while the request was under way. What changed from sent to now goes onto base;
+// the rest (the refused change) is base's. Lists of objects with ids are matched by id; other lists
+// whose lengths differ are taken from now.
+export function rebase(base, sent, now) {
+  if (JSON.stringify(now) === JSON.stringify(sent)) return base;
+  const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (Array.isArray(sent) && Array.isArray(now)) {
+    const b = Array.isArray(base) ? base : [];
+    if ([...sent, ...now, ...b].every(v => isObj(v) && v.id != null)) {
+      const byId = list => new Map(list.map(v => [v.id, v]));
+      const bi = byId(b), si = byId(sent);
+      return now.map(v => (si.has(v.id) ? rebase(bi.get(v.id), si.get(v.id), v) : v)).filter(v => v !== undefined);
+    }
+    if (b.length === sent.length && sent.length === now.length) return now.map((v, i) => rebase(b[i], sent[i], v));
+    return now;
+  }
+  if (isObj(sent) && isObj(now)) {
+    const b = isObj(base) ? base : {};
+    const out = {};
+    for (const k of new Set([...Object.keys(b), ...Object.keys(now)])) {
+      if (!(k in now)) {
+        if (!(k in sent)) out[k] = b[k];  // only on the server; else deleted meanwhile
+        continue;
+      }
+      const v = k in sent ? rebase(b[k], sent[k], now[k]) : now[k];
+      if (v !== undefined) out[k] = v;
+    }
+    return out;
+  }
+  return now;
+}
+
 export function uid(prefix = 'z') {
   return prefix + Math.random().toString(36).slice(2, 8);
 }

@@ -1,6 +1,6 @@
 // Side panel per tab.
 import { computeCoverage } from './coverage.js';
-import { api, edit, emit, heldBadges, savePref, select, sensorById, sensorColor, setTool, state } from './store.js';
+import { api, edit, emit, heldBadges, savePref, saveNow, select, sensorById, sensorColor, setTool, state } from './store.js';
 import { AlignTool, PlaceSensorTool, WallTool, ZoneTool, autoFitImage, deleteSelection } from './tools.js';
 import { ZONE_KINDS, bindNumber, dist, esc, fmt, h, personColor, regionOfRoom, roomsWithSensor, toast, uid, zoneOutline } from './util.js';
 import { loadSize } from './view.js';
@@ -921,10 +921,11 @@ function settingsPanel(panel) {
   root.append(targetRooms(p));
   root.append(experts);
   const reset = h('<button class="btn" style="margin-top:12px">Alle auf Standard</button>');
-  reset.onclick = () => {
+  reset.onclick = async () => {
     if (!confirm('Alle Einstellungen zurücksetzen?')) return;
     edit(c => { c.params = {}; });
-    setTimeout(() => location.reload(), 800);
+    await saveNow();  // the reload shows what the server took over (a fixed delay could cut the request off)
+    location.reload();
   };
   root.append(reset);
   panel.append(root);
