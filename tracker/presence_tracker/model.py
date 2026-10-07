@@ -127,8 +127,12 @@ class TrackerParams:
     # outputs
     light_cost: float = 2.0  # a second of light without anybody costs as much as this many seconds dark
                              # with somebody there (assumed; Leon: light without a person is the worst)
-    lead_time: float = 1.0  # s, "approaching" looks this far ahead
-    approach_min_speed: float = 0.3  # m/s
+    # "wird betreten" (MODEL.md 6): P(a walker enters within lead_time) above approach_cost / (approach_cost
+    # + 1); approach_cost: a light switched on in vain costs as much as this many entries into a dark room.
+    # 2 s and 0.05 (measured 6./7.10., MODEL.md 6): light >= 1 s / 1 m before 60 / 62 % of the entries, 4.0
+    # vain 30-s lights per hour; Leon's trial of "1 s / 1 m ahead"
+    lead_time: float = 2.0  # s
+    approach_cost: float = 0.05
 
 @dataclass
 class Config:

@@ -172,6 +172,16 @@ class Tiling:
         to 1 over the tiles in view). Walls: the points behind one seen from the mean get nothing
         (nobody walks through a wall; the Gaussian itself does not know them) - those with a
         density above 1e-3 of the peak (within 3.7 standard deviations)."""
+        d = self.gauss_points(mean, var)
+        if d is None:
+            out = np.zeros(self.n)
+            out[self.cell_near(mean)] = 1.0
+            return out
+        return np.bincount(self.point_tile, d, self.n)
+
+    def gauss_points(self, mean, var):
+        """(points,) the share of N(mean, diag var) at each sample point as in gauss_mass (summing
+        to 1), or None if the Gaussian has nothing in view."""
         d = np.exp(-0.5 * (((self.points - np.asarray(mean)[None, :]) ** 2) / (np.asarray(var)[None, :] + POINT * POINT / 12)).sum(axis=1))
         if not self.world.clear(float(mean[0]), float(mean[1]), 3.72 * math.sqrt(float(np.max(var)) + POINT * POINT / 12)):
             near = np.flatnonzero(d > 1e-3)
@@ -181,11 +191,7 @@ class Tiling:
                 if behind.any() and not behind.all():
                     d[near[behind]] = 0.0
         s = d.sum()
-        if not s > 0:
-            out = np.zeros(self.n)
-            out[self.cell_near(mean)] = 1.0
-            return out
-        return np.bincount(self.point_tile, d / s, self.n)
+        return d / s if s > 0 else None
 
     def near_doors(self, mean, var) -> np.ndarray:
         """(R + 1,) rate (1/s) of walking into each region and out of the house for a walker at

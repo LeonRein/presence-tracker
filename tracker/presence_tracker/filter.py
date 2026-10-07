@@ -45,6 +45,8 @@ GIVE_UP = 0.01  # a known person who exists with less probability (wherever they
                 # only P(several of them come back) changes, by <= GIVE_UP^2 / 2 (0.05: 14 % less
                 # computing time, light wrongly off 1.67 instead of 1.17)
 RECYCLE_EVERY = 1.0  # s
+ENTER_MIN_WALK = 0.02  # "wird betreten" (MODEL.md 6): a person walking with less probability can raise no
+                       # zone's p_enter by more than this; not moved on
 GAP_EXACT = 120.0  # s: the end of a gap in the data is moved as always, what lies before in leaps
 LEAP = 15.0  # s   (_predict_gap; 7.10. 08:06, 8 people, 3 h: rooms within 0.022 of moving all as always)
 MAX_LEAPS = 2000  # longer gaps in longer leaps (8 h of 8 people: 1.7 s CPU; a week in leaps of 5 min,
@@ -1732,11 +1734,155 @@ class Tracker:
         out["tiles"] = [[int(i), round(float(mass[i] / tl.area[i]), 4)] for i in k]
         return out
 
+    # ------------------------------------------------- "about to be entered" (MODEL.md 6)
+
+    def entering(self) -> dict:
+        """zone id -> {"p", "eta", "distance", "person"} for the observed rooms and the areas: the
+        probability that somebody walking with a track enters the zone within the look-ahead
+        (lead_time), and for the one who most probably does, the expected time
+        and distance to it and their id in the display (persons(); None if not in the most
+        probable hypothesis)."""
+        return self._cached("entering", lambda: self._entering(self.p.lead_time))
+
+    def _entry_targets(self):
+        """The zones a "wird betreten" is computed for - the observed rooms (by the tiles' rooms)
+        and the areas - as (zone ids, (sample points, zones) share of each point in each zone,
+        rasters (zones, nx, ny) of their cells)."""
+        cached = getattr(self, "_targets", None)
+        if cached is not None and cached[0] is self.tiles:
+            return cached[1:]
+        tl, w = self.tiles, self.world
+        areas = self.config.home_zones("area")
+        ids = list(self.rooms) + [z.id for z in areas]
+        A = np.zeros((len(tl.points), len(ids)))
+        masks = np.zeros((len(ids), w.nx, w.ny), dtype=bool)
+        room = tl.room[tl.point_tile]
+        for k in range(len(self.rooms)):
+            A[room == k, k] = 1.0
+            masks[k] = self.room_of == k
+        ci, cj = w.cell_of(tl.points)
+        for k, z in enumerate(areas, start=len(self.rooms)):
+            masks[k] = w.zone_mask(z)
+            A[masks[k][ci, cj], k] = 1.0
+        self._targets = (self.tiles, ids, A, masks)
+        return ids, A, masks
+
+    def _walk_ahead(self, obj, h: float):
+        """The position (mean (2,), variance (2,)) of a person's walking component h s ahead: the
+        OU velocity of MODEL.md 3.2 over one step h, the walls reflecting the move as in
+        Gauss.walls (sigma points, 5.2); door gaps are no wall."""
+        m = self.m
+        s2 = 0.5 * (m.speed ** 2 + m.speed_spread ** 2)
+        F, Q = kernels.motion(2, float(h), float(m.still_noise ** 2), 1.0 / m.turn_rate, float(s2), 0.0,
+                              np.zeros(0, dtype=np.int64), np.zeros(0))
+        F, Q = F[WALK], Q[WALK]
+        m0 = np.ascontiguousarray(obj.mean[WALK, :, :2])
+        P0 = np.ascontiguousarray(obj.cov[WALK, :, :2, :2])
+        mean = m0 @ F.T
+        cov = np.einsum("ij,ajk,lk->ail", F, P0, F) + Q[None]
+        (x0, y0), (x1, y1) = m0[:, 0].tolist(), mean[:, 0].tolist()
+        reach = math.hypot(x1 - x0, y1 - y0) + math.sqrt(8.0) * (
+            math.sqrt(max(float(P0[:, 0, 0].max()), 0.0)) + abs(F[0, 1]) * math.sqrt(max(float(P0[:, 1, 1].max()), 0.0))
+            + math.sqrt(max(Q[0, 0], 0.0)))
+        if not self.world.clear(x0, y0, reach):
+            _, mean, cov = kernels.wall_moves(m0, P0, F, Q, mean, np.ascontiguousarray(cov), self.world.walls,
+                                              self.world.wall_box)
+        return mean[:, 0], cov[:, 0, 0]
+
+    def _target_mass(self, mean, var, A) -> np.ndarray:
+        d = self.tiles.gauss_points(mean, var)
+        return np.zeros(A.shape[1]) if d is None else d @ A
+
+    def _entering(self, h: float) -> dict:
+        """entering() for the look-ahead h (s).
+
+        Per person with a track (not a ghost source), only their walking component moves on
+        (standing people sway by centimetres; getting up goes anywhere): where it is h/2 and h
+        s ahead - unless the walk ends first (rate speed / walk length, MODEL.md 3.2): then
+        where it stopped, the time of stopping on the nodes 0, h/2, h -, against where it is
+        now. Their rise in each zone, max(P(in it at h/2), P(in it at h)) - P(in it now), at
+        least 0, is the probability that they enter it within h (a lower bound of being in it
+        at some time; whoever is in it stays). People of a hypothesis are independent:
+        P(somebody enters) = 1 - prod(1 - rise), mixed over the hypotheses (5.1).
+        Deterministic, no samples."""
+        ids, A, masks = self._entry_targets()
+        Z = len(ids)
+        out = {z: {"p": 0.0, "eta": None, "distance": None, "person": None} for z in ids}
+        if not Z or h <= 0:
+            return out
+        m = self.m
+        mu = m.speed / m.walk_length
+        rise, walk = {}, {}
+        for obj, _ in self._objects():
+            if not isinstance(obj, Gauss) or obj.phantom:
+                continue
+            w = float(obj.weights()[WALK]) * (1.0 - obj.a)
+            if w < ENTER_MIN_WALK:
+                continue
+            pos, vel = obj.mean[WALK, :, 0], obj.mean[WALK, :, 1]
+            speed = math.hypot(float(vel[0]), float(vel[1]))
+            now = self._target_mass(pos, obj.cov[WALK, :, 0, 0], A)
+            half = self._target_mass(*self._walk_ahead(obj, 0.5 * h), A)
+            end = self._target_mass(*self._walk_ahead(obj, h), A)
+            # who stops stays where they stopped: the time of stopping on the three nodes
+            # (0, h/2, h), each taking the stops nearest to it
+            q1, q3, q4 = (math.exp(-mu * h * f) for f in (0.25, 0.75, 1.0))
+            at_half = (1.0 - q1) * now + q1 * half
+            at_end = (1.0 - q1) * now + (q1 - q3) * half + q3 * end
+            r = w * np.maximum(np.maximum(at_half, at_end) - now, 0.0)
+            if r.max() > 0:
+                rise[id(obj)] = r
+                walk[id(obj)] = (obj, pos.copy(), vel.copy(), speed)
+        if not rise:
+            return out
+        hw = self.hyp_weights()
+        p = np.zeros(Z)
+        share = {k: np.zeros(Z) for k in rise}
+        for wh, hy in zip(hw, self.hyps):
+            empty = np.ones(Z)
+            for obj in hy.people():
+                r = rise.get(id(obj))
+                if r is not None:
+                    empty *= 1.0 - r
+                    share[id(obj)] += wh * r
+            p += wh * (1.0 - empty)
+        best = self.hyps[int(np.argmax([h.logw for h in self.hyps]))]
+        display = {id(o): k + 1 for k, o in enumerate(best.people())}
+        for k, z in enumerate(ids):
+            out[z]["p"] = float(min(max(p[k], 0.0), 1.0))
+            if p[k] < 0.01:
+                continue
+            key = max(share, key=lambda q: share[q][k])
+            obj, pos, vel, speed = walk[key]
+            dist = self._ray_distance(pos, vel, masks[k])
+            out[z].update({"distance": dist, "eta": dist / speed if dist is not None and speed > 0.05 else None,
+                           "person": display.get(key)})
+        return out
+
+    def _ray_distance(self, pos, vel, mask, reach: float = 5.0, step: float = 0.05):
+        """How far a walker at pos walks in the direction of vel until they are in the zone (its
+        raster mask), if no wall is in the way and within reach; else None."""
+        speed = math.hypot(float(vel[0]), float(vel[1]))
+        if speed < 1e-6:
+            return None
+        s = np.arange(0.0, reach + step / 2, step)
+        pts = pos[None, :] + s[:, None] * (vel / speed)[None, :]
+        i, j = self.world.cell_of(pts)
+        inside = np.flatnonzero(mask[i, j])
+        if not len(inside):
+            return None
+        hit = int(inside[0])
+        if hit and self.world.crosses_wall(pos[None, :], pts[hit][None, :])[0]:
+            return None
+        return float(s[hit])
+
     def zone_states(self) -> dict:
         """Per zone: the most probable number of people (observed rooms: from all hypotheses),
-        moving / still and "about to be entered" from the most probable hypothesis' people.
-        Occupied, where the probability is known: P(somebody there) above the threshold that
-        minimizes the expected cost of the light (MODEL.md 6)."""
+        moving / still from the most probable hypothesis' people, "about to be entered" from all
+        (entering()). Occupied, where the probability is known: P(somebody there) above the
+        threshold that minimizes the expected cost of the light; about to be entered likewise,
+        with the cost of a light switched on in vain against that of entering in the dark
+        (MODEL.md 6)."""
         from .zones import ZoneState
         p = self.p
         c = p.light_cost / (p.light_cost + 1.0)
@@ -1778,14 +1924,14 @@ class Tracker:
                 if z.contains(x, y):
                     st.moving += moving
                     st.still += not moving
-                elif moving and math.hypot(vx, vy) >= p.approach_min_speed:
-                    steps = max(1, int(p.lead_time / 0.1))
-                    for k in range(1, steps + 1):
-                        tau = p.lead_time * k / steps
-                        if z.contains(x + vx * tau, y + vy * tau):
-                            st.approaching = True
-                            st.eta = tau if st.eta is None else min(st.eta, tau)
-                            break
+        c_enter = p.approach_cost / (p.approach_cost + 1.0)
+        for zid, e in self.entering().items():
+            st = states.get(zid)
+            if st is None:
+                continue
+            st.p_enter = e["p"]
+            st.approaching = e["p"] > c_enter
+            st.eta, st.distance, st.person = e["eta"], e["distance"], e["person"]
         for st in (*states.values(), total):
             st.moving = min(st.moving, st.count)
             st.still = min(st.still, st.count - st.moving)

@@ -68,7 +68,7 @@ const LIVE = {
         st.probability != null ? `<span class="badge" title="Wahrscheinlichkeit, dass jemand da ist; besetzt (Licht an) ab der Schwelle aus den Kosten">${Math.round(st.probability * 100)} %</span>` : '',
         st.moving ? `<span class="badge ok">${st.moving} bewegt</span>` : '',
         st.still ? `<span class="badge">${st.still} ruhig</span>` : '',
-        st.approaching ? `<span class="badge warn">gleich${st.eta != null ? ` (${fmt(st.eta, 1)} s)` : ''}</span>` : '',
+        st.approaching ? `<span class="badge warn" title="Wahrscheinlichkeit, dass jemand Gehendes gleich hereinkommt (Vorausschau in den Einstellungen)">gleich ${Math.round((st.p_enter ?? 0) * 100)} %${st.eta != null ? ` · ${fmt(st.eta, 1)} s` : ''}</span>` : '',
       ].join('') : '';
       return `<div class="item"><span class="swatch" style="background:${color}"></span><span class="grow">${esc(z.name)}</span>${badges}</div>`;
     }).join('');
@@ -124,7 +124,7 @@ const LIVE = {
     const st = state.live?.zones?.[ds.id];
     if (!st) return '';
     return `<dl class="kv"><dt>Personen</dt><dd>${st.count}</dd><dt>bewegt / ruhig</dt><dd>${st.moving} / ${st.still}</dd>
-      <dt>wird betreten</dt><dd>${st.approaching ? `ja, in ${fmt(st.eta, 1)} s` : 'nein'}</dd></dl>`;
+      <dt>wird betreten</dt><dd>${st.approaching ? 'ja' : 'nein'}${st.p_enter != null ? `, ${Math.round(st.p_enter * 100)} %` : ''}${st.eta != null ? ` · in ${fmt(st.eta, 1)} s, ${fmt(st.distance, 1)} m${st.person != null ? ` (Person ${st.person})` : ''}` : ''}</dd></dl>`;
   },
   calib() {
     const c = state.live?.calibration;
@@ -735,8 +735,8 @@ const PARAMS = [
   ]],
   ['Ausgabe', [
     ['light_cost', 'Kosten: Licht ohne Person', '×', 'Eine Sekunde Licht ohne Person ist so schlimm wie so viele Sekunden Dunkel mit Person. Ein Raum gilt als besetzt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt: bei 2 über 67 %.', 0.5],
-    ['lead_time', 'Vorausschau „wird betreten“', 's', 'Wie früh eine Zone als „wird betreten“ gilt. Bei 1 m/s Gehtempo entspricht 1 s etwa 1 m.', 0.1],
-    ['approach_min_speed', 'Mindesttempo dafür', 'm/s', '', 0.05],
+    ['lead_time', 'Vorausschau „wird betreten“', 's', 'So weit rechnet das Modell jeden Gehenden mit seinem eigenen Bewegungsmodell voraus (Wände halten auf, Türen nicht). Weil es Richtung und Tempo mit der Zeit vergisst, kommt das Signal später als diese Zeit vor dem Eintritt: mit 2 s bei 60 % der Eintritte mindestens 1 s (1 m) vorher (MODEL.md 6).', 0.1],
+    ['approach_cost', 'Kosten: Einschalten auf Verdacht', '×', 'Ein Einschalten auf Verdacht, nach dem niemand hereinkommt, ist so schlimm wie so viele Eintritte in einen dunklen Raum. „Wird betreten“ gilt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.01],
   ]],
 ];
 

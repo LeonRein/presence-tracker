@@ -28,8 +28,12 @@ def _entities(zone_id: str, name: str) -> list:
                               "json_attributes_template": "{{ {'moving': value_json.moving, 'still': value_json.still, 'probability': value_json.probability | default(none)} | tojson }}"}),
         ("binary_sensor", "moving", {**base, "name": f"{name} Bewegung", "device_class": "motion",
                                       "value_template": "{{ 'ON' if value_json.moving > 0 else 'OFF' }}"}),
+        # MODEL.md 6: P(somebody walking enters within the look-ahead) above its threshold; the
+        # probability, time, distance and who as attributes (for Node-RED and tuning)
         ("binary_sensor", "approaching", {**base, "name": f"{name} wird betreten", "icon": "mdi:walk",
-                                           "value_template": "{{ 'ON' if value_json.approaching else 'OFF' }}"}),
+                                           "value_template": "{{ 'ON' if value_json.approaching else 'OFF' }}",
+                                           "json_attributes_topic": state,
+                                           "json_attributes_template": "{{ {'p_enter': value_json.p_enter | default(none), 'eta': value_json.eta | default(none), 'distance': value_json.distance | default(none), 'person': value_json.person | default(none)} | tojson }}"}),
     ]
 
 
