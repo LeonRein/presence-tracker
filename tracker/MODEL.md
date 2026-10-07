@@ -390,7 +390,8 @@ Lebensdauer der Geister geschätzt (4.2).
 - **Geplant:** simulationsbasierte Kalibrierung (0_Talts2018 Alg. 1): Welten aus diesem Modell
   erzeugen; der Rang der wahren Zahl unter der Filterverteilung muss gleichverteilt sein.
 - Werkzeuge: `tools/record.py` (Aufnahme), `tools/replay.py` (Aufnahmen durch den Tracker),
-  `tools/ghostmap.py` (Geisterkarte offline).
+  `tools/ghostmap.py` (Geisterkarte offline), `tools/calibrate_offline.py` (Kalibrierung aus
+  Alltagsaufnahmen, auch ohne große Überschneidung; 10).
 
 ## 9. Bekannte Schwächen und Offenes
 Offen beim LD2410C (4.3): Die Echoquellen schlucken auch, was eine Person mit Spur über das mittlere
@@ -483,6 +484,29 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   P(belegt) 0,8–1,0, obwohl leer (Energien auf Grundniveau, Licht nur vergessen); danach die ganze
   Nacht 0,1–0,2 und um 01:08 bei einem Energiestoß 38 s über der Schwelle. Wände setzen einen
   Grundriss und Kalibrierungen voraus, zu denen die Messungen passen.
+- **Küchensensor „hinter der Wand“** (7.10., Aufnahmen ab 6.10. 18:10): Seine Ziele jenseits der
+  Außenwand sind Mehrwegechos von Personen in Ess-, Wohnzimmer oder Flur, kein falscher Maßstab:
+  Bei allen misst gleichzeitig (±0,5 s) ein anderer Sensor dort jemanden (bei Zielen in der Küche
+  47 %), und ihre Entfernung wächst mit dem Abstand dieser Person zum Küchensensor (4,8 m + 0,71·d,
+  Korrelation 0,79). Kein Maßstab holt sie in den Raum (bei 0,7 noch 17 %). Die Wege zur
+  Vorratstür kreuzen die Wandlinie schon bei Maßstab 1 und 90° zu 92 % in der Öffnung.
+- **Kalibrieren ohne große Überschneidung** (7.10., `tools/calibrate_offline.py`): Paare gleichzeitiger
+  Messungen (mit Ausreißeranteil, Myronenko & Song 2010), dazu der Grundriss je LD2450-Spur: Person
+  im sichtbaren freien Raum oder Echo (Likelihood-Feld wie Thrun, Burgard & Fox 2005, 6.4;
+  Kameraposen aus Wegen und Karte wie Mohedano, Cavallaro & García 2014). Der Grundriss bestimmt
+  Richtung und Lage, keinen Maßstab: gleichverteilt auf der sichtbaren Fläche schiebt er die Punkte
+  an die Wände (Küche 1,55), ohne Jacobi-Faktor zieht er die Echos herein (0,53). Ohne Paare kommt
+  der Maßstab deshalb von den übrigen LD2450 (hierarchisch, hier 1,05–1,08 ± 0,06–0,09).
+  Ergebnisse: Arbeitszimmer 320° → 324° (±0,3°, je nach Variante 323–326°), Maßstab 1,04–1,06,
+  Spiegel wie gezeichnet (die gespiegelte Lösung, die die Paare allein erlauben, 295°, ist um 465 log
+  schlechter); Schritte über eine Wandlinie durch die Tür 11 von 82 → 90 von 98, Paare mit dem Flur
+  im Median 0,55 → 0,32 m. Flur: Die Paare wollen 50° (Esszimmer–Flur 0,53 → 0,18 m), dann gehen
+  aber mehr Schritte durch die Wand neben der Arbeitszimmertür; mit freier Lage passt beides (0,6 m
+  weiter an seiner Wand, 44°, Maßstab 0,94). Die eingezeichnete Lage ist zu prüfen. Küche: 94° ± 4°,
+  ohne eigenen Maßstab. report_eval: keine Variante nachweislich besser (falsch aus 2,0–4,7 von 15
+  statt 3,0, falsch an immer 0 von 41); die Unterschiede liegen an Lichtschaltern in Türen, wo 0,2 m
+  den Raum entscheiden. Die Log-Evidenz ist zwischen Maßstäben nicht vergleichbar (die Dichte der
+  Messungen im Haus ändert sich mit dem Maßstab).
 - **Die gemeldete Entfernung des LD2410C erfindet Personen** (0.9.3): Sie ist der Ring, in dem die
   Energie gerade über ihrer Schwelle liegt. Leon allein am Schreibtisch in 1,5 m (Arbeitszimmer
   6.10. 22:20–22:50): in 27 % der Ruhig-Frames 2,6–6 m. Das Modell brauchte dafür eine zweite Person
