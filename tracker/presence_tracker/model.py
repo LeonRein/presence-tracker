@@ -90,7 +90,7 @@ class ZoneConfig:
     center: list | None = None
     radius: float = 0.0
     anchor: list | None = None  # rooms from walls: a point inside, identifies the room after edits
-    entry: bool = False  # rooms: people may appear and leave here (stairwell, front door)
+    entry: bool = False  # rooms: outside the home, the public space beyond its door (stairwell; MODEL.md 2)
 
     def __post_init__(self):
         self.geometry = Shape(self.shape, self.points, self.center, self.radius)
@@ -122,8 +122,6 @@ class TrackerParams:
     # rooms without a sensor, see unobserved.py (assumed)
     dwell_median: float = 120.0  # s, typical stay in such a room
     dwell_spread: float = 1.5  # spread of ln(duration), wide: long stays stay possible
-    dwell_median_open: float = 1800.0  # s, the same for an open region (bedroom, the way out): hours are normal
-    dwell_spread_open: float = 2.0
     # LD2410C
     ld2410_hold: float = 1.5  # s, gaps in the LD2410C presence up to this long are bridged (display)
     # outputs
@@ -150,28 +148,35 @@ class Config:
             s._update()
         self.wall_segments = sight_segments(self.walls, self.doors)
         self.sensor_by_id = {s.id: s for s in self.sensors}
-        self.exit_doors = self._unobserved()
-        self.entry_zones = [z for z in self.zones if z.kind == "entry" or (z.kind == "room" and z.entry)] + self.exit_doors
+        self._places()
 
-    def _unobserved(self) -> list:
-        """Rooms that no sensor covers, grouped into regions connected by doors.
+    def _places(self):
+        """The places of the people model (MODEL.md 2), derived from the plan, not stored.
 
-        A region is *open* if people can come from elsewhere into it (an entry room such as the
-        stairs, an entry zone, or a door to the outside), otherwise *closed* (balcony, kitchen
-        with a single door): whoever comes out of a closed region must have gone in before.
-        Sets self.regions {id: {name, rooms, open}} and self.closed_doors; returns the circles
-        around doors into open regions, which work like entries. Derived, not stored."""
-        self.regions, self.closed_doors, self.closed_rooms = {}, [], []
-        self.portals = []  # all ways out of the observed area: door circles with .region, .closed
+        Rooms marked as entry (the stairwell) are outside: public space beyond the flat's door, no
+        part of the home. A door into one is a door to the outside, like a door in an outer wall.
+        The other rooms that no sensor covers are grouped into regions connected by doors. A region
+        is *open* if it has ways out (doors to the outside, entry zones drawn in it; "exits" counts
+        them), otherwise *closed* (balcony, kitchen with a single door): whoever comes out of a
+        closed region must have gone in before.
+        Sets self.regions {id: {name, rooms, open, exits}}; self.portals, all ways out of the
+        observed area (circles with .region: a region id or "outside", .closed, .watch);
+        self.closed_doors; self.outside_rooms; self.closed_rooms, the rooms in which the sensors see
+        nobody of the home (those of closed regions, and the outside rooms): what shows up there is
+        a reflection or nobody of the home."""
+        self.regions, self.closed_doors, self.closed_rooms, self.portals = {}, [], [], []
+        self.outside_rooms = [z for z in self.zones_of("room") if z.entry]
         placed = [s for s in self.sensors if s.enabled and s.placed]
-        rooms = self.zones_of("room")
+        rooms = [z for z in self.zones_of("room") if not z.entry]
         if not placed or not rooms:
-            return []
+            self.closed_rooms = list(self.outside_rooms)
+            return
         covered = {z.id: self._room_covered(z, placed) for z in rooms}
         pieces = wall_pieces(self.walls)
         walls = [p for p in pieces if p[2] == "wall"]
 
         def sides(c, piece):
+            """The rooms on both sides of a door or divider; None: outside (no room, or an outside room)."""
             (ax, ay), (bx, by), _ = piece
             length = math.hypot(bx - ax, by - ay)
             nx, ny = -(by - ay) / length, (bx - ax) / length
@@ -207,19 +212,18 @@ class Config:
             groups.setdefault(find(rid), []).append(rid)
         by_id = {z.id: z for z in rooms}
         user_entries = self.zones_of("entry")
+
+        def middle(z):
+            x0, y0, x1, y1 = z.geometry.bounds()
+            return (x0 + x1) / 2, (y0 + y1) / 2
         for root, members in groups.items():
-            outside = any((a is None and b is not None and b.id in members) or (b is None and a is not None and a.id in members)
-                          for (a, b), _ in links)
-            def middle(z):
-                x0, y0, x1, y1 = z.geometry.bounds()
-                return (x0 + x1) / 2, (y0 + y1) / 2
-            entry = any(by_id[r].entry for r in members) or any(
-                by_id[r].contains(*middle(z)) for z in user_entries for r in members)
+            exits = sum(1 for (a, b), _ in links if (a is None) != (b is None) and (a or b).id in members)
+            exits += sum(1 for z in user_entries if any(by_id[r].contains(*middle(z)) for r in members))
             self.regions[root] = {"name": " + ".join(by_id[r].name for r in sorted(members)), "rooms": sorted(members),
-                                  "open": outside or entry}
+                                  "open": exits > 0, "exits": exits}
 
         self.closed_rooms = [by_id[r] for region in self.regions.values() if not region["open"] for r in region["rooms"]]
-        out = []
+        self.closed_rooms += self.outside_rooms
         for (a, b), d in links:
             if d is None:
                 continue
@@ -240,18 +244,17 @@ class Config:
             self.portals.append(zone)
             if zone.closed:
                 self.closed_doors.append(zone)
-            else:
-                out.append(zone)
-        # user-drawn entry zones and entry rooms (stairs) in the observed area lead outside
-        for z in self.zones:
-            if z.kind == "entry" or (z.kind == "room" and z.entry and covered.get(z.id)):
-                x0, y0, x1, y1 = z.geometry.bounds()
-                portal = ZoneConfig(f"entry-{z.id}", z.name, kind="entry", shape="circle",
-                                    center=[(x0 + x1) / 2, (y0 + y1) / 2],
-                                    radius=max(0.5 * math.hypot(x1 - x0, y1 - y0) + 0.3, 1.0))
-                portal.region, portal.closed, portal.watch = "outside", False, (portal.center[0], portal.center[1])
-                self.portals.append(portal)
-        return out
+        # entry zones drawn in the observed area lead outside (in a region they make it open)
+        unseen = [by_id[r] for region in self.regions.values() for r in region["rooms"]]
+        for z in user_entries:
+            if any(r.contains(*middle(z)) for r in unseen):
+                continue
+            x0, y0, x1, y1 = z.geometry.bounds()
+            portal = ZoneConfig(f"entry-{z.id}", z.name, kind="entry", shape="circle",
+                                center=[(x0 + x1) / 2, (y0 + y1) / 2],
+                                radius=max(0.5 * math.hypot(x1 - x0, y1 - y0) + 0.3, 1.0))
+            portal.region, portal.closed, portal.watch = "outside", False, (portal.center[0], portal.center[1])
+            self.portals.append(portal)
 
     def _room_covered(self, room, sensors) -> bool:
         """Sensors see most of the room. Seeing a part through a door (31 % of the balcony
@@ -284,6 +287,16 @@ class Config:
 
     def zones_of(self, kind: str) -> list:
         return [z for z in self.zones if z.kind == kind]
+
+    def home_zones(self, *kinds) -> list:
+        """The zones of these kinds that belong to the home: not the outside rooms (the stairwell,
+        MODEL.md 2), which get no count, no state and no entity."""
+        return [z for z in self.zones if z.kind in kinds and not (z.kind == "room" and z.entry)]
+
+    def observed_rooms(self) -> list:
+        """The rooms of the home that the sensors see (in no region without a sensor)."""
+        unseen = {r for region in self.regions.values() for r in region["rooms"]}
+        return [z for z in self.home_zones("room") if z.id not in unseen]
 
     def hidden(self, s: SensorConfig, pos, u, margin: float) -> bool:
         """The radar can't see through the (concrete) walls: a point more than `margin` behind

@@ -7,11 +7,11 @@ export const ZONE_KINDS = {
   entry: { label: 'Eingang', color: '#d48806', note: 'Hier kommen Personen von außen herein oder verlassen das Haus (z. B. die Haustür in einem Raum mit Sensor)' },
 };
 
-// the rooms the sensors see: every room that is not in a group without a sensor (state.live.regions,
-// derived from the plan on the server)
+// the rooms the sensors see: every room of the home (not an entry room: the stairwell is outside)
+// that is not in a group without a sensor (state.live.regions, derived from the plan on the server)
 export function roomsWithSensor(config, live) {
   const unseen = new Set(Object.values(live?.regions || {}).flatMap(r => r.rooms || []));
-  return config.zones.filter(z => z.kind === 'room' && !unseen.has(z.id));
+  return config.zones.filter(z => z.kind === 'room' && !z.entry && !unseen.has(z.id));
 }
 
 // the group without a sensor a room belongs to, or null

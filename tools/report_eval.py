@@ -64,8 +64,9 @@ def main():
     end = max(parse_time(r["to"]) for r in reports)
     windows = [(parse_time(r["from"]), parse_time(r["to"]), r) for r in reports]
     c = config.params.light_cost / (config.params.light_cost + 1.0)
-    rooms = [z.id for z in config.zones_of("room") if not any(z.id in r["rooms"] for r in config.regions.values())]
+    rooms = [z.id for z in config.observed_rooms()]
     zones = [z for z in config.zones_of("room") if z.id in rooms]
+    outside = {z.id for z in config.outside_rooms}  # entry rooms: counts there are not scored
     seen = {}  # room -> last time an LD2450 measured somebody there (for windows that excuse walks)
 
     tracker = None
@@ -154,6 +155,9 @@ def main():
             continue
         parts = []
         for room, n in r["rooms"].items():
+            if room in outside:  # the stairwell is outside (MODEL.md 2): nothing to score
+                parts.append(f"{room}={n}: außer Haus, nicht bewertet")
+                continue
             dists = [p[room] for _, p in ss if room in p]
             if not dists:
                 continue

@@ -35,9 +35,8 @@ class Model:
     speed_spread = 0.36  # m/s: spread of the speed between walks (10-90 % 0.44-1.37 m/s)
     turn_rate = 0.85  # 1/s: a walker's direction is forgotten at this rate (velocity autocorrelation)
     walk_length = 2.0  # m: mean length of a walk (measured, median 2.1 m), walkers stop at speed / this
-    # 3.3 into the house and out of it (assumed)
+    # 3.3 coming home (assumed); leaving is walking out through a door to the outside
     arrive_rate = 1 / (4 * 3600)  # 1/s per way in
-    leave_rate = 1 / (2 * 3600)  # 1/s
     # 3.4 people nobody knows of (assumed): newcomers per way in, and how soon somebody out of the
     # house is forgotten (whoever comes back after that is a newcomer)
     guest_rate = 1 / (2 * 86400)  # 1/s per way in

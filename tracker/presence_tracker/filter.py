@@ -130,7 +130,7 @@ class Tracker:
         self.config = config
         self.p = config.params
         self.sensor_model = sensor_model or SensorModel(config)
-        self.dwell = Dwell(self.p, [rid for rid, r in config.regions.items() if r["open"]])
+        self.dwell = Dwell(self.p)
         self.listeners = []
         self.runtime = {}
         self.now = start or 0.0
@@ -158,7 +158,7 @@ class Tracker:
         self._gcache = {}
         self._area = {}
         self._ghost_total = {}
-        rooms = [z for z in self.config.zones_of("room") if not any(z.id in r["rooms"] for r in self.config.regions.values())]
+        rooms = self.config.observed_rooms()
         self.rooms = [z.id for z in rooms]
         w = self.world
         self.room_of = np.full((w.nx, w.ny), -1, dtype=np.int16)
@@ -311,7 +311,7 @@ class Tracker:
         if changed is not None:
             self._recalibrated(changed)
         else:
-            self.dwell = Dwell(self.p, [rid for rid, r in config.regions.items() if r["open"]])
+            self.dwell = Dwell(self.p)
             self._build()
         self.use_ghost_map(self.ghost_map)  # it holds only while the sensors are where they were
         self.ld_background.use(config)
@@ -1738,7 +1738,7 @@ class Tracker:
         region_of = {room: rid for rid, r in self.config.regions.items() for room in r["rooms"]}
         counts = self.count_distribution()
         places = self.place_distribution()
-        for z in self.config.zones_of("room"):
+        for z in self.config.home_zones("room"):  # the stairwell is outside: no state (MODEL.md 6)
             st = ZoneState()
             rid = region_of.get(z.id)
             if rid is None:
@@ -1754,7 +1754,7 @@ class Tracker:
                     st.decided = st.probability > c
             states[z.id] = st
         total = ZoneState()
-        zones = [z for z in self.config.zones if z.kind in ("room", "area")]
+        zones = self.config.home_zones("room", "area")
         for z in zones:
             states.setdefault(z.id, ZoneState())
         total.count = int(np.argmax(places["_house"]))

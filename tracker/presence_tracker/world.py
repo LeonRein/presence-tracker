@@ -3,7 +3,8 @@ places without a sensor behind doors, the walls a person can't walk through.
 
 Places are numbered: 0 is the observed area, 1.. the regions without a sensor (Config.regions),
 then "outside". A raster of 0.1 m cells says which place a point belongs to (-1: no room, e.g.
-inside a wall).
+inside a wall); the cells of an outside room (the stairwell) are outside: walking into one is
+leaving the house.
 """
 
 import math
@@ -23,9 +24,9 @@ class World:
         self.places = ["observed"] + self.regions + ["outside"]
         self.outside = len(self.places) - 1
         self.index = {name: i for i, name in enumerate(self.places)}
-        # places people can come in to from outside and leave to it (an entry, a stairwell)
-        self.open_places = [self.index[rid] for rid, r in config.regions.items() if r["open"]]
-        rooms = config.zones_of("room")
+        # per region its ways out of the house (doors to the outside, entry zones in it; MODEL.md 3.3)
+        self.exits = [config.regions[rid]["exits"] for rid in self.regions]
+        rooms = config.zones_of("room")  # with the outside rooms (stairwell): their cells are outside
         region_of_room = {r: rid for rid, reg in config.regions.items() for r in reg["rooms"]}
         if rooms:
             xs = [b for z in rooms for b in (z.geometry.bounds()[0], z.geometry.bounds()[2])]
@@ -45,7 +46,7 @@ class World:
                 z = next((z for z in rooms if z.contains(x, y)), None)
                 if z is not None:
                     rid = region_of_room.get(z.id)
-                    self.labels[i, j] = OBSERVED if rid is None else self.index[rid]
+                    self.labels[i, j] = self.outside if z.entry else OBSERVED if rid is None else self.index[rid]
         # area per place (m^2): a person in a place without a sensor is somewhere in it
         self.area = np.bincount(self.labels[self.labels >= 0].ravel(), minlength=len(self.places)) * CELL * CELL
         # walls a person can't cross (door gaps cut out, like for the radar's sight)

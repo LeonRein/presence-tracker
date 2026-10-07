@@ -1,4 +1,5 @@
-"""Home Assistant entities via MQTT discovery: one device, four entities per room/area zone."""
+"""Home Assistant entities via MQTT discovery: one device, four entities per room/area zone of the home
+(not for an entry room: the stairwell is outside, MODEL.md 6)."""
 
 import json
 import re
@@ -32,17 +33,45 @@ def _entities(zone_id: str, name: str) -> list:
     ]
 
 
+DISCOVERY = "homeassistant/+/presence_tracker/+/config"  # every discovery config of this device
+
+
 class Discovery:
-    """Keeps the published discovery configs in sync with the zones and publishes their states."""
+    """Keeps the published discovery configs in sync with the zones and publishes their states.
+
+    What the broker retains from earlier runs (DISCOVERY, subscribed at connect) and is no longer
+    wanted - a zone deleted, or a room that became an entry room (the stairwell is outside), while
+    the app was not running - is cleared with its state topic: empty retained payloads, so Home
+    Assistant removes the entities."""
 
     def __init__(self, publish):
         self.publish = publish  # async (topic, payload: str, retain: bool)
         self.published: dict[str, str] = {}  # discovery topic -> payload
         self.last_state: dict[str, str] = {}
+        self.wanted: dict[str, str] = {}  # discovery topic -> payload, as of the last sync
+        self.stale: set[str] = set()  # retained topics of entities no longer wanted, to be cleared
+
+    def retained(self, topic: str, payload: bytes) -> bool:
+        """A message on a discovery topic of this device (DISCOVERY): if its entity is no longer
+        wanted, it and its state are to be cleared (by the next states()). False for other topics."""
+        parts = topic.split("/")
+        if len(parts) != 5 or parts[0] != "homeassistant" or parts[2] != "presence_tracker" or parts[4] != "config":
+            return False
+        if payload and topic not in self.wanted:
+            self.stale.add(topic)
+            try:
+                state = json.loads(payload).get("state_topic")
+            except (ValueError, AttributeError):
+                state = None
+            if isinstance(state, str) and state.startswith(f"{PREFIX}/zone/"):
+                self.stale.add(state)
+        return True
 
     async def sync(self, zones: list):
         wanted = {}
-        items = [(z.id, z.name) for z in zones if z.kind in ("room", "area")] + [("_total", "Haus")]
+        # the rooms and areas of the home; an entry room (the stairwell) is outside, it gets none
+        items = [(z.id, z.name) for z in zones if z.kind in ("room", "area") and not (z.kind == "room" and z.entry)]
+        items += [("_total", "Haus")]
         for zone_id, name in items:
             zid = "total" if zone_id == "_total" else slug(zone_id)
             for component, suffix, cfg in _entities(zone_id, name):
@@ -50,6 +79,7 @@ class Discovery:
                 cfg = {**cfg, "unique_id": uid,
                        "default_entity_id": f"{component}.presence_{slug(name)}_{suffix}"}
                 wanted[f"homeassistant/{component}/presence_tracker/{uid}/config"] = json.dumps(cfg)
+        self.wanted = wanted
         for topic in set(self.published) - set(wanted):
             await self.publish(topic, "", True)
             del self.published[topic]
@@ -60,6 +90,11 @@ class Discovery:
         self.last_state.clear()
 
     async def states(self, states: dict, force: bool = False):
+        wanted_states = {f"{PREFIX}/zone/{zone_id}/state" for zone_id in states}
+        for topic in sorted(self.stale):
+            self.stale.discard(topic)
+            if topic not in self.wanted and topic not in wanted_states:
+                await self.publish(topic, "", True)
         for zone_id, st in states.items():
             payload = json.dumps(st.to_dict())
             if force or self.last_state.get(zone_id) != payload:

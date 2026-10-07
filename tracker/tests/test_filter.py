@@ -15,7 +15,8 @@ BALCONY_DOOR = (6.0, 2.0)
 
 def flat_config(entry: bool = False) -> Config:
     """Room 6 x 5 m (two sensors in the bottom corners), balcony behind the right wall (door at
-    (6, 2)), hallway behind the left wall (door at (0, 4))."""
+    (6, 2)), hallway behind the left wall (door at (0, 4)). entry: the hallway is the stairwell,
+    outside the flat (MODEL.md 2), and its door the flat's door."""
     def rect(zid, x0, y0, x1, y1, is_entry=False):
         return {"id": zid, "name": zid, "kind": "room", "shape": "rect", "points": [[x0, y0], [x1, y1]],
                 "anchor": [(x0 + x1) / 2, (y0 + y1) / 2], "entry": is_entry}
@@ -105,13 +106,13 @@ import pytest  # noqa: E402
 
 
 def test_somebody_else_coming_in_is_counted():
-    # one person is known to be in the hallway, nobody else; they come in and sit, then somebody
-    # nobody knew of walks in through the hallway door and stays (MODEL.md 3.4)
+    # one person is known to be out (in the stairwell), nobody else; they come in and sit, then
+    # somebody nobody knew of walks in through the flat's door and stays (MODEL.md 3.4)
     config = flat_config(entry=True)
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.6, 1.0), start=1, pauses={2: 120}))
     b = Person(walk((-1.0, 4.0), FLUR_DOOR, (2.0, 2.5), (2.1, 2.5), start=40, pauses={2: 60}))
     end = min(a.waypoints[-1][0], b.waypoints[-1][0])
-    crowd, samples = run(config, [a, b], end, ["flur"])
+    crowd, samples = run(config, [a, b], end, ["outside"])
     assert present(samples, 20, 38) == {1}
     assert present(samples, 70, end - 1) == {2}
 
@@ -128,7 +129,7 @@ def test_a_recalibrated_sensor_keeps_the_people():
     turned = Config.from_dict({**config.to_dict(), "sensors": [{**s, "heading": s["heading"] + 1.5}
                                                                if s["id"] == "a" else s
                                                                for s in config.to_dict()["sensors"]]})
-    crowd = Tracker(config, start=0.0, people=["flur"])
+    crowd = Tracker(config, start=0.0, people=["outside"])
     samples = []
     done = False
     for t, sid, frame in simulate([a, b], sim_sensors(config), end, walls=config.wall_segments):
@@ -191,7 +192,7 @@ def test_the_ghost_map_does_not_confirm_itself():
     # there count as a person all the same - what the map says at a spot is no evidence for it
     seat = (4.5, 3.5)
     config = flat_config(entry=True)
-    crowd = Tracker(config, start=0.0, people=["flur", "outside"])
+    crowd = Tracker(config, start=0.0, people=["outside", "outside"])
     for sid in ("a", "b"):
         crowd.ghost_map.add_birth(sid, seat, 200.0)
     learned = _learned(crowd)

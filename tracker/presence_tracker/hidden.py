@@ -18,7 +18,8 @@ only in whether a track was a person (merged, Tracker._merged); evidence weighs 
 
 State of an unseen person, as masses that sum to 1:
   walk[c]          walking in tile c: walkers spread to the neighbouring tiles and through doors into
-                   the regions behind them (the diffusion limit of MODEL.md 3.2, tiling.py)
+                   the regions behind them or out of the house (the diffusion limit of MODEL.md 3.2,
+                   tiling.py)
   still[l, k, c]   standing or sitting in tile c, with the stay's rate of getting up go_l and its
                    detectability kappa_k (filtermodel.Shapes, MODEL.md 3.1, 4.1)
   region[r, a]     behind a door in region r, for a time in age bin a (the stay ends by its hazard)
@@ -198,16 +199,18 @@ class Hidden:
             self.clock += dt
             while self.clock >= tl.tick:
                 self.clock -= tl.tick
-                self.region[:, 0] += tl.T_in @ self.walk
+                gone = tl.T_in @ self.walk
+                self.region[:, 0] += gone[:tl.R]
+                self.out += gone[tl.R]
                 self.walk = tl.T_walk @ self.walk
-        if tl.R:
+        if tl.R or tl.ways:
             self._regions(dt)
         self._arrive(dt)
 
     def leap(self, dt: float):
         """The motion over a step dt much longer than a walk (a data gap of minutes to days, MODEL.md
         5.3): standing people get up as in move; every walk is taken whole, wherever it ends
-        (Tiling.walk_end) - stopped in a tile, beginning a new stay, or gone into a region. What is
+        (Tiling.walk_end) - stopped in a tile, beginning a new stay, gone into a region or out. What is
         lost: a short stay begun within the step ends no earlier than the next step (fresh stays
         last 26 min on average; the slow kinds of stay make that). The last minutes of a gap are
         moved with move, so the fast parts (walking, short stays) are as in move afterwards."""
@@ -221,14 +224,15 @@ class Hidden:
             self.still *= ((1 - up) * (1 - q))[:, None, None]
             self.still += sh.kappa_w[None, :, None] * (q * (s - rise))[:, None, :]
             self.walk += rise.sum(axis=0)
-        if tl.R:
+        if tl.R or tl.ways:
             self._regions(dt)
         self._arrive(dt)
         if tl.n:
             end = tl.walk_end() @ self.walk
             self.walk = np.zeros(tl.n)
             self.still += sh.stay_prior()[:, :, None] * end[None, None, :tl.n]
-            self.region[:, 0] += end[tl.n:]
+            self.region[:, 0] += end[tl.n:tl.n + tl.R]
+            self.out += end[tl.n + tl.R]
 
     def _arrive(self, dt: float):
         """Newcomers (only the unknown people have them)."""
@@ -236,13 +240,11 @@ class Hidden:
     def _regions(self, dt: float):
         tl = self.tiles
         m = tl.tr.m
-        # stays end (out at a door of the region, walking; without one the stay goes on); from the
-        # regions with the way out leaving the house, coming home; the stays age
-        ways = len(tl.open) + len(tl.entries)
+        # stays end (through one of the region's doors: walking into view, or out of the house; without
+        # any the stay goes on); coming home by the ways in; the stays age
         self.out = kernels.hidden_regions(self.region, self.walk, self.out, -np.expm1(-tl.region_rates() * dt),
-                                          tl.door_ptr, tl.door_list, tl.open_idx, tl.entry_idx,
-                                          -math.expm1(-m.leave_rate * dt), -math.expm1(-m.arrive_rate * ways * dt),
-                                          -np.expm1(-dt / tl.widths[:-1]))
+                                          tl.door_ptr, tl.door_list, tl.exits, tl.entry_idx,
+                                          -math.expm1(-m.arrive_rate * tl.ways * dt), -np.expm1(-dt / tl.widths[:-1]))
 
     # ------------------------------------------------------------ evidence
 
@@ -334,10 +336,9 @@ class Undetected(Hidden):
     def _arrive(self, dt: float):
         tl, m = self.tiles, self.tiles.tr.m
         self.out *= math.exp(-m.forget_rate * dt)
-        if len(tl.open) + len(tl.entries):
+        if tl.ways:
             come = m.guest_rate * dt
-            for r in tl.open:
-                self.region[r, 0] += come
+            self.region[:, 0] += come * tl.exits
             for c in tl.entries:
                 self.walk[c] += come
 

@@ -108,7 +108,7 @@ const LIVE = {
     const fmtS = s => s >= 5400 ? `${Math.round(s / 3600)} h` : s >= 90 ? `${Math.round(s / 60)} min` : `${s} s`;
     const names = Object.fromEntries(state.config.zones.map(z => [z.id, z.name]));
     return regions.map(r => `<div class="item" style="flex-wrap:wrap"><span class="grow" style="white-space:normal">${(r.rooms || []).map(id => esc(names[id] || id)).join(', ') || esc(r.name)}</span>
-      ${r.open ? '<span class="badge" title="Von hier aus kann man das Haus verlassen (Treppe, Eingang)">Ausgang</span>' : ''}
+      ${r.open ? '<span class="badge" title="Von hier aus kann man das Haus verlassen (Tür nach draußen, Eingang)">Ausgang</span>' : ''}
       ${r.probabilities.length ? r.probabilities.map(p => `<span class="badge ${p >= 0.5 ? 'on' : ''}" title="Wahrscheinlichkeit, dass diese Person hier ist">${Math.round(p * 100)} %</span>`).join('') : '<span class="badge">leer</span>'}
       <div class="meta" style="flex-basis:100%;white-space:normal">${(r.rooms || []).length > 1 ? 'Ohne Sensor über Türen verbunden, deshalb zusammen. ' : ''}Aufenthalt typisch ${fmtS(r.dwell.median)}, 90 % unter ${fmtS(r.dwell.p90)} (Annahme)</div></div>`).join('');
   },
@@ -266,8 +266,8 @@ function planPanel(panel, view) {
   for (const z of rooms) {
     const item = h(`<div class="item ${sel?.kind === 'room' && sel.id === z.id ? 'selected' : ''}">
       <span class="swatch" style="background:${z.entry ? ZONE_KINDS.entry.color : ZONE_KINDS.room.color}"></span>
-      <span class="grow">${esc(z.name)}</span>${z.entry ? '<span class="badge warn">Eingang</span>' : ''}
-      ${state.live ? (regionOfRoom(state.live, z.id) ? '<span class="badge">ohne Sensor</span>' : '<span class="badge ok">Sensor</span>') : ''}
+      <span class="grow">${esc(z.name)}</span>${z.entry ? '<span class="badge warn" title="Öffentlicher Raum vor der Wohnungstür: außer Haus">Eingang</span>' : ''}
+      ${state.live && !z.entry ? (regionOfRoom(state.live, z.id) ? '<span class="badge">ohne Sensor</span>' : '<span class="badge ok">Sensor</span>') : ''}
       <span class="meta">${fmt(zoneArea(z), 1)} m²</span></div>`);
     item.onclick = () => select({ kind: 'room', id: z.id });
     roomList.append(item);
@@ -333,10 +333,11 @@ function roomDetail(el, z) {
   const others = (region?.rooms || []).filter(id => id !== z.id).map(id => esc(names[id] || id));
   const seen = !state.live ? '' : !region ? 'Die Sensoren sehen diesen Raum: Personen darin werden gezählt.'
     : `Kein Sensor sieht diesen Raum überwiegend.${others.length ? ` Über Türen mit ${others.join(', ')} verbunden: Das Modell weiß nur, dass jemand in dieser Gruppe ist, nicht in welchem Raum.` : ''}${region.open ? ' Von hier kann man das Haus verlassen.' : ' Wer herauskommt, muss vorher hineingegangen sein.'}`;
+  const outside = 'Außer Haus: Wer hier ist, hat die Wohnung verlassen. Keine Personenzahl, nichts an Home Assistant; die Tür hierher ist die Wohnungstür.';
   el.append(h(`<div class="card">
     <label class="field">Raum<input type="text" value="${esc(z.name)}" id="name"></label>
-    <label class="check" style="margin-top:8px"><input type="checkbox" id="entry" ${z.entry ? 'checked' : ''}> Eingang: Hier kommen Personen von außen herein und verlassen das Haus (Treppenhaus, Haustür)</label>
-    <p class="note">Fläche ${fmt(zoneArea(z))} m². ${seen}</p>
+    <label class="check" style="margin-top:8px"><input type="checkbox" id="entry" ${z.entry ? 'checked' : ''}> Eingang: öffentlicher Raum vor der Wohnungstür (Treppenhaus). Gehört nicht zur Wohnung; wer hineingeht, ist außer Haus</label>
+    <p class="note">Fläche ${fmt(zoneArea(z))} m². ${z.entry ? outside : seen}</p>
     <p class="note">Die Form folgt den Wänden: zum Ändern die Wände verschieben (Tab Grundriss).</p>
   </div>`));
   el.querySelector('#name').onchange = e => panelEdit(c => { c.zones.find(x => x.id === z.id).name = e.target.value; });
@@ -723,10 +724,8 @@ const PARAMS = [
     ['wall_margin', 'Toleranz an Wänden', 'm', 'Messpunkte weiter hinter einer Wand oder außerhalb aller Räume sind Reflexionen und werden verworfen.', 0.05],
   ]],
   ['Räume ohne Sensor', [
-    ['dwell_median', 'Typischer Aufenthalt', 's', 'Annahme für Räume ohne Sensor und ohne Ausgang.', 10],
+    ['dwell_median', 'Typischer Aufenthalt', 's', 'Annahme für Räume ohne Sensor. Das Treppenhaus zählt nicht dazu: Es liegt außer Haus.', 10],
     ['dwell_spread', 'Streuung des Aufenthalts', '', 'Streuung von ln(Dauer): breit, damit lange Aufenthalte möglich bleiben.', 0.1],
-    ['dwell_median_open', 'Typischer Aufenthalt, offener Bereich', 's', 'Dasselbe für Räume ohne Sensor mit Ausgang (verbunden mit Treppe oder Eingang, oft mit dem Schlafzimmer): Stunden sind normal.', 60],
-    ['dwell_spread_open', 'Streuung, offener Bereich', '', '', 0.1],
   ]],
   ['LD2410C', [
     ['ld2410_hold', 'Haltezeit (Anzeige)', 's', 'Lücken in der LD2410C-Präsenz bis zu dieser Länge werden in der Anzeige überbrückt.', 0.1],

@@ -77,10 +77,19 @@ def test_rooms_keep_names_when_walls_move():
     assert len(names) == 2 and "Raum 1" in names and set(names) & {"Wohnen", "Treppe"}
 
 
-def test_entry_rooms_count_as_entry_zones():
-    c = Config.from_dict({"walls": [*OUTER, wall((3, 0), (3, 4))]})
-    rooms = c.zones_of("room")
-    assert len(rooms) == 2 and not c.entry_zones
+def test_entry_rooms_are_outside():
+    # an entry room (the stairwell) is public space beyond the flat's door: no room of the home and
+    # no region without a sensor; the door into it is a door to the outside (MODEL.md 2)
+    c = Config.from_dict({"walls": [*OUTER, wall((3, 0), (3, 4))], "doors": [{"id": "d", "x": 3.0, "y": 2.0}],
+                          "sensors": [{"id": "s", "x": 0.05, "y": 0.05, "heading": 45, "placed": True}]})
+    rooms = sorted(c.zones_of("room"), key=lambda z: z.geometry.bounds()[0])
+    assert len(rooms) == 2 and not c.outside_rooms and set(c.regions) == {rooms[1].id}
     d = c.to_dict()
-    d["zones"][0]["entry"] = True
-    assert len(Config.from_dict(d).entry_zones) == 1
+    next(z for z in d["zones"] if z["id"] == rooms[1].id)["entry"] = True
+    c = Config.from_dict(d)
+    assert [z.id for z in c.outside_rooms] == [rooms[1].id] and not c.regions
+    assert [z.id for z in c.observed_rooms()] == [rooms[0].id] and [z.id for z in c.home_zones("room")] == [rooms[0].id]
+    assert [p.region for p in c.portals] == ["outside"]
+    # what a sensor sees in there is nobody of the home
+    s = c.sensors[0]
+    assert c.hidden(s, (3.5, 2.0), (1.0, 0.0), 0.4) and not c.hidden(s, (2.5, 2.0), (1.0, 0.0), 0.4)

@@ -31,7 +31,7 @@ def test_the_people_survive_a_restart():
     config = flat_config(entry=True)
     people = sitting_two(config, 300)
     frames = list(simulate(people, sim_sensors(config), 250, walls=config.wall_segments))
-    crowd = Tracker(config, start=0.0, people=["flur"])
+    crowd = Tracker(config, start=0.0, people=["outside"])
     for t, sid, frame in frames:
         if t >= 100:
             break
@@ -60,17 +60,18 @@ def test_the_people_survive_a_restart():
 
 def test_the_saved_state_round_trips_and_needs_the_same_tiles():
     config = flat_config(entry=True)
-    crowd = Tracker(config, start=0.0, people=["flur", "anywhere"])
+    crowd = Tracker(config, start=0.0, people=["outside", "anywhere"])
     state = json.loads(json.dumps(crowd.people_state()))
     again = Tracker(config)
     assert again.restore_people(state)
     a, b = crowd.place_distribution(), again.place_distribution()
     assert all(np.allclose(a[k], b[k], atol=1e-3) for k in a)  # float16
     assert crowd.people_state()["densities"] == state["densities"]
-    # another floor plan (the hallway a room with a sensor): the densities do not fit, nothing is
-    # restored; nor from a broken file
+    # another floor plan (the hallway a room of the flat with a sensor, no longer the stairwell): the
+    # densities do not fit, nothing is restored; nor from a broken file
     d = config.to_dict()
     d["sensors"].append({"id": "c", "x": -1.95, "y": 3.05, "heading": 45, "placed": True})
+    d["zones"] = [{**z, "entry": False} for z in d["zones"]]
     other = Tracker(Config.from_dict(d))
     assert other.tiles.n > again.tiles.n
     before = other.people_state()

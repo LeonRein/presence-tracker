@@ -383,12 +383,13 @@ def hidden_stays(walk, still, stop_p, up, q, kappa_w, go_w):
 
 
 @njit(cache=True)
-def hidden_regions(region, walk, out, ends_p, door_ptr, door_tiles, open_, entries, leave_p, arrive_p, older_p):
+def hidden_regions(region, walk, out, ends_p, door_ptr, door_tiles, exits, entries, arrive_p, older_p):
     """hidden.Hidden._regions, in place on region (R, A) and walk; returns out. ends_p (R, A):
-    probability that a stay ends in the step; who comes out appears walking at the region's doors
-    (door_tiles[door_ptr[r]:door_ptr[r + 1]]; none: the stay goes on); leaving the house from the
-    open regions with leave_p, coming home with arrive_p by the open regions and the entries;
-    the stays age with older_p (A - 1,)."""
+    probability that a stay ends in the step; who comes out leaves through one of the region's doors
+    alike: walking into view at a door into the observed area (door_tiles[door_ptr[r]:door_ptr[r + 1]])
+    or out of the house through one of its exits[r] ways out (none at all: the stay goes on). Coming
+    home with arrive_p, by every way in alike: the regions' ways out and the entries; the stays age
+    with older_p (A - 1,)."""
     R, A = region.shape
     for r in range(R):
         o = 0.0
@@ -397,24 +398,21 @@ def hidden_regions(region, walk, out, ends_p, door_ptr, door_tiles, open_, entri
             region[r, a] -= e
             o += e
         nd = door_ptr[r + 1] - door_ptr[r]
-        if nd == 0:
+        ways = nd + exits[r]
+        if ways == 0:
             region[r, 0] += o
         else:
             for i in range(door_ptr[r], door_ptr[r + 1]):
-                walk[door_tiles[i]] += o / nd
-    for r in open_:
-        lv = 0.0
-        for a in range(A):
-            e = region[r, a] * leave_p
-            region[r, a] -= e
-            lv += e
-        out += lv
-    ways = len(open_) + len(entries)
+                walk[door_tiles[i]] += o / ways
+            out += o * exits[r] / ways
+    ways = len(entries)
+    for r in range(R):
+        ways += exits[r]
     if ways and out > 0:
         come = out * arrive_p
         out -= come
-        for r in open_:
-            region[r, 0] += come / ways
+        for r in range(R):
+            region[r, 0] += come * exits[r] / ways
         for c in entries:
             walk[c] += come / ways
     for r in range(R):
@@ -441,7 +439,7 @@ def warm():
     crosses_wall(f((1, 2)), np.ones((1, 2)), walls, walls)
     sensor_rates(f((1, 2)), f((2, 0)), 0.0, 0.0, f((2, 2)), 0.0, 0.0, 0.1, f(4), 1e-6, 1.0, f((1, 3)), np.ones(2), 0.7)
     hidden_stays(f(3), f((2, 2, 3)), 0.1, f(2), 0.1, f(2), f(2))
-    hidden_regions(f((1, 3)), f(3), 0.0, f((1, 3)), i(2), i(0), i(0), i(0), 0.1, 0.1, f(2))
+    hidden_regions(f((1, 3)), f(3), 0.0, f((1, 3)), i(2), i(0), i(1), i(0), 0.1, f(2))
 
 
 if __name__ == "__main__":

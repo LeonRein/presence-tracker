@@ -251,7 +251,8 @@ class Gauss:
     def _through_doors(self, dt, tiles):
         """The walkers' share that walking takes through a door in dt (tiling.py: the rates of the
         tiles at the doors, by the walking component's mass there) goes to the part gone through a
-        door, into the region behind it, its stay just begun; that part moves on."""
+        door, into the region behind it, its stay just begun, or out of the house (a door to the
+        outside, MODEL.md 2); that part moves on."""
         from .hidden import Hidden
         if self.away is not None:
             self.away.move(dt)
@@ -270,7 +271,9 @@ class Gauss:
             self.away = Hidden(tiles)
         else:
             self.away.scale(self.a / (self.a + moved))
-        self.away.region[:, 0] += moved / (self.a + moved) * rate / total
+        share = moved / (self.a + moved) * rate / total
+        self.away.region[:, 0] += share[:-1]
+        self.away.out += share[-1]
         lw = self.logw.copy()
         lw[WALK] += math.log1p(-frac) if frac < 1 else -math.inf
         top = lw.max()

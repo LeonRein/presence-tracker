@@ -134,6 +134,8 @@ class App:
     # ------------------------------------------------------------------ input
 
     def on_message(self, topic: str, payload: bytes, recv: float):
+        if self.discovery.retained(topic, payload):  # our own entities as the broker keeps them
+            return
         parts = topic.split("/")
         if len(parts) != 3 or parts[0] != self.prefix:
             return
@@ -172,6 +174,11 @@ class App:
             await self._publish(ha.AVAILABILITY, "online", True)
             self.discovery.published.clear()
             await self.discovery.sync(self.config.zones)
+            # what the broker retains of earlier runs: entities no longer wanted are removed (ha.py)
+            try:
+                await client.subscribe(ha.DISCOVERY)
+            except Exception as e:  # noqa: BLE001 - a lost connection is handled by the source loop
+                log.debug("subscribe failed: %s", e)
 
     async def _publish(self, topic: str, payload: str, retain: bool = False):
         if self.client is None or not self.publish_enabled:
