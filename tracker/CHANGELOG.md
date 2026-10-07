@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.19.0
+
 Robustheit (zwei Reviews von 0.18.0). Der Node-RED-Flow behält bei *nicht verfügbar* den letzten
 Zustand: Alles, was die App anhielt oder ihre Ausgaben einfror, ließ ein brennendes Licht brennen.
 
