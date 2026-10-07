@@ -591,8 +591,13 @@ Ankünfte und das Vergessen aus 3.4.
   Quadratur kostet es das auch bei 30 min. Mit 16 Hypothesen: bis 6.10. 0 / 1,68, −1121540; 7.10.
   0,11 / 0 (Flur 9:49 0,10), −449289. Meldungen 7.10. früh (Start 06:50): Esszimmer 8:29 1,00, Arbeitszimmer
   8:52 genau eine Person 1,00, Schreibtisch 8:07 1,00; leere Nacht (`phantom.py`) 0 min.
-- **Zurückgeben:** Eine bekannte Person ohne Spur, die zu weniger als 1 % existiert und im Haus ist
-  (r × P(im Haus) < 0,01), geht mit r × ihrer Dichte in die Intensität (Bernoulli → Poisson). Das
+- **Zurückgeben:** Eine bekannte Person ohne Spur, die zu weniger als 1 % existiert (r < 0,01), geht
+  mit r × ihrer Dichte in die Intensität (Bernoulli → Poisson), wo sie auch ist. Wer das Haus verlassen
+  hat, verblasst draußen wie überall (oben) und geht erst dann zurück. Bis 7.10. ging zurück, wer zu
+  weniger als 1 % existierte *und im Haus war* (r × P(im Haus) < 0,01): Wer hinausging, kam sofort mit
+  seinem ganzen r in die Intensität außer Haus, kehrte von dort mit 1/(4 h) zurück und wurde erst nach
+  einem Tag vergessen, während alle anderen ohne Stütze in Minuten verblassen (10, „Wer hinausging,
+  blieb erwartet“). Das
   ändert nur P(mehrere davon kommen zurück), um höchstens 0,01²/2. Sonst würde jeder Gast für immer
   verfolgt. (Die Literatur verwirft Bernoulli-Teile unter 10⁻⁵, B_GarciaFernandez2018 Abschn. VII,
   oder r < 10⁻³, B_Reuter2017 S. 166; hier geht keine Masse verloren.) Die Intensität ist eine für alle
@@ -1196,6 +1201,19 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   7.10. 8:57 (zweite Person; Telefon „not_home“ 9:06:59): im Haus erwartet 8:57:00 1,10 statt 1,99,
   8:58:31 1,20 statt 1,85; angezeigt 1 statt 2 bis 8:59. Ab 9:01 verblasst die gebliebene Person in
   beiden Fassungen hinter Türen (Bad, mit config7 ohne Sensor; 9, 5.5). Leere Nacht 0 min.
+- **Wer hinausging, blieb erwartet** (7.10., nach dem Zusammenführen des Treppenhauses außer Haus mit der
+  Geisterkarte 0.14.0): Licht fälschlich an im Flur 09:48:50–09:49:18 (P 0,14, 11 % des Fensters; jede
+  Änderung allein 0,05 / 0,07). Ein Geist des Flur-LD2450 bei (−0,15; 4,33), 1,6 m vor der
+  Wohnungstür, während Leon am Schreibtisch saß. Die Hypothese „der Geist ist Leon, die Spur am
+  Schreibtisch eine neue Person“ hatte 09:48:46–50 0,15–0,79 statt höchstens 0,01 (Geisterkarte allein),
+  weil die unbekannten Personen in Sicht 0,014–0,058 statt 0,004–0,006 wogen. Ursache: Zurückgegeben wurde, wer zu weniger als 1 % *im Haus*
+  existierte; wer hinausging, also sofort mit seinem ganzen r (09:01:05: r 0,995, die Unbekannten
+  draußen 0,27 → 1,25). Draußen verblasst die Intensität nicht (vergessen nach einem Tag), und mit
+  1/(4 h) kehrten diese Unbekannten zurück: Zufluss an der Tür etwa 7·10⁻⁵/s, der sich als Unbekannte
+  an schlecht sichtbaren Plätzen sammelte. Vorher (Treppe als Bereich) blieb, wer hinausging, eine
+  bekannte Person im Haus und verblasste mit 2 min wie jeder (5.5). Jetzt geht zurück, wer zu weniger als
+  1 % existiert, wo er auch ist (5.5): bis 6.10. an 0 / aus 1,50, −1121573 (vorher −1121572); 7.10.
+  0 / 0, −449450 (vorher 0,11 / 0, −449502); leere Nacht 0 min.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

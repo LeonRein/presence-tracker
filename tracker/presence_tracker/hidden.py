@@ -294,10 +294,6 @@ class Hidden:
         """Probability per place (observed, regions..., outside); 1 - r: nowhere (does not exist)."""
         return self.r * np.concatenate([[(self.walk.sum() + self.still.sum())], self.region.sum(axis=1), [self.out]])
 
-    def in_house(self) -> float:
-        """P(the person exists and is in the house)."""
-        return self.r * max(1.0 - self.out / max(self.total(), 1e-300), 0.0)
-
 
 class Undetected(Hidden):
     """The people nobody knows of (MODEL.md 3.4, 5.5): a Poisson point process over the tiles, its

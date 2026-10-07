@@ -40,9 +40,10 @@ __all__ = ["Model", "Tracker"]
 
 MAX_STEP = 0.2  # s: motion is cut into parts no longer than this
 MOUNT_RADIUS = 0.3  # m: targets this close to a sensor come from its mount
-GIVE_UP = 0.01  # a known person who exists and is in the house with less probability joins the
-                # unknown ones with r x their density: only P(several of them come back) changes, by
-                # <= GIVE_UP^2 / 2 (0.05: 14 % less computing time, light wrongly off 1.67 instead of 1.17)
+GIVE_UP = 0.01  # a known person who exists with less probability (wherever they are, out of the house
+                # too: there the existence fades as anywhere) joins the unknown ones with r x their density:
+                # only P(several of them come back) changes, by <= GIVE_UP^2 / 2 (0.05: 14 % less
+                # computing time, light wrongly off 1.67 instead of 1.17)
 RECYCLE_EVERY = 1.0  # s
 GAP_EXACT = 120.0  # s: the end of a gap in the data is moved as always, what lies before in leaps
 LEAP = 15.0  # s   (_predict_gap; 7.10. 08:06, 8 people, 3 h: rooms within 0.022 of moving all as always)
@@ -662,13 +663,18 @@ class Tracker:
                 and self.config.sensors[si].enabled and self.config.sensors[si].placed]
 
     def _recycle(self):
-        """Known people almost surely out of the house or not existing join the unknown ones (MODEL.md
-        5.5): otherwise every guest who ever came would be followed forever. The unknown ones are one
+        """Known people who almost surely do not exist join the unknown ones (MODEL.md 5.5): otherwise
+        every guest who ever came would be followed forever. Who left the house fades there like
+        anywhere (_fade) and is given back only then: given back at once with all of r, they were
+        unknown people out of the house who come back at the rate of coming home and are forgotten
+        only after a day, while the existence of everybody else without support fades in minutes
+        (7.10. 09:01: r 0.99 given back, the unknown ones out of the house 0.27 -> 1.25; at 09:48 a
+        ghost in the hallway became a person, MODEL.md 10). The unknown ones are one
         Poisson process for all hypotheses, as in the PMBM (B_GarciaFernandez2018 eq. 7-10): what the
         hypotheses give back is added to it weighted by their probability (otherwise every hypothesis
         would carry its own copy of the density, a third of the computing time at a start with
         nothing known, MODEL.md 10)."""
-        gone = [[u for u in hy.hidden if u.in_house() < GIVE_UP] for hy in self.hyps]
+        gone = [[u for u in hy.hidden if u.r < GIVE_UP] for hy in self.hyps]
         if not any(gone):
             return
         w = self.hyp_weights()

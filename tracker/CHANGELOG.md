@@ -2,6 +2,13 @@
 
 ## Unveröffentlicht
 
+## 0.15.0
+
+- **Kalibrierung: Ergebnis lesbar.** Je Sensor ein Block (Drehung alt → neu, Maßstab, Bewertung,
+  Erklärung) statt einer Tabelle, die aus der Seitenleiste ragte.
+- **ESPHome** (`esphome/`): Frames werden aus einer eigenen Task gesendet (`idf_send_async`), größere
+  UART-Puffer, `post_connect_roaming: false`. Seit 7.10. auf allen Boards: keine Neustarts mehr bei
+  Netz-Hängern (vorher Task-Watchdog, Arbeitszimmer 15-mal in 18 h).
 - **Kalibrierung schlägt nichts mehr vor, das nur auf einem Gang beruht** (MODEL.md 10). Im
   Test (config8, Aufnahme 7.10. 16:00–16:40: Leons Gang und wenig Alltag) schlug 0.13.0 vor, den Flur um
   −17° und das Esszimmer um +5° zu drehen; beim Esszimmer lagen danach mehr Gehende außerhalb der Sicht
@@ -19,8 +26,16 @@
   7.10. 16:39 (11–17 Stunden je Sensor) wie bisher vorgeschlagen: Esszimmer 319,6° / 1,071, Wohnzimmer
   138,3° / 1,132, Arbeitszimmer 324,4° / 1,049 (Jackknife 0,3–0,8°, 0,004–0,020); es bleiben der Flur
   (Grundriss gegen Paare), die Küche (20 % statt 19 % außer Sicht) und das Bad (eine Stunde).
-
-## 0.15.0
+- **Wer hinausgeht, verblasst draußen wie überall** (MODEL.md 5.5, 10). Eine bekannte Person ohne Spur
+  geht erst in die unbekannten Personen über, wenn sie zu weniger als 1 % existiert, nicht schon, wenn
+  sie außer Haus ist. Seit das Treppenhaus außer Haus liegt, kam jeder, der hinausging, sofort mit
+  seinem ganzen r in die unbekannten Personen außer Haus; dort verblasst nichts, sie kehrten mit
+  1/(4 h) zurück und wurden erst nach einem Tag vergessen (7.10. 09:01: 0,27 → 1,25 erwartete
+  Unbekannte draußen). Diese Ankünfte sammelten sich als Unbekannte in Sicht (09:48 0,014–0,058 statt
+  0,004), und um 09:48:46 wurde ein Geist im Flur zu einer Person: Licht fälschlich an im Flur 0,14
+  (11 % des Fensters). Gemessen (12 Hypothesen): Meldungen bis 6.10. an 0 von 41, aus 1,50 von 15,
+  Log-Evidenz −1121573 (−1); 7.10. an 0 von 13 (vorher 0,11), aus 0 von 7, −449450 (+52), Flur 09:49
+  0,07; Küche 0,04 / 0,01 / 0,01; leere Nacht 0 min.
 
 - **Das Treppenhaus ist außer Haus** (MODEL.md 2, 3.3, 3.4, 6, 10). Ein Raum mit dem Haken *Eingang*
   gehört nicht mehr zur Wohnung: Er ist öffentlicher Raum vor der Wohnungstür, den auch andere
