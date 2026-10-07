@@ -557,6 +557,31 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Entfernung. Die Energien selbst kosten etwa ein Sechstel (je Sensor und Sekunde ein Verhältnis je
   Kachel und Person); der Rest kommt von mehr getrennten Dichten über die Hypothesen (im Mittel 8,6
   statt 4,6 Personen auf Kacheln).
+- **Rechenzeit: kompilierte Kernel (Numba, 7.10.)**. Profil von 2eea738 (py-spy mit nativen Frames,
+  5 Sensoren, 21:00–21:20, 14 916 Proben): 41 % im Python-Interpreter, 39 % in numpys Aufwand je
+  Aufruf (Typauflösung, Iteratoren, Prüfungen), 7 % Speicher anlegen und freigeben, nur 13 % in
+  numpys Rechenschleifen. Die meisten Arrays sind klein (2 Achsen × 4–6 Zustände, 5–16 Punkte); bei
+  ihnen kostet der Aufruf, nicht die Rechnung. In `kernels.py` (`@njit(cache=True)`, ohne fastmath)
+  stehen deshalb als Schleifen: IMM-Mischung und lineare Vorhersage von `Gauss.predict`, die
+  Sigma-Punkte an den Wänden, Spiegeln und Wandkreuzung, die Erfassungsraten eines Sensors samt
+  Maske, `Hidden.move` und `_regions`, die Poisson-Binomial-Zählverteilung. Ergebnisse gleich
+  (report_eval auf den Meldungen vom 6.10.: Log-Evidenz −1186122,4 in beiden, Licht falsch an 0 von
+  41, aus 2,08 von 15 in beiden); CPU-Zeit (bench.py, 6.10. 21:00–21:20, je dreimal abwechselnd,
+  gleiche Python-Umgebung): 36,7–39,2 → 26,1–27,5 s (−29 %); Antwortzeit je Frame im Mittel
+  1,39 → 0,99 ms, p99 16 → 12 ms. Im Container (Podman, derselbe Rechner, je dreimal): Alpine wie
+  bisher 50,0–54,7 s, Debian slim ohne Numba 41,6–44,1 s (−18 %: musl ist für diese vielen kleinen
+  Aufrufe langsamer), slim mit Numba 29,5–31,4 s (−42 % gegenüber Alpine). Die ganze App im
+  Container (15 min Nachspiel ab 21:00 mit offener Live-Ansicht, CPU-Zeit des Prozesses): Alpine
+  6,6 %, slim 5,5 %, slim mit Numba 4,0 % eines Kerns. Kosten: Image 430 statt 150 MB (llvmlite
+  173 MB), Speicher des Prozesses 201 statt 84 MB (LLVM wird zum Laden der kompilierten Kernel
+  gebraucht), Bauen ~10 s länger (hier; die Kernel werden beim Bauen kompiliert und liegen in
+  `NUMBA_CACHE_DIR`, Start dann 0,2 s statt 6 s Kompilieren). Ein Aufruf mit anderen Typen oder
+  einem nicht zusammenhängenden Array kompiliert zur Laufzeit neu (hier 1–4 s, auf Home Assistant
+  ein Vielfaches); `tests/test_kernels.py` prüft, dass das nicht vorkommt. Nicht übernommen: die
+  LD2410C-Likelihood (`Stats._mu_part`) als Kernel war genauso schnell wie numpy – dort rechnen
+  k × 16 Logarithmen je Aufruf, und numpys vektorisierter Logarithmus ist schneller als der skalare.
+  Was danach bleibt (Profil mit Kerneln): LD2410C 28 %, Ausgaben 11 %, `Hidden.move` 8 % (reine
+  Arithmetik über die 15 Schichten), der Rest verteilt.
 - **Weniger Schichten je Kachel** (7.10., 11 h aus 3.1): 5 statt 7 Arten des Aufenthalts und 3 statt
   5 Stufen κ, also 15 statt 35 Schichten von `steht`: Evidenz −1 (bei 24 Hypothesen ab 10⁻⁹ −3,
   ab 10⁻⁷ +56), Lichtfehler gleich, Rechenzeit 3,0 statt 3,3 % (21 Uhr). Mehr spart das nicht,

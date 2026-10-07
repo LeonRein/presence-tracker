@@ -2,6 +2,15 @@
 
 ## Unveröffentlicht
 
+- **Weniger Rechenzeit: die inneren Schleifen sind kompiliert (Numba).** Die meiste Zeit ging nicht in
+  die Rechnung, sondern in den Aufwand je numpy-Aufruf auf kleinen Arrays. Die Vorhersage der
+  Gauß-Komponenten, die Wände, die Erfassungsraten der Sensoren, die Bewegung der Kacheldichten und
+  die Zählverteilungen laufen jetzt als kompilierte Schleifen (`kernels.py`), mit denselben Ergebnissen
+  (`tools/report_eval.py` unverändert). Gemessen im Container auf denselben 15 Minuten (5 Sensoren, Live-Ansicht
+  offen): 4,0 % statt 6,6 % eines Kerns. Das Image beruht dafür auf `python:3.13-slim` statt Alpine
+  (llvmlite gibt es nicht für musl; schon das allein spart 17 %), ist 430 statt 150 MB groß, und die App
+  braucht etwa 200 statt 85 MB Speicher. Die Kernel werden beim Bauen des Images kompiliert, der Start
+  bleibt schnell; das erste Bauen dauert etwas länger (MODEL.md 10).
 - **Fehlermeldungen lassen sich genau nachspielen.** Eine Meldung speichert jetzt auch, wann das Modell
   zuletzt ohne Wissen begann, was es da gelernt hatte (Geisterkarte und, neu, den LD2410C-Hintergrund mit
   den Echoraten), den Stand des Codes und, was die App sekündlich angezeigt hat (Zahl und
