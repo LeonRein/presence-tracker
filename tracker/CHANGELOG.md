@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.17.1
+
 - **Zahlenfelder abgesichert:** Ein geleertes Feld wurde als 0 gespeichert; bei *Kosten: Licht ohne
   Person* galt dann jeder Raum als besetzt, im Live-System wären alle Lichter angegangen. Jetzt behält
   ein leeres oder ungültiges Feld seinen alten Wert und zeigt, was erlaubt ist (Grenzen je Einstellung,
