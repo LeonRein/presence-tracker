@@ -907,6 +907,24 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
     neuen Bad, 45° → 55°) und liegen bis auf das Esszimmer (−4,1° ± 2,1°) innerhalb ihrer
     Unsicherheit; die Evidenz entscheidet zwischen ihnen und config8 nicht.
   Offen: Flur-Position, Küche, Entfernungsversatz (9).
+- **Ein Gang ist kein Alltag** (7.10. abends, Test der App 0.13.0 mit config8 und der Aufnahme 16:00–16:40):
+  Vorgeschlagen wurden Flur −17° (33,6° ± 2,7°) und Esszimmer +3–5°, beide „bestimmt“. Beim Esszimmer
+  lagen danach mehr Gehende außer Sicht (32 → 37 %, 65 Punkte aus 12 Spuren); der Flur mit 34° legt im
+  Alltag 3200–4000 seiner Messungen hinter Wände (report_eval, oben). Warum die Prüfungen hielten: Der
+  Gang ist in sich stimmig. Ein Jackknife über seine Minuten gibt für den Flur ± 1,6° (Esszimmer ± 4,1°),
+  Grundriss allein und Paare allein liegen beide bei 30–36°; der Widerspruch zu den Paaren durch die
+  Wohnzimmertür (50°) steckt nur in Alltagsdaten. Der Modellfehler (2,1°) war an 2-h-Fenstern gemessen:
+  kurze Alltagsfenster (10 min, 1–10 Spuren) weichen vom Gesamtfit im Mittel nur 3–4° ab, der Gang um
+  15°: Er ist eine ungewöhnliche Auswahl von Orten (fast nur der Fleck im Flur zwischen den Türen), keine
+  Stichprobe des Alltags. Keine Statistik innerhalb des Gangs kann das zeigen. Deshalb jetzt (`solve`):
+  Ein Wert wird nur vorgeschlagen, wenn der Sensor Gehende aus mindestens 3 verschiedenen Stunden hat;
+  seine Unsicherheit enthält ein Jackknife, bei dem je eine von bis zu 8 Gruppen aufeinanderfolgender
+  Stunden wegfällt (Künsch 1989); und nicht, wenn die neue Lage Punkt für Punkt mehr Gehende außer Sicht
+  legt (gepaart: mehr hinaus als herein um mehr als die Wurzel ihrer Summe). Die gesammelten Daten
+  überstehen jetzt einen Neustart. 16:00–16:40 allein: nichts vorgeschlagen, auch das Bad nicht (sein
+  Ergebnis hängt am Flur: 50,8° mit dem Flur bei 34°, 55,1° mit den Alltagsdaten, Grundriss allein 54,3°).
+  Alle Daten (6.10. 18:00 – 7.10. 16:39): Esszimmer, Wohnzimmer, Arbeitszimmer wie zuvor (Jackknife
+  0,3–0,8° und 0,004–0,020), Flur Widerspruch, Küche mehr außer Sicht (19 → 20 %), Bad erst eine Stunde.
 - **Sigma-Punkte statt Mittel, Wände über Sigma-Punkte** (7.10., 5.2): Fehlerberichte 6.10.
   (Stand 0.10.0 → mit allem): Licht zu spät aus 3,00 → 1,67 von 15, fälschlich an 0 von 41 (beide),
   Log-Evidenz +470. Küche 21:57 (zum Lichtschalter, wie oben): Tiefpunkt Küche 0,02 → 0,75; Küche

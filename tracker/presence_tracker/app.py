@@ -118,7 +118,14 @@ class App:
         self.last_model_save = time.monotonic()
         self.clocks = defaultdict(SensorClock)
         self.last_frame_t = -math.inf
-        self.calibrator = getattr(self, "calibrator", None) or Calibrator(self.config)
+        if getattr(self, "calibrator", None) is None:
+            self.calibrator = Calibrator(self.config)
+            cal_path = self.data_dir / "calibration.npz"
+            if not self.replay and cal_path.exists():
+                try:
+                    self.calibrator.load(cal_path)
+                except (OSError, ValueError, KeyError):
+                    log.warning("calibration.npz unreadable, collecting anew")
         self.calibrator.config = self.config
 
     def _model_started(self, t: float | None):
@@ -232,6 +239,7 @@ class App:
         self.tracker.ghost_map.save(self.data_dir / "ghostmap.json")
         self.tracker.ld_background.save(self.data_dir / "ld2410.json")
         self._save_people()
+        self.calibrator.save(self.data_dir / "calibration.npz")
 
     def _save_people(self):
         """What is known about the people, for the next start (MODEL.md 5.3)."""

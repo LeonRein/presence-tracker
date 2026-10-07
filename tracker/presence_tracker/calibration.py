@@ -92,6 +92,17 @@ DETERMINED_SCALE = 0.25 / 5  # 0.05
 # every fit.
 MODEL_HEADING = 2.1  # deg
 MODEL_SCALE = 0.042
+# Independent stretches: errors of the model (a drawn position slightly off, the LD2450's angle error)
+# depend on where people walk, so a fit holds only if it holds across stretches of different
+# everyday situations. A stretch is an hour; the uncertainty is a delete-one-group jackknife over at
+# most JACK_GROUPS groups of consecutive hours (Kuensch 1989, blocks of a dependent series). With
+# fewer than MIN_STRETCHES hours with walking data of a sensor, its spread between situations can't be
+# estimated, and nothing is proposed for it: on 7.10. a 10-minute walk alone turned the hall by 17 deg,
+# self-consistent within the walk (jackknife over its minutes 1.6 deg), but it put thousands of the
+# hall's everyday measurements behind walls (MODEL.md 10).
+STRETCH = 3600.0  # s
+MIN_STRETCHES = 3
+JACK_GROUPS = 8
 KEEP = 24 * 3600.0  # s of walking measurements the app keeps (about 5 MB a day for six sensors)
 T, SEG, LX, LY, V, SINGLE = range(6)  # columns of the measurement rows
 
@@ -636,6 +647,24 @@ def outside(prob: Problem, phi) -> dict:
     return out
 
 
+def out_of_sight(prob: Problem, phi, sid) -> np.ndarray:
+    """Per walking point of the sensor: more than 0.3 m away from what it can see?"""
+    pt = prob.points[sid]
+    if sid not in prob.fields or not len(pt.z):
+        return np.zeros(len(pt.z), bool)
+    return prob.fields[sid].lookup(prob.world(phi, sid, pt.z))[1] > 0.3
+
+
+def more_out_of_sight(prob: Problem, phi0, phi, sid) -> bool:
+    """Does the new pose put more of the sensor's walking points out of sight? Paired, point by point
+    (McNemar): of the points whose verdict changes, b go out of sight and c come into it; more out
+    by more than one standard deviation of b - c (sqrt(b + c)) counts. The points of one track are
+    not independent, so this errs on the side of keeping the old pose."""
+    a, b_ = out_of_sight(prob, phi0, sid), out_of_sight(prob, phi, sid)
+    b, c = int((~a & b_).sum()), int((a & ~b_).sum())
+    return b - c > math.sqrt(b + c)
+
+
 def pair_agreement(prob: Problem, phi) -> dict:
     """Per sensor pair (simultaneous pairs only): count, within 1 m, median distance of those."""
     out = {}
@@ -670,6 +699,45 @@ def crossings(prob: Problem, phi) -> dict:
 
 # ------------------------------------------------------------------------------------- solve
 
+def stretch_groups(prob: Problem) -> list:
+    """The hours with walking data, merged into at most JACK_GROUPS groups of consecutive hours with
+    about equal numbers of walking points: [(first hour, last hour)]."""
+    hours = collections.Counter()
+    for pt in prob.points.values():
+        hours.update((pt.t // STRETCH).astype(int).tolist())
+    keys = sorted(hours)
+    if not keys:
+        return []
+    total, groups, acc, first = sum(hours.values()), [], 0, keys[0]
+    for i, h in enumerate(keys):
+        acc += hours[h]
+        if acc >= total * (len(groups) + 1) / JACK_GROUPS or i == len(keys) - 1:
+            groups.append((first, h))
+            if i + 1 < len(keys):
+                first = keys[i + 1]
+    return groups
+
+
+def jackknife(prob: Problem, phi, groups) -> dict:
+    """Delete-one-group jackknife standard deviations of heading (deg) and scale per fitted sensor."""
+    reps = []
+    for lo, hi in groups:
+        def weights(t, lo=lo, hi=hi):
+            h = t // STRETCH
+            return ((h < lo) | (h > hi)).astype(float)
+        Fj = Fit(prob, weights=weights)
+        reps.append(Fj.run(phi))
+    k = len(reps)
+    out = {}
+    for sid in prob.fit:
+        i = prob.npar * prob.fit.index(sid)
+        dh = np.array([(r[i] - phi[i] + math.pi) % (2 * math.pi) - math.pi for r in reps])
+        dk = np.array([math.exp(r[i + 1]) for r in reps])
+        out[sid] = (math.degrees(math.sqrt((k - 1) / k * ((dh - dh.mean()) ** 2).sum())),
+                    math.sqrt((k - 1) / k * ((dk - dk.mean()) ** 2).sum()))
+    return out
+
+
 def solve(config: Config, data: dict, check_mirror: bool = False) -> dict:
     """New heading and scale for every placed sensor with walking measurements, each with its
     uncertainty; only what is determined is proposed. Positions and mirrors stay as configured
@@ -678,7 +746,9 @@ def solve(config: Config, data: dict, check_mirror: bool = False) -> dict:
     Per sensor, a value is proposed when its uncertainty (robust covariance and the model error)
     is below DETERMINED_*, the heading has no second mode, and the floor plan alone and the pairs
     and handovers alone give the same heading: if they don't, something in the drawing is off (the
-    sensor's position, the walls around it), and no heading or scale fits both."""
+    sensor's position, the walls around it), and no heading or scale fits both. And only if the
+    sensor has walking data from at least MIN_STRETCHES hours (its uncertainty then includes the
+    jackknife over them), and the new pose doesn't put more of its walking points out of sight."""
     placed = [s.id for s in config.sensors if s.placed and s.enabled]
     data = {sid: np.asarray(a, float).reshape(-1, 6) for sid, a in data.items() if sid in placed}
     base = Problem(config, data, [])
@@ -697,23 +767,39 @@ def solve(config: Config, data: dict, check_mirror: bool = False) -> dict:
     phi0 = prob.start()
     before, after = outside(prob, phi0), outside(prob, phi)
     agree0, agree1 = pair_agreement(prob, phi0), pair_agreement(prob, phi)
+    groups = stretch_groups(prob)
+    jack = jackknife(prob, phi, groups) if len(groups) >= MIN_STRETCHES else {}
     out = {}
     for sid in fit:
         s = config.sensor_by_id[sid]
         r = prob.describe(phi, sid)
         sd = F.sd(sid)
-        sd_h, sd_k = math.hypot(sd["heading"], MODEL_HEADING), math.hypot(sd["scale"], MODEL_SCALE)
+        jh, jk = jack.get(sid, (0.0, 0.0))
+        sd_h = math.hypot(max(sd["heading"], jh), MODEL_HEADING)
+        sd_k = math.hypot(max(sd["scale"], jk), MODEL_SCALE)
+        per_hour = collections.Counter((prob.points[sid].t // STRETCH).astype(int).tolist())
+        stretches = sum(n >= MIN_POINTS for n in per_hour.values())
+        few = stretches < MIN_STRETCHES
+        worse = more_out_of_sight(prob, phi0, phi, sid)
         alt, gap = F.second_mode(sid)
         h_plan, h_pair = prob.describe(Fplan.phi, sid)["heading"], prob.describe(Fpair.phi, sid)["heading"]
         sd_plan = math.hypot(Fplan.sd(sid)["heading"], MODEL_HEADING)
         sd_pair = math.hypot(Fpair.sd(sid)["heading"], MODEL_HEADING)
         conflict = (sd_plan < PRIOR_DEG / 2 and sd_pair < PRIOR_DEG / 2
                     and abs(angle_diff(h_plan, h_pair)) > 2 * math.hypot(sd_plan, sd_pair))
-        good_heading = sd_h <= DETERMINED_HEADING and gap >= SECOND_MODE and not conflict
+        good_heading = sd_h <= DETERMINED_HEADING and gap >= SECOND_MODE and not conflict and not few and not worse
         ruler = sid in F.rulers
-        good_scale = sd_k <= DETERMINED_SCALE and ruler and not conflict
+        good_scale = sd_k <= DETERMINED_SCALE and ruler and not conflict and not few and not worse
         reasons = []
-        if conflict:
+        if few:
+            reasons.append(f"Messungen in Bewegung erst aus {stretches} Stunde{'n' if stretches != 1 else ''}. "
+                           "Ein einzelner Gang zeigt nicht, ob die Lage auch im Alltag passt (am 7.10. drehte ein "
+                           f"Gang allein den Flur um 17°). Nach mindestens {MIN_STRETCHES} Stunden mit normalem "
+                           "Leben erneut berechnen; die App sammelt weiter.")
+        elif worse:
+            reasons.append(f"Mit dem neuen Wert lägen mehr Punkte in Bewegung außerhalb der Sicht "
+                           f"({100 * after[sid]:.0f} % statt {100 * before[sid]:.0f} %). Bleibt wie bisher.")
+        elif conflict:
             reasons.append(f"Grundriss ({h_plan:.0f}°) und gemeinsame Messungen mit anderen Sensoren ({h_pair:.0f}°) "
                            "widersprechen sich. Stimmt die eingezeichnete Position des Sensors und der Wände um ihn?")
         else:
@@ -736,7 +822,8 @@ def solve(config: Config, data: dict, check_mirror: bool = False) -> dict:
             "mirror": s.mirror,
             "fitted_heading": r["heading"], "fitted_scale": r["scale"],
             "heading_sd": round(sd_h, 2), "scale_sd": round(sd_k, 4),
-            "heading_plan": h_plan, "heading_pairs": h_pair,
+            "heading_plan": h_plan, "heading_pairs": h_pair, "stretches": stretches,
+            "jackknife": [round(jh, 2), round(jk, 4)] if jack else None,
             "turn": round(angle_diff(r["heading"], s.heading), 1),
             "apply": {"heading": good_heading, "scale": good_scale},
             "quality": quality, "reason": " ".join(reasons),
@@ -806,9 +893,30 @@ class Calibrator:
                 chunks.pop(0)
             self.since = max(self.since, t - KEEP)
 
+    def save(self, path):
+        """The collected data, for the next start (a restart would otherwise lose up to a day)."""
+        data = self.data()
+        tmp = path.with_name(path.name + ".tmp.npz")
+        np.savez_compressed(tmp, since=np.array([self.since if self.since is not None else np.nan]),
+                            **{"s_" + sid: a for sid, a in data.items()})
+        tmp.replace(path)
+
+    def load(self, path):
+        """What `save` wrote; track numbers go on after the loaded ones."""
+        self.reset()
+        with np.load(path) as f:
+            since = float(f["since"][0])
+            self.since = None if math.isnan(since) else since
+            last = -1
+            for key in f.files:
+                if key.startswith("s_") and len(f[key]):
+                    self._chunks[key[2:]].append(np.array(f[key], float))
+                    last = max(last, int(f[key][:, SEG].max()))
+        self._ids = itertools.count(last + 1)
+
     def data(self) -> dict:
         out = {}
-        for sid in list(self._rows):
+        for sid in sorted(set(self._rows) | set(self._chunks)):
             parts = self._chunks.get(sid, []) + [np.array(self._rows[sid], float).reshape(-1, 6)]
             a = np.concatenate(parts)
             if len(a):

@@ -2,6 +2,24 @@
 
 ## Unveröffentlicht
 
+- **Kalibrierung schlägt nichts mehr vor, das nur auf einem Gang beruht** (MODEL.md 10). Im
+  Test (config8, Aufnahme 7.10. 16:00–16:40: Leons Gang und wenig Alltag) schlug 0.13.0 vor, den Flur um
+  −17° und das Esszimmer um +5° zu drehen; beim Esszimmer lagen danach mehr Gehende außerhalb der Sicht
+  (32 → 37 %), und der Flur mit 34° legt im Alltag tausende Messungen hinter Wände. Innerhalb des Gangs
+  war das Ergebnis stabil (Jackknife über seine Minuten: Flur ± 1,6°), die Unsicherheit also nicht das
+  Problem: Ein Gang zeigt nur eine Situation. Jetzt:
+  - Vorgeschlagen wird für einen Sensor nur, was auf Gehenden aus mindestens 3 verschiedenen Stunden
+    beruht; die Unsicherheit enthält das Jackknife über Gruppen von Stunden (Künsch 1989). Sonst:
+    „Messungen in Bewegung erst aus 1 Stunde …“.
+  - Kein Vorschlag, der mehr Gehende eines Sensors außerhalb seiner Sicht legt (gepaarter Vergleich
+    Punkt für Punkt).
+  - Die gesammelten Messungen überstehen einen Neustart (`/data/calibration.npz`).
+  Gemessen: 16:00–16:40 allein nichts vorgeschlagen (auch das Bad nicht: sein Ergebnis hängt am
+  falschen Flur, 50,8° gegen 55,1° mit den Alltagsdaten der anderen). Mit allen Daten 6.10. 18:00 bis
+  7.10. 16:39 (11–17 Stunden je Sensor) wie bisher vorgeschlagen: Esszimmer 319,6° / 1,071, Wohnzimmer
+  138,3° / 1,132, Arbeitszimmer 324,4° / 1,049 (Jackknife 0,3–0,8°, 0,004–0,020); es bleiben der Flur
+  (Grundriss gegen Paare), die Küche (20 % statt 19 % außer Sicht) und das Bad (eine Stunde).
+
 ## 0.15.0
 
 - **Das Treppenhaus ist außer Haus** (MODEL.md 2, 3.3, 3.4, 6, 10). Ein Raum mit dem Haken *Eingang*

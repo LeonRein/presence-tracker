@@ -90,14 +90,16 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
 4. **Sensoren** (Tab *Sensoren*): jeden Sensor platzieren, Blickrichtung drehen, Montagehöhe eintragen.
    *Tote Winkel zeigen* färbt Stellen, die kein Sensor sieht, rot.
 5. **Kalibrierung** (Tab *Kalibrierung*): Die App sammelt laufend, wo Gehende gemessen werden (die letzten
-   24 Stunden); ein Tag normales Leben reicht meist. Schneller geht es allein: ein paar Minuten kreuz und
-   quer durch jeden Raum mit Sensor und mehrmals durch die Türen zwischen ihnen. *Berechnen* rechnet für
+   24 Stunden, auch über einen Neustart); ein Tag normales Leben reicht meist. Ein Gang allein kreuz und
+   quer durch die Räume und Türen ergänzt das, ersetzt es aber nicht. *Berechnen* rechnet für
    alle Sensoren gemeinsam Blickrichtung und Maßstab (misst er ein paar Prozent zu kurz oder zu lang),
    jeweils mit Unsicherheit: aus dem, was zwei Sensoren gleichzeitig sehen, aus den Übergängen von einem
    Blickfeld ins nächste (auch wenn sich zwei Sensoren nur in einer Tür überschneiden) und aus dem
    Grundriss (Gehende sind in Räumen und gehen durch Türen). Die eingezeichneten Positionen und die
    x-Richtung (wie der Sensor eingebaut ist) bleiben; die x-Richtung prüft die App nur auf Wunsch.
-   Übernommen wird nur, was sicher bestimmt ist. Widersprechen sich Grundriss und gemeinsame Messungen,
+   Übernommen wird nur, was sicher bestimmt ist: aus mindestens 3 verschiedenen Stunden mit Gehenden,
+   stabil zwischen ihnen, und ohne dass mehr Gehende außerhalb der Sicht des Sensors lägen. Widersprechen
+   sich Grundriss und gemeinsame Messungen,
    sagt die App das: Dann stimmt meist die eingezeichnete Position des Sensors nicht. Nach dem Drehen
    oder Versetzen eines Sensors *Neu sammeln*.
 

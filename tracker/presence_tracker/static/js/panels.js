@@ -641,7 +641,7 @@ function calibrationPanel(panel, view) {
     <h2>Kalibrierung</h2>
     <ol class="steps">
       <li>Sensoren genau an ihrer Position einzeichnen, mit Montagehöhe und der x-Richtung, wie sie eingebaut sind. Die Blickrichtung muss nur grob stimmen.</li>
-      <li>Die App sammelt laufend, wo Gehende gemessen werden (die letzten 24 Stunden). Ein Tag normales Leben reicht meist. Schneller geht es allein: ein paar Minuten kreuz und quer durch jeden Raum mit Sensor, an den Wänden entlang und mehrmals durch die Türen zwischen ihnen.</li>
+      <li>Die App sammelt laufend, wo Gehende gemessen werden (die letzten 24 Stunden). Ein Tag normales Leben reicht meist. Vorgeschlagen wird für einen Sensor erst etwas, wenn er in mindestens 3 verschiedenen Stunden Gehende gemessen hat: Ein einzelner Gang zeigt nicht, ob die Lage auch im Alltag passt. Ein Gang allein kreuz und quer durch die Räume und Türen ergänzt den Alltag um Stellen, an die man sonst selten kommt.</li>
       <li>Berechnen, Ergebnis prüfen und übernehmen.</li>
     </ol>
     <p class="note">Die eingezeichneten Positionen und die x-Richtung bleiben. Blickrichtung und Maßstab (wie viel zu kurz oder zu lang ein Sensor misst) folgen für alle Sensoren gemeinsam aus drei Dingen: Was zwei Sensoren gleichzeitig sehen, muss übereinanderliegen. Wer aus dem Blickfeld eines Sensors in das eines anderen geht, geht dazwischen weiter. Und wer geht, ist in einem Raum und geht durch Türen, nicht durch Wände. Übernommen wird nur, was die Messungen sicher bestimmen.</p>

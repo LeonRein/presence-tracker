@@ -1,23 +1,31 @@
 import copy
 
+import numpy as np
 import pytest
 
-from presence_tracker.calibration import Calibrator, solve
+from presence_tracker.calibration import MIN_STRETCHES, STRETCH, Calibrator, Problem, more_out_of_sight, solve
 from presence_tracker.model import Config, SensorConfig, TrackerParams
 from presence_tracker.sim import Person, SimSensor, simulate
 
 from test_frames import walk
 
 
-def _session(truth, guess, people, duration, walls=(), check_mirror=False):
+def _collect(truth, guess, people, duration, walls=(), hours=MIN_STRETCHES):
     """The app's calibration data: raw frames of simulated sensors (placed as in `truth`) into a
-    Calibrator that knows only `guess`."""
-    sensors = [SimSensor(s, noise=0.05) for s in truth.sensors]
+    Calibrator that knows only `guess`; the same walk once in each of `hours` hours (independent
+    stretches of everyday life)."""
     calibrator = Calibrator(guess)
-    for t, sid, frame in simulate(people, sensors, duration, walls=walls):
-        calibrator.on_frame(sid, t, frame)
+    for k in range(hours):
+        sensors = [SimSensor(s, noise=0.05) for s in truth.sensors]
+        for t, sid, frame in simulate(people, sensors, duration, walls=walls, seed=k + 1):
+            calibrator.on_frame(sid, t + k * STRETCH, frame)
     status = calibrator.status()
     assert status["since"] is not None and all(n > 0 for n in status["frames"].values())
+    return calibrator
+
+
+def _session(truth, guess, people, duration, walls=(), check_mirror=False, hours=MIN_STRETCHES):
+    calibrator = _collect(truth, guess, people, duration, walls, hours)
     return solve(guess, calibrator.data(), check_mirror)
 
 
@@ -113,6 +121,57 @@ def test_sensors_that_share_only_a_door():
         assert r["apply"]["heading"], r["reason"]
         assert _turn(r, s.heading) == pytest.approx(0, abs=3.0)
         assert r["outside"][1] <= r["outside"][0]
+
+
+def _door_walk():
+    left = [(1, 1), (4, 1), (4, 3), (1, 3), (1, 1.5), (3.5, 3.5), (2, 0.6)]
+    right = [(6, 1), (9, 1), (9, 3), (6, 3), (8.5, 0.6), (6.5, 3.5), (9, 2)]
+    door = [(4.3, 2.5), (5.7, 2.5)]
+    return Person(walk(*left, *door, *right, *door[::-1], (2, 2), speed=0.8))
+
+
+def test_a_single_walk_proposes_nothing():
+    # one stretch can't show whether a pose holds in other situations (7.10.: a walk alone turned
+    # the hall by 17 deg, self-consistently, and everyday tracking got worse)
+    truth = _two_rooms()
+    guess = copy.deepcopy(truth)
+    guess.sensors[1].heading = 125
+    guess.rebuild()
+    person = _door_walk()
+    result = _session(truth, guess, [person], person.waypoints[-1][0], walls=truth.wall_segments, hours=1)
+    for sid, r in result["sensors"].items():
+        assert not r["apply"]["heading"] and not r["apply"]["scale"]
+        assert r["heading"] == guess.sensor_by_id[sid].heading
+        assert "erst aus 1 Stunde" in r["reason"]
+
+
+def test_no_pose_that_puts_more_walking_out_of_sight():
+    truth = _two_rooms()
+    person = _door_walk()
+    data = _collect(truth, truth, [person], person.waypoints[-1][0], truth.wall_segments, hours=1).data()
+    prob = Problem(truth, data, ["a", "b"])
+    right = prob.start()
+    turned = right.copy()
+    turned[2] += np.radians(25)  # b turned by 25 deg: its walk into the neighbouring room and the wall
+    assert more_out_of_sight(prob, right, turned, "b")
+    assert not more_out_of_sight(prob, turned, right, "b")
+    assert not more_out_of_sight(prob, right, right, "a")
+
+
+def test_the_collected_data_survive_a_restart(tmp_path):
+    truth, guess, person = _three_sensors()
+    calibrator = _collect(truth, guess, [person], 30.0, hours=1)
+    calibrator.save(tmp_path / "calibration.npz")
+    again = Calibrator(guess)
+    again.load(tmp_path / "calibration.npz")
+    a, b = calibrator.data(), again.data()
+    assert a.keys() == b.keys() and all(np.array_equal(a[k], b[k]) for k in a)
+    assert again.since == calibrator.since
+    sensors = [SimSensor(s, noise=0.05) for s in truth.sensors]
+    for t, sid, frame in simulate([person], sensors, 10.0):
+        again.on_frame(sid, t + 100.0, frame)
+    new = again.data()["a"]
+    assert new[len(a["a"]):, 1].min() > a["a"][:, 1].max()  # new tracks, not merged with old ones
 
 
 def test_second_person_sitting_still_does_not_disturb():
