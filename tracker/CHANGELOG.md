@@ -2,6 +2,31 @@
 
 ## Unveröffentlicht
 
+- **Kalibrierung neu: alle Sensoren gemeinsam, auch wenn sie sich nur in einer Tür überschneiden**
+  (MODEL.md 10, `calibration.py`). Die alte Rechnung schlug nach einem Gang am 7.10. vor, das
+  Arbeitszimmer zu spiegeln (294°), das Esszimmer auf Maßstab 1,27 und den Flur um 15° zu drehen.
+  Ursachen: Die Spiegelsuche ließ den ersten Sensor immer ungespiegelt (die eingebaute Lage wurde nie
+  gerechnet); fast alle gemeinsamen Messungen lagen in einem Fleck im Flur zwischen den Türen, der die
+  Drehung kaum bestimmt; falsche Paare; der Maßstab des Esszimmers hing über eine Kette an 8 m
+  entfernten Messungen des Wohnzimmers. Jetzt:
+  - Eine Rechnung für alle Sensoren aus drei Dingen: gleichzeitige Messungen zweier Sensoren (mit
+    Anteil falscher Paare), Übergänge von einem Blickfeld ins nächste (Rahimi, Dunagan & Darrell 2004,
+    mit dem Gehmodell aus MODEL.md 3.2) und der Grundriss (Gehende sind in Räumen und gehen durch
+    Türen); dazu ein Prior auf die Maßstäbe der LD2450, gemessen 1,06 ± 5 %.
+  - Die x-Richtung bleibt, wie eingebaut (auf Wunsch prüft die App sie: auf dem Gang vom 7.10. ist die
+    eingebaute für jeden Sensor klar besser).
+  - Jeder Wert mit Unsicherheit (robust gegen korrelierte Messfehler, dazu der an Alltagsdaten
+    gemessene Modellfehler von 2,1° und 0,042). Übernommen wird nur, was bestimmt ist; „Drehung
+    unsicher“, „mehrdeutig“ oder „Grundriss und gemeinsame Messungen widersprechen sich“ statt Unsinn.
+  - Die App sammelt laufend die Messungen Gehender der letzten 24 Stunden (etwa 5 MB); ein eigener
+    Gang ergänzt sie. *Neu sammeln* nach dem Drehen oder Versetzen eines Sensors. Leons Gang allein
+    hätte die Wände verbessert und den Alltag verschlechtert (Paare innerhalb 0,5 m 54 % → 24 %); mit
+    allen Daten 54 % → 56 %, Schritte durch Wände 232 → 214 von 646.
+  - `tools/calibrate_offline.py` rechnet mit demselben Code.
+  Gemessen mit `tools/report_eval.py` (Meldungen 7.10.): Licht falsch an 0 von 13, aus 0 von 7 wie
+  bisher; Log-Evidenz +1945 (mit Jacobi-Term für die Maßstäbe). Offen: Der Flursensor sitzt
+  wahrscheinlich 0,4–0,8 m weiter nördlich an der Badwand als eingezeichnet (nachmessen).
+
 ## 0.12.0
 
 - **Wer nicht mehr gemessen wird, ist nach 2 statt 30 Minuten vergessen** (MODEL.md 3.4, 5.5, 9, 10).

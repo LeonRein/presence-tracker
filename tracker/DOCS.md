@@ -81,10 +81,17 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
    (Tab *Sensoren*, Karte „Geister“); eine eigene Zone dafür gibt es nicht mehr.
 4. **Sensoren** (Tab *Sensoren*): jeden Sensor platzieren, Blickrichtung drehen, Montagehöhe eintragen.
    *Tote Winkel zeigen* färbt Stellen, die kein Sensor sieht, rot.
-5. **Kalibrierung** (Tab *Kalibrierung*): allein 2–3 Minuten durch die Überschneidungen der Sensoren gehen.
-   Die eingezeichneten Positionen bleiben; aus den Messungen folgen je Sensor Blickrichtung, Maßstab (misst er
-   ein paar Prozent zu kurz oder zu lang) und x-Richtung. Die Blickrichtungen müssen nur grob stimmen. Ein
-   Sensor ohne genug gemeinsame Messungen mit einem anderen (z. B. Küche) bleibt, wie er ist.
+5. **Kalibrierung** (Tab *Kalibrierung*): Die App sammelt laufend, wo Gehende gemessen werden (die letzten
+   24 Stunden); ein Tag normales Leben reicht meist. Schneller geht es allein: ein paar Minuten kreuz und
+   quer durch jeden Raum mit Sensor und mehrmals durch die Türen zwischen ihnen. *Berechnen* rechnet für
+   alle Sensoren gemeinsam Blickrichtung und Maßstab (misst er ein paar Prozent zu kurz oder zu lang),
+   jeweils mit Unsicherheit: aus dem, was zwei Sensoren gleichzeitig sehen, aus den Übergängen von einem
+   Blickfeld ins nächste (auch wenn sich zwei Sensoren nur in einer Tür überschneiden) und aus dem
+   Grundriss (Gehende sind in Räumen und gehen durch Türen). Die eingezeichneten Positionen und die
+   x-Richtung (wie der Sensor eingebaut ist) bleiben; die x-Richtung prüft die App nur auf Wunsch.
+   Übernommen wird nur, was sicher bestimmt ist. Widersprechen sich Grundriss und gemeinsame Messungen,
+   sagt die App das: Dann stimmt meist die eingezeichnete Position des Sensors nicht. Nach dem Drehen
+   oder Versetzen eines Sensors *Neu sammeln*.
 
 **Sensormodell** (Tab *Sensoren*, Sensor auswählen): Karten, wo der Sensor wie zuverlässig erkennt (angenommen und
 aus dem Betrieb gelernt) und wo er Geister meldet, dazu der gelernte Messfehler nach Abstand. Die App lernt das

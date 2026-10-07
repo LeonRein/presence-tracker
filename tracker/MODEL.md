@@ -622,7 +622,8 @@ Lebensdauer der Geister geschätzt (4.2).
   erzeugen; der Rang der wahren Zahl unter der Filterverteilung muss gleichverteilt sein.
 - Werkzeuge: `tools/record.py` (Aufnahme), `tools/replay.py` (Aufnahmen durch den Tracker),
   `tools/ghostmap.py` (Geisterkarte offline), `tools/calibrate_offline.py` (Kalibrierung aus
-  Alltagsaufnahmen, auch ohne große Überschneidung; 10).
+  Aufnahmen mit dem Modell der App, `calibration.py`, dazu Block-Bootstrap, Spiegel- und Maßstabsprofile
+  und freie Positionen; 10).
 
 ## 9. Bekannte Schwächen und Offenes
 Offen beim LD2410C (4.3): Flur 21:35 und 21:56 (Eintretende zu 0,5 statt 0,9 im Flur) liegen nicht
@@ -688,6 +689,14 @@ Näherungen, die man prüfen oder ersetzen kann:
   LD2410C-Hintergrund dieses Sensors neu beginnen, obwohl sich der Sensor selbst nicht bewegt hat (die
   App kann Drehen und Kalibrieren nicht unterscheiden). Für die Meldung 7.10. 08:07 war das nicht die
   Ursache (Hintergrund im Nachspiel unverändert).
+
+- **Kalibrierung (10, „Kalibrierung der App neu“):** Beim Flur widersprechen sich Grundriss (36–41°)
+  und Paare (50° mit Ess- und Wohnzimmer durch die Tür, 29° beim Gang im Flur selbst); frei gefittet
+  liegt seine Position in 6 von 7 2-h-Fenstern 0,4–0,8 m weiter nördlich an der Badwand (y 3,05–3,49
+  statt 2,67). Nachmessen. Die Küche hat keine verlässlichen eigenen Paare (ihre Echos jenseits der
+  Wand laufen mit den Personen mit). Der Wohnzimmer-Maßstab ist auf 8 m (durch die Tür in den Flur) 1,07,
+  auf 2–6 m 1,13: ein Entfernungsversatz statt eines Maßstabs ist ungeprüft. Ein Faktor auf
+  sin(Azimut) je Sensor (Phasen-Monopuls) machte die Fenster nicht einheitlicher.
 
 Nicht geprüft (Ablationen ausstehend): λ_d = 0,85 gegen langsamere Richtungswechsel; OU-Näherung
 gegen weißes Rauschen in der Beschleunigung; Swerling-I gegen logistisch; Geisterkarte gegen globale
@@ -800,6 +809,52 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   statt 3,0, falsch an immer 0 von 41); die Unterschiede liegen an Lichtschaltern in Türen, wo 0,2 m
   den Raum entscheiden. Die Log-Evidenz ist zwischen Maßstäben nicht vergleichbar (die Dichte der
   Messungen im Haus ändert sich mit dem Maßstab).
+- **Kalibrierung der App neu** (7.10. abends, `calibration.py`): Leon ging 16:13–16:22 allein kreuz
+  und quer (neuer Badsensor, Küche nicht betreten). Die alte App-Rechnung (Paare je Sensorpaar mit
+  RANSAC, gemeinsame kleinste Quadrate, Spiegel frei) schlug vor: Arbeitszimmer gespiegelt (294°),
+  Esszimmer Maßstab 1,27, Flur −15°. Ursachen, nachgerechnet auf denselben Frames:
+  1. *Spiegelsuche:* Der alphabetisch erste Sensor (Arbeitszimmer) war immer ungespiegelt, die
+     Alternative „alle umgedreht“ ist nur bei zwei Sensoren eine Symmetrie. Die eingebaute Lage (alle
+     gespiegelt) hätte nach dem eigenen Maß die meisten passenden Paare gehabt (1463 gegen 1361),
+     wurde aber nie gerechnet.
+  2. *Paare in einem Fleck:* 6 der 7 Sensorpaare hatten ihre Paare im Flur zwischen den Türen um
+     (−1,3 / 4,2), quer 0,15–0,23 m Streuung, das Wohnzimmer 8 m entfernt durch die Tür. Ein Fleck legt
+     je Sensorpaar nur eine Kombination fest; drinnen entscheidet er den Spiegel kaum (passende Paare
+     richtig gegen gespiegelt 3–30 % auseinander).
+  3. *Falsche Paare:* bei den gezeichneten Lagen lagen nur 45–70 % der Bad-Paare innerhalb 1 m.
+  4. *Maßstab frei, Kette:* Das Esszimmer hing nur über 251 Paare an einer Stelle am Wohnzimmer, dessen
+     Maßstab der Fleck auf 8 m setzte (1,07 statt 1,15) – Esszimmer 1,27.
+  5. *Frames als unabhängig:* Paare alle 0,1 s; die Unsicherheit wurde nicht ausgewiesen.
+  Neu (eine Rechnung für App und `tools/calibrate_offline.py`): alle Sensoren gemeinsam (Bündelausgleich,
+  Triggs et al. 2000); Paare mit Ausreißeranteil (Myronenko & Song 2010); Übergänge zwischen
+  Sichtfeldern wie Rahimi, Dunagan & Darrell 2004, mit dem OU-Gehmodell aus 3.2 über bis zu 2 s;
+  Grundriss je LD2450-Spur (Person im sichtbaren freien Raum oder Echo); Maßstabsprior mit der
+  gemessenen Streuung der LD2450 (ln-Maßstab 0,05) um den Median der Sensoren mit eigenen Paaren;
+  Spiegel aus der Konfiguration (nur auf Wunsch verglichen); Paare und Grundrisspunkte je 1 s.
+  Unsicherheit: cluster-robuste Kovarianz über 30-s-Blöcke (Liang & Zeger 1986) plus Modellfehler.
+  Vorgeschlagen wird ein Wert nur, wenn er bestimmt ist (Richtung ≤ 4°, Maßstab ≤ 0,05: so viel wie
+  der LD2450 selbst in 5 m), die Richtung keinen zweiten Modus hat und Grundriss allein und Paare
+  allein dieselbe Richtung wollen. Die App sammelt laufend die Messungen Gehender der letzten 24 h.
+  Gemessen:
+  - *Modellfehler:* 2-h-Fenster vom 6./7.10. streuen über ihre eigene Unsicherheit hinaus um
+    0,9–3,3° (Flur 3,3) und 0,017–0,073 im Maßstab (Esszimmer 0,073); quadratisch gemittelt 2,1° und
+    0,042, das steht jetzt in jeder Unsicherheit. Die Streuung zwischen den Fenstern ist 2–4-mal so
+    groß wie die robuste Kovarianz, der Block-Bootstrap (120 s) innerhalb eines Laufs 1–2-mal.
+  - *Spiegel:* auf Leons Gang ist die eingebaute Lage für jeden Sensor besser (bereinigt um die
+    Korrelation, Log-Posterior: Arbeitszimmer +29, Esszimmer +54, Wohnzimmer +52, Bad +45, Flur +250).
+  - *Nur Leons Gang gegen alle Daten:* Arbeitszimmer 324,2° / 1,11 gegen 324,4° / 1,05, Bad 50,8° /
+    1,05 gegen 55,1° / 0,99, aber Esszimmer 326,8° / 1,20 gegen 319,6° / 1,07 und Flur 33,6° gegen
+    (Widerspruch, bleibt 50°). Der Gang allein verbessert die Wände (Schritte durch Wände auf dem
+    Gang 39 → 9) und verschlechtert den Alltag: Paare innerhalb 0,5 m 54 % → 24 %, Schritte durch
+    Wände 232 → 121 von 646. Alle Daten: 54 % → 56 %, Wände 232 → 214, Punkte außer Sicht 3,4 → 2,8 %,
+    Übergänge innerhalb 1 m 36 → 38 %. Daher sammelt die App jetzt laufend.
+  - *report_eval* (Meldungen 7.10., config7-Lagen): alle Varianten Licht falsch an 0 von 13, aus 0
+    von 7 (alte App-Rechnung aus 0,01); P im Fenster der Meldungen 08:45 (zwei im Arbeitszimmer):
+    Bad 0,12 (config7) / 0,09 (alle Daten) / 0,24 (nur Gang) / 0,70 (alt); Küche 11:39 0,08 / 0,10 /
+    0,32 / 0,00. Log-Evidenz (mit dem Jacobi-Term 2 ln k je Positionsdichte, damit Maßstäbe vergleichbar
+    sind): alle Daten +1945 gegen config7; nur Gang −5785 und alt −3913, obwohl beide 3300–4000
+    Flur-Messungen weniger verwenden (mit 34–35° liegen sie hinter Wänden).
+  Offen: Flur-Position, Küche, Entfernungsversatz (9).
 - **Sigma-Punkte statt Mittel, Wände über Sigma-Punkte** (7.10., 5.2): Fehlerberichte 6.10.
   (Stand 0.10.0 → mit allem): Licht zu spät aus 3,00 → 1,67 von 15, fälschlich an 0 von 41 (beide),
   Log-Evidenz +470. Küche 21:57 (zum Lichtschalter, wie oben): Tiefpunkt Küche 0,02 → 0,75; Küche
