@@ -22,9 +22,9 @@ import math
 
 import numpy as np
 
-from .filtermodel import FRAME, IDLE, STILL, WALK, Model, Shapes, radar_pd
+from .filtermodel import FRAME, IDLE, P_FA, S50, STILL, WALK, Model, Shapes
 from .frames import SensorRuntime, detections as frame_detections
-from . import ld2410
+from . import kernels, ld2410
 from . import gauss
 from .gauss import Gauss
 from .hidden import Hidden, Undetected
@@ -38,10 +38,20 @@ __all__ = ["Model", "Tracker"]
 
 MAX_STEP = 0.2  # s: motion is cut into parts no longer than this
 MOUNT_RADIUS = 0.3  # m: targets this close to a sensor come from its mount
-LN2 = math.log(2.0)
 GIVE_UP = 0.01  # a known person in the house with less probability joins the unknown ones with all
                 # of their mass: only P(several of them come back) changes, by <= GIVE_UP^2 / 2
 RECYCLE_EVERY = 1.0  # s
+
+
+_LGAMMA = np.zeros(0)
+
+
+def _lgamma_table(n: int) -> np.ndarray:
+    """lgamma(i + 1) for i < n (at least)."""
+    global _LGAMMA
+    if len(_LGAMMA) < n:
+        _LGAMMA = np.array([math.lgamma(i + 1) for i in range(max(n, 64))])
+    return _LGAMMA
 
 
 def _logsumexp(a) -> float:
@@ -279,8 +289,8 @@ class Tracker:
 
     # ------------------------------------------------------------ geometry
 
-    def _g(self, si: int, pos: np.ndarray) -> np.ndarray:
-        """How well sensor si sees the points (..., 2), 0..1 (MODEL.md 4.1, from the geometry)."""
+    def _grid(self, si: int) -> np.ndarray:
+        """How well sensor si sees each 0.1 m cell of the world, 0..1 (MODEL.md 4.1)."""
         grid = self._gcache.get(si)
         if grid is None:
             w = self.world
@@ -292,6 +302,11 @@ class Tracker:
                         grid[i, j] = self.sensor_model.pd(sid, w.x0 + (i + 0.5) * CELL, w.y0 + (j + 0.5) * CELL) / PD_MAX
             self._gcache[si] = grid
             self._area[si] = float((grid > 0.05).sum()) * CELL * CELL
+        return grid
+
+    def _g(self, si: int, pos: np.ndarray) -> np.ndarray:
+        """How well sensor si sees the points (..., 2), 0..1 (MODEL.md 4.1, from the geometry)."""
+        grid = self._grid(si)
         shape = pos.shape[:-1]
         flat = pos.reshape(-1, 2)
         w = self.world
@@ -306,35 +321,21 @@ class Tracker:
         dx, dy = pos[..., 0] - s.x, pos[..., 1] - s.y
         return np.hypot(dx, dy), np.arctan2(dy, dx)
 
-    def _mask(self, si: int, pos: np.ndarray, skip=()) -> np.ndarray:
-        """Share of the rate at which sensor si would start a new track on somebody at pos (n, 2)
-        that is left given its live tracks: next to a target it measures, somebody is merged into it
-        (resolution, Svensson 2012); near where it holds a lost target it finds that one again."""
-        out = np.ones(len(pos))
-        segs = [s for s in self._live_by_sensor.get(si, []) if s not in skip]
-        if not segs:
-            return out
-        m = self.m
-        r, th = self._polar(si, pos)
-        for seg in segs:
-            info = self.segs[seg]
-            if info["lost"] is None:
-                rz, tz = self._polar(si, info["z"])
-                dr = r - rz
-                dc = 0.5 * (r + rz) * np.angle(np.exp(1j * (th - tz)))
-                out *= 1 - np.exp(-LN2 * ((dr / m.res_range) ** 2 + (dc / m.res_cross) ** 2))
-            else:
-                dz = pos - info["lost"]["z"]
-                out *= 1 - self._near((dz * dz).sum(axis=1))
-        return out
-
-    def _base_rates(self, si: int, pos: np.ndarray) -> tuple:
-        """Rate (1/s) at which sensor si starts a track on a walker / on a still person at pos,
-        without the mask: rho * P_D(r) * geometry (MODEL.md 4.1)."""
-        (rs, r50s), (rw, r50w) = self.m.acquire
-        r, _ = self._polar(si, pos)
-        g = self._g(si, pos)
-        return rw * radar_pd(r, r50w) * g, rs * radar_pd(r, r50s) * g
+    def _rates(self, si: int, pos: np.ndarray, skip=(), masked=True, base=None) -> np.ndarray:
+        """(2, n) rates (1/s) [walkers, still people] at which sensor si starts a track on somebody
+        at pos (n, 2): rho * P_D(r) * geometry (MODEL.md 4.1); masked: times the share left given
+        its live tracks but skip - next to a target it measures, somebody is merged into it
+        (resolution, Svensson 2012); near where it holds a lost target it finds that one again
+        (kernels.sensor_rates). base: the rates without the mask at pos if known."""
+        s, w, m = self.config.sensors[si], self.world, self.m
+        (rs, r50s), (rw, r50w) = m.acquire
+        live = [(0.0, *self.segs[seg]["z"]) if self.segs[seg]["lost"] is None else (1.0, *self.segs[seg]["lost"]["z"])
+                for seg in (self._live_by_sensor.get(si, []) if masked else ()) if seg not in skip]
+        return kernels.sensor_rates(np.ascontiguousarray(pos, dtype=float).reshape(-1, 2),
+                                    np.zeros((2, 0)) if base is None else base, float(s.x), float(s.y), self._grid(si),
+                                    float(w.x0), float(w.y0), CELL, np.array([rw, r50w, rs, r50s], dtype=float), P_FA,
+                                    S50, np.array(live, dtype=float).reshape(-1, 3),
+                                    np.array([m.res_range, m.res_cross], dtype=float), float(m.find_radius))
 
     def _tile_rates(self, si: int, skip=()) -> tuple:
         """(walkers, still people) rates (n,) of sensor si per tile (averaged over the tile)."""
@@ -344,13 +345,12 @@ class Tracker:
         key = ("tiles", si)
         base = self._gcache.get(key)
         if base is None:
-            base = self._base_rates(si, tl.points)
-            self._gcache[key] = (base, tl.average(base[0]), tl.average(base[1]))
-            base = self._gcache[key]
+            at = self._rates(si, tl.points, masked=False)
+            base = self._gcache[key] = (at, tl.average(at))
         if not any(s not in skip for s in self._live_by_sensor.get(si, [])):
-            return base[1], base[2]
-        mask = self._mask(si, tl.points, skip)
-        return tl.average(base[0][0] * mask), tl.average(base[0][1] * mask)
+            return base[1][0], base[1][1]
+        r = tl.average(self._rates(si, tl.points, skip, base=base[0]))
+        return r[0], r[1]
 
     def _gauss_rates(self, si: int, g: Gauss, skip=(), pts=None) -> np.ndarray:
         """(2, P) rate of sensor si per component [STILL, WALK] at its sigma points (gauss.UNIT, or
@@ -361,10 +361,8 @@ class Tracker:
         if pts is None:
             pts = g.sigma(self.world)
         n = pts.shape[1]
-        flat = pts.reshape(-1, 2)
-        rw, rs = self._base_rates(si, flat)
-        mask = self._mask(si, flat, skip)
-        return np.stack([rs[:n] * mask[:n], rw[n:] * mask[n:]])
+        r = self._rates(si, pts, skip)
+        return np.stack([r[1, :n], r[0, n:]])
 
     @staticmethod
     def _expect(f) -> np.ndarray:
@@ -1388,26 +1386,10 @@ class Tracker:
         """The number of people, per column: one Bernoulli per known person (ps (P, C)), plus a
         Poisson number of unknown ones (means (C,)), cut where the rest is below 1e-9. (C, size),
         a column's entries beyond its own cut 0."""
-        C = len(means)
-        dist = np.ones((C, 1))
-        for q in ps:
-            nxt = np.zeros((C, dist.shape[1] + 1))
-            nxt[:, :-1] = dist * (1 - q)[:, None]
-            nxt[:, 1:] += dist * q[:, None]
-            dist = nxt
-        some = np.flatnonzero(means > 0)
-        if len(some):
-            mean = means[some][:, None]
-            cut = (mean + 10 * np.sqrt(mean) + 6).astype(int)
-            k = np.arange(int(cut.max()))
-            pois = np.exp(k * np.log(mean) - mean - np.array([math.lgamma(i + 1) for i in k]))
-            pois[k >= cut] = 0.0
-            out = np.zeros((C, dist.shape[1] + len(k) - 1))
-            out[means <= 0, :dist.shape[1]] = dist[means <= 0]
-            for i in range(dist.shape[1]):
-                out[some, i:i + len(k)] += dist[some, i:i + 1] * pois
-            dist = out
-        return dist
+        means = np.asarray(means, dtype=float)
+        top = float(means.max()) if len(means) else 0.0
+        return kernels.poisson_binomial(np.asarray(ps, dtype=float).reshape(-1, len(means)), means,
+                                        _lgamma_table(int(top + 10 * math.sqrt(max(top, 0.0)) + 6)))
 
     def _counts(self, per_object) -> np.ndarray:
         """(columns, K): count distributions per column of per_object(obj) - for a known person the

@@ -127,6 +127,11 @@ class Tiling:
                     self.doors[place - 1].append(c)
         self.entries = [c for c in (self.cell_near(watch) for watch, _ in w.portals_of(w.outside)) if c >= 0]
         self.open = [p - 1 for p in w.open_places]
+        # the same as arrays (kernels.hidden_regions)
+        self.door_ptr = np.cumsum([0] + [len(self.doors[r]) for r in range(self.R)]).astype(np.int64)
+        self.door_list = np.array([c for r in range(self.R) for c in self.doors[r]], dtype=np.int64)
+        self.open_idx = np.array(self.open, dtype=np.int64)
+        self.entry_idx = np.array(self.entries, dtype=np.int64)
         from .hidden import AGE_EDGES
         self.age_edges = AGE_EDGES
         self.widths = np.diff(np.concatenate([AGE_EDGES, [AGE_EDGES[-1] * 2]]))

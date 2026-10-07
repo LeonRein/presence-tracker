@@ -99,5 +99,5 @@ def test_rates_are_expected_over_the_component():
     g.cov[:, :, 0, 0] = 2.25  # 1.5 m: the sigma points reach 2.6 m, beyond the walls
     assert (tr.world.place_of(g.sigma(tr.world).reshape(-1, 2)) == 0).all()
     r = tr._gauss_rates(0, g)
-    rw, _ = tr._base_rates(0, g.pos)
+    rw, _ = tr._rates(0, g.pos, masked=False)
     assert r.shape == (2, 5) and not np.isclose(tr._expect(r)[WALK], rw[WALK], rtol=0.05)

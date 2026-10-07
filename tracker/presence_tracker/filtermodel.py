@@ -9,6 +9,7 @@ WALK, STILL = 1, 0
 FRAME = 0.089  # s, LD2450 frame period (measured)
 IDLE = 6.0  # s: frames further apart were lost on the way (the idle heartbeat is 5 s)
 P_FA = 1e-6  # false alarm probability per detection cell of a CFAR radar (a usual design value, Skolnik)
+S50 = math.log(P_FA) / math.log(0.5) - 1  # the SNR at which a Swerling I target is detected half the time
 
 
 class Model:
@@ -129,13 +130,6 @@ def stay_rates(share: float, scale: float, points=Model.stay_points, ratio=2.0) 
     lam.append(math.log(last / rest) / points[-1])
     p.append(last)
     return np.array(p), np.array(lam)
-
-
-def radar_pd(r, r50: float):
-    """Swerling I detection probability at distance r, half at r50 (radar equation, SNR ~ r^-4)."""
-    s50 = math.log(P_FA) / math.log(0.5) - 1
-    r = np.maximum(r, 0.3)
-    return P_FA ** (1.0 / (1.0 + s50 * (r50 / r) ** 4))
 
 
 class Shapes:

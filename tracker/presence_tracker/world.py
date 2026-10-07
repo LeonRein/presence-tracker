@@ -10,6 +10,8 @@ import math
 
 import numpy as np
 
+from . import kernels
+
 OBSERVED = 0
 CELL = 0.1  # m, raster of the place labels
 
@@ -49,7 +51,7 @@ class World:
         segs = [(a[0], a[1], b[0], b[1]) for a, b in config.wall_segments]
         self.walls = np.array(segs, dtype=float).reshape(-1, 4)
         w = self.walls
-        self._wall_box = np.stack([np.minimum(w[:, 0], w[:, 2]), np.minimum(w[:, 1], w[:, 3]),
+        self.wall_box = np.stack([np.minimum(w[:, 0], w[:, 2]), np.minimum(w[:, 1], w[:, 3]),
                                    np.maximum(w[:, 0], w[:, 2]), np.maximum(w[:, 1], w[:, 3])], axis=1)
         # per cell the distance from anywhere in it to the nearest wall (a lower bound): moves
         # within that distance of a point cross no wall
@@ -104,64 +106,17 @@ class World:
         out[ok] = self.labels[i[ok], j[ok]]
         return out
 
-    def _near_walls(self, p0: np.ndarray, p1: np.ndarray) -> np.ndarray:
-        """The walls whose bounding box meets the one of the moves p0 -> p1."""
-        lo = np.minimum(p0.min(axis=0), p1.min(axis=0))
-        hi = np.maximum(p0.max(axis=0), p1.max(axis=0))
-        bb = self._wall_box
-        return (bb[:, 0] <= hi[0]) & (bb[:, 2] >= lo[0]) & (bb[:, 1] <= hi[1]) & (bb[:, 3] >= lo[1])
-
     def crosses_wall(self, p0: np.ndarray, p1: np.ndarray) -> np.ndarray:
         """Per move p0 -> p1 (n, 2): does it cross a wall?"""
-        if len(self.walls) == 0 or len(p0) == 0:
-            return np.zeros(len(p0), dtype=bool)
-        near = self._near_walls(p0, p1)
-        if not near.any():
-            return np.zeros(len(p0), dtype=bool)
-        ax, ay, bx, by = (self.walls[near, k][None, :] for k in range(4))
-        px, py = p0[:, 0:1], p0[:, 1:2]
-        qx, qy = p1[:, 0:1], p1[:, 1:2]
-
-        def orient(x1, y1, x2, y2, x3, y3):
-            return (x2 - x1) * (y3 - y1) - (y2 - y1) * (x3 - x1)
-
-        d1 = orient(ax, ay, bx, by, px, py)
-        d2 = orient(ax, ay, bx, by, qx, qy)
-        d3 = orient(px, py, qx, qy, ax, ay)
-        d4 = orient(px, py, qx, qy, bx, by)
-        return ((d1 * d2 < 0) & (d3 * d4 < 0)).any(axis=1)
+        return kernels.crosses_wall(np.ascontiguousarray(p0, dtype=float), np.ascontiguousarray(p1, dtype=float),
+                                    self.walls, self.wall_box)
 
     def reflect(self, p0: np.ndarray, p1: np.ndarray) -> tuple:
         """Per move p0 -> p1 (n, 2): where it ends if walls reflect (MODEL.md 3.2) - mirrored at
         the first wall it crosses (once) - and the unit normal of that wall (0 where it crosses
         none), for mirroring a velocity too."""
-        p1 = np.array(p1, dtype=float)
-        normal = np.zeros_like(p1)
-        if len(self.walls) == 0 or len(p1) == 0:
-            return p1, normal
-        near = self._near_walls(p0, p1)
-        if not near.any():
-            return p1, normal
-        walls = self.walls[near]
-        a, b = walls[None, :, 0:2], walls[None, :, 2:4]
-        d = (p1 - p0)[:, None, :]
-        e = b - a
-        w = a - p0[:, None, :]
-        den = d[..., 0] * e[..., 1] - d[..., 1] * e[..., 0]
-        with np.errstate(divide="ignore", invalid="ignore"):
-            t = (w[..., 0] * e[..., 1] - w[..., 1] * e[..., 0]) / den  # along the move
-            u = (w[..., 0] * d[..., 1] - w[..., 1] * d[..., 0]) / den  # along the wall
-        hit = (den != 0) & (t > 0) & (t < 1) & (u > 0) & (u < 1)
-        rows = np.flatnonzero(hit.any(axis=1))
-        if not len(rows):
-            return p1, normal
-        k = np.argmin(np.where(hit[rows], t[rows], np.inf), axis=1)
-        ew = e[0, k]
-        n = np.stack([-ew[:, 1], ew[:, 0]], axis=1) / np.hypot(ew[:, 0], ew[:, 1])[:, None]
-        off = ((p1[rows] - a[0, k]) * n).sum(axis=1)
-        p1[rows] -= 2 * off[:, None] * n
-        normal[rows] = n
-        return p1, normal
+        return kernels.reflect(np.ascontiguousarray(p0, dtype=float), np.ascontiguousarray(p1, dtype=float),
+                               self.walls, self.wall_box)
 
     def portals_of(self, place: int) -> list:
         return [(watch, inward) for p, watch, inward in self.portals if p == place]

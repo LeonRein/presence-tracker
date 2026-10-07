@@ -24,6 +24,7 @@ import math
 
 import numpy as np
 
+from . import kernels
 from .filtermodel import STILL, WALK
 
 LOG2PI = math.log(2 * math.pi)
@@ -38,16 +39,6 @@ X, V = 0, 1  # state indices; a track's c and o follow at slots[seg], slots[seg]
 UNIT = math.sqrt(3.0) * np.array([[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]])
 UNIT_W = np.array([1 / 3, 1 / 6, 1 / 6, 1 / 6, 1 / 6])
 UNIT_REACH = math.sqrt(3.0)  # the farthest unit point from the centre
-
-
-def _chol(C):
-    """Cholesky factors of 2 x 2 covariances (..., 2, 2) (closed form; numpy's is slow for such
-    small ones)."""
-    L = np.zeros_like(C)
-    L[..., 0, 0] = np.sqrt(np.maximum(C[..., 0, 0], 1e-24))
-    L[..., 1, 0] = C[..., 1, 0] / L[..., 0, 0]
-    L[..., 1, 1] = np.sqrt(np.maximum(C[..., 1, 1] - L[..., 1, 0] ** 2, 0.0))
-    return L
 
 
 def _collapse(parts):
@@ -201,23 +192,17 @@ class Gauss:
         stayed = self.gow * np.exp(-shapes.go * dt)
         p_stay = float(stayed.sum())
         p_stop = -math.expm1(-m.speed / m.walk_length * dt)
-        w_ss, w_sw = w[STILL] * p_stay, w[STILL] * (1 - p_stay)
-        w_ww, w_ws = w[WALK] * (1 - p_stop), w[WALK] * p_stop
-        mS, PS = self.mean[STILL], self.cov[STILL]
-        mW, PW = self.mean[WALK], self.cov[WALK]
-        # walking -> standing: the velocity is 0 from now on
-        mWS, PWS = mW.copy(), PW.copy()
-        mWS[:, V] = 0.0
-        PWS[:, V, :] = 0.0
-        PWS[:, :, V] = 0.0
-        # standing -> walking: off in any direction at the walking speed (MODEL.md 3.1)
-        mSW, PSW = mS.copy(), PS.copy()
-        mSW[:, V] = 0.0
-        PSW[:, V, :] = 0.0
-        PSW[:, :, V] = 0.0
-        PSW[:, V, V] = 0.5 * (m.speed ** 2 + m.speed_spread ** 2)
-        tot_s, mS, PS = _collapse([(w_ss, mS, PS), (w_ws, mWS, PWS)])
-        tot_w, mW, PW = _collapse([(w_ww, mW, PW), (w_sw, mSW, PSW)])
+        # the incoming parts of each mode matched to one Gaussian (walking -> standing: the velocity is
+        # 0 from now on; standing -> walking: off in any direction at the walking speed, MODEL.md
+        # 3.1), then the linear prediction per mode (exact discretizations, Saerkkae & Solin 2019,
+        # ex. 6.2; the velocity's correlation time 1 / turn_rate, MODEL.md 3.2)
+        s2 = 0.5 * (m.speed ** 2 + m.speed_spread ** 2)  # walking: stationary velocity variance per axis
+        ao = math.exp(-dt / m.tau)
+        F, Q = kernels.motion(self.mean.shape[2], float(dt), float(m.still_noise ** 2), 1.0 / m.turn_rate, float(s2), ao,
+                              np.array(list(self.slots.values()), dtype=np.int64),
+                              np.array([self.var[seg] * (1 - m.const_share) * (1 - ao * ao) for seg in self.slots]))
+        tot_s, tot_w, w_ss, w_ws, m0, P0, self.mean, self.cov = kernels.imm_predict(
+            w, self.mean, self.cov, p_stay, p_stop, s2, F, Q)
         # the kinds of stay: who stood on is more likely a long stay; who just stopped, a fresh one.
         # The detectability changes now and then within a stay, and is new for a new one
         if tot_s > 0:
@@ -233,29 +218,8 @@ class Gauss:
         self.logw = _log(np.array([tot_s, tot_w]))
         top = self.logw.max()
         self.logw -= top + math.log(float(np.exp(self.logw - top).sum()))
-        # linear prediction per mode (exact discretizations, Saerkkae & Solin 2019, ex. 6.2)
-        d = self.mean.shape[2]
-        F = np.broadcast_to(np.eye(d), (2, d, d)).copy()
-        Q = np.zeros((2, d, d))
-        F[STILL, V, V] = 0.0
-        Q[STILL, X, X] = m.still_noise ** 2 * dt
-        tau = 1.0 / m.turn_rate  # the velocity's correlation time (MODEL.md 3.2)
-        a = math.exp(-dt / tau)
-        s2 = 0.5 * (m.speed ** 2 + m.speed_spread ** 2)  # stationary variance per axis
-        F[WALK, X, V] = tau * (1 - a)
-        F[WALK, V, V] = a
-        Q[WALK, V, V] = s2 * (1 - a * a)
-        Q[WALK, X, V] = Q[WALK, V, X] = s2 * tau * (1 - a) ** 2
-        Q[WALK, X, X] = 2 * s2 * tau * (dt - 2 * tau * (1 - a) + 0.5 * tau * (1 - a * a))
-        ao = math.exp(-dt / m.tau)
-        for seg, k in self.slots.items():
-            F[:, k + 1, k + 1] = ao
-            Q[:, k + 1, k + 1] = self.var[seg] * (1 - m.const_share) * (1 - ao * ao)
-        self.mean = np.einsum("kij,kaj->kai", F, np.stack([mS, mW]))
-        P = np.stack([PS, PW])
-        self.cov = np.einsum("kij,kajl,kml->kaim", F, P, F) + Q[:, None, :, :]
         if tiles is not None and tiles.n and not self.phantom:
-            self.walls(np.stack([mS, mW]), P, F, Q, tiles.world)
+            self.walls(m0, P0, F, Q, tiles.world)
             self._through_doors(dt, tiles)
 
     def walls(self, m0, P0, F, Q, world):
@@ -279,37 +243,10 @@ class Gauss:
                                                     + math.sqrt(max(Q[WALK, X, X], 0.0)))
         if world.clear(x0, y0, reach):
             return
-        core = [X, V]
-        Fc = F[WALK][np.ix_(core, core)]
-        Qc = Q[WALK][np.ix_(core, core)]
-        L0 = _chol(P0[WALK][:, core][:, :, core])  # (2 axes, 2, 2)
-        Lq = _chol(Qc)
-        pre = np.repeat(m0[WALK][:, core][None], 2 * n, axis=0)  # (points, 2 axes, 2)
-        q = np.zeros_like(pre)
-        i = 0
-        for a in (0, 1):
-            for j in range(2):
-                for sign in (s, -s):
-                    pre[i, a] += sign * L0[a][:, j]
-                    q[i + 4, a] += sign * Lq[:, j]
-                    i += 1
-            i += 4
-        post = np.einsum("ij,paj->pai", Fc, pre) + q
-        p1, normal = world.reflect(pre[:, :, 0], post[:, :, 0])
-        if not normal.any():
-            return
-        post[:, :, 0] = p1
-        vn = (post[:, :, 1] * normal).sum(axis=1)
-        post[:, :, 1] -= 2 * vn[:, None] * normal
-        mu = post.mean(axis=0)
-        e = post - mu[None]
-        Cn = np.einsum("pai,paj->aij", e, e) / len(post)
-        m = self.mean[WALK][:, core]
-        P = self.cov[WALK]
-        C = P[:, core][:, :, core]
-        G = np.linalg.solve(C + 1e-12 * np.eye(2)[None], P[:, core, :]).transpose(0, 2, 1)  # (2, d, 2)
-        self.mean[WALK] = self.mean[WALK] + np.einsum("aij,aj->ai", G, mu - m)
-        self.cov[WALK] = P + np.einsum("aij,ajl,aml->aim", G, Cn - C, G)
+        hit, mean, cov = kernels.wall_moves(m0[WALK], P0[WALK], F[WALK], Q[WALK], self.mean[WALK], self.cov[WALK],
+                                            world.walls, world.wall_box)
+        if hit:
+            self.mean[WALK], self.cov[WALK] = mean, cov
 
     def _through_doors(self, dt, tiles):
         """The walkers' share that walking takes through a door in dt (tiling.py: the rates of the

@@ -27,6 +27,8 @@ import math
 
 import numpy as np
 
+from . import kernels
+
 AGE_EDGES = np.concatenate([[0.0], 2.0 ** np.arange(1, 18)])  # s, region stay ages: 2 s ... 36 h
 
 
@@ -117,20 +119,12 @@ class Hidden:
         tl = self.tiles
         m, sh = tl.tr.m, tl.sh
         if tl.n:
-            # walkers stop (the mean walk is walk_length long), standing people get up at their rate
-            stop = self.walk * -math.expm1(-m.speed / m.walk_length * dt)
-            up = -np.expm1(-sh.go * dt)  # (L,)
-            s = self.still.sum(axis=1)  # (L, n): over the detectability
-            rise = up[:, None] * s
-            self.walk -= stop
-            self.walk += rise.sum(axis=0)
+            # walkers stop (the mean walk is walk_length long), standing people get up at their rate;
             # who stays: the detectability changes now and then within a stay (MODEL.md 4.1), drawn
             # anew from kappa_w; who stops begins a fresh stay (its kind from go_w, its
-            # detectability from kappa_w: Shapes.stay_prior). Written with the sums over the
-            # detectability: two passes over still instead of six
-            q = -math.expm1(-m.kappa_switch * dt)
-            self.still *= ((1 - up) * (1 - q))[:, None, None]
-            self.still += sh.kappa_w[None, :, None] * (q * (s - rise) + sh.go_w[:, None] * stop[None, :])[:, None, :]
+            # detectability from kappa_w: Shapes.stay_prior)
+            kernels.hidden_stays(self.walk, self.still, -math.expm1(-m.speed / m.walk_length * dt), -np.expm1(-sh.go * dt),
+                                 -math.expm1(-m.kappa_switch * dt), sh.kappa_w, sh.go_w)
             self.clock += dt
             while self.clock >= tl.tick:
                 self.clock -= tl.tick
@@ -142,34 +136,13 @@ class Hidden:
     def _regions(self, dt: float):
         tl = self.tiles
         m = tl.tr.m
-        rates = tl.region_rates()
-        ends = self.region * -np.expm1(-rates * dt)
-        self.region -= ends
-        for r in range(tl.R):
-            out = float(ends[r].sum())
-            doors = tl.doors[r]
-            if not doors:
-                self.region[r, 0] += out  # no way out drawn: the stay goes on
-                continue
-            for c in doors:
-                self.walk[c] += out / len(doors)
-        # the regions with the way out: leaving the house, coming home
-        for r in tl.open:
-            leave = self.region[r] * -math.expm1(-m.leave_rate * dt)
-            self.region[r] -= leave
-            self.out += float(leave.sum())
+        # stays end (out at a door of the region, walking; without one the stay goes on); from the
+        # regions with the way out leaving the house, coming home; the stays age
         ways = len(tl.open) + len(tl.entries)
-        if ways and self.out > 0:
-            come = self.out * -math.expm1(-m.arrive_rate * ways * dt)
-            self.out -= come
-            for r in tl.open:
-                self.region[r, 0] += come / ways
-            for c in tl.entries:
-                self.walk[c] += come / ways
-        # the stays age
-        older = self.region[:, :-1] * -np.expm1(-dt / tl.widths[:-1])[None, :]
-        self.region[:, :-1] -= older
-        self.region[:, 1:] += older
+        self.out = kernels.hidden_regions(self.region, self.walk, self.out, -np.expm1(-tl.region_rates() * dt),
+                                          tl.door_ptr, tl.door_list, tl.open_idx, tl.entry_idx,
+                                          -math.expm1(-m.leave_rate * dt), -math.expm1(-m.arrive_rate * ways * dt),
+                                          -np.expm1(-dt / tl.widths[:-1]))
 
     # ------------------------------------------------------------ evidence
 
