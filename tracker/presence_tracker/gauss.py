@@ -192,44 +192,11 @@ class Gauss:
         for seg, k in self.slots.items():
             F[:, k + 1, k + 1] = ao
             Q[:, k + 1, k + 1] = self.var[seg] * (1 - m.const_share) * (1 - ao * ao)
-        before = np.stack([mS[:, X], mW[:, X]])
         self.mean = np.einsum("kij,kaj->kai", F, np.stack([mS, mW]))
         P = np.stack([PS, PW])
         self.cov = np.einsum("kij,kajl,kml->kaim", F, P, F) + Q[:, None, :, :]
         if tiles is not None and tiles.n and not self.phantom:
-            self._walls(before, tiles.world)
             self._through_doors(dt, tiles)
-
-    def _walls(self, before, world):
-        """Nobody walks through a wall (MODEL.md 2, 5.2): each component's density is cut at the walls
-        along the axes next to it, on the side where its mean was before the step, and replaced by
-        the moments of the cut density - the truncated Kalman filter (H_SimonSimon2006 eq. 5-15; for
-        one bound on one coordinate the transformation is the regression of the state on that
-        coordinate). The weights stay: what would have crossed turns at the wall (3.2), it is not
-        evidence against the component."""
-        for k in (STILL, WALK):
-            for a in (0, 1):
-                walls = world.axis_walls[a]
-                if not len(walls):
-                    continue
-                side_pos, along = before[k, a], before[k, 1 - a]
-                near = walls[(walls[:, 1] <= along) & (along <= walls[:, 2])]
-                for c in near[:, 0]:
-                    P = self.cov[k, a]
-                    s = math.sqrt(P[X, X])
-                    side = 1.0 if side_pos > c else -1.0
-                    t = side * (self.mean[k, a, X] - c) / s  # how far inside, in standard deviations
-                    if t > 4.0:
-                        continue
-                    # N(0, 1) cut at -t (Mills' ratio; its asymptote far beyond the wall)
-                    if t > -8.0:
-                        lam = math.exp(-0.5 * t * t) / (math.sqrt(2 * math.pi) * 0.5 * math.erfc(-t / math.sqrt(2)))
-                    else:
-                        lam = -t / (1 - 1 / t ** 2 + 3 / t ** 4)
-                    keep = max(1.0 - t * lam - lam * lam, 0.0)  # share of the variance left along the bound
-                    g = P[:, X] / s
-                    self.mean[k, a] = self.mean[k, a] + side * lam * g
-                    self.cov[k, a] = P - np.outer(g, g) * (1.0 - keep)
 
     def _through_doors(self, dt, tiles):
         """The walkers' share that walking takes through a door in dt (tiling.py: the rates of the

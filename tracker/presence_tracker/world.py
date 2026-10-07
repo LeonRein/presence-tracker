@@ -48,15 +48,6 @@ class World:
         # walls a person can't cross (door gaps cut out, like for the radar's sight)
         segs = [(a[0], a[1], b[0], b[1]) for a, b in config.wall_segments]
         self.walls = np.array(segs, dtype=float).reshape(-1, 4)
-        # the walls along the axes, for keeping a Gaussian on its side (gauss.py): per axis a, rows
-        # (c, lo, hi) of the walls x_a = c reaching from lo to hi along the other axis
-        self.axis_walls = []
-        for a in (0, 1):
-            w = self.walls
-            on = np.abs(w[:, a] - w[:, a + 2]) < 1e-6
-            lo = np.minimum(w[on, 1 - a], w[on, 3 - a])
-            hi = np.maximum(w[on, 1 - a], w[on, 3 - a])
-            self.axis_walls.append(np.stack([w[on, a], lo, hi], axis=1) if on.any() else np.zeros((0, 3)))
         # doors out of the observed area: where someone coming out appears, walking inward
         self.portals = []
         for q in config.portals:

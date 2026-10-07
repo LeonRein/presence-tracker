@@ -2,9 +2,6 @@
 
 ## Unveröffentlicht
 
-- Personen mit Spur gehen nicht mehr durch Wände: Ihre Gauß-Verteilung wird an den Wänden abgeschnitten
-  (abgeschnittener Kalman-Filter, MODEL.md 5.2). Vorher lief jemand, dessen Spur der Sensor kurz hielt, in
-  der Vorhersage durch die Wand, und die wiedergefundene Spur galt als Geist (Licht im falschen Raum).
 - **Der LD2410C zählt mit seinen Energien je Entfernungsring** (bewegt und ruhig) statt mit Flag und
   gemeldeter Entfernung (MODEL.md 4.3). Die gemeldete Entfernung erfand Personen: Leon allein am
   Schreibtisch in 1,5 m, in 27 % der Ruhig-Frames meldete er 2,6–6 m, und das Modell stellte die zweite Person
