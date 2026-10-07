@@ -119,7 +119,7 @@ def _lgamma(a: np.ndarray) -> np.ndarray:
 class Stats:
     """The frames of one sensor since the last evaluation, as the sufficient statistics of the
     Gamma likelihood per cell: time (s) of uncensored frames, time x energy, time x log energy, time
-    of censored ones (each frame stands for the time since the sensor's previous frame)."""
+    of censored ones (each frame for the time it stands for: Tracker._ld_frame)."""
 
     __slots__ = ("time", "t_unc", "t_e", "t_le", "t_cens")
 

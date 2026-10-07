@@ -11,6 +11,17 @@
   (llvmlite gibt es nicht für musl; schon das allein spart 17 %), ist 430 statt 150 MB groß, und die App
   braucht etwa 200 statt 85 MB Speicher. Die Kernel werden beim Bauen des Images kompiliert, der Start
   bleibt schnell; das erste Bauen dauert etwas länger (MODEL.md 10).
+- **LD2410C: Die Stille vor einem Frame zählt mit den Energien des Frames davor.** Ohne Anlass sendet
+  die Firmware nur alle 5 s einen Herzschlag; der erste Frame danach kommt, weil eine Energie gestiegen
+  ist, stand aber bisher für die ganze Stille davor (2–3 s statt 0,089 s). Dadurch lernte die App den
+  Hintergrund ohne Person 13–15 % zu hoch (Arbeits-, Ess-, Wohnzimmer; Flur 5 %, Küche 0; bewegt allein
+  25–30 %). Jetzt steht jeder Frame für einen Frame und die Stille für den Frame davor, wie die nicht
+  gesendeten Frames waren (auf Strecken mit vollem Takt nachgespielt: bewegt 0–2 %, ruhig 1–7 % neben
+  dem vollen Strom; „unter den Schwellen“ lag 5–65 % daneben, die Flags sind keine Schwellen auf die
+  Energien; MODEL.md 4.3, 10). `tools/report_eval.py`: Licht fälschlich aus 1,00 statt 2,08 von 15
+  (Wohnzimmer 21:24), an 0 von 41; leere Räume nachts weiter 0 min. Rechenzeit (6.10. 21:00–21:20, 5 Sensoren, je zweimal
+  gleichzeitig) 2,7 statt 3,6 % eines Kerns. `sim.py` sendet wie die Firmware
+  nur einen Herzschlag, wenn es nichts zu melden gibt. Neu `tools/ld2410/thinning.py`.
 - **Fehlermeldungen lassen sich genau nachspielen.** Eine Meldung speichert jetzt auch, wann das Modell
   zuletzt ohne Wissen begann, was es da gelernt hatte (Geisterkarte und, neu, den LD2410C-Hintergrund mit
   den Echoraten), den Stand des Codes und, was die App sekündlich angezeigt hat (Zahl und

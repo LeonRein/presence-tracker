@@ -259,13 +259,17 @@ Das Modell, je Sensor:
 - **Hintergrund b je Sensor, Ring und Art: von der App gelernt** (wie die Geisterkarte): Online-EM der
   Überlagerung, der Anteil des Hintergrunds an einer Energie ist im Mittel `e · b/μ` (Richardson 1972;
   Shepp & Vardi 1982), μ aus dem Stand vor diesen Frames (die Energien lernen nicht ihr eigenes Urteil,
-  J_Park2020). Prior: bewegt Ring 0 13, Ring 1 9, sonst 4,5, ruhig 5 mit dem Gewicht 10 min; Vergessen
-  6 h (angenommen). Neu für einen Sensor, wenn er verschoben wird. Gespeichert mit der Geisterkarte.
+  J_Park2020). Prior: bewegt Ring 0 13, Ring 1 9, sonst 4,5, ruhig 5 mit dem Gewicht 10 min (gemessen
+  6.10., 4,3 h; auf 19 h 16 / 9 / 4,3 / 4,9, gleiche Lichtfehler, 10 „Die Stille vor einem Frame“);
+  Vergessen 6 h (angenommen). Neu für einen Sensor, wenn er verschoben wird. Gespeichert mit der Geisterkarte.
 - **Zeit:** Die Frames werden je Sekunde gesammelt (Gamma: die Summen von Δt, Δt·e, Δt·ln e und Δt der
-  gekappten genügen), jeder Frame mit Δt / τ, Δt = Zeit seit dem vorigen Frame des Sensors bis 6 s
-  (4.4: ohne Anlass sendet die Firmware nur alle 5 s, die Energien lagen dazwischen unter den
-  Schwellen), τ 4 s bewegt / 13 s ruhig (zusammengesetzte Likelihood mit der Korrelationszeit als
-  effektiver Stichprobengröße; Varin, Reid & Firth 2011).
+  gekappten genügen), jeder mit Δt / τ, τ 4 s bewegt / 13 s ruhig (zusammengesetzte Likelihood mit der
+  Korrelationszeit als effektiver Stichprobengröße; Varin, Reid & Firth 2011). Ein Frame steht für
+  einen Frame des LD2450 (0,089 s, gemessen 0,0891 s an allen fünf). Ohne Anlass (kein LD2450-Ziel,
+  beide Flags aus) sendet die Firmware nur alle 5 s einen Herzschlag (4.4); der erste Frame danach
+  kommt, weil etwas gestiegen ist. Die Stille davor steht deshalb für die Energien des Frames davor
+  (des Herzschlags), wie die nicht gesendeten Frames bis dahin waren; eine Lücke über 6 s sagt nichts
+  (10, „Die Stille vor einem Frame“).
 - **Verrechnung:** Kein Produkt über die Personen. Je Hypothese die Personen nacheinander (erst die mit
   Spur, dann die ohne, zuletzt die unbekannten), jede gegeben die vorigen mit dem, was sie danach
   hineingeben (exakt für Personen an bekanntem Ort). Jede Person (Kacheln bzw. Komponenten an ihrem
@@ -295,9 +299,11 @@ Das Modell, je Sensor:
 - Alles in Log-Größen; Verhältnisse auf e^600 begrenzt.
 
 ### 4.4 Lücken zwischen Frames
-Die Firmware sendet leere Frames nur alle 5 s. Eine Lücke bis 6 s zählt als beobachtet und leer;
-eine längere sagt nichts. Ein Neustart der App ist eine solche Lücke für alle Sensoren: Die Personen
-werden über sie nur vorgerückt, nicht gewichtet (5.3).
+Die Firmware sendet leere Frames (kein LD2450-Ziel, beide Flags des LD2410C aus) nur alle 5 s, den
+ersten leeren nach einem vollen sofort. Eine Lücke bis 6 s zählt als beobachtet und leer (für den
+LD2410C: mit den Energien des Frames vor der Lücke, 4.3); eine längere sagt nichts.
+Ein Neustart der App ist eine solche Lücke für alle Sensoren: Die Personen werden über sie nur
+vorgerückt, nicht gewichtet (5.3).
 
 ## 5. Inferenz
 
@@ -819,6 +825,35 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   mit dem gespeicherten von 08:00:17 Arbeitszimmer und Esszimmer ab 10 s nach dem Start durchgehend
   1,000 bis 08:09, ohne Wissen ebenso (die Intensität in Sicht nimmt beide); die Küche dabei
   mindestens 0,34 / 0,95 / 0,01 (wer dort war, ist nicht bekannt). `phantom.py` 18:00–6:15 0,0 min.
+- **Die Stille vor einem Frame** (7.10., 4.3, 4.4): Die Firmware sendet einen Frame je LD2450-Frame
+  (0,089 s), solange der LD2450 ein Ziel hat oder ein Flag des LD2410C an ist, sonst alle 5 s einen
+  Herzschlag; den ersten leeren Frame nach einem vollen sofort. Bis 2eea738 stand jeder Frame für die
+  Zeit seit dem vorigen: Der erste Frame nach einer Stille, gesendet, weil eine Energie gestiegen war,
+  stand für die ganze Stille davor (im Mittel 2–3 s statt 0,089 s; 70–120 solche Frames je Stunde und
+  Sensor, Küche 3, fast alle Episoden nur der Flags). Nachgespielt auf Strecken mit vollem Takt (der
+  LD2450 hatte ein Ziel, die Flags meist aus; 11–82 min je Sensor, `tools/ld2410/thinning.py`), die
+  mittlere Energie gegen den vollen Strom: so bewegt ×1,01–1,30, ruhig ×0,99–1,02; „die Stille gehört
+  zum Frame davor“ ×0,99–1,02 / ×1,01–1,07; „in der Stille liegt jeder Ring unter seiner Schwelle“
+  (zensierte Gamma-Beobachtung mit den Schwellen der Firmware) ×1,05–1,44 / ×1,05–1,65. Die Flags sind
+  keine Schwellen auf die gemeldeten Energien: Bei Bewegt-Flag aus liegt ein Ring in 2–32 % der Frames
+  über seiner Schwelle, bei Ruhig-Flag aus in 4–18 %; und die Gamma-Form trägt die Aussage „unter 15–50“
+  nicht. Ohne Person (kein LD2450-Ziel ±30 s, 6./7.10., 19 h) war die Energie mit der alten Gewichtung
+  bewegt um 25–30 % zu hoch (Arbeits-, Ess-, Wohnzimmer; Flur 8 %, Küche 0), ruhig gleich. Gelernt im
+  Filter (6.10. 18:00 bis 7.10. 06:00), alle Ringe zusammen alt gegen neu: Arbeitszimmer +14 %,
+  Esszimmer +13 %, Wohnzimmer +15 %, Flur +5 %, Küche 0; bewegt Ring 2–8 5,6–5,8 → 4,1–4,3 (offline
+  4,0–4,3); die Echorate im Flur 0,51 → 0,24 je Stunde. Die Messungen in 4.3 (Hintergrund, Profil,
+  Formen, Gewinn, Amplitude) waren schon „bis zum nächsten Frame“ gewichtet (`tools/ld2410/geom.py`),
+  τ auf Strecken mit vollem Takt gemessen: Sie bleiben. report_eval (Fenster bis 6.10.): Licht
+  fälschlich aus 2,08 → 1,00 von 15 (Wohnzimmer 21:24 0,23 → 0,86), an 0 von 41; mit 16 Hypothesen
+  ab 10⁻⁷ aus 2,08 → 1,00, an 0,12 → 0; leere Räume 18:00–06:15 0 min wie vorher; Rechenzeit (21:00–21:20, je zweimal
+  gleichzeitig) 2,7 statt 3,6 %. Niedriger werden
+  Bereiche ohne Sensor (Bad 22:18 0,99 → 0,52, Schlafzimmer 21:31 0,94 → 0,51; welcher der beiden,
+  zählt nur für die Türen) und die Sitzende im Esszimmer 21:03 (0,93 → 0,74, über der Schwelle). Die
+  Log-Evidenz ist zwischen den Gewichtungen nicht vergleichbar (die Gewichte der Messungen ändern
+  sich). Der Prior des Hintergrunds aus den 19 h (bewegt Ring 0 16, Ring 1 9, sonst 4,3, ruhig 4,9
+  statt 13 / 9 / 4,5 / 5): Lichtfehler gleich, Evidenz +17, nicht übernommen. Offen: Der erste leere
+  Frame nach einem vollen steht für die Stille danach, obwohl die Ruhig-Energien noch abklingen (ruhig
+  bis ×1,07).
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.
