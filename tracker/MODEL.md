@@ -851,9 +851,15 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   - *report_eval* (Meldungen 7.10., config7-Lagen): alle Varianten Licht falsch an 0 von 13, aus 0
     von 7 (alte App-Rechnung aus 0,01); P im Fenster der Meldungen 08:45 (zwei im Arbeitszimmer):
     Bad 0,12 (config7) / 0,09 (alle Daten) / 0,24 (nur Gang) / 0,70 (alt); Küche 11:39 0,08 / 0,10 /
-    0,32 / 0,00. Log-Evidenz (mit dem Jacobi-Term 2 ln k je Positionsdichte, damit Maßstäbe vergleichbar
-    sind): alle Daten +1945 gegen config7; nur Gang −5785 und alt −3913, obwohl beide 3300–4000
-    Flur-Messungen weniger verwenden (mit 34–35° liegen sie hinter Wänden).
+    0,32 / 0,00.
+  - *Log-Evidenz* (mit dem Jacobi-Term 2 ln k je Positionsdichte, damit Maßstäbe vergleichbar sind;
+    gegen config7/config8 auf denselben Frames): alle Daten 7.10. 07:44–12:55 +1945, 6.10. 19–22 Uhr
+    −1000, Stunde des Gangs +159 (zusammen +1104); nur Gang −5785 / −4002 / +1063 (auf seinen eigenen
+    Daten); alt −3913 / −27728 / +886. „Nur Gang“ und „alt“ verwenden dabei 3200–4000
+    Flur-Messungen weniger (mit 34–35° liegen sie hinter Wänden), „alt“ abends 9700
+    Arbeitszimmer-Messungen weniger (gespiegelt). Die Änderungen mit allen Daten sind klein (außer dem
+    neuen Bad, 45° → 55°) und liegen bis auf das Esszimmer (−4,1° ± 2,1°) innerhalb ihrer
+    Unsicherheit; die Evidenz entscheidet zwischen ihnen und config8 nicht.
   Offen: Flur-Position, Küche, Entfernungsversatz (9).
 - **Sigma-Punkte statt Mittel, Wände über Sigma-Punkte** (7.10., 5.2): Fehlerberichte 6.10.
   (Stand 0.10.0 → mit allem): Licht zu spät aus 3,00 → 1,67 von 15, fälschlich an 0 von 41 (beide),

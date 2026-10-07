@@ -24,8 +24,9 @@
     allen Daten 54 % → 56 %, Schritte durch Wände 232 → 214 von 646.
   - `tools/calibrate_offline.py` rechnet mit demselben Code.
   Gemessen mit `tools/report_eval.py` (Meldungen 7.10.): Licht falsch an 0 von 13, aus 0 von 7 wie
-  bisher; Log-Evidenz +1945 (mit Jacobi-Term für die Maßstäbe). Offen: Der Flursensor sitzt
-  wahrscheinlich 0,4–0,8 m weiter nördlich an der Badwand als eingezeichnet (nachmessen).
+  bisher; Log-Evidenz (mit Jacobi-Term für die Maßstäbe) über 9 h Nachspiel +1104 (die alte Rechnung
+  −30755). Offen: Der Flursensor sitzt wahrscheinlich 0,4–0,8 m weiter nördlich an der Badwand als
+  eingezeichnet (nachmessen).
 
 ## 0.12.0
 
