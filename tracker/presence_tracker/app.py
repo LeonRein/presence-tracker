@@ -18,7 +18,7 @@ from collections import defaultdict
 import aiohttp
 from aiohttp import web
 
-from . import __version__, ha
+from . import __version__, code_hash, ha
 from .calibration import Calibrator
 from .model import Config
 from .filter import Tracker
@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 STATIC = (pathlib.Path(__file__).parent / "static").resolve()
 BLOCKED_DUMP = 15.0  # s the event loop may be busy before the watchdog logs where it is
 REPORT_WINDOW = 15 * 60.0  # s of sensor data kept for an error report
+CODE = code_hash()
 REPORT_KINDS = {
     "lost": "Person verloren",
     "ghost": "Geist (Person, wo niemand ist)",
@@ -64,6 +65,7 @@ class App:
         self.zone_states: dict = {}
         self.reports = data_dir / "reports"
         self.recent = collections.deque()  # (receive time, topic, payload) of the last REPORT_WINDOW s
+        self.shown = collections.deque()  # (model time, what the app showed) per second, as long back
         self._reset_tracker()
         self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
 
@@ -95,6 +97,7 @@ class App:
                 self.tracker.ld_background.use(self.config)
             except (ValueError, KeyError, TypeError):
                 log.warning("ld2410.json unreadable, starting from the prior")
+        self.model_start = None  # when the model last started from nothing known, if not at its first frame
         self.last_model_save = time.monotonic()
         self.clocks = defaultdict(SensorClock)
         self.last_frame_t = -math.inf
@@ -166,11 +169,7 @@ class App:
             if self.tracker.start is None:
                 continue
             start = time.process_time()
-            try:
-                self.tracker.step(self.clock())
-                self.zone_states = self.tracker.zone_states()
-            except Exception:  # noqa: BLE001 - see _model_failed
-                self._model_failed("step")
+            if not self.tick(self.clock()):
                 continue
             if not self.replay and time.monotonic() - self.last_model_save > 600:
                 self.last_model_save = time.monotonic()
@@ -182,9 +181,36 @@ class App:
                 last_push = now
                 await self._broadcast(self.live_message())
 
+    def tick(self, now: float) -> bool:
+        """The model goes on to now; its outputs, and once a second what they show for an error
+        report. False if the model failed."""
+        try:
+            self.tracker.step(now)
+            self.zone_states = self.tracker.zone_states()
+            t = self.tracker.now
+            if not self.shown or t - self.shown[-1][0] >= 1.0:
+                self.shown.append((t, self.shown_now()))
+                while self.shown[0][0] < t - REPORT_WINDOW:
+                    self.shown.popleft()
+        except Exception:  # noqa: BLE001 - see _model_failed
+            self._model_failed("step")
+            return False
+        return True
+
     def _save_learned(self):
         self.tracker.ghost_map.save(self.data_dir / "ghostmap.json")
         self.tracker.ld_background.save(self.data_dir / "ld2410.json")
+
+    def shown_now(self) -> dict:
+        """What Home Assistant and the map show, for an error report: per room [count, P(somebody
+        there), occupied], the people [id, most probable place, its probability, x, y, lost]."""
+        zones = {z: [st.count, None if st.probability is None else round(st.probability, 3), st.occupied]
+                 for z, st in self.zone_states.items() if not z.startswith("_")}
+        persons = []
+        for d in self.tracker.persons():
+            place, p = max(d["places"].items(), key=lambda kv: kv[1])
+            persons.append([d["id"], place, p, d["x"], d["y"], d["lost"]])
+        return {"zones": zones, "persons": persons}
 
     def live_message(self) -> str:
         snap = self.tracker.snapshot()
@@ -293,6 +319,7 @@ class App:
             return web.json_response({"error": str(e)}, status=400)
         self.config = config
         self.tracker.reconfigure(config)  # a moved sensor: the ghost map starts over (MODEL.md 4.2)
+        self.model_start = self.tracker.now
         self.calibrator.config = config
         config.save(self.config_path)
         if self.client is not None:
@@ -379,8 +406,10 @@ class App:
 
     async def h_report(self, request):
         """Something looked wrong: what (room, kind, how long ago, a note), saved with the config,
-        the ghost map and the sensor data of the last REPORT_WINDOW s in the recordings' format, so
-        the moment can be replayed exactly. These are the truth data of the evaluation (MODEL.md 8)."""
+        what was learned (ghost map, LD2410C background), the code, when the model started from
+        nothing known, and the sensor data of the last REPORT_WINDOW s in the recordings' format, with
+        what the app showed per second in between (topic "app/shown"): the moment can be replayed and
+        compared with what the app believed. These are the truth data of the evaluation (MODEL.md 8)."""
         body = await request.json()
         kind = body.get("kind")
         if kind not in REPORT_KINDS:
@@ -389,17 +418,23 @@ class App:
         ago = min(max(float(body.get("minutes_ago") or 0), 0.0), REPORT_WINDOW / 60)
         now = self.clock()  # the wall clock, or the recording's time in a replay
         meta = {"report": {"t": now, "t_event": now - 60 * ago, "room": room, "kind": kind,
-                           "text": str(body.get("text") or "")[:2000], "version": __version__},
-                "config": self.config.to_dict(), "ghost_map": self.tracker.ghost_map.to_dict()}
+                           "text": str(body.get("text") or "")[:2000], "version": __version__, "code": CODE,
+                           "model_start": self.model_start or self.tracker.start},
+                "config": self.config.to_dict(), **self.tracker.learned()}
         self.reports.mkdir(parents=True, exist_ok=True)
         name = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{re.sub(r'[^a-z0-9_]', '', room.lower()) or 'haus'}-{kind}"
         lines = [json.dumps(meta)]
+        shown = collections.deque(self.shown)
         for recv, topic, payload in list(self.recent):
+            while shown and shown[0][0] <= recv:
+                t, data = shown.popleft()
+                lines.append(json.dumps({"t": t, "topic": "app/shown", "payload": data}))
             try:
                 data = json.loads(payload)
             except ValueError:
                 data = payload.decode(errors="replace")
             lines.append(json.dumps({"t": recv, "topic": topic, "payload": data}))
+        lines += [json.dumps({"t": t, "topic": "app/shown", "payload": data}) for t, data in shown]
         path = self.reports / f"{name}.jsonl.gz"
         await asyncio.to_thread(path.write_bytes, gzip.compress("\n".join(lines).encode()))
         log.info("error report %s: %d messages", path.name, len(lines) - 1)
@@ -426,6 +461,7 @@ class App:
 
     async def h_reset_tracks(self, request):
         self.tracker.reset_people()  # nothing known about where anybody is: the data decides again
+        self.model_start = self.tracker.now
         return web.json_response({"ok": True})
 
     # -------------------------------------------------- Home Assistant (Dobby)
