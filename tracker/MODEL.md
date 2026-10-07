@@ -198,7 +198,12 @@ Ziele des LD2450 im selben Gehäuse (der unterdrückt Sitzende und hat Geister: 
   n ≈ 2: eine Amplitude (Radargleichung). Der Schweif ist kein Sonderfall eines Raums (Arbeitszimmer
   allein und die übrigen vier: τ 0,42 / 0,39, ℓ 1,59 / 1,67 m). Nach dem Winkel flach bis 45–60°
   (Strahl voll bis 50°, 0 ab 70°, angenommen darüber). Die Amplitude einzelner Aufenthalte streut um
-  einen Faktor 2 um das Potenzgesetz.
+  das Profil (`tools/ld2410/amplitude.py`, Aufenthalte einer Person ≥ 30 s, 6.10. 18–23 Uhr, Gewinn g
+  auf dem Profil je Aufenthalt): log g Streuung 0,93 ruhig / 0,66 bewegt (nach Abzug der
+  Schätzunsicherheit), als Gamma(β, β) β 1,6 / 2,8, 10–90 % g 0,14–2,3; innerhalb eines Aufenthalts
+  beständig (Hälften korreliert 0,88 / 0,71), ruhig und bewegt derselbe Gewinn (0,88); er geht mit der
+  Erkennbarkeit des LD2450 (Wiederfinderate je Aufenthalt, innerhalb Sensor und 1 m Entfernung,
+  Spearman 0,62). Im Modell ist er nicht (10).
 - **Zeit:** Die Ruhig-Energien folgen einer Person mit etwa 2 s (zwei Fälle: Kommen und Gehen; nah
   gekappt bei 100, darum dort 3 s länger voll). Korrelationszeit des Log-Likelihood-Verhältnisses „Person
   / niemand“: 4 s bewegt, 13 s ruhig.
@@ -396,9 +401,9 @@ Lebensdauer der Geister geschätzt (4.2).
 ## 9. Bekannte Schwächen und Offenes
 Offen beim LD2410C (4.3): Die Echoquellen schlucken auch, was eine Person mit Spur über das mittlere
 Profil hinaus abgibt (Flur 21:35 und 21:56: Eintretende zu 0,5 statt 0,9 im Flur); eine Amplitude je
-Aufenthalt (wie κ beim LD2450) wäre die Form dafür. Ob und wie stark er durch Wände und Türen sieht (bisher: gar nicht; die zweite Person im
+Aufenthalt half dagegen nicht (10). Ob und wie stark er durch Wände und Türen sieht (bisher: gar nicht; die zweite Person im
 Bad erscheint im Arbeitszimmer, wenn doch); die Amplitude einzelner Aufenthalte streut um einen Faktor
-2–4 um das Profil (eine Erkennbarkeit wie κ beim LD2450 wäre die Form dafür); δ ist gegen teils
+2–4 um das Profil (4.3), das Modell nimmt das mittlere; δ ist gegen teils
 unkalibrierte LD2450 gemessen (0,07–0,5 m je nach Sensor); die Addition mehrerer Personen ist nicht an
 Zwei-Personen-Zeiten geprüft; α, τ, κ, die Verzögerung und das Vergessen des Hintergrunds sind über die
 Evidenz (7) zu schätzen; das Bewegt-Flag ist ohne Ablation weggelassen. Ein Raumteil, den kein Sensor
@@ -532,6 +537,19 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
 - **Echoquellen zuerst, gegen die Personen, wie sie vorher waren** (7.10.): nahmen eintretenden
   Personen mit und ohne Spur ihre Energie (Licht zu spät aus in 5,3 von 15 Fenstern statt 2,0).
   Jetzt sind sie Alternative nur zu Personen ohne Spur und zuletzt in der Kette: 3,0.
+- **Amplitude je Aufenthalt beim LD2410C** (7.10., verworfen): der Gewinn g auf dem Profil einer
+  Stehenden (gemessen 4.3) als Gamma(2, 2) in 5 Stufen (Swerling III: langsam, fest über einen
+  Aufenthalt), neu bei jedem Stehenbleiben, innerhalb mit 1/(600 s) neu gezogen wie κ. Geprüft (a) an
+  κ gekoppelt (k-te Stufe von κ = k-te Stufe von g) auf Kacheln und Gauß-Komponenten, (b) nur auf den
+  Personen mit Spur, gekoppelt oder eigene Stufen, (c) dazu auf Gehenden (Gamma(3,5)), (d) wie (b)
+  mit Gamma(4, 4). Log-Evidenz um +1800 bis +2250 besser, Licht fälschlich aus aber in 3,50 / 3,17 /
+  4,42 / 3,17 statt 3,0 von 15 Fenstern (an weiterhin 0 von 41). Der Flur um 21:56 wird besser (0,40 →
+  0,57, mit (d) 0,55), der um 21:35 und das Wohnzimmer um 21:24 nicht; schlechter werden das Wohnzimmer
+  um 21:21 (0,89 → 0,52–0,81) und die zweite Person im Bad (21:30: 0,86 → 0,02–0,08): Mit freier
+  Amplitude erklärt die Person in der Küche (unkalibrierter Sensor, misst etwa 1 m zu weit hinten)
+  ihre Energie mit niedrigem g, und eine ungesehene Person nahe dem Sensor nimmt den Rest. Mit
+  Gehenden zusätzlich das Arbeitszimmer 21:36 (0,86 → 0,33). Die Streuung ist echt, aber solange
+  Kalibrierung und Profilform nicht stimmen, nutzt das Modell die Freiheit für Fehlpassungen.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.
