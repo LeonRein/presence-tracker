@@ -2,6 +2,27 @@
 
 ## Unveröffentlicht
 
+## 0.12.0
+
+- **Wer nicht mehr gemessen wird, ist nach 2 statt 30 Minuten vergessen** (MODEL.md 3.4, 5.5, 9, 10).
+  Eine bekannte Person ohne stützende Messung klingt jetzt mit 2 min ab (Existenz als Markov-Kette,
+  Musicki & Evans 2005). Gemessen an 5,6 h bekannter Sitzender in Sicht (Schreibtisch 6./7.10.,
+  Esszimmer 7.10.): Die längste Zeit ohne jede stützende Messung (LD2450 oder LD2410C über dem
+  Hintergrund) war 18,2 s, 99 % unter 0,3 s; nur der LD2450: höchstens 85 s. Ein leerer Platz in Sicht
+  wird vom LD2410C mit −48 bis −125 log je Minute widerlegt; das Abklingen zählt daher nur, wo nichts
+  misst (Ecke der Vorratskammer, Räume hinter Türen). 2 min lassen einer Sitzenden in der längsten
+  gemessenen Lücke r ≥ 0,86; 45 s machten das Licht an anderer Stelle schlechter. Wer hinter einer Tür
+  schläft, ist nach wenigen Minuten „unbekannt“ und kommt als neue Person heraus.
+- **Die Erkennbarkeit κ und die Amplitude des LD2410C sind Gauß-Laguerre-Punkte** statt gleich
+  wahrscheinlicher Stufen (wie die Sigma-Punkte für die Position): Ein Drittel der Masse von κ lag nahe
+  0 und machte „ungesehen sitzen“ billig. κ: 0,42 / 2,29 / 6,29 mit 0,71 / 0,28 / 0,01 statt
+  0,19 / 0,71 / 2,10; Log-Evidenz +466 bzw. +513 bei gleichen Lichtfehlern.
+
+Gemessen (12 Hypothesen): Meldungen vom 7.10. Licht fälschlich an 0 von 13, aus 0 von 7; Küche
+11:39–12:55 0,04 / 0,01 / 0,00 (0.11.0: 0,08 / 0,02 / 0,01). Meldungen bis 6.10.: an 0 von 41, aus 1,68
+statt 1,17 von 15: ein 6-s-Fenster im Arbeitszimmer um 21:36, an einem Platz, den die Geisterkarte als
+Geisterquelle gelernt hat (MODEL.md 9); Log-Evidenz +380. Leere Nacht 0 min Licht an.
+
 ## 0.11.0
 
 Gemessen mit `tools/report_eval.py`: Meldungen bis 6.10. (5 Sensoren, config5) Licht fälschlich an 0 von
@@ -16,15 +37,8 @@ Rechenzeit auf derselben Stunde, je Lauf ein Kern, Median aus drei: 32,8 s gegen
   - Eine bekannte Person ohne Spur existiert nur noch mit einer Wahrscheinlichkeit (Bernoulli wie im
     PMBM): „die Spur war ein Geist“ und „sie war eine Person“ werden nach dem Ende der Spur eine
     Hypothese mit r < 1, statt dass die erste abgeschnitten wird und nie zurückkommt. Ohne Messungen,
-    die sie stützen, klingt r mit 2 min ab (Existenz als Markov-Kette, Musicki & Evans 2005); die
-    Energien des LD2410C bei Sitzenden halten sie: Gemessen an 5,6 h bekannter Sitzender in Sicht
-    war die längste Zeit ohne jede stützende Messung (LD2450 oder LD2410C) 18,2 s (99 % unter 0,3 s);
-    ein leerer Platz in Sicht wird vom LD2410C mit −48 bis −125 log je Minute widerlegt. Wer hinter
-    einer Tür schläft, ist nach wenigen Minuten „unbekannt“ und kommt als neue Person heraus. Die
-    Anzeige zeigt Personen ab r = 0,5.
-  - Die Erkennbarkeit κ und die Amplitude des LD2410C sind Gauß-Laguerre-Quadraturpunkte statt
-    gleich wahrscheinlicher Stufen: Ein Drittel der Masse von κ lag nahe 0 und machte „ungesehen
-    sitzen“ billig (Log-Evidenz +466 bzw. +513, Lichtfehler gleich).
+    die sie stützen, klingt r mit 30 min ab (Existenz als Markov-Kette, Musicki & Evans 2005); die
+    Energien des LD2410C bei Sitzenden halten sie. Die Anzeige zeigt Personen ab r = 0,5.
   - Das Ende einer Geisterspur sprach bis zu 26-mal für eine Person (die Quelle musste sterben *und*
     nicht wiedergefunden werden); jetzt konkurrierende Risiken.
   - Die Sicht eines Sensors auf eine Person ist die Sicht auf die Stelle, an der ihre Spur sitzt (über
@@ -32,11 +46,12 @@ Rechenzeit auf derselben Stunde, je Lauf ein Kern, Median aus drei: 32,8 s gegen
     Person“ unmöglich und Leon wurde doppelt; ein Streifen der Küche an ihrer Wand war für jeden Sensor
     unsichtbar (dort stand die Person der Live-App, 2,29 / 7,70).
   - Die unbekannten Personen sind eine Intensität für alle Hypothesen, nicht eine Kopie je Hypothese.
-  Gemessen (12 Hypothesen): Meldungen vom 7.10. (13 leere, 7 belegte Raum-Fenster) Licht fälschlich an
-  3,14 → 0, aus 0 → 0; Küche 11:39–12:55 im Mittel 0,97 / 0,96 / 0,96 (e0e26e8) → 0,04 / 0,01 / 0,00,
-  Flur 9:49 0,13 → 0,05. Meldungen bis 6.10.: fälschlich an 0 von 41 wie bisher, aus 1,68 statt 1,17
-  von 15 (ein 6-s-Fenster im Arbeitszimmer, MODEL.md 9), Log-Evidenz +408; die leere Nacht 0 min Licht
-  an. Im Haus erwartet tagsüber etwa 1 statt 3,1–3,6 (wahr 1). Neue Tests (`tests/test_existence.py`).
+  Gemessen: Meldungen vom 7.10. (13 leere, 7 belegte Raum-Fenster) Licht fälschlich an 3,14 → 0, aus
+  0 → 0; Küche 11:39–12:55 im Mittel 0,97 / 0,96 / 0,96 (e0e26e8) → 0,08 / 0,02 / 0,01, Flur 9:49
+  0,13 → 0,05. Meldungen bis 6.10.: fälschlich an 0 von 41, aus 1,17 von 15 wie bisher, Log-Evidenz +28
+  (12 Hypothesen) bzw. +196 (16); die leere Nacht 0 min Licht an. Im Haus erwartet tagsüber 1,1 statt
+  3,1–3,6 (wahr 1); dafür gelten Schlafende nach einer Stunde als unbekannt (MODEL.md 9). Rechenzeit
+  (latency.py, 21 Uhr, ein Kern) 37,4 → 32,8 s. Neue Tests (`tests/test_existence.py`).
 
 - **Weniger Rechenzeit: die inneren Schleifen sind kompiliert (Numba).** Die meiste Zeit ging nicht in
   die Rechnung, sondern in den Aufwand je numpy-Aufruf auf kleinen Arrays. Die Vorhersage der
