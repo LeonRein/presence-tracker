@@ -285,18 +285,28 @@ class App:
                 self.last_model_save = time.monotonic()
                 self._saving = asyncio.create_task(self._save_in_background())
             self.stats["cpu"] += time.process_time() - start
-            await self.discovery.states(self.zone_states, t=self.tracker.now)
+            try:
+                await self.discovery.states(self.zone_states, t=self.tracker.now)
+            except Exception:  # noqa: BLE001 - the loop must go on (it is all of the app's output)
+                self.throttled("states", logging.ERROR, "states not published", exc_info=True)
             now = time.monotonic()
             if self.ws_clients and now - last_push >= 0.12:
                 last_push = now
-                self._broadcast(self.live_message())
+                try:
+                    self._broadcast(self.live_message())
+                except Exception:  # noqa: BLE001 - the live view must not stop the outputs
+                    self.throttled("live", logging.ERROR, "live view not sent", exc_info=True)
 
     def tick(self, now: float) -> bool:
         """The model goes on to now; its outputs, and once a second what they show for an error
         report. False if the model failed."""
         try:
             self.tracker.step(now)
-            self.zone_states = self.tracker.zone_states()
+            states = self.tracker.zone_states()
+            bad = [z for z, st in states.items() if not st.finite()]
+            if bad:  # never "nobody there" for a NaN: the model starts over
+                raise FloatingPointError(f"probabilities not finite in {', '.join(bad)}")
+            self.zone_states = states
             t = self.tracker.now
             if not self.shown or t - self.shown[-1][0] >= 1.0:
                 self.shown.append((t, self.shown_now()))

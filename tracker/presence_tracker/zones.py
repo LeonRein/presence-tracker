@@ -1,15 +1,16 @@
 """Zone states: what goes to Home Assistant (computed by Tracker.zone_states)."""
 
+import math
 from dataclasses import dataclass
 
 
 def _q(x: float | None, step: float):
-    return None if x is None else round(round(x / step) * step, 2)
+    return None if x is None or not math.isfinite(x) else round(round(x / step) * step, 2)
 
 
-def _p(p: float) -> float:
-    """A probability in 5-% steps."""
-    return round(round(p * 20) / 20, 2)
+def _p(p: float) -> float | None:
+    """A probability in 5-% steps (None if it is no number: never raises, app.App.tick checks)."""
+    return round(round(p * 20) / 20, 2) if math.isfinite(p) else None
 
 
 @dataclass
@@ -35,6 +36,10 @@ class ZoneState:
     target_person: int | None = None  # their id in the display
     probability: float | None = None  # P(somebody is in there), where the filter knows it
     decided: bool | None = None  # occupied by the decision on the probability (MODEL.md 6)
+
+    def finite(self) -> bool:
+        """Its probabilities are numbers (a NaN shows as "nobody there": NaN > c is false)."""
+        return all(p is None or math.isfinite(p) for p in (self.probability, self.p_enter, self.p_target))
 
     @property
     def occupied(self) -> bool:

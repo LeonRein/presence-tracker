@@ -5,17 +5,21 @@ stops it or freezes its outputs leaves a light that is on burning."""
 import asyncio
 import base64
 import json
+import math
 import os
 import socket
 import threading
 import time
 
 import aiohttp
+import numpy as np
 import pytest
 from aiohttp import web
 
 from presence_tracker import app as app_module
 from presence_tracker.app import App
+from presence_tracker.filter import Tracker
+from presence_tracker.zones import ZoneState
 from presence_tracker.sim import Person, simulate
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
@@ -243,3 +247,38 @@ def test_saving_runs_in_a_thread_and_loads_again(tmp_path, monkeypatch):
     assert again.tracker.started_from is not None
     assert json.loads(json.dumps(again.tracker.learned())) == json.loads(json.dumps(app.tracker.learned()))
     assert {k: len(v) for k, v in again.calibrator.data().items()} == {k: len(v) for k, v in app.calibrator.data().items()}
+
+
+def test_a_nan_is_a_model_failure_never_nobody_there(tmp_path, caplog):
+    """A NaN in a weight made every output NaN: "nobody there" without a word (NaN > c is false), and
+    the app stopped at the next save or in to_dict. Now the model starts over, with a log line."""
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    run_a_while(app, 20.0)
+    assert app.zone_states["wohn"].occupied
+    tracker = app.tracker
+    for hy in tracker.hyps:
+        hy.logw = math.nan
+    tracker._version += 1
+    assert not app.tick(1000.0 + 20.5)  # no raise
+    assert app.tracker is not tracker and "not finite" in caplog.text
+    with pytest.raises(FloatingPointError):
+        tracker._normalize()
+    st = ZoneState(probability=math.nan, p_enter=math.nan, eta=math.inf, approaching=True)
+    assert not st.finite() and st.to_dict()["probability"] is None  # never raises
+
+
+def test_the_ld2410_factor_of_a_person_all_in_view_never_takes_log_0():
+    """All of a person in an LD2410C's view (masses summing to 1) and every ratio below e^-745: until
+    now math.log(0), the error that stopped 0.9.3 ("math domain error")."""
+    class Stats:
+        def log_ratio(self, mu, mu0, lik):
+            return np.array([-1000.0, -2000.0])
+
+    m = np.array([0.5, 0.5])
+    lr, log_f = Tracker._ld_ratio(object(), (m, np.zeros((2, 16))), np.zeros(16), Stats(), None)
+    assert math.isclose(log_f, -1000.0 + math.log(0.5), rel_tol=1e-12)
+    # the usual case as before
+    lr, log_f = Tracker._ld_ratio(object(), (np.array([0.3, 0.2]), np.zeros((2, 16))), np.zeros(16),
+                                  type("S", (), {"log_ratio": lambda self, *a: np.array([1.0, -1.0])})(), None)
+    assert math.isclose(log_f, math.log(0.5 + 0.3 * math.e + 0.2 / math.e))

@@ -1331,6 +1331,10 @@ class Tracker:
 
     def _normalize(self):
         total = _logsumexp([h.logw for h in self.hyps])
+        if math.isnan(total) or total == math.inf:
+            # a weight not finite: every weight and output after it would be NaN, and NaN shows as
+            # "nobody there" (argmax 0, NaN > c false). The app's model starts over (app._model_failed)
+            raise FloatingPointError(f"the hypotheses' weights are not finite ({total})")
         if total == -math.inf:
             # nothing explains the data (should not happen): keep the hypotheses, equal weights
             for h in self.hyps:
@@ -1464,7 +1468,13 @@ class Tracker:
         inside = float(m @ np.exp(lr - top))
         if isinstance(obj, Undetected):
             return lr, top + math.log(math.exp(-top) + inside) - math.log1p(float(m.sum()))
-        return lr, top + math.log(max(1.0 - float(m.sum()), 0.0) * math.exp(-top) + inside)
+        rest = max(1.0 - float(m.sum()), 0.0)
+        total = rest * math.exp(-top) + inside
+        if total > 0:
+            return lr, top + math.log(total)
+        # all of the person in view (rest 0) and every ratio below e^-745: the same in the log space
+        # (math.log(0) stopped 0.9.3 with "math domain error")
+        return lr, _logsumexp(np.append(lr + _log(m), _log(rest)))
 
     def _ld_weigh(self, si: int, st: "ld2410.Stats"):
         """The LD2410C's energies since they were last weighed (MODEL.md 4.3): mean = background +
