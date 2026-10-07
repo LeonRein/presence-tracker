@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.17.0
+
 - **Ziel** (MODEL.md 6, 10 „Ziel“): neue Entität `binary_sensor.presence_<raum>_ziel` je Raum, neben *wird
   betreten*. P(ein Gehender geht als Nächstes in diesen Raum), ohne Horizont: aus seiner Bewegung (`p_enter`
   von *wird betreten*) und einer Karte, die die App selbst lernt, wohin die Gänge von jeder Stelle, in jeder
