@@ -29,6 +29,26 @@ from .filtermodel import STILL, WALK
 LOG2PI = math.log(2 * math.pi)
 X, V = 0, 1  # state indices; a track's c and o follow at slots[seg], slots[seg] + 1
 
+# Sigma points of a component's position (MODEL.md 5.2): what depends on where the person is
+# (the rates of new tracks, not being tracked, the sensors' sight) is its expectation over the
+# component's distribution, not its value at the mean. The unscented transform of the 2-D position
+# (diagonal covariance) with n + kappa = 3: the centre with 1/3 and +-sqrt(3) sigma along each axis
+# with 1/6 each, exact for the moments up to the fourth per axis (Saerkkae & Svensson 2023,
+# eq. 8.70-8.71; the 1-D Gauss-Hermite rule of order 3 per axis, alg. 8.5).
+UNIT = math.sqrt(3.0) * np.array([[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]])
+UNIT_W = np.array([1 / 3, 1 / 6, 1 / 6, 1 / 6, 1 / 6])
+UNIT_REACH = math.sqrt(3.0)  # the farthest unit point from the centre
+
+
+def _chol(C):
+    """Cholesky factors of 2 x 2 covariances (..., 2, 2) (closed form; numpy's is slow for such
+    small ones)."""
+    L = np.zeros_like(C)
+    L[..., 0, 0] = np.sqrt(np.maximum(C[..., 0, 0], 1e-24))
+    L[..., 1, 0] = C[..., 1, 0] / L[..., 0, 0]
+    L[..., 1, 1] = np.sqrt(np.maximum(C[..., 1, 1] - L[..., 1, 0] ** 2, 0.0))
+    return L
+
 
 def _collapse(parts):
     """Moment matching of weighted Gaussians [(w, mean (2, d), cov (2, d, d))] (per axis)."""
@@ -118,6 +138,38 @@ class Gauss:
     def walking(self) -> float:
         return float(self.weights()[WALK])
 
+    def sigma(self, world=None, mean=None, var=None) -> np.ndarray:
+        """(2 modes, P, 2) the sigma points of each component's position (weights UNIT_W), or of
+        N(mean, diag var) given per mode (2, 2); with the world: those across a wall seen from the
+        component's mean mirrored at it (walls reflect, MODEL.md 3.2)."""
+        pos = self.pos
+        mean = pos if mean is None else mean
+        var = self.pos_var() if var is None else var
+        sd = np.sqrt(np.maximum(var, 0.0))
+        pts = mean[:, None, :] + UNIT[None, :, :] * sd[:, None, :]
+        if world is None:
+            return pts
+        # only components with a wall within reach of their points (from their mean)
+        near = []
+        for k, ((x, y), (mx, my), (sx, sy)) in enumerate(zip(pos.tolist(), mean.tolist(), sd.tolist())):
+            if not world.clear(x, y, abs(mx - x) + abs(my - y) + UNIT_REACH * max(sx, sy)):
+                near.append(k)
+        if not near:
+            return pts
+        n = pts.shape[1]
+        p0 = np.repeat(pos[near], n, axis=0)
+        pts[near] = world.reflect(p0, pts[near].reshape(-1, 2))[0].reshape(len(near), n, 2)
+        return pts
+
+    def near_sigma(self, z, radius: float, world=None) -> tuple:
+        """E[exp(-|x - z|^2 / (2 radius^2))] per component (2,) and the sigma points (2, P, 2) of
+        the position weighted by that kernel (a Gaussian again: z as a measurement with variance
+        radius^2) - for the expectation of something else times the kernel."""
+        P, r2 = self.pos_var(), radius ** 2
+        z = np.asarray(z)[None, :]
+        mean = (self.pos * r2 + z * P) / (P + r2)
+        return self.near(z[0], radius), self.sigma(world, mean, P * r2 / (P + r2))
+
     def near(self, z, radius: float) -> np.ndarray:
         """(2,) E[exp(-|x - z|^2 / (2 radius^2))] per component."""
         v = radius ** 2 + self.pos_var()
@@ -196,7 +248,61 @@ class Gauss:
         P = np.stack([PS, PW])
         self.cov = np.einsum("kij,kajl,kml->kaim", F, P, F) + Q[:, None, :, :]
         if tiles is not None and tiles.n and not self.phantom:
+            self.walls(np.stack([mS, mW]), P, F, Q, tiles.world)
             self._through_doors(dt, tiles)
+
+    def walls(self, m0, P0, F, Q, world):
+        """Walls reflect (MODEL.md 3.2, 5.2) what moves across them in this step: the sigma points
+        of where the walking component was (m0, P0: before the linear prediction F, Q) and of the
+        step's noise (the augmented unscented transform with cubature points, Saerkkae & Svensson
+        2023 alg. 8.16 / 8.11), each moved linearly; a point whose move crosses a wall ends
+        mirrored at it, its velocity too. The component is matched to the moments of the points
+        again (cross-axis covariances dropped), and the rest of the state (the tracks' offsets)
+        follows by its regression on position and velocity. Where the component already was stays
+        as it is - only the motion meets the walls (cutting the spread at a wall trapped people
+        behind it, MODEL.md 10). The weights stay: what would have crossed turns. Standing people
+        move by a centimetre in a step: not worth it."""
+        n = 8  # per axis position, velocity and their noise; both axes
+        s = math.sqrt(n)
+        # every point's move stays within this of where the component was: the shift of the mean
+        # plus s standard deviations of position, of the velocity's share and of the noise
+        (x0, y0), (x1, y1) = m0[WALK, :, X].tolist(), self.mean[WALK, :, X].tolist()
+        vx, vv = max(P0[WALK, :, X, X].tolist()), max(P0[WALK, :, V, V].tolist())
+        reach = math.hypot(x1 - x0, y1 - y0) + s * (math.sqrt(max(vx, 0.0)) + abs(F[WALK, X, V]) * math.sqrt(max(vv, 0.0))
+                                                    + math.sqrt(max(Q[WALK, X, X], 0.0)))
+        if world.clear(x0, y0, reach):
+            return
+        core = [X, V]
+        Fc = F[WALK][np.ix_(core, core)]
+        Qc = Q[WALK][np.ix_(core, core)]
+        L0 = _chol(P0[WALK][:, core][:, :, core])  # (2 axes, 2, 2)
+        Lq = _chol(Qc)
+        pre = np.repeat(m0[WALK][:, core][None], 2 * n, axis=0)  # (points, 2 axes, 2)
+        q = np.zeros_like(pre)
+        i = 0
+        for a in (0, 1):
+            for j in range(2):
+                for sign in (s, -s):
+                    pre[i, a] += sign * L0[a][:, j]
+                    q[i + 4, a] += sign * Lq[:, j]
+                    i += 1
+            i += 4
+        post = np.einsum("ij,paj->pai", Fc, pre) + q
+        p1, normal = world.reflect(pre[:, :, 0], post[:, :, 0])
+        if not normal.any():
+            return
+        post[:, :, 0] = p1
+        vn = (post[:, :, 1] * normal).sum(axis=1)
+        post[:, :, 1] -= 2 * vn[:, None] * normal
+        mu = post.mean(axis=0)
+        e = post - mu[None]
+        Cn = np.einsum("pai,paj->aij", e, e) / len(post)
+        m = self.mean[WALK][:, core]
+        P = self.cov[WALK]
+        C = P[:, core][:, :, core]
+        G = np.linalg.solve(C + 1e-12 * np.eye(2)[None], P[:, core, :]).transpose(0, 2, 1)  # (2, d, 2)
+        self.mean[WALK] = self.mean[WALK] + np.einsum("aij,aj->ai", G, mu - m)
+        self.cov[WALK] = P + np.einsum("aij,ajl,aml->aim", G, Cn - C, G)
 
     def _through_doors(self, dt, tiles):
         """The walkers' share that walking takes through a door in dt (tiling.py: the rates of the

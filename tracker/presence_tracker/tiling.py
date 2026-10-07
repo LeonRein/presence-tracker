@@ -160,8 +160,17 @@ class Tiling:
 
     def gauss_mass(self, mean, var) -> np.ndarray:
         """(n,) share of a Gaussian N(mean, diag var) in each tile (by the sample points, summing
-        to 1 over the tiles in view)."""
+        to 1 over the tiles in view). Walls: the points behind one seen from the mean get nothing
+        (nobody walks through a wall; the Gaussian itself does not know them) - those with a
+        density above 1e-3 of the peak (within 3.7 standard deviations)."""
         d = np.exp(-0.5 * (((self.points - np.asarray(mean)[None, :]) ** 2) / (np.asarray(var)[None, :] + POINT * POINT / 12)).sum(axis=1))
+        if not self.world.clear(float(mean[0]), float(mean[1]), 3.72 * math.sqrt(float(np.max(var)) + POINT * POINT / 12)):
+            near = np.flatnonzero(d > 1e-3)
+            if len(near):
+                behind = self.world.crosses_wall(np.repeat(np.asarray(mean, dtype=float)[None, :], len(near), axis=0),
+                                                 self.points[near])
+                if behind.any() and not behind.all():
+                    d[near[behind]] = 0.0
         s = d.sum()
         if not s > 0:
             out = np.zeros(self.n)

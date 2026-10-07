@@ -25,6 +25,7 @@ import numpy as np
 from .filtermodel import FRAME, IDLE, STILL, WALK, Model, Shapes, radar_pd
 from .frames import SensorRuntime, detections as frame_detections
 from . import ld2410
+from . import gauss
 from .gauss import Gauss
 from .hidden import Hidden, Undetected
 from .sensormodel import PD_MAX, SensorModel
@@ -301,14 +302,24 @@ class Tracker:
         mask = self._mask(si, tl.points, skip)
         return tl.average(base[0][0] * mask), tl.average(base[0][1] * mask)
 
-    def _gauss_rates(self, si: int, g: Gauss, skip=()) -> np.ndarray:
-        """(2,) rate of sensor si per component [STILL, WALK], at its mean (0 where the person has a
-        measuring track of this sensor: one person, one track per sensor)."""
+    def _gauss_rates(self, si: int, g: Gauss, skip=(), pts=None) -> np.ndarray:
+        """(2, P) rate of sensor si per component [STILL, WALK] at its sigma points (gauss.UNIT, or
+        pts (2, P, 2)); 0 where the person has a measuring track of this sensor: one person, one
+        track per sensor."""
         if any(self.segs[s]["si"] == si and self._measuring(s) for s in g.slots if s in self.segs and s not in skip):
-            return np.zeros(2)
-        rw, rs = self._base_rates(si, g.pos)
-        mask = self._mask(si, g.pos, skip)
-        return np.array([rs[STILL], rw[WALK]]) * mask[[STILL, WALK]]
+            return np.zeros((2, len(gauss.UNIT_W)))
+        if pts is None:
+            pts = g.sigma(self.world)
+        n = pts.shape[1]
+        flat = pts.reshape(-1, 2)
+        rw, rs = self._base_rates(si, flat)
+        mask = self._mask(si, flat, skip)
+        return np.stack([rs[:n] * mask[:n], rw[n:] * mask[n:]])
+
+    @staticmethod
+    def _expect(f) -> np.ndarray:
+        """Expectation over the sigma points (last axis) of values at them."""
+        return f @ gauss.UNIT_W
 
     # ------------------------------------------------------------- frames
 
@@ -419,12 +430,15 @@ class Tracker:
             live = self._live(t0 + dt * (k + 1))
             if not live:
                 continue
-            r = sum(self._gauss_rates(si, obj) for si in live)
+            pts = obj.sigma(self.world)
+            r = sum(self._gauss_rates(si, obj, pts=pts) for si in live)
             da = 0.0
             if obj.away is not None and lat_f is not None:
                 share = dt / MAX_STEP  # lat_f holds for MAX_STEP; dt is at most that long
                 da = obj.away.weigh(lat_f[0] ** share, lat_f[1] ** share)
-            d = obj.reweigh(obj.kappa_weigh(np.exp(-kappa * r[STILL] * dt), math.exp(-r[WALK] * dt)), da)
+            # E[exp(-rate(x) dt)] over each component, per level of detectability
+            d = obj.reweigh(obj.kappa_weigh(self._expect(np.exp(-np.outer(kappa, r[STILL]) * dt)),
+                                            float(self._expect(np.exp(-r[WALK] * dt)))), da)
             for h in refs:
                 self.hyps[h].logw += d
         obj.t = t
@@ -544,7 +558,7 @@ class Tracker:
             if isinstance(obj, Hidden):
                 v = float(obj.walking() @ (g > 0.1)) if self.tiles.n else 0.0
             else:
-                v = (1 - obj.a) * obj.walking() * float(self._g(si, obj.pos[WALK][None, :])[0] > 0.1)
+                v = (1 - obj.a) * obj.walking() * float(self._expect(self._g(si, obj.sigma(self.world)[WALK]) > 0.1))
                 if obj.away is not None and self.tiles.n:
                     v += obj.a * float(obj.away.walking() @ (g > 0.1))
             for h in refs:
@@ -564,7 +578,8 @@ class Tracker:
             else:
                 r = self._gauss_rates(si, obj)
                 da = obj.away.weigh(1 / (1 + rw * lw), 1 / (1 + np.outer(kappa, rs) * ls)) if obj.away is not None else 0.0
-                d = obj.reweigh(obj.kappa_weigh(1 / (1 + kappa * r[STILL] * ls), 1 / (1 + r[WALK] * lw)), da)
+                d = obj.reweigh(obj.kappa_weigh(self._expect(1 / (1 + np.outer(kappa, r[STILL]) * ls)),
+                                                float(self._expect(1 / (1 + r[WALK] * lw)))), da)
             for h in refs:
                 self.hyps[h].logw += d
 
@@ -626,7 +641,10 @@ class Tracker:
         return tl.average(self._g(si, tl.points) * self._near((dz * dz).sum(axis=1)))
 
     def _kk_gauss(self, si, c: Gauss, z) -> np.ndarray:
-        return self._g(si, c.pos) * c.near(z, self.m.find_radius)
+        """(2,) per component: E[sight * kernel] - the kernel exactly, the sight at the sigma points
+        of the position weighted by it."""
+        k, pts = c.near_sigma(z, self.m.find_radius, self.world)
+        return k * self._expect(self._g(si, pts))
 
     def _held(self, si, seg, d, t):
         """A lost track, still held: not found again on anybody near where it is held, nor on the
@@ -743,8 +761,9 @@ class Tracker:
             def logf(g):
                 r = self._gauss_rates(si, g, skip | {seg})
                 if censored:
-                    return g.kappa_weigh(kappa * r[STILL] * ls, r[WALK] * lw)
-                return g.kappa_weigh(np.expm1(kappa * r[STILL] * last), math.expm1(r[WALK] * last))
+                    return g.kappa_weigh(self._expect(np.outer(kappa, r[STILL]) * ls), float(self._expect(r[WALK] * lw)))
+                return g.kappa_weigh(self._expect(np.expm1(np.outer(kappa, r[STILL]) * last)),
+                                     float(self._expect(np.expm1(r[WALK] * last))))
         if not refind:
             # the ghost map learns from P(ghost) judged without itself at z (MODEL.md 4.2)
             map_rate = self._ghost_rate(si, z)
@@ -766,13 +785,16 @@ class Tracker:
                        if k == gid and s != seg)
 
         def attach(obj):
-            """seg starts / is found on this person: (new object, log factor)."""
+            """seg starts / is found on this person: (new object, log factor). The rate of the start
+            (or the chance of finding it there) where the person is given z: over the posterior,
+            int p(x) f(x) N(z | x) dx = N(z) E[f(x) | z]."""
             if isinstance(obj, Gauss):  # somebody with tracks
                 def make():
                     new = obj.copy()
                     if seg not in new.slots:
                         new.add_track(seg, var, m.const_share)
-                    return new, new.update(seg, z, m.white, logf(new))
+                    L = new.update(seg, z, m.white)
+                    return new, L + new.reweigh(logf(new)) if L > -math.inf else L
                 return derived(("gauss", id(obj)), make)
             if not tl.n:
                 return None, -math.inf

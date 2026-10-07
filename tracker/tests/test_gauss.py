@@ -64,3 +64,40 @@ def test_getting_up_after_a_long_stay_is_followed():
     t_up = a.waypoints[3][0]
     after = [n for t, _, n in samples if t_up + 3 <= t <= a.waypoints[-1][0]]
     assert after and all(n == 1 for n in after), after
+
+
+def test_walls_turn_a_walk_but_leave_who_stands_at_one():
+    # walls reflect what moves across them (MODEL.md 5.2): a walker heading for the wall stays in
+    # the room, while somebody standing right at a wall (as measured) is not pushed off it - only
+    # the step's motion meets the walls, not the spread the Gaussian already has
+    tr = Tracker(flat_config())
+    m, sh = Model(), Shapes(Model())
+    m.walk_length = 1e12
+    g = walker((0.0, 0.8))
+    g.mean[:, :, 0] = (3.0, 4.5)
+    free = g.copy()
+    for _ in range(10):
+        g.predict(0.2, m, sh, tr.tiles)
+        free.predict(0.2, m, sh)
+    assert free.pos[WALK, 1] > 5.2
+    assert g.pos[WALK, 1] < 4.9 and g.mean[WALK, 1, 1] < 0.0  # turned at the wall at y = 5
+    s = walker((0.0, 0.0))
+    s.logw = np.log([1.0, 1e-300])
+    s.mean[:, :, 0] = (3.0, 4.95)
+    for _ in range(25):
+        s.predict(0.2, Model(), sh, tr.tiles)
+    assert abs(s.pos[STILL, 1] - 4.95) < 0.06  # only who got up meanwhile and walked into it turned
+
+
+def test_rates_are_expected_over_the_component():
+    # the rates of a wide component are the mean over its sigma points, not the value at its mean
+    # (MODEL.md 5.2), and points across a wall are mirrored into the room (walls reflect)
+    tr = Tracker(flat_config())
+    tr._live_by_sensor = {}
+    g = walker()
+    g.mean[:, :, 0] = (4.5, 3.5)  # far from sensor a, where its rate falls with the distance
+    g.cov[:, :, 0, 0] = 2.25  # 1.5 m: the sigma points reach 2.6 m, beyond the walls
+    assert (tr.world.place_of(g.sigma(tr.world).reshape(-1, 2)) == 0).all()
+    r = tr._gauss_rates(0, g)
+    rw, _ = tr._base_rates(0, g.pos)
+    assert r.shape == (2, 5) and not np.isclose(tr._expect(r)[WALK], rw[WALK], rtol=0.05)
