@@ -76,8 +76,8 @@ fortlaufendem `seq` heißt: Frame schon vor dem Senden verloren.
 
 Nach dem Verbinden sucht ESPHome sonst nach 5 und 10 min einen besseren Access Point; diese Suche hielt
 die Hauptschleife sekundenlang an. `wifi: post_connect_roaming: false` schaltet sie ab (7.10.2026:
-Arbeitszimmer mit allem seit 13:13 ohne Neustart; Flur und Wohnzimmer mit alter Firmware im selben
-Zeitraum dreimal neu gestartet, bei denselben Netz-Hängern).
+Arbeitszimmer mit beidem seit 13:13 ohne Neustart; der Flur mit alter Firmware startete bei denselben
+Netz-Hängern um 14:57 und 16:13 neu).
 
 Ob der Sensor online ist, steht retained in `presence/<name>/status` (`online` / `offline`, per Last Will).
 Zusätzlich veröffentlicht ESPHome alle nicht-internen Entitäten unter `presence/<name>/…`.
