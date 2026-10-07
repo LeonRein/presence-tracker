@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.20.0
+
 - **Personen an der Wand, an der der Sensor hängt** (Meldungen 7.10. abends, Bad und Schlafzimmer):
   Ein Ziel gilt erst als Reflexion hinter einer Wand, wenn kein Punkt im Umkreis von 0,4 m in Sicht ist.
   Bisher wurde nur entlang der Sichtlinie zurückgegangen; ein Sensor in der Ecke blickt an seiner Wand
