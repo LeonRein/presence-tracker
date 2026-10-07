@@ -97,13 +97,21 @@ class App:
                 self.tracker.ld_background.use(self.config)
             except (ValueError, KeyError, TypeError):
                 log.warning("ld2410.json unreadable, starting from the prior")
-        self.model_start = None  # when the model last started from nothing known, if not at its first frame
+        self._model_started(None)  # at its first frame
         self.last_model_save = time.monotonic()
         self.clocks = defaultdict(SensorClock)
         self.last_frame_t = -math.inf
         self.calibrator = getattr(self, "calibrator", None) or Calibrator(self.config)
         self.calibrator.config = self.config
         self.tracker.listeners.append(self._on_tracker_event)
+
+    def _model_started(self, t: float | None):
+        """The model starts from nothing known (app start, model failure, reset, new config): when
+        (None: at its first frame) and what it had learned then, for an error report. Replayed from
+        there with what was learned at the report instead, the replay was up to 0.12 off from what the
+        app believed (6.10., 21:22); with this copy it is the same."""
+        self.model_start = t
+        self.start_learned = json.loads(json.dumps(self.tracker.learned()))
 
     def _on_tracker_event(self, event, data):
         if event == "frame":
@@ -319,7 +327,7 @@ class App:
             return web.json_response({"error": str(e)}, status=400)
         self.config = config
         self.tracker.reconfigure(config)  # a moved sensor: the ghost map starts over (MODEL.md 4.2)
-        self.model_start = self.tracker.now
+        self._model_started(self.tracker.now)
         self.calibrator.config = config
         config.save(self.config_path)
         if self.client is not None:
@@ -406,8 +414,8 @@ class App:
 
     async def h_report(self, request):
         """Something looked wrong: what (room, kind, how long ago, a note), saved with the config,
-        what was learned (ghost map, LD2410C background), the code, when the model started from
-        nothing known, and the sensor data of the last REPORT_WINDOW s in the recordings' format, with
+        when the model last started from nothing known and what it had learned then (ghost map,
+        LD2410C background), the code, and the sensor data of the last REPORT_WINDOW s in the recordings' format, with
         what the app showed per second in between (topic "app/shown"): the moment can be replayed and
         compared with what the app believed. These are the truth data of the evaluation (MODEL.md 8)."""
         body = await request.json()
@@ -420,7 +428,7 @@ class App:
         meta = {"report": {"t": now, "t_event": now - 60 * ago, "room": room, "kind": kind,
                            "text": str(body.get("text") or "")[:2000], "version": __version__, "code": CODE,
                            "model_start": self.model_start or self.tracker.start},
-                "config": self.config.to_dict(), **self.tracker.learned()}
+                "config": self.config.to_dict(), **self.start_learned}
         self.reports.mkdir(parents=True, exist_ok=True)
         name = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{re.sub(r'[^a-z0-9_]', '', room.lower()) or 'haus'}-{kind}"
         lines = [json.dumps(meta)]
@@ -461,7 +469,7 @@ class App:
 
     async def h_reset_tracks(self, request):
         self.tracker.reset_people()  # nothing known about where anybody is: the data decides again
-        self.model_start = self.tracker.now
+        self._model_started(self.tracker.now)
         return web.json_response({"ok": True})
 
     # -------------------------------------------------- Home Assistant (Dobby)

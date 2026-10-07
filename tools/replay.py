@@ -69,7 +69,7 @@ def main():
         config = Config.from_dict(json.load(open(a.config)))
     crowd = Tracker(config, seed=a.seed)
     if a.report:
-        crowd.load_learned(meta)  # its ghost map and LD2410C background
+        crowd.load_learned(meta)  # its ghost map and LD2410C background when its model started
     if a.learned:
         crowd.load_learned(json.load(open(a.learned)))
     rooms = [z.id for z in config.zones_of("room") if not any(z.id in r["rooms"] for r in config.regions.values())]
