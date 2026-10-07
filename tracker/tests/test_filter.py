@@ -143,9 +143,20 @@ def test_a_recalibrated_sensor_keeps_the_people():
             samples.append((t, float(dist[2]) if len(dist) > 2 else 0.0))
     assert crowd.config.sensors[0].heading == 46.5
     assert all(p > 0.9 for t, p in samples), [(round(t), round(p, 3)) for t, p in samples if p <= 0.9]
-    # another parameter: the model starts over as after a restart, from what it knew (the tracks
+    # what only the outputs read (the light's cost, "wird betreten", the display) and the names of
+    # zones and sensors: nothing of the model changes, the tracks and hypotheses stay
+    d = turned.to_dict()
+    d["params"].update(light_cost=3.0, approach_cost=0.1, lead_time=3.0, ld2410_hold=5.0, target_threshold=0.7)
+    d["zones"][0]["name"] = "Wohnzimmer"
+    d["sensors"][1]["name"] = "Ecke"
+    segs, hyps = dict(crowd.segs), [(hy.logw, hy.key()) for hy in crowd.hyps]
+    assert not crowd.reconfigure(Config.from_dict(d)) and crowd.segs == segs
+    assert [(hy.logw, hy.key()) for hy in crowd.hyps] == hyps
+    c = 3.0 / 4.0
+    assert crowd.zone_states()["wohn"].decided == (crowd.zone_states()["wohn"].probability > c)
+    # a parameter of the model: it starts over as after a restart, from what it knew (the tracks
     # end, the people go to the tiles, MODEL.md 5.3): both are still there
-    other = Config.from_dict({**turned.to_dict(), "params": {**turned.to_dict()["params"], "light_cost": 3.0}})
+    other = Config.from_dict({**d, "params": {**d["params"], "range_sigma_base": 0.2}})
     assert crowd.reconfigure(other) and not crowd.segs and crowd.started_from is not None
     dist = crowd.count_distribution()["wohn"]
     assert len(dist) > 2 and dist[2] > 0.9, dist

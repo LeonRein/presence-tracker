@@ -48,7 +48,8 @@ GIVE_UP = 0.01  # a known person who exists with less probability (wherever they
 RECYCLE_EVERY = 1.0  # s
 ENTER_MIN_WALK = 0.02  # "wird betreten" (MODEL.md 6): a person walking with less probability can raise no
                        # zone's p_enter by more than this; not moved on
-OUTPUT_PARAMS = ("target_threshold", "target_thresholds")  # "Ziel" only (MODEL.md 6)
+# what only the outputs (MODEL.md 6) or the display read: a change restarts nothing
+OUTPUT_PARAMS = ("target_threshold", "target_thresholds", "light_cost", "approach_cost", "lead_time", "ld2410_hold")
 GAP_EXACT = 120.0  # s: the end of a gap in the data is moved as always, what lies before in leaps
 LEAP = 15.0  # s   (_predict_gap; 7.10. 08:06, 8 people, 3 h: rooms within 0.022 of moving all as always)
 MAX_LEAPS = 2000  # longer gaps in longer leaps (8 h of 8 people: 1.7 s CPU; a week in leaps of 5 min,
@@ -344,11 +345,16 @@ class Tracker:
         for k in OUTPUT_PARAMS:  # how the outputs decide changes nothing of the model
             a["params"].pop(k, None)
             b["params"].pop(k, None)
-        if a != b or [s["id"] for s in sa] != [s["id"] for s in sb] or old.regions != new.regions:
+        for z in a["zones"] + b["zones"]:  # nor what the zones are called
+            z.pop("name", None)
+
+        def regions(c):
+            return {rid: {k: v for k, v in r.items() if k != "name"} for rid, r in c.regions.items()}
+        if a != b or [s["id"] for s in sa] != [s["id"] for s in sb] or regions(old) != regions(new):
             return None
         if not np.array_equal(World(new).labels, self.world.labels):
             return None
-        return [x["id"] for x, y in zip(sa, sb) if x != y]
+        return [x["id"] for x, y in zip(sa, sb) if dict(x, name=None) != dict(y, name=None)]
 
     def _recalibrated(self, changed):
         """Sensors changed, the people's world not (reconfigure): the people stay as they are; the

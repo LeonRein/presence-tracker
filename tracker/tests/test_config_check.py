@@ -63,13 +63,16 @@ def test_per_room_threshold_and_door_are_checked(app):
 
 def test_a_valid_edit_says_whether_the_model_restarted(app):
     data = app.config.to_dict()
-    data["params"]["light_cost"] = 3.0
+    data["params"]["range_sigma_base"] = 0.2  # a parameter of the model
     status, body = put(app, data)
     assert status == 200 and body["restarted"] is True
-    assert app.config.params.light_cost == 3.0
-    data["params"]["target_threshold"] = 0.6  # an output only: the people stay
+    assert app.config.params.range_sigma_base == 0.2
+    data["params"]["light_cost"] = 3.0  # outputs only: the people stay
+    data["params"]["target_threshold"] = 0.6
+    data["zones"][0]["name"] = "Wohnzimmer"
     status, body = put(app, data)
     assert status == 200 and body["restarted"] is False
+    assert app.config.params.light_cost == 3.0 and app.tracker.p.light_cost == 3.0
 
 
 def test_the_stored_config_loads_as_it_is():
