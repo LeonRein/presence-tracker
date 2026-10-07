@@ -2,15 +2,8 @@
 
 ## Unveröffentlicht
 
-## 0.17.1
+## 0.18.0
 
-- **Zahlenfelder abgesichert:** Ein geleertes Feld wurde als 0 gespeichert; bei *Kosten: Licht ohne
-  Person* galt dann jeder Raum als besetzt, im Live-System wären alle Lichter angegangen. Jetzt behält
-  ein leeres oder ungültiges Feld seinen alten Wert und zeigt, was erlaubt ist (Grenzen je Einstellung,
-  Sensorwert, Türbreite und Bildlage). `PUT /api/config` prüft dieselben Grenzen (`model.PARAM_LIMITS`,
-  `SENSOR_LIMITS`, `Config.from_dict(check=True)`) und lehnt Werte außerhalb, `NaN` und leere Werte mit
-  400 und einer deutschen Meldung ab; die Oberfläche lädt dann den gespeicherten Stand neu. Eine
-  gespeicherte Konfiguration lädt wie bisher ohne Prüfung.
 - **Bearbeiten sicherer:** Nach jedem Speichern sagt eine Meldung *Gespeichert* und, wenn das Modell
   neu startet, *Modell neu gestartet* (`PUT /api/config` antwortet mit `restarted`). Rückgängig und
   Wiederholen gibt es als Knöpfe auf der Karte, auch am Handy. Strg+Z wirkt nur noch im Tab der Änderung;
@@ -44,6 +37,16 @@
   Kosten steht die Schwelle, die daraus folgt („besetzt ab 67 %“). Listenzeilen (Räume, Sensoren, Zonen,
   Ebenen) per Tastatur erreichbar, sichtbarer Fokusrahmen. LD2410C-Stufen mit zwei Nachkommastellen, die
   Prüfanleitung zur gespiegelten x-Achse steht unter ihrem Häkchen.
+
+## 0.17.1
+
+- **Zahlenfelder abgesichert:** Ein geleertes Feld wurde als 0 gespeichert; bei *Kosten: Licht ohne
+  Person* galt dann jeder Raum als besetzt, im Live-System wären alle Lichter angegangen. Jetzt behält
+  ein leeres oder ungültiges Feld seinen alten Wert und zeigt, was erlaubt ist (Grenzen je Einstellung,
+  Sensorwert, Türbreite und Bildlage). `PUT /api/config` prüft dieselben Grenzen (`model.PARAM_LIMITS`,
+  `SENSOR_LIMITS`, `Config.from_dict(check=True)`) und lehnt Werte außerhalb, `NaN` und leere Werte mit
+  400 und einer deutschen Meldung ab; die Oberfläche lädt dann den gespeicherten Stand neu. Eine
+  gespeicherte Konfiguration lädt wie bisher ohne Prüfung.
 
 ## 0.17.0
 
