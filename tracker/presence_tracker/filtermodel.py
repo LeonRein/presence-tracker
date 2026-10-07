@@ -81,6 +81,10 @@ class Model:
     ld_tau = (4.0, 13.0)  # s: frames count with dt / tau (moving, still; integrated correlation time
                           # of the log-likelihood ratio "person / nobody", measured)
     ld_every = 1.0  # s: the energies are weighed this often
+    # s: what one frame stands for, the LD2450's frame period (measured 0.0891 s on all five boards).
+    # Without anything to report the firmware sends only a heartbeat every 5 s: the silence before a
+    # frame belongs to the energies of the frame before it, not to the new one (MODEL.md 4.3, 4.4)
+    ld_frame = 0.089
     # all cells of a kind move together within a block (broadband interference, the moving flag's
     # blips): 1/gain ~ Gamma(kappa, kappa) per block and kind, measured sd of the log gain over 1-s
     # blocks without anybody 0.14-0.27 moving, 0.09-0.18 still [moving, still]; mixed with bursts

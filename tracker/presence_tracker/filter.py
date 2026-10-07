@@ -1216,18 +1216,33 @@ class Tracker:
 
     def _ld_frame(self, si, rt, t, ld):
         """The LD2410C's energies of this frame (MODEL.md 4.3), gathered until they are weighed
-        (every ld_every s, with the next move of everybody). A frame stands for the time since the
-        sensor's previous one: without anything to report the firmware sends a frame only every 5 s,
-        and the energies were below its thresholds meanwhile; a longer gap is lost data."""
+        (every ld_every s, with the next move of everybody). A frame stands for one frame (ld_frame).
+        Without anything to report (no LD2450 target, both flags off) the firmware sends only a
+        heartbeat every 5 s, and the first frame after such a silence is there because something
+        rose: the silence stands for the energies of the frame before it, as the frames until the
+        next heartbeat would have been (measured on thinned full-rate stretches: within 0-7 %; the
+        flags are no thresholds on the energies, a censored "below the thresholds" was 5-65 % off).
+        A gap longer than IDLE is lost data."""
         dt = t - rt.ld_t
-        rt.ld_t = t
         mg, sg = ld.get("move_gates"), ld.get("still_gates")
-        if not 0 < dt <= IDLE or not mg or not sg or len(mg) != 9 or len(sg) != 9:
+        if dt <= 0:
             return
+        rt.ld_t = t
+        prev, rt.ld_e = rt.ld_e, None
+        if not mg or not sg or len(mg) != 9 or len(sg) != 9:
+            return
+        e = rt.ld_e = np.array(list(mg) + list(sg[2:]), dtype=float)
         st = self._ld_stats.get(si)
         if st is None:
             st = self._ld_stats[si] = ld2410.Stats()
-        st.add(np.array(list(mg) + list(sg[2:]), dtype=float), dt)
+        frame = self.m.ld_frame
+        if dt > IDLE:
+            st.add(e, frame)
+        elif dt > 2 * frame and prev is not None:
+            st.add(prev, dt - frame)
+            st.add(e, frame)
+        else:
+            st.add(e, dt)  # the next frame (or one lost on the way)
 
     def _ld_tiles(self, si: int) -> tuple:
         """The tiles sensor si's LD2410C sees and what a person there puts into its 16 cells:

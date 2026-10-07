@@ -4,7 +4,8 @@ Imitates the MQTT frames of the ESPHome firmware, including the LD2450's quirks:
 a lost target coasted for 15 frames with its last speed (MODEL.md 4.1), noise, an error that wanders slowly (each sensor sees a person a bit elsewhere), at most 3 targets, still people dropping out, occasional ghosts, and the LD2410C
 as MODEL.md 4.3 describes it: its energies per gate Gamma-distributed about the background plus what
 the people in its beam put in, correlated over the time the filter assumes, capped at 100; its
-flags the firmware's thresholds on them.
+flags the firmware's thresholds on them. Like the firmware, a sensor with nothing to report (no
+target, both flags off) sends only a heartbeat every 5 s (MODEL.md 4.4).
 """
 
 import math
@@ -57,7 +58,10 @@ class SimSensor:
     resolution: float = 0.0  # m, people closer than this to each other come out as one target
     blind_to: tuple = ()  # indices of people this sensor doesn't see from blind_after on (hidden behind someone)
     blind_after: float = 0.0
+    idle: float = 5.0  # s: without anything to report (no target, both LD2410C flags off) the firmware sends
+                       # only a heartbeat this often, the first such frame at once (0: every frame)
     seq: int = 0
+    _sent: tuple = (-math.inf, True)  # when the last frame was sent, and whether it was empty
     _dropped: dict = field(default_factory=dict)
     _ghost_until: float = -1.0
     _ghost_pos: tuple = (0.0, 0.0)
@@ -70,14 +74,23 @@ class SimSensor:
 
 
 def simulate(people: list, sensors: list, duration: float, rate: float = 11.0, seed: int = 1, walls: list = ()):
-    """Yield (t, sensor_id, frame) in time order. walls: sight-blocking segments (Config.wall_segments)."""
+    """Yield (t, sensor_id, frame) in time order, as the firmware sends them (SimSensor.idle). walls:
+    sight-blocking segments (Config.wall_segments)."""
     rng = random.Random(seed)
     dt = 1 / rate
     t = 0.0
     while t < duration:
         for k, s in enumerate(sensors):
             ts = t + k * dt / len(sensors)
-            yield ts, s.config.id, _frame(s, people, ts, dt, rng, walls)
+            frame = _frame(s, people, ts, dt, rng, walls)
+            ld = frame["ld2410"]
+            empty = not frame["targets"] and not ld.get("moving") and not ld.get("still")
+            if empty and s._sent[1] and ts - s._sent[0] < s.idle:
+                continue
+            s._sent = (ts, empty)
+            frame["seq"] = s.seq
+            s.seq += 1
+            yield ts, s.config.id, frame
         t += dt
 
 
@@ -209,7 +222,6 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
     sd = int(round((int(np.argmax(e[9:])) + 2.5) * 750, -1)) if still else 0
     move_gates = [int(v) for v in e[:9]]
     still_gates = [0, 0] + [int(v) for v in e[9:]]
-    s.seq += 1
     return {
         "seq": s.seq,
         "uptime_ms": int(t * 1000),

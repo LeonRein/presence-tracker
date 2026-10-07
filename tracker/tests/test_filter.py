@@ -238,3 +238,28 @@ def test_the_app_and_its_config_have_one_version():
     import presence_tracker
     text = (pathlib.Path(__file__).parent.parent / "config.yaml").read_text()
     assert re.search(r'version: "([^"]+)"', text).group(1) == presence_tracker.__version__
+
+
+def test_the_silence_before_a_frame_belongs_to_the_frame_before_it():
+    """The firmware sends a heartbeat every 5 s while it has nothing to report; the first frame after
+    the silence is there because something rose. The silence stands for the energies of the frame
+    before it, the new frame for one frame (MODEL.md 4.3)."""
+    def frame(e):
+        return {"targets": [], "ld2410": {"moving": e > 30, "still": e > 30, "move_gates": [e] * 9,
+                                          "still_gates": [0, 0] + [e] * 7}}
+
+    crowd = Tracker(flat_config(), start=0.0)
+    si, f = crowd.sidx["a"], crowd.m.ld_frame
+    crowd.process_frame("a", 1.0, frame(5))
+    crowd.process_frame("a", 6.0, frame(60))
+    st = crowd._ld_stats[si]
+    assert np.isclose(st.time, 5.0 + f)
+    assert np.allclose(st.t_e, 5 * 5.0 + 60 * f)
+    # at the frame rate, each frame stands for the time since the one before
+    crowd.process_frame("a", 6.09, frame(60))
+    assert np.isclose(crowd._ld_stats[si].time, 5.09 + f)
+    # after lost data (more than 6 s) the gap says nothing: each of the two frames stands for one frame
+    crowd = Tracker(flat_config(), start=0.0)
+    crowd.process_frame("a", 1.0, frame(5))
+    crowd.process_frame("a", 8.0, frame(60))
+    assert np.allclose(crowd._ld_stats[si].t_e, 5 * f + 60 * f)

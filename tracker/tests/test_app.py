@@ -49,7 +49,8 @@ def test_a_report_replays_to_what_the_app_showed(tmp_path):
     app._model_started(None)  # as if loaded from ld2410.json
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), (4.5, 1.0), start=5, pauses={2: 20, 3: 60}))
     next_tick = 0.0
-    for t, sid, frame in simulate([a], sim_sensors(config), 60.0, walls=config.wall_segments):
+    # every frame sent (no heartbeat thinning): the frames drive the app's ticks here
+    for t, sid, frame in simulate([a], sim_sensors(config, idle=0.0), 60.0, walls=config.wall_segments):
         app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
         if t >= next_tick:
             assert app.tick(1000.0 + t)

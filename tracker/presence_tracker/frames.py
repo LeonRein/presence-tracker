@@ -36,8 +36,9 @@ class SensorRuntime:
     ld_last_present: float = -math.inf
     move_gates: list | None = None  # energy per 0.75 m gate (engineering mode)
     still_gates: list | None = None
-    # LD2410C for the filter (MODEL.md 4.3): when its energies came last
+    # LD2410C for the filter (MODEL.md 4.3): when its energies came last, and what they were
     ld_t: float = -math.inf
+    ld_e: object = None
 
 
 class SensorClock:
