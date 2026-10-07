@@ -66,7 +66,8 @@ Geschwindigkeitssprung-Prozess (gemessen 6.10., 8,7 h LD2450-Spuren, Wege ≥ 2 
 **Gauß-Näherung** (für Personen mit Spur, 5.2; eigene Herleitung): Der Prozess hat
 `E[v(t)·v(0)] ∝ e^(−λ_d t)`. Ein Ornstein-Uhlenbeck-Prozess mit τ = 1/λ_d und stationärer Varianz
 (s² + Streuung²)/2 je Achse hat dieselben ersten und zweiten Momente; exakt diskretisiert
-(Buch_SarkkaSolin2019 Bsp. 6.2). Wände kennt sie nicht.
+(Buch_SarkkaSolin2019 Bsp. 6.2). Wände: Die Bewegung eines Schritts trifft sie über Sigma-Punkte
+(5.2), nicht die Verteilung selbst.
 
 **Diffusionsgrenze** (für Personen ohne Spur, 5.3): Über Zeiten länger als 1/λ_d breitet sich der
 Prozess wie eine Diffusion aus, je Achse mit `D = E[s²] / (2 λ_d) = (s² + Streuung²) / (2 λ_d)` =
@@ -300,7 +301,19 @@ Schritt (Buch_SarkkaSvensson2023 S. 352; B_Li2019 Gl. 26–33):
 1. Übergänge *steht → geht* (`Σ p_l (1 − e^(−λ_l Δt))`) und *geht → steht* (`1 − e^(−μΔt)`), je
    Ziel-Betriebsart per Momentenabgleich zu einer Komponente zusammengefasst.
 2. Lineare Vorhersage je Komponente (3.1 bzw. OU-Näherung 3.2), Kalman-Update mit der Spur.
-3. Nicht-Erfassung durch andere Sensoren: Faktor je Komponente, am Mittel der Komponente.
+3. Nicht-Erfassung durch andere Sensoren: Faktor je Komponente, als Erwartung über ihre Position
+   (`E[e^(−r(x)Δt)]`), ebenso die Rate einer neuen Spur, die Sicht beim Wiederfinden (unter dem Kern
+   gewichtet) und „geht in Sicht“: Unscented-Transformation der Position je Achse (diagonale
+   Kovarianz, n + κ = 3: Mitte 1/3, ±√3 σ je 1/6; Buch_SarkkaSvensson2023 Gl. 8.70–8.71). Punkte
+   hinter einer Wand, vom Mittel aus gesehen, werden an ihr gespiegelt (Wände reflektieren). Das
+   LD2410C sieht die Komponenten weiter an ihrem Mittel (über Sigma-Punkte: Log-Evidenz −524).
+   **Wände in der Vorhersage:** Die Sigma-Punkte (Kubatur, 2n = 16 Punkte; ebd. Alg. 8.11/8.16)
+   von Position, Geschwindigkeit und Rauschen der Komponente *geht* vor dem Schritt werden linear
+   bewegt; wer dabei eine Wand kreuzt, endet an ihr gespiegelt, die Geschwindigkeit auch. Danach
+   Momentenabgleich, die Versätze der Spuren folgen über ihre Regression. Was schon an oder hinter
+   einer Wand liegt, bleibt (anders als das verworfene Abschneiden, 10). Für Ausgaben und den
+   Wechsel auf Kacheln (5.4) zählt die Masse hinter einer Wand, vom Mittel aus gesehen, nicht
+   (außer es läge alles dahinter).
 4. **Durch eine Tür** in einen Bereich ohne Sensor: Die Komponente *geht* verliert dorthin mit der
    Rate der Türkacheln (5.3), gewichtet mit ihrer Masse dort (jede Türkachel als ihr kleiner Gauß).
    Das wandert in einen Teil „durch eine Tür“ (eine Dichte über Kacheln und Bereiche mit Gewicht a).
@@ -415,12 +428,12 @@ Evidenz (7) zu schätzen; das Bewegt-Flag ist ohne Ablation weggelassen. Ein Rau
 sieht (Küche hinter der Wand bei y = 7,7 m), kann Personen halten, die niemand ausschließt.
 
 Näherungen, die man prüfen oder ersetzen kann:
-- Nicht-Erfassung und Erfassungsrate einer Gauß-Komponente am Mittel statt über ihre Verteilung.
 - Auf den Kacheln ist Gehen eine Diffusion: Kurzzeitig gerades Gehen und die Richtung gehen verloren,
   beim Wechsel Gauß → Kacheln auch Geschwindigkeit und Versätze. Innerhalb einer Kachel ist die
   Masse nicht weiter aufgelöst; Raten sind über die Kachel gemittelt, auch wo eine Sichtgrenze sie
-  schneidet. Die
-  Gauß-Näherung kennt keine Wände.
+  schneidet. Die Gauß-Näherung kennt Wände nur über ihre Sigma-Punkte (5.2): Fünf Punkte je
+  Komponente, Spiegelung höchstens einmal; was hinter einer Wand liegt, entscheidet die Sicht
+  vom Mittel aus.
 - Zwischen zwei Takten (0,2 s) wirken „gehalten, nicht wiedergefunden“ und die Ausgaben auf einen
   bis 0,2 s alten Stand.
 - Versatzvarianz je Achse gemittelt, obwohl entlang/quer verschieden gemessen.
@@ -517,6 +530,17 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   statt 3,0, falsch an immer 0 von 41); die Unterschiede liegen an Lichtschaltern in Türen, wo 0,2 m
   den Raum entscheiden. Die Log-Evidenz ist zwischen Maßstäben nicht vergleichbar (die Dichte der
   Messungen im Haus ändert sich mit dem Maßstab).
+- **Sigma-Punkte statt Mittel, Wände über Sigma-Punkte** (7.10., 5.2): Fehlerberichte 6.10.
+  (Stand 0.10.0 → mit allem): Licht zu spät aus 3,00 → 1,67 von 15, fälschlich an 0 von 41 (beide),
+  Log-Evidenz +470. Küche 21:57 (zum Lichtschalter, wie oben): Tiefpunkt Küche 0,02 → 0,75; Küche
+  22:01–22:15 und die Nacht wie vorher (0,00 / 0,02, keine Sekunde über der Schwelle). Ablationen
+  (zu spät aus von 15 / Log-Evidenz gegenüber allem): nur Sigma-Punkte ohne Wände 4,17 / −27;
+  ohne Spiegeln in der Vorhersage 3,50 / −44; ohne Masse hinter Wänden 2,67 / −21; ohne Spiegeln
+  der Sigma-Punkte bei den Raten 1,67 / −41; Wände, aber Raten am Mittel 2,17 / −205; zusätzlich das
+  LD2410C über Sigma-Punkte 1,79 / −524 (nicht übernommen). Ein Fenster (Wohnzimmer 21:24) kippt
+  zwischen den Varianten ganz; die Log-Evidenz ist das stabilere Maß. Rechenzeit: +10 % (CPU-Zeit,
+  6.10. 21:00–21:20, 5 Sensoren, je dreimal: 33,9 → 37,1 s), verteilt auf die Sigma-Punkte bei den
+  Raten, Spiegeln in der Vorhersage, Masse hinter Wänden und Wiederfinden.
 - **Die gemeldete Entfernung des LD2410C erfindet Personen** (0.9.3): Sie ist der Ring, in dem die
   Energie gerade über ihrer Schwelle liegt. Leon allein am Schreibtisch in 1,5 m (Arbeitszimmer
   6.10. 22:20–22:50): in 27 % der Ruhig-Frames 2,6–6 m. Das Modell brauchte dafür eine zweite Person
