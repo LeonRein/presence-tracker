@@ -1,9 +1,11 @@
 """Small helpers of the app: files written so that a power cut leaves the old or the new one, and log
 lines that a stream of bad input can't flood."""
 
+import contextlib
 import logging
 import os
 import pathlib
+import tempfile
 import time
 
 
@@ -12,12 +14,18 @@ def atomic_write(path, data: bytes):
     renamed over the old one, and the directory flushed too. Without the fsync a power cut after the
     rename can leave an empty file (ext4 delayed allocation): the app then started with nothing."""
     path = pathlib.Path(path)
-    tmp = path.with_name(path.name + ".tmp")
-    with open(tmp, "wb") as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    # a temporary file of its own: a save in a thread and one in the loop never mix
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
     try:
         fd = os.open(path.parent, os.O_RDONLY)
     except OSError:

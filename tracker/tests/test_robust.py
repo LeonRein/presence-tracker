@@ -7,14 +7,18 @@ import base64
 import json
 import os
 import socket
+import threading
 import time
 
 import aiohttp
+import pytest
 from aiohttp import web
 
 from presence_tracker import app as app_module
 from presence_tracker.app import App
-from test_filter import flat_config
+from presence_tracker.sim import Person, simulate
+from test_filter import FLUR_DOOR, flat_config
+from test_frames import sim_sensors, walk
 
 
 def test_a_browser_that_stops_reading_holds_up_nothing(tmp_path, monkeypatch):
@@ -154,3 +158,88 @@ def test_the_mqtt_loop_survives_whatever_a_message_does(monkeypatch):
 
     asyncio.run(main())
     assert seen == [b"0", b"1", b"2"] and clients[-1] is None  # all messages, then reconnecting
+
+
+def run_a_while(app, until=40.0):
+    config = app.config
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), start=2, pauses={2: 60}))
+    for t, sid, frame in simulate([a], sim_sensors(config), until, walls=config.wall_segments):
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
+        app.tick(1000.0 + t)
+
+
+@pytest.mark.parametrize("name, content", [
+    ("calibration.npz", b""), ("calibration.npz", b"PK\x03\x04garbage"), ("people.json", b"[1]"),
+    ("people.json", b'"x"'), ("people.json", b""), ("people.json", b'{"tiles": [], "hyps": 5}'),
+    ("ghostmap.json", b""), ("ghostmap.json", b"[]"), ("ghostmap.json", b'{"x0": "a"}'),
+    ("ld2410.json", b"[]"), ("ld2410.json", b'{"num": {"a": 5}}'), ("destinations.json", b"[]"),
+])
+def test_a_broken_file_is_nothing_learned_for_its_part_only(tmp_path, caplog, name, content):
+    """An empty file after a power cut, a broken or wrongly typed one: the app starts (until 0.18 it
+    did not), that part with nothing learned, the others as saved."""
+    caplog.set_level("INFO")
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    run_a_while(app)
+    app._save_learned()
+    saved = {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.suffix in (".json", ".npz")}
+    assert set(saved) >= {"ghostmap.json", "ld2410.json", "destinations.json", "people.json", "calibration.npz"}
+    (tmp_path / name).write_bytes(content)
+    again = App(tmp_path, publish=False)  # must not raise
+    assert any(name in r.message for r in caplog.records if r.levelname in ("WARNING", "INFO"))
+    assert (again.tracker.started_from is None) == (name == "people.json")
+    if name != "calibration.npz":
+        assert again.calibrator.data()  # the other parts as saved
+    else:
+        assert not again.calibrator.data()
+    if name == "ghostmap.json":
+        assert not again.tracker.ghost_map.count
+    if name == "ld2410.json":
+        assert not again.tracker.ld_background.num
+    run_a_while(again, 20.0)
+    assert again.tick(1000.0 + 20.0)
+
+
+def test_a_failed_save_stops_nothing(tmp_path, monkeypatch, caplog):
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    run_a_while(app, 20.0)
+
+    def full(path, data):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(app_module, "atomic_write", full)
+    app._save_learned()  # must not raise
+    asyncio.run(app._save_in_background())
+    assert sum("not saved" in r.message for r in caplog.records) == 10
+    monkeypatch.undo()
+    # the model refuses to save a broken state (a density that is no density): it starts over
+    tracker = app.tracker
+
+    def broken():
+        raise ValueError("a density that is no density")
+
+    monkeypatch.setattr(tracker, "people_state", broken)
+    app._save_learned()  # must not raise
+    assert app.tracker is not tracker and (tmp_path / "ghostmap.json").exists()
+
+
+def test_saving_runs_in_a_thread_and_loads_again(tmp_path, monkeypatch):
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    run_a_while(app)
+    threads = []
+    write = app_module.atomic_write
+
+    def spy(path, data):
+        threads.append(threading.current_thread() is threading.main_thread())
+        write(path, data)
+
+    monkeypatch.setattr(app_module, "atomic_write", spy)
+    asyncio.run(app._save_in_background())
+    assert threads == [False] * 5
+    assert not list(tmp_path.glob("*.tmp")) and not list(tmp_path.glob(".*.tmp"))
+    again = App(tmp_path, publish=False)
+    assert again.tracker.started_from is not None
+    assert json.loads(json.dumps(again.tracker.learned())) == json.loads(json.dumps(app.tracker.learned()))
+    assert {k: len(v) for k, v in again.calibrator.data().items()} == {k: len(v) for k, v in app.calibrator.data().items()}

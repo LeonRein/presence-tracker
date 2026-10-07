@@ -46,6 +46,7 @@ LD2450's own tracks, sensortracks.py), independent of the poses, and solves on r
 """
 
 import collections
+import io
 import itertools
 import math
 import time
@@ -56,6 +57,7 @@ import numpy as np
 from .floorplan import wall_pieces
 from .model import Config
 from .sensortracks import SensorTracks
+from .util import atomic_write
 
 MIN_SPEED = 0.05  # m/s raw radial speed: walking
 MIN_RANGE = 0.5  # m on the floor: closer, the slant correction decides everything
@@ -902,11 +904,19 @@ class Calibrator:
 
     def save(self, path):
         """The collected data, for the next start (a restart would otherwise lose up to a day)."""
+        atomic_write(path, self.snapshot()())
+
+    def snapshot(self):
+        """The collected data as they are now (copied), and a function that packs them for the file:
+        the packing (seconds for a day of data) may run in a thread while the frames go on."""
         data = self.data()
-        tmp = path.with_name(path.name + ".tmp.npz")
-        np.savez_compressed(tmp, since=np.array([self.since if self.since is not None else np.nan]),
-                            **{"s_" + sid: a for sid, a in data.items()})
-        tmp.replace(path)
+        since = np.array([self.since if self.since is not None else np.nan])
+
+        def pack() -> bytes:
+            buf = io.BytesIO()
+            np.savez_compressed(buf, since=since, **{"s_" + sid: a for sid, a in data.items()})
+            return buf.getvalue()
+        return pack
 
     def load(self, path):
         """What `save` wrote; track numbers go on after the loaded ones."""

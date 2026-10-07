@@ -2,7 +2,6 @@
 
 import asyncio
 import base64
-import binascii
 import collections
 import faulthandler
 import gzip
@@ -14,7 +13,6 @@ import re
 import signal
 import time
 import uuid
-import zlib
 from collections import defaultdict
 
 import aiohttp
@@ -29,7 +27,7 @@ from .destination import DestinationMap
 from .ghostmap import GhostMap
 from .sources import Clock, ReplayClock, mqtt_source, replay_source
 from .frames import SensorClock, parse_frame
-from .util import Throttled
+from .util import Throttled, atomic_write
 
 log = logging.getLogger(__name__)
 STATIC = (pathlib.Path(__file__).parent / "static").resolve()
@@ -106,6 +104,7 @@ class App:
         self.recent = collections.deque()  # (receive time, topic, payload) of the last REPORT_WINDOW s
         self.shown = collections.deque()  # (model time, what the app showed) per second, as long back
         self.throttled = Throttled(log)  # log lines about bad input: at most one a minute per kind and sensor
+        self._saving = None  # the task saving what was learned (every 10 min)
         self._reset_tracker()
         self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
 
@@ -124,6 +123,10 @@ class App:
         self._reset_tracker()
 
     def _reset_tracker(self):
+        """A new model with what was learned and saved. A file that can't be read (empty after a
+        power cut, broken, of another type) is logged and that part starts with nothing learned: until
+        0.18 an empty calibration.npz, people.json [1] or ghostmap.json [] kept the app from starting
+        at all."""
         self.tracker = Tracker(self.config)
         # where the sensors start ghost tracks (learned online, MODEL.md 4.2): it holds only while the
         # sensors are where they were when it was learned, else it starts over
@@ -132,17 +135,19 @@ class App:
             try:
                 if not self.tracker.use_ghost_map(GhostMap.load(gm_path)):
                     log.info("ghost map learned with other sensors or poses: starting a new one")
-            except (ValueError, KeyError):
-                log.warning("ghostmap.json unreadable, starting without a ghost map")
+            except Exception as e:  # noqa: BLE001 - the map from the prior (Tracker) holds
+                log.warning("ghostmap.json unreadable (%r), starting a new ghost map", e)
+                self.tracker.use_ghost_map(None)
         # what each LD2410C sees without anybody (learned online, MODEL.md 4.3), per sensor only
         # while it is where it was
         ld_path = self.data_dir / "ld2410.json"
         if ld_path.exists():
             try:
                 self.tracker.ld_background.load(ld_path)
-                self.tracker.ld_background.use(self.config)
-            except (ValueError, KeyError, TypeError):
-                log.warning("ld2410.json unreadable, starting from the prior")
+            except Exception as e:  # noqa: BLE001
+                log.warning("ld2410.json unreadable (%r), starting from the prior", e)
+                self.tracker.ld_background.load_dict({})
+            self.tracker.ld_background.use(self.config)
         # where walks go (learned online, MODEL.md 6 "Ziel"): it holds while the rooms and doors are the
         # same, else it starts empty
         dest_path = self.data_dir / "destinations.json"
@@ -150,18 +155,20 @@ class App:
             try:
                 if not self.tracker.use_dest_map(DestinationMap.from_dict(json.loads(dest_path.read_text()))):
                     log.info("destination map learned with other rooms or doors: starting a new one")
-            except (OSError, ValueError, KeyError, TypeError, zlib.error, binascii.Error):
-                log.warning("destinations.json unreadable, starting an empty destination map")
+            except Exception as e:  # noqa: BLE001
+                log.warning("destinations.json unreadable (%r), starting an empty destination map", e)
+                self.tracker.use_dest_map(None)
         # what was known about the people when the app stopped (MODEL.md 5.3), moved on over the
         # time it did not run; without it (first start, another floor plan) nothing is known
         people_path = self.data_dir / "people.json"
         if not self.replay and people_path.exists():
             try:
                 state = json.loads(people_path.read_text())
-            except (OSError, ValueError):
-                state = None
-            if not self.tracker.restore_people(state):
-                log.info("people.json unreadable or made for another floor plan: nothing known about the people")
+                if not self.tracker.restore_people(state if isinstance(state, dict) else None):
+                    log.info("people.json unreadable or made for another floor plan: nothing known about the people")
+            except Exception as e:  # noqa: BLE001
+                log.warning("people.json unreadable (%r): nothing known about the people", e)
+                self.tracker.reset_people()
         self._model_started(None)  # at its first frame
         self.last_model_save = time.monotonic()
         self.clocks = defaultdict(SensorClock)
@@ -172,8 +179,9 @@ class App:
             if not self.replay and cal_path.exists():
                 try:
                     self.calibrator.load(cal_path)
-                except (OSError, ValueError, KeyError):
-                    log.warning("calibration.npz unreadable, collecting anew")
+                except Exception as e:  # noqa: BLE001
+                    log.warning("calibration.npz unreadable (%r), collecting anew", e)
+                    self.calibrator.reset()
         self.calibrator.config = self.config
 
     def _model_started(self, t: float | None):
@@ -272,9 +280,10 @@ class App:
             start = time.process_time()
             if not self.tick(self.clock()):
                 continue
-            if not self.replay and time.monotonic() - self.last_model_save > 600:
+            if (not self.replay and time.monotonic() - self.last_model_save > 600
+                    and (self._saving is None or self._saving.done())):
                 self.last_model_save = time.monotonic()
-                self._save_learned()
+                self._saving = asyncio.create_task(self._save_in_background())
             self.stats["cpu"] += time.process_time() - start
             await self.discovery.states(self.zone_states, t=self.tracker.now)
             now = time.monotonic()
@@ -298,24 +307,59 @@ class App:
             return False
         return True
 
+    def _learned_files(self) -> list:
+        """What was learned and is known about the people, as it is now - taken in the loop, the model
+        changes with every frame: [(file, its bytes, or a function packing a copy)]. A part that fails
+        is logged and left out; a people's state the model refuses to save (not finite, hidden.py) is a
+        model failure (_model_failed: it starts over from the last save)."""
+        files = []
+        parts = [("ghostmap.json", lambda: json.dumps(self.tracker.ghost_map.to_dict()).encode()),
+                 ("ld2410.json", lambda: json.dumps(self.tracker.ld_background.to_dict()).encode()),
+                 ("destinations.json", lambda: json.dumps(self.tracker.dest_map.to_dict()).encode()),
+                 ("people.json", self._people_bytes),
+                 ("calibration.npz", self.calibrator.snapshot)]
+        for name, make in parts:
+            try:
+                data = make()
+            except Exception:  # noqa: BLE001 - logged; the other files are saved
+                log.exception("%s not saved", name)
+                if name == "people.json":
+                    self._model_failed("saving the people")
+                continue
+            if data is not None:
+                files.append((self.data_dir / name, data))
+        return files
+
+    @staticmethod
+    def _write_files(files: list):
+        for path, data in files:
+            try:
+                atomic_write(path, data() if callable(data) else data)
+            except Exception:  # noqa: BLE001 - a full disk must not stop the app: logged, tried again later
+                log.exception("%s not saved", path.name)
+
     def _save_learned(self):
-        self.tracker.ghost_map.save(self.data_dir / "ghostmap.json")
-        self.tracker.ld_background.save(self.data_dir / "ld2410.json")
-        path = self.data_dir / "destinations.json"
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.tracker.dest_map.to_dict()))
-        tmp.replace(path)
-        self._save_people()
-        self.calibrator.save(self.data_dir / "calibration.npz")
+        """Save now (at the exit), in the loop."""
+        self._write_files(self._learned_files())
+
+    async def _save_in_background(self):
+        """Every 10 min: taken in the loop, packed (calibration.npz: seconds for a day) and written in a
+        thread, so that the ticks and Home Assistant's states go on meanwhile."""
+        try:
+            await asyncio.to_thread(self._write_files, self._learned_files())
+        except Exception:  # noqa: BLE001
+            log.exception("saving failed")
+
+    def _people_bytes(self) -> bytes | None:
+        if self.tracker.start is None:  # nothing happened since the start: what it started from holds
+            return None
+        return json.dumps(self.tracker.people_state(), allow_nan=False).encode()
 
     def _save_people(self):
         """What is known about the people, for the next start (MODEL.md 5.3)."""
-        if self.tracker.start is None:  # nothing happened since the start: what it started from holds
-            return
-        path = self.data_dir / "people.json"
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.tracker.people_state(), allow_nan=False))
-        tmp.replace(path)
+        data = self._people_bytes()
+        if data is not None:
+            atomic_write(self.data_dir / "people.json", data)
 
     def shown_now(self) -> dict:
         """What Home Assistant and the map show, for an error report: per room [count, P(somebody
@@ -369,6 +413,8 @@ class App:
             if self.client is not None:
                 await self._publish(ha.AVAILABILITY, "offline", True)
             if not self.replay:
+                if self._saving is not None:
+                    await asyncio.gather(self._saving, return_exceptions=True)
                 self._save_learned()
             await runner.cleanup()
 
@@ -441,7 +487,11 @@ class App:
         if restarted:
             self._model_started(self.tracker.now)
         self.calibrator.config = config
-        config.save(self.config_path)
+        try:
+            config.save(self.config_path)
+        except OSError as e:
+            log.exception("tracker.json not saved")
+            return web.json_response({"error": f"In Gebrauch, aber nicht gespeichert: {e}"}, status=500)
         if self.client is not None:
             await self.discovery.sync(config.zones)
         # rooms are derived from the walls here; the editor takes them over

@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field, fields
 
 from .floorplan import sight_segments, sync_rooms, wall_pieces
 from .geometry import Shape, distance_to_segment, line_of_sight
+from .util import atomic_write
 
 
 SIGHT_OFFSET = 0.2  # m, see SensorConfig.sight_origin
@@ -488,6 +489,4 @@ class Config:
         return cls.from_dict(json.loads(path.read_text()))
 
     def save(self, path: pathlib.Path):
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.to_dict(), indent=1, ensure_ascii=False))
-        tmp.replace(path)
+        atomic_write(path, json.dumps(self.to_dict(), indent=1, ensure_ascii=False).encode())
