@@ -202,7 +202,7 @@ class Gauss:
                               np.array(list(self.slots.values()), dtype=np.int64),
                               np.array([self.var[seg] * (1 - m.const_share) * (1 - ao * ao) for seg in self.slots]))
         tot_s, tot_w, w_ss, w_ws, m0, P0, self.mean, self.cov = kernels.imm_predict(
-            w, self.mean, self.cov, p_stay, p_stop, s2, F, Q)
+            w, np.ascontiguousarray(self.mean), np.ascontiguousarray(self.cov), p_stay, p_stop, s2, F, Q)
         # the kinds of stay: who stood on is more likely a long stay; who just stopped, a fresh one.
         # The detectability changes now and then within a stay, and is new for a new one
         if tot_s > 0:

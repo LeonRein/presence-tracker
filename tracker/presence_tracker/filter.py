@@ -1386,9 +1386,9 @@ class Tracker:
         """The number of people, per column: one Bernoulli per known person (ps (P, C)), plus a
         Poisson number of unknown ones (means (C,)), cut where the rest is below 1e-9. (C, size),
         a column's entries beyond its own cut 0."""
-        means = np.asarray(means, dtype=float)
+        means = np.ascontiguousarray(means, dtype=float)
         top = float(means.max()) if len(means) else 0.0
-        return kernels.poisson_binomial(np.asarray(ps, dtype=float).reshape(-1, len(means)), means,
+        return kernels.poisson_binomial(np.ascontiguousarray(np.reshape(ps, (-1, len(means))), dtype=float), means,
                                         _lgamma_table(int(top + 10 * math.sqrt(max(top, 0.0)) + 6)))
 
     def _counts(self, per_object) -> np.ndarray:
