@@ -21,7 +21,7 @@ from aiohttp import web
 from . import __version__, code_hash, ha
 from . import calibration
 from .calibration import Calibrator
-from .model import Config, limits_dict
+from .model import Config, check_config, limits_dict
 from .filter import Tracker
 from .destination import DestinationMap
 from .ghostmap import GhostMap
@@ -47,6 +47,8 @@ REPORT_KINDS = {  # new kinds only add keys: old reports keep theirs
 }
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}
 SEND_TIMEOUT = 5.0  # s a browser may take for one live message; a slower one is cut off
+DOWN_AFTER = 3  # model failures without RETRY s of running between: the model is down
+RETRY = 60.0  # s: while down, the model is rebuilt and tried again this often (a rebuild is seconds of CPU)
 
 
 class LiveClient:
@@ -88,6 +90,11 @@ class App:
         self.images.mkdir(parents=True, exist_ok=True)
         self.config_path = data_dir / "tracker.json"
         self.config = Config.load(self.config_path)
+        if self.config_path.exists():  # stored, it loads as it is: say loudly if the model may fail with it
+            try:
+                check_config(json.loads(self.config_path.read_text()))
+            except ValueError as e:
+                log.error("tracker.json does not pass the check: %s - the model may fail with it", e)
         self.prefix = prefix
         self.publish_enabled = publish
         self.replay = replay
@@ -105,22 +112,51 @@ class App:
         self.shown = collections.deque()  # (model time, what the app showed) per second, as long back
         self.throttled = Throttled(log)  # log lines about bad input: at most one a minute per kind and sensor
         self._saving = None  # the task saving what was learned (every 10 min)
+        self.failures: list[float] = []  # when the model failed (monotonic), until it ran RETRY s without
+        self.paused_until = -math.inf  # while down: the model rests until then (monotonic)
+        self.available = None  # what this connection last said on the availability topic (None: nothing yet)
         self._reset_tracker()
         self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
 
-    def _model_failed(self, where: str):
+    def _model_failed(self, where: str, count: bool = True):
         """An error in the model must not stop the app: 0.9.3 died on one LD2410C frame (7.10.,
         between 22:52 and 2:07), the MQTT client said goodbye cleanly, so its last will never went
         out, and Home Assistant kept the last states for hours. Logged with the traceback; the model
         starts over from what was learned and saved, about the people from what it knew just before
         (if that is still sound, else from the last save)."""
         log.exception("model failed on %s: starting over", where)
+        now = time.monotonic()
+        if count:  # (not a configuration refused in PUT /api/config: the old one holds)
+            self.failures.append(now)
+        if count and self.down:
+            # a failure that comes back after every rebuild (a configuration the model can't run with,
+            # a learned file that breaks it): until 0.18 the model was rebuilt at every frame (seconds of
+            # CPU each, the frames piling up) and Home Assistant kept the states from before, "online"
+            if len(self.failures) == DOWN_AFTER:
+                log.error("THE MODEL FAILS AGAIN AND AGAIN (%d times, last on %s): Home Assistant gets "
+                          "'unavailable' until it has run %.0f s without failing, tried again every %.0f s. "
+                          "Check the configuration and the errors above.", len(self.failures), where, RETRY, RETRY)
+            self.paused_until = now + RETRY
         try:
             if not self.replay:
                 self._save_people()
         except Exception:  # noqa: BLE001 - the failed model may be broken: then the last save holds
             log.warning("the people could not be saved, starting from the last save")
         self._reset_tracker()
+
+    @property
+    def down(self) -> bool:
+        """The model failed DOWN_AFTER times without running RETRY s between: it does not run (Home
+        Assistant: unavailable), also when a frame of one sensor breaks it every time while the ticks
+        between run."""
+        return len(self.failures) >= DOWN_AFTER
+
+    def _model_ran(self):
+        """A good tick: once the model has run RETRY s since it last failed, it runs (again)."""
+        if self.failures and time.monotonic() - self.failures[-1] >= RETRY:
+            if self.down:
+                log.warning("the model runs again (%.0f s without failing, after %d failures)", RETRY, len(self.failures))
+            self.failures.clear()
 
     def _reset_tracker(self):
         """A new model with what was learned and saved. A file that can't be read (empty after a
@@ -238,18 +274,25 @@ class App:
         except Exception:  # noqa: BLE001 - the calibration's data, not the model: logged only
             self.throttled(("calibration", sensor_id), logging.ERROR, "calibration: frame of %s not taken",
                            sensor_id, exc_info=True)
-        try:
-            self.tracker.process_frame(sensor_id, t, frame)
-        except Exception:  # noqa: BLE001 - see _model_failed
-            self._model_failed(f"frame of {sensor_id}")
+        if time.monotonic() < self.paused_until:  # down: the model rests until it is tried again
+            pass
+        else:
+            try:
+                self.tracker.process_frame(sensor_id, t, frame)
+            except Exception:  # noqa: BLE001 - see _model_failed
+                self._model_failed(f"frame of {sensor_id}")
         self.last_frame_t = t
         self.stats["frames"] += 1
         self.stats["cpu"] += time.process_time() - start
 
     async def _on_client(self, client):
         self.client = client
+        self.available = None
+        self.discovery.last_state.clear()  # every state goes out again with the next tick
         if client is not None and self.publish_enabled:
-            await self._publish(ha.AVAILABILITY, "online", True)
+            # "online" only once fresh states are out (housekeeping): the broker may hold "online" and the
+            # states of a run that ended without its last will, and Home Assistant would show them as now
+            await self._set_available(False)
             self.discovery.published.clear()
             await self.discovery.sync(self.config.zones)
             # what the broker retains of earlier runs: entities no longer wanted are removed (ha.py)
@@ -258,13 +301,22 @@ class App:
             except Exception as e:  # noqa: BLE001 - a lost connection is handled by the source loop
                 log.debug("subscribe failed: %s", e)
 
-    async def _publish(self, topic: str, payload: str, retain: bool = False):
+    async def _publish(self, topic: str, payload: str, retain: bool = False) -> bool:
         if self.client is None or not self.publish_enabled:
-            return
+            return False
         try:
             await self.client.publish(topic, payload, qos=1 if retain else 0, retain=retain)
         except Exception as e:  # noqa: BLE001 - a lost connection is handled by the source loop
             log.debug("publish failed: %s", e)
+            return False
+        return True
+
+    async def _set_available(self, on: bool):
+        """The entities' availability (ha.AVAILABILITY), sent when it changes. Node-RED keeps a light's
+        last state while they are unavailable (its choice); "online" means: these states are fresh."""
+        state = "online" if on else "offline"
+        if self.client is not None and self.available != state and await self._publish(ha.AVAILABILITY, state, True):
+            self.available = state
 
     # ------------------------------------------------------------ main loops
 
@@ -275,11 +327,14 @@ class App:
             # to the log - where the app hangs (each call replaces the previous timer)
             faulthandler.dump_traceback_later(BLOCKED_DUMP)
             await asyncio.sleep(0.1)
-            if self.tracker.start is None:
+            if self.down:
+                await self._set_available(False)
+            if self.tracker.start is None or time.monotonic() < self.paused_until:
                 continue
             start = time.process_time()
             if not self.tick(self.clock()):
                 continue
+            self._model_ran()
             if (not self.replay and time.monotonic() - self.last_model_save > 600
                     and (self._saving is None or self._saving.done())):
                 self.last_model_save = time.monotonic()
@@ -287,6 +342,8 @@ class App:
             self.stats["cpu"] += time.process_time() - start
             try:
                 await self.discovery.states(self.zone_states, t=self.tracker.now)
+                if not self.down:
+                    await self._set_available(True)  # after the first fresh states of this connection
             except Exception:  # noqa: BLE001 - the loop must go on (it is all of the app's output)
                 self.throttled("states", logging.ERROR, "states not published", exc_info=True)
             now = time.monotonic()
@@ -422,6 +479,7 @@ class App:
         finally:
             if self.client is not None:
                 await self._publish(ha.AVAILABILITY, "offline", True)
+                self.available = "offline"
             if not self.replay:
                 if self._saving is not None:
                     await asyncio.gather(self._saving, return_exceptions=True)
@@ -499,7 +557,7 @@ class App:
             restarted = self.tracker.reconfigure(config)
             self.tracker.zone_states()
         except Exception as e:  # noqa: BLE001 - the old configuration holds
-            self._model_failed("a new configuration")
+            self._model_failed("a new configuration", count=False)
             return web.json_response({"error": f"Das Modell läuft mit dieser Konfiguration nicht: {e!r}. "
                                                "Es gilt die vorige."}, status=400)
         self.config = config

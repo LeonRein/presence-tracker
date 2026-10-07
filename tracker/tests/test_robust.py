@@ -19,6 +19,7 @@ from aiohttp import web
 from presence_tracker import app as app_module
 from presence_tracker.app import App
 from presence_tracker.filter import Tracker
+from presence_tracker.ha import AVAILABILITY
 from presence_tracker.zones import ZoneState
 from presence_tracker.sim import Person, simulate
 from test_filter import FLUR_DOOR, flat_config
@@ -282,3 +283,98 @@ def test_the_ld2410_factor_of_a_person_all_in_view_never_takes_log_0():
     lr, log_f = Tracker._ld_ratio(object(), (np.array([0.3, 0.2]), np.zeros((2, 16))), np.zeros(16),
                                   type("S", (), {"log_ratio": lambda self, *a: np.array([1.0, -1.0])})(), None)
     assert math.isclose(log_f, math.log(0.5 + 0.3 * math.e + 0.2 / math.e))
+
+
+class FakeMqtt:
+    def __init__(self):
+        self.sent = []
+
+    async def publish(self, topic, payload, qos=0, retain=False):
+        self.sent.append((topic, payload))
+
+    async def subscribe(self, topic):
+        pass
+
+    def availability(self):
+        return [p for t, p in self.sent if t == AVAILABILITY]
+
+
+async def feed(app, seconds, uptime):
+    """Empty frames of both sensors every 0.1 s, as the boards send them when they see something."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        uptime[0] += 100
+        for sid in ("a", "b"):
+            frame = {"uptime_ms": uptime[0], "targets": [{"x": 500, "y": 2000, "speed": 0, "slot": 1}], "ld2410": {}}
+            app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), time.time())
+        await asyncio.sleep(0.1)
+
+
+def test_online_only_with_fresh_states(tmp_path):
+    """At a (re)connect the broker may still hold "online" and the states of a run that ended without
+    its last will: Home Assistant showed them as now (Node-RED: unavailable -> on is a change). The
+    app says "offline" at once and "online" only after its first fresh states."""
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=True)
+    mqtt = FakeMqtt()
+
+    async def main():
+        await app._on_client(mqtt)
+        assert mqtt.sent[0] == (AVAILABILITY, "offline")
+        task = asyncio.create_task(app.housekeeping())
+        await asyncio.sleep(0.3)
+        assert mqtt.availability() == ["offline"]  # no frame yet: nothing fresh to say
+        await feed(app, 0.5, [1000])
+        task.cancel()
+
+    asyncio.run(main())
+    assert mqtt.availability() == ["offline", "online"]
+    topics = [t for t, _ in mqtt.sent]
+    first_state = min(i for i, t in enumerate(topics) if t.endswith("/state") and "zone" in t)
+    assert topics.index(AVAILABILITY, 1) > first_state
+
+
+def test_a_model_that_fails_again_and_again_is_unavailable(tmp_path, monkeypatch, caplog):
+    """A failure that comes back after every rebuild (here: every tick): until 0.18 the model was
+    rebuilt at every one, and Home Assistant kept the last states as "online". Now after DOWN_AFTER
+    failures the entities are unavailable, the model rests RETRY s between tries, and once it has run
+    RETRY s again they are online again."""
+    monkeypatch.setattr(app_module, "RETRY", 0.6)
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=True)
+    mqtt = FakeMqtt()
+    builds = []
+    real_reset = App._reset_tracker
+
+    def counted(self):
+        builds.append(1)
+        real_reset(self)
+
+    monkeypatch.setattr(App, "_reset_tracker", counted)
+    real_states = Tracker.zone_states
+    broken = [False]
+
+    def zone_states(self):
+        if broken[0]:
+            raise TypeError("'NoneType' object is not subscriptable")
+        return real_states(self)
+
+    monkeypatch.setattr(Tracker, "zone_states", zone_states)
+    uptime = [1000]
+
+    async def main():
+        await app._on_client(mqtt)
+        task = asyncio.create_task(app.housekeeping())
+        await feed(app, 0.5, uptime)
+        assert mqtt.availability() == ["offline", "online"]
+        broken[0] = True
+        await feed(app, 2.0, uptime)
+        assert app.down and mqtt.availability() == ["offline", "online", "offline"]
+        assert len(builds) <= app_module.DOWN_AFTER + 4, len(builds)  # not one per tick: one per RETRY
+        broken[0] = False
+        await feed(app, 2.0, uptime)
+        task.cancel()
+
+    asyncio.run(main())
+    assert not app.down and mqtt.availability() == ["offline", "online", "offline", "online"]
+    assert caplog.text.count("FAILS AGAIN AND AGAIN") == 1 and "runs again" in caplog.text
