@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import binascii
 import collections
 import faulthandler
 import gzip
@@ -13,6 +14,7 @@ import re
 import signal
 import time
 import uuid
+import zlib
 from collections import defaultdict
 
 import aiohttp
@@ -23,6 +25,7 @@ from . import calibration
 from .calibration import Calibrator
 from .model import Config
 from .filter import Tracker
+from .destination import DestinationMap
 from .ghostmap import GhostMap
 from .sources import Clock, ReplayClock, mqtt_source, replay_source
 from .frames import SensorClock
@@ -104,6 +107,15 @@ class App:
                 self.tracker.ld_background.use(self.config)
             except (ValueError, KeyError, TypeError):
                 log.warning("ld2410.json unreadable, starting from the prior")
+        # where walks go (learned online, MODEL.md 6 "Ziel"): it holds while the rooms and doors are the
+        # same, else it starts empty
+        dest_path = self.data_dir / "destinations.json"
+        if dest_path.exists():
+            try:
+                if not self.tracker.use_dest_map(DestinationMap.from_dict(json.loads(dest_path.read_text()))):
+                    log.info("destination map learned with other rooms or doors: starting a new one")
+            except (OSError, ValueError, KeyError, TypeError, zlib.error, binascii.Error):
+                log.warning("destinations.json unreadable, starting an empty destination map")
         # what was known about the people when the app stopped (MODEL.md 5.3), moved on over the
         # time it did not run; without it (first start, another floor plan) nothing is known
         people_path = self.data_dir / "people.json"
@@ -238,6 +250,10 @@ class App:
     def _save_learned(self):
         self.tracker.ghost_map.save(self.data_dir / "ghostmap.json")
         self.tracker.ld_background.save(self.data_dir / "ld2410.json")
+        path = self.data_dir / "destinations.json"
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.tracker.dest_map.to_dict()))
+        tmp.replace(path)
         self._save_people()
         self.calibrator.save(self.data_dir / "calibration.npz")
 

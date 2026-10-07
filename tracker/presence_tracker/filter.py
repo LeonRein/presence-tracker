@@ -30,6 +30,7 @@ from . import kernels, ld2410
 from . import gauss
 from .gauss import Gauss
 from .hidden import Hidden, Undetected
+from . import destination
 from .sensormodel import PD_MAX, SensorModel
 from .sensortracks import SensorTracks
 from .tiling import Tiling
@@ -47,6 +48,7 @@ GIVE_UP = 0.01  # a known person who exists with less probability (wherever they
 RECYCLE_EVERY = 1.0  # s
 ENTER_MIN_WALK = 0.02  # "wird betreten" (MODEL.md 6): a person walking with less probability can raise no
                        # zone's p_enter by more than this; not moved on
+OUTPUT_PARAMS = ("light_cost", "lead_time", "approach_cost", "target_threshold", "target_thresholds")
 GAP_EXACT = 120.0  # s: the end of a gap in the data is moved as always, what lies before in leaps
 LEAP = 15.0  # s   (_predict_gap; 7.10. 08:06, 8 people, 3 h: rooms within 0.022 of moving all as always)
 MAX_LEAPS = 2000  # longer gaps in longer leaps (8 h of 8 people: 1.7 s CPU; a week in leaps of 5 min,
@@ -147,8 +149,11 @@ class Tracker:
                                                self.m.ld_echo_rate, self.m.ld_echo_prior_time)
         self.ld_background.use(config)
         self.learn_ghosts = True  # learn the map online (MODEL.md 4.2); off for the offline EM tool
+        self.dest_map = None  # where walks go (destination.py, learned online, MODEL.md 6 "Ziel")
+        self.learn_dest = True
         self._build()
         self.use_ghost_map(None)
+        self.use_dest_map(None)
         self.reset_people(people)
 
     # --------------------------------------------------------------- setup
@@ -170,6 +175,7 @@ class Tracker:
         self.tiles = Tiling(self)
         for si in range(len(self.sensors)):
             self._g(si, np.zeros((1, 2)))
+        self.dest_geo = destination.Geometry(self)
 
     def reset_people(self, people=None):
         """Start over: nothing known about the people (MODEL.md 5.3, unknown_start); or people at
@@ -212,6 +218,8 @@ class Tracker:
         self._version = 0  # counts the moves of everybody and the events (for the outputs' cache)
         self.segs = {}  # seg id -> dict(si, t, zt, var, z, born, lost, ...)
         self._live_by_sensor = {si: [] for si in range(len(self.sensors))}
+        self._dest_learner = destination.Learner()  # the walks under way (they follow the live tracks)
+        self._dest_t = -math.inf
 
     def people_state(self) -> dict:
         """What is known about the people, to start from after a restart (MODEL.md 5.3): per
@@ -317,6 +325,7 @@ class Tracker:
             self.dwell = Dwell(self.p)
             self._build()
         self.use_ghost_map(self.ghost_map)  # it holds only while the sensors are where they were
+        self.use_dest_map(self.dest_map)  # it holds while the rooms and doors are the same
         self.ld_background.use(config)
         if changed is None:
             if not self.restore_people(state):
@@ -332,6 +341,9 @@ class Tracker:
         sa, sb = a.pop("sensors"), b.pop("sensors")
         a.pop("background")
         b.pop("background")
+        for k in OUTPUT_PARAMS:  # how the outputs decide changes nothing of the model
+            a["params"].pop(k, None)
+            b["params"].pop(k, None)
         if a != b or [s["id"] for s in sa] != [s["id"] for s in sb] or old.regions != new.regions:
             return None
         if not np.array_equal(World(new).labels, self.world.labels):
@@ -378,6 +390,15 @@ class Tracker:
             self.ghost_map = new
             self.ghost_map.poses = {s.id: pose_of(s) for s in self.config.sensors}
         self._ghost_total = {}
+        return ok
+
+    def use_dest_map(self, dm) -> bool:
+        """Use a learned destination map (MODEL.md 6 "Ziel") if it was learned with these rooms, doors
+        and regions; else start an empty one."""
+        ok = dm is not None and dm.fingerprint == self.dest_geo.fingerprint() and dm.count.shape[0] == self.dest_geo.n
+        self.dest_map = dm if ok else destination.DestinationMap.for_geometry(self.dest_geo)
+        if hasattr(self, "_out_cache"):
+            self._out_cache.pop("targets", None)
         return ok
 
     def _ghost_types(self) -> tuple:
@@ -587,6 +608,10 @@ class Tracker:
         if t - self._recycled >= RECYCLE_EVERY:
             self._recycled = t
             self._recycle()
+        if self.learn_dest and t - self._dest_t >= MAX_STEP - 1e-9:
+            # the walks counted into the destination map (MODEL.md 6 "Ziel"): reads the hypotheses only
+            self._dest_t = t
+            self._dest_learner.observe(self, self.dest_geo, self.dest_map)
 
     def _flush(self, t: float):
         """Move everybody to time t: the people without a track all from the last flush, each
@@ -1876,6 +1901,117 @@ class Tracker:
             return None
         return float(s[hit])
 
+    # ------------------------------------------------------- "Ziel" (MODEL.md 6)
+
+    def threshold(self, zone: str) -> float:
+        """The room's threshold for "Ziel" (its own, else the default)."""
+        p = self.p
+        try:
+            return float((p.target_thresholds or {}).get(zone, p.target_threshold))
+        except (TypeError, ValueError, AttributeError):
+            return float(p.target_threshold)
+
+    def targets(self) -> dict:
+        """room id -> "Ziel" for the observed rooms: {"p", "on", "map", "weight", "walks", "from",
+        "distance", "eta", "person"} (MODEL.md 6).
+
+        The walkers' own motion ("wird betreten", p_enter) is the prior; the learned map of where walks
+        went (destination.py) its data, per walker a Dirichlet posterior with dest_prior_walks walks of
+        prior weight. For the room: P = (1 - lam) q_move + lam q_map with
+          - q_move = p_enter on the scale of the room's threshold c: its odds times odds(c) / odds(c_v),
+            so that q_move >= c exactly where p_enter > c_v ("wird betreten" on);
+          - q_map = sum_h w_h (1 - prod_k (1 - P(k walks) f_k(room))), f_k = the share of the walks
+            counted at walker k's cell and velocity that went to the room (by a door, not across a
+            divider: there 0);
+          - lam = n / (n + prior) with n the walks counted for the walkers who could go there
+            (weighted by P(walking) and their hypotheses' weights).
+        On if P >= c; with nothing learned there (lam = 0) exactly when "wird betreten" is on. Only
+        reads the hypotheses and the map."""
+        return self._cached("targets", self._target_outputs)
+
+    def _target_outputs(self) -> dict:
+        from .filtermodel import WALK
+        geo, dm = self.dest_geo, self.dest_map
+        enter = self.entering()
+        p = self.p
+        c_v = p.approach_cost / (p.approach_cost + 1.0)
+        K = len(self.rooms)
+        prior = self.m.dest_prior_walks
+        walkers = {}  # id(obj) -> (P(walking), room, space, f (C,), n, x, y, vx, vy)
+        for obj, _ in self._objects():
+            if not isinstance(obj, Gauss) or obj.phantom:
+                continue
+            pw = float(obj.weights()[WALK]) * (1.0 - obj.a)
+            if pw < ENTER_MIN_WALK:
+                continue
+            x, y = float(obj.mean[WALK, 0, 0]), float(obj.mean[WALK, 1, 0])
+            vx, vy = float(obj.mean[WALK, 0, 1]), float(obj.mean[WALK, 1, 1])
+            if math.hypot(vx, vy) < destination.MIN_SPEED:
+                continue
+            near = geo.around(x, y)
+            if near is None:
+                continue
+            room = int(geo.cell_room[near[0][0]])
+            cnt = dm.lookup(*near, vx, vy)
+            n = float(cnt.sum())
+            f = cnt / n if n > 0 else np.zeros(geo.C)
+            walkers[id(obj)] = (pw, room, int(geo.space[room]), f, n, x, y, vx, vy)
+        hw = self.hyp_weights() if self.hyps else []
+        q_map = np.zeros(K)
+        num, den = np.zeros(K), np.zeros(K)
+        share = {}
+        for wh, hy in zip(hw, self.hyps):
+            empty = np.ones(K)
+            for obj in hy.people():
+                wk = walkers.get(id(obj))
+                if wk is None:
+                    continue
+                pw, room, space, f, n, *_ = wk
+                # the rooms this walker could go to next: by a door, or across a divider (there f = 0)
+                rel = geo.allowed[space, :K] | (geo.space == space)
+                rel[room] = False
+                pk = pw * f[:K] * rel
+                empty *= 1.0 - pk
+                num += wh * pw * n * rel
+                den += wh * pw * rel
+                share.setdefault(id(obj), np.zeros(K))
+                share[id(obj)] += wh * pw * rel * (f[:K] + 1e-3)
+            q_map += wh * (1.0 - empty)
+        best = self.hyps[int(np.argmax([h.logw for h in self.hyps]))] if self.hyps else None
+        display = {id(o): k + 1 for k, o in enumerate(best.people())} if best is not None else {}
+        out = {}
+        for k, z in enumerate(self.rooms):
+            c = min(max(self.threshold(z), 1e-6), 1.0 - 1e-6)
+            pe = enter.get(z, {}).get("p", 0.0)
+            n = num[k] / den[k] if den[k] > 0 else 0.0
+            lam = n / (n + prior) if n > 0 else 0.0
+            if pe <= 0.0:
+                q_move = 0.0
+            elif pe >= 1.0:
+                q_move = 1.0
+            else:
+                o = pe / (1.0 - pe) * (c / (1.0 - c)) / (c_v / (1.0 - c_v))
+                q_move = o / (1.0 + o)
+            if lam > 0:
+                prob = (1.0 - lam) * q_move + lam * float(q_map[k])
+                on = prob >= c
+            else:
+                prob = q_move
+                on = pe > c_v  # nothing learned for these walkers: "wird betreten" decides
+            e = {"p": float(min(max(prob, 0.0), 1.0)), "on": bool(on), "map": float(q_map[k]), "weight": lam,
+                 "walks": n, "from": None, "distance": None, "eta": None, "person": None}
+            if prob >= 0.01 and share:
+                key = max(share, key=lambda q: share[q][k])
+                if share[key][k] > 0:
+                    pw, room, space, f, nn, x, y, vx, vy = walkers[key]
+                    dist = geo.door_distance(space, k, x, y)
+                    speed = math.hypot(vx, vy)
+                    e.update({"from": self.rooms[room], "distance": dist,
+                              "eta": dist / speed if dist is not None and speed > 0.05 else None,
+                              "person": display.get(key)})
+            out[z] = e
+        return out
+
     def zone_states(self) -> dict:
         """Per zone: the most probable number of people (observed rooms: from all hypotheses),
         moving / still from the most probable hypothesis' people, "about to be entered" from all
@@ -1931,7 +2067,16 @@ class Tracker:
                 continue
             st.p_enter = e["p"]
             st.approaching = e["p"] > c_enter
+            st.c_enter = c_enter
             st.eta, st.distance, st.person = e["eta"], e["distance"], e["person"]
+        for zid, e in self.targets().items():
+            st = states.get(zid)
+            if st is None:
+                continue
+            st.target = e["on"]
+            st.c_target = self.threshold(zid)
+            st.p_target, st.target_weight, st.target_walks = e["p"], e["weight"], e["walks"]
+            st.target_from, st.target_distance, st.target_eta, st.target_person = e["from"], e["distance"], e["eta"], e["person"]
         for st in (*states.values(), total):
             st.moving = min(st.moving, st.count)
             st.still = min(st.still, st.count - st.moving)
@@ -1973,7 +2118,8 @@ class Tracker:
     # ------------------------------------------------------------- learned
 
     def learned(self) -> dict:
-        return {"ghost_map": self.ghost_map.to_dict(), "ld_background": self.ld_background.to_dict()}
+        return {"ghost_map": self.ghost_map.to_dict(), "ld_background": self.ld_background.to_dict(),
+                "dest_map": self.dest_map.to_dict()}
 
     def use_ld_background(self, bg: "ld2410.Background"):
         """Use a learned LD2410C background (MODEL.md 4.3), per sensor only where it was learned
@@ -1988,3 +2134,5 @@ class Tracker:
         if data.get("ld_background"):
             self.ld_background.load_dict(data["ld_background"])
             self.ld_background.use(self.config)
+        if data.get("dest_map"):  # used if the rooms and doors are the same
+            self.use_dest_map(destination.DestinationMap.from_dict(data["dest_map"]))

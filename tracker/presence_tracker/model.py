@@ -133,6 +133,13 @@ class TrackerParams:
     # vain 30-s lights per hour; Leon's trial of "1 s / 1 m ahead"
     lead_time: float = 2.0  # s
     approach_cost: float = 0.05
+    # "Ziel" (MODEL.md 6): somebody walking goes into the room next, from their motion and the learned
+    # map of where walks went; on at P >= the room's threshold c = K_false / (K_false + K_late) (a light
+    # switched on in vain against an entry into a dark room). 0.8: a vain light costs as much as 4 late
+    # ones. Per room (room id -> threshold) where it differs; where nothing is learned, "Ziel" is "wird
+    # betreten" whatever the threshold
+    target_threshold: float = 0.8
+    target_thresholds: dict = field(default_factory=dict)
 
 @dataclass
 class Config:

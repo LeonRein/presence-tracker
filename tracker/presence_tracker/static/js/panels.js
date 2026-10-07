@@ -69,6 +69,7 @@ const LIVE = {
         st.moving ? `<span class="badge ok">${st.moving} bewegt</span>` : '',
         st.still ? `<span class="badge">${st.still} ruhig</span>` : '',
         st.approaching ? `<span class="badge warn" title="Wahrscheinlichkeit, dass jemand Gehendes gleich hereinkommt (Vorausschau in den Einstellungen)">gleich ${Math.round((st.p_enter ?? 0) * 100)} %${st.eta != null ? ` · ${fmt(st.eta, 1)} s` : ''}</span>` : '',
+        st.target ? `<span class="badge warn" title="Ziel: Jemand Gehendes geht als Nächstes hierher. ${st.target_source === 'karte' ? 'Entschieden von der gelernten Karte' : 'Entschieden von der Bewegung (wie „wird betreten“)'}">Ziel ${Math.round((st.p_target ?? 0) * 100)} %${st.target_source === 'karte' ? ' · Karte' : ''}</span>` : '',
       ].join('') : '';
       return `<div class="item"><span class="swatch" style="background:${color}"></span><span class="grow">${esc(z.name)}</span>${badges}</div>`;
     }).join('');
@@ -124,7 +125,8 @@ const LIVE = {
     const st = state.live?.zones?.[ds.id];
     if (!st) return '';
     return `<dl class="kv"><dt>Personen</dt><dd>${st.count}</dd><dt>bewegt / ruhig</dt><dd>${st.moving} / ${st.still}</dd>
-      <dt>wird betreten</dt><dd>${st.approaching ? 'ja' : 'nein'}${st.p_enter != null ? `, ${Math.round(st.p_enter * 100)} %` : ''}${st.eta != null ? ` · in ${fmt(st.eta, 1)} s, ${fmt(st.distance, 1)} m${st.person != null ? ` (Person ${st.person})` : ''}` : ''}</dd></dl>`;
+      <dt>wird betreten</dt><dd>${st.approaching ? 'ja' : 'nein'}${st.p_enter != null ? `, ${Math.round(st.p_enter * 100)} %` : ''}${st.eta != null ? ` · in ${fmt(st.eta, 1)} s, ${fmt(st.distance, 1)} m${st.person != null ? ` (Person ${st.person})` : ''}` : ''}</dd>
+      <dt>Ziel</dt><dd>${st.target ? 'ja' : 'nein'}${st.p_target != null ? `, ${Math.round(st.p_target * 100)} %` : ''}${st.target_from ? ` · aus ${esc(roomName(st.target_from))}${st.target_distance != null ? `, ${fmt(st.target_distance, 1)} m zur Tür` : ''}${st.target_person != null ? ` (Person ${st.target_person})` : ''}` : ''}${st.target_source ? ` · ${st.target_source === 'karte' ? 'Karte' : 'Bewegung'} (Karte ${Math.round((st.target_weight ?? 0) * 100)} %, ${st.target_walks ?? 0} Gänge)` : ''}</dd></dl>`;
   },
   calib() {
     const c = state.live?.calibration;
@@ -737,11 +739,33 @@ const PARAMS = [
     ['light_cost', 'Kosten: Licht ohne Person', '×', 'Eine Sekunde Licht ohne Person ist so schlimm wie so viele Sekunden Dunkel mit Person. Ein Raum gilt als besetzt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt: bei 2 über 67 %.', 0.5],
     ['lead_time', 'Vorausschau „wird betreten“', 's', 'So weit rechnet das Modell jeden Gehenden mit seinem eigenen Bewegungsmodell voraus (Wände halten auf, Türen nicht). Weil es Richtung und Tempo mit der Zeit vergisst, kommt das Signal später als diese Zeit vor dem Eintritt: mit 2 s bei 60 % der Eintritte mindestens 1 s (1 m) vorher (MODEL.md 6).', 0.1],
     ['approach_cost', 'Kosten: Einschalten auf Verdacht', '×', 'Ein Einschalten auf Verdacht, nach dem niemand hereinkommt, ist so schlimm wie so viele Eintritte in einen dunklen Raum. „Wird betreten“ gilt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.01],
+    ['target_threshold', 'Schwelle „Ziel“', '', '„Ziel“ ist an, wenn die Wahrscheinlichkeit, dass ein Gehender als Nächstes in den Raum geht, mindestens so hoch ist. Sie entsteht aus der Bewegung (wie „wird betreten“) und der gelernten Karte, wohin die Gänge von dort bisher gingen; wo die Karte noch nichts weiß, ist „Ziel“ genau „wird betreten“. Schwelle = K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein vergebliches Licht ist so schlimm wie 4 späte. Je Raum unten anders einstellbar (MODEL.md 6).', 0.05],
   ]],
 ];
 
 // what describes the home and the output; the rest are the model's measured numbers
 const HOME_GROUPS = ['Personen', 'Ausgabe'];
+
+function roomName(id) {
+  return state.config.zones.find(z => z.id === id)?.name || id;
+}
+
+// the threshold of "Ziel" per room: empty = the default above
+function targetRooms(p) {
+  const el = h(`<div><h3>Schwelle „Ziel“ je Raum</h3><p class="note">Leer: die Schwelle oben. Vorschlag aus der Untersuchung (MODEL.md 6): Esszimmer und Küche 0,7, sonst 0,8.</p></div>`);
+  for (const z of roomsWithSensor(state.config, state.live)) {
+    const v = (p.target_thresholds || {})[z.id];
+    const row = h(`<div class="param"><label class="field">${esc(z.name)}
+      <input type="number" step="0.05" min="0" max="1" placeholder="${p.target_threshold}" value="${v ?? ''}"></label></div>`);
+    row.querySelector('input').onchange = e => panelEdit(c => {
+      const t = { ...(c.params.target_thresholds || {}) };
+      if (e.target.value === '') delete t[z.id]; else t[z.id] = +e.target.value;
+      c.params.target_thresholds = t;
+    });
+    el.append(row);
+  }
+  return el;
+}
 
 function settingsPanel(panel) {
   const p = state.config.params;
@@ -759,6 +783,7 @@ function settingsPanel(panel) {
       target.append(el);
     }
   }
+  root.append(targetRooms(p));
   root.append(experts);
   const reset = h('<button class="btn" style="margin-top:12px">Alle auf Standard</button>');
   reset.onclick = () => {

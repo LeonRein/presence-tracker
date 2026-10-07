@@ -1,6 +1,6 @@
 """Score the tracker against the truth taken from error reports (MODEL.md 8): the recordings replayed
-the way the app ran them (a fresh model at every start of the app, the ghost map and the LD2410C
-background learned on from the first one, the people's state saved when the app stopped and restored at
+the way the app ran them (a fresh model at every start of the app, the ghost map, the LD2410C
+background and the destination map learned on from the first one, the people's state saved when the app stopped and restored at
 its start, MODEL.md 5.3), and per reported moment and room P(somebody there) and P(the reported
 number) against what the report
 says.
@@ -70,7 +70,7 @@ def main():
     seen = {}  # room -> last time an LD2450 measured somebody there (for windows that excuse walks)
 
     tracker = None
-    gm = ldb = None
+    gm = ldb = dm = None
     clocks = collections.defaultdict(SensorClock)
     samples = collections.defaultdict(list)  # report name -> [(t, {room: P(somebody)})]
     next_start = 0
@@ -100,12 +100,15 @@ def main():
                     loglik += tracker.loglik
                     segments.append(tracker.loglik)
                     gm, ldb = tracker.ghost_map, getattr(tracker, "ld_background", None)
+                    dm = getattr(tracker, "dest_map", None)
                     people = None if a.forget else json.loads(json.dumps(tracker.people_state()))
                 tracker = Tracker(config)
                 if gm is not None:
                     tracker.use_ghost_map(gm)
                 if ldb is not None:
                     tracker.use_ld_background(ldb)
+                if dm is not None:
+                    tracker.use_dest_map(dm)
                 if people is not None and not tracker.restore_people(people):
                     print("the saved people do not fit: nothing known")
                 clocks.clear()

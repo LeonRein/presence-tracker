@@ -134,6 +134,11 @@ class Model:
     # is not converged in these two (MODEL.md 5.1): compare model variants at more than one setting
     max_hyps = 12
     hyp_floor = 1e-7  # hypotheses with less weight are dropped
+    # 6 "Ziel": the learned map of where walks go (destination.py) weighs, in each cell, against the
+    # walkers' own motion ("wird betreten") as a Dirichlet prior with the weight of this many walks
+    # (as the ghost map's prior weighs one ghost per cell, MODEL.md 4.2, 10): one walk can't make a
+    # spot a destination, a few concordant ones do
+    dest_prior_walks = 1.0
 
 
 def stay_rates(share: float, scale: float, points=Model.stay_points, ratio=2.0) -> tuple:
