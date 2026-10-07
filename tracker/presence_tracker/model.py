@@ -479,8 +479,32 @@ class Config:
         # door: what shows up in there is a reflection; people are counted at the door instead
         if any(z.contains(pos[0], pos[1], -margin) for z in self.closed_rooms):
             return True
-        back = (float(pos[0] - u[0] * margin), float(pos[1] - u[1] * margin))
-        return not line_of_sight(s.sight_origin(), back, self.wall_segments)
+        # behind a wall by more than margin: no point within margin of it is in sight (the
+        # measurement error of a person who is). Not only back along the line of sight: a sensor
+        # that hangs on a wall looks along it, and a target 5 cm beyond that wall lies 0.4 m behind
+        # it along the line of sight (MODEL.md 4.1)
+        o = s.sight_origin()
+        p = (float(pos[0]), float(pos[1]))
+        segs = self.wall_segments
+        if line_of_sight(o, p, segs):
+            return False
+        cands = [(p[0] - float(u[0]) * margin, p[1] - float(u[1]) * margin)]
+        for a, b in segs:
+            ax, ay, bx, by = float(a[0]), float(a[1]), float(b[0]), float(b[1])
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            if L2 <= 0:
+                continue
+            t = min(max(((p[0] - ax) * dx + (p[1] - ay) * dy) / L2, 0.0), 1.0)
+            fx, fy = ax + t * dx, ay + t * dy
+            if math.hypot(p[0] - fx, p[1] - fy) > margin:
+                continue
+            # the foot on the wall, a centimetre to the sensor's side of it
+            nx, ny = -dy, dx
+            side = (o[0] - fx) * nx + (o[1] - fy) * ny
+            k = (0.01 if side >= 0 else -0.01) / math.sqrt(L2)
+            cands.append((fx + nx * k, fy + ny * k))
+        return not any(line_of_sight(o, c, segs) for c in cands)
 
     def visible_sensors(self, x: float, y: float, margin: float = 0.0) -> list:
         return [s for s in self.sensors if s.enabled and s.placed and s.sees(x, y, self.wall_segments, margin)]

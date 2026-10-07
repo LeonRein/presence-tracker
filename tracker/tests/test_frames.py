@@ -75,6 +75,23 @@ def test_detections_behind_a_wall_are_reflections():
     assert [d.hidden for d in detections(config, config.sensors[0], frame)] == [True, False, False]
 
 
+def test_behind_a_wall_is_measured_across_it_not_along_the_line_of_sight():
+    # MODEL.md 4.1: a sensor hanging on a wall (x = 0) looks along it. A person sitting at that wall is
+    # measured a few centimetres beyond it now and then; along the line of sight such a point lies
+    # far behind the wall (7.10. 22:10, Bad and Schlafzimmer: 11 % / 20 % of the still targets were
+    # thrown away), across it 0.1 m: noise at the wall, kept. 0.6 m beyond it: a reflection.
+    s = SensorConfig("a", x=0.0, y=0.0, heading=60, height=1.0, placed=True)
+    config = Config(sensors=[s], walls=[{"points": [[0.0, -1.0], [0.0, 6.0]], "kind": "wall"}])
+
+    def target(x, y):
+        lx, ly = s.to_local(x, y)
+        return {"slot": 1, "x": round(lx * 1000), "y": round(ly * 1000), "speed": 0}
+
+    hidden = [detections(config, s, {"targets": [target(x, y)]})[0].hidden
+              for x, y in [(-0.1, 3.0), (0.2, 3.0), (-0.6, 3.0)]]
+    assert hidden == [False, False, True]
+
+
 def test_a_few_ghosts_do_not_make_a_spot_a_ghost_source_many_do():
     # MODEL.md 4.2: the prior weighs one ghost per cell. Three tracks taken for ghosts in 2.5 h (a seat
     # the filter got wrong, 6.10.) made the spot 13 times the prior with the weight of 4 h of watching;
