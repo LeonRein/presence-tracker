@@ -47,6 +47,37 @@ REPORT_KINDS = {  # new kinds only add keys: old reports keep theirs
     "other": "Sonstiges",
 }
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}
+SEND_TIMEOUT = 5.0  # s a browser may take for one live message; a slower one is cut off
+
+
+class LiveClient:
+    """One browser on /api/live. Only the newest message waits for it (a queue of one, an older one
+    is replaced), sent by its own task: a browser that stops reading (a phone gone to sleep, a stalled
+    proxy) fills the send buffer, and until 0.18 the loop that steps the model and publishes the rooms to
+    Home Assistant waited there - the entities stayed "online" with the last state, a light on stayed on.
+    One that takes longer than SEND_TIMEOUT for a message is cut off (it reconnects when it wakes up)."""
+
+    def __init__(self, ws, transport):
+        self.ws = ws
+        self.transport = transport
+        self.queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+
+    def offer(self, text: str):
+        if self.queue.full():
+            self.queue.get_nowait()
+        self.queue.put_nowait(text)
+
+    async def run(self):
+        try:
+            while True:
+                text = await self.queue.get()
+                await asyncio.wait_for(self.ws.send_str(text), SEND_TIMEOUT)
+        except asyncio.TimeoutError:
+            log.info("live view: a browser takes no messages, cut off")
+        except (ConnectionError, RuntimeError):
+            pass
+        if self.transport is not None:
+            self.transport.abort()  # a write cut off in the middle leaves the stream unusable
 
 
 class App:
@@ -232,7 +263,7 @@ class App:
             now = time.monotonic()
             if self.ws_clients and now - last_push >= 0.12:
                 last_push = now
-                await self._broadcast(self.live_message())
+                self._broadcast(self.live_message())
 
     def tick(self, now: float) -> bool:
         """The model goes on to now; its outputs, and once a second what they show for an error
@@ -292,15 +323,10 @@ class App:
             self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
         return json.dumps({"type": "live", **snap})
 
-    async def _broadcast(self, text: str):
-        dead = []
-        for ws in self.ws_clients:
-            try:
-                await ws.send_str(text)
-            except (ConnectionError, RuntimeError):
-                dead.append(ws)
-        for ws in dead:
-            self.ws_clients.discard(ws)
+    def _broadcast(self, text: str):
+        """To every browser on the live view, without waiting for any (LiveClient)."""
+        for client in self.ws_clients:
+            client.offer(text)
 
     async def run(self, host: str, port: int):
         runner = web.AppRunner(self.web_app(), access_log=None)
@@ -408,13 +434,16 @@ class App:
     async def h_live(self, request):
         ws = web.WebSocketResponse(heartbeat=30)
         await ws.prepare(request)
-        self.ws_clients.add(ws)
+        client = LiveClient(ws, request.transport)
+        client.offer(self.live_message())
+        self.ws_clients.add(client)
+        sender = asyncio.create_task(client.run())
         try:
-            await ws.send_str(self.live_message())
             async for _ in ws:
                 pass
         finally:
-            self.ws_clients.discard(ws)
+            self.ws_clients.discard(client)
+            sender.cancel()
         return ws
 
     async def h_upload(self, request):
