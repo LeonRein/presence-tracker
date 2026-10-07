@@ -281,7 +281,15 @@ class Tracker:
                 obj.leap(lead / leaps)
             for _ in range(parts):
                 obj.move((gap - lead) / parts)
+            self._fade(obj, gap)
         self._version += 1
+
+    def _fade(self, obj, dt: float):
+        """A known person without a track keeps existing with exp(-dt / record_life) (Musicki & Evans
+        2005: the existence of a track as a Markov chain, p11 < 1; MODEL.md 5.5); None: always."""
+        life = self.m.record_life
+        if life and type(obj) is Hidden and obj.r > 0:
+            obj.r *= math.exp(-dt / life)
 
     def reconfigure(self, config):
         """A new configuration. If only sensors changed (turned, moved, recalibrated, switched on
@@ -589,6 +597,7 @@ class Tracker:
             for obj, refs in objs:
                 if isinstance(obj, Hidden):
                     obj.move((t - t0) / parts)
+                    self._fade(obj, (t - t0) / parts)
                     d = obj.weigh(*lat_f) if lat_f is not None else 0.0
                     for h in refs:
                         self.hyps[h].logw += d
@@ -918,7 +927,7 @@ class Tracker:
         likely than a person, MODEL.md 10.)"""
         lost = info["lost"]
         types = self._ghost_types()
-        if not self.m.ghost_end_exact:
+        if not self.m.ghost_end_exact or (lost is None and self.m.ghost_end_unheld):
             u = t - (lost["t"] if lost else info.get("gt", info["born"]))
             return np.array([math.log(max(-math.expm1(-max(u, FRAME) / life), 1e-300)) for _, life in types])
         if lost is None:

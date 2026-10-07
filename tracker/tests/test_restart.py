@@ -102,7 +102,8 @@ def test_a_gap_moves_everybody_on():
             tr.process_frame("a", gap, {"targets": []})
         finally:
             F.GAP_EXACT = old
-        return tr.hyps[0].hidden[0].places()
+        h = tr.hyps[0].hidden[0]
+        return h.places() / h.r  # where, if the person exists (the existence fades as well, MODEL.md 5.5)
 
     short, day = after(60.0), after(86400.0)
     assert short[0] > 0.99

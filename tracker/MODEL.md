@@ -28,6 +28,17 @@ ersetzen darf, wenn etwas Besseres belegt ist.
 7. **Läuft als Home-Assistant-App**: wenig Rechenzeit (nicht mehr als 0.6.21), reproduzierbare
    Ergebnisse. Was gelernt wird (Geisterkarte), lernt die App selbst.
 
+Leon, 7.10.: „Die Annahme einer festen Personenzahl ist schlichtweg falsch und führt zu anderen schweren
+Fehlern. […] Eine neue Person darf nur entstehen, wenn es dafür harte Evidenz gibt. Wenn es erst 5
+Sekunden dauert, bis eine Person als solche identifiziert wird, ist das nicht schlimm. Und Geister
+dürfen sich ohne Belege in den Messwerten nicht halten können!“
+
+*Anmerkung zu 3 (Umsetzung):* Wer nie da war (eine Spur, die ein Geist war, oder dieselbe Person
+doppelt), verschwindet nicht „im Raum“, er hat nie existiert. Das Modell trägt deshalb für jede
+bekannte Person ohne Spur die Wahrscheinlichkeit, dass es sie gibt (5.5); Messungen, die gegen sie
+sprechen, senken sie, wie sie die Dichte formen. Eine wirkliche Person verschwindet weiter nur über
+Türen.
+
 ## 2. Die Welt
 
 Aus dem Grundriss (`model.py`, `world.py`):
@@ -97,6 +108,11 @@ Prozess wie eine Diffusion aus, je Achse mit `D = E[s²] / (2 λ_d) = (s² + Str
 - Wie viele Personen da sind, ist nirgends fest eingestellt (mal einer, mal zwei, mal keiner, mal ein
   Gast). Ein Neustart der App setzt das Wissen über sie fort (5.3); weiß das Modell nichts, sind die
   unbekannten eine Poisson-Intensität ohne feste Zahl (5.3, 5.5).
+- Auch eine bekannte Person ohne Spur ist nur wahrscheinlich da: Sie existiert mit einer
+  Wahrscheinlichkeit r (Bernoulli, 5.5). War ihre Spur vielleicht ein Geist oder eine schon bekannte
+  Person, bleibt diese Möglichkeit als r < 1 erhalten, und was danach nicht zu ihr passt (keine neue
+  Spur, wo sie gesehen würde; kein Herauskommen aus einem Bereich ohne Sensor; die Energien des
+  LD2410C), senkt r. Das ist keine Regel: dieselbe Rechnung wie für ihre Dichte (1.3, Anmerkung).
 
 ## 4. Messmodell
 
@@ -124,6 +140,17 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 - `g_s(x)`: Sicht nach Winkel, Reichweite und Wänden (`sensormodel.py`): voll bis 15°
   vor dem Rand des Blickfelds, 0,5 am Rand, 0 bei 15° jenseits; voll bis Reichweite + 1 m, dann
   Abfall mit e je 1,5 m (gemessen 5.10. an Gehenden).
+  **Sicht einer Person, nicht eines Punkts** (seit 7.10., `Tracker._spread_sight`): Der Sensor misst
+  die Person dort, wo ihre Spur auf ihr sitzt, `z = x + c + o + w` (unten). Er sieht sie also so weit,
+  wie er diese Stelle sieht: `g(x) = E[g_s(x + c + o)]`, Versatz gaußsch mit der Varianz von unten je
+  Entfernung, gemittelt über das, was von x aus ohne Wand erreichbar ist (durch eine Türlücke ja,
+  durch eine Wand nicht; in den Bereichen ohne Sensor bleibt die Sicht der Punkte). Vorher war der
+  Schatten einer Wand eine scharfe Kante auf 0,1 m: Wer 0,2 m im Schatten stand, war unsichtbar,
+  obwohl seine Spur in Sicht saß (6.10. 20:55, Flur aus Sicht des Arbeitszimmers: „die Spur ist
+  Leons“ hatte das Gewicht 0, 10), und ein 0,2 m breiter Streifen der Küche an ihrer Wand (x 2,2–2,4)
+  war für jeden Sensor und das LD2410C unsichtbar (Kacheln 0,08 m²): Dort sammelten sich Personen
+  (7.10. 07:10 Küche 0,76, 10). Jetzt erfasst der LD2450 dort Gehende mit 0,26–0,32 /s (Raummitte
+  0,48 /s), das LD2410C erwartet 26–40 statt 0.
 - `q(x)`: Auflösung neben einem gemessenen Ziel,
   `1 − exp(−ln 2 ((Δr/0,6 m)² + (Δquer/0,9 m)²))` (Form A_Svensson2012 Gl. 18–20); neben einem
   gehaltenen Ziel stattdessen `1 − exp(−d²/(2·0,7²))` (dort würde es wiedergefunden).
@@ -167,6 +194,14 @@ Eine Spur, die zu keiner Person gehört.
   - `λ_e` = 3·10⁻⁴: Mehrwegeechos laufen mit Gehenden mit (angenommen).
 - **Lebensdauer:** Mischung zweier Exponentialverteilungen, Startwert 40 % mit 3 s, 60 % mit 39 s
   (geschätzt per EM 6.10.); wird mit der Karte weitergelernt.
+- **Ende der Spur** (`Tracker._ghost_end`): Der Sensor gibt eine gehaltene Spur auf, wenn er sie nicht
+  wiederfindet (4.1). Bei einer Person ist das „u s nicht wiedergefunden“, S(u). Beim Geist ist die
+  Quelle entweder noch da und nicht wiedergefunden, S_D(u) S(u), oder sie verschwand bei τ < u, bevor
+  sie wiedergefunden wurde, ∫ f_D(τ) S(τ) dτ (konkurrierende Risiken, Kalbfleisch & Prentice 2002 Kap.
+  8). Ohne Halten geendet: für Person und Geist gleich (kein Faktor). Bis 0.10.0 bekam der Geist
+  S(u) und dazu `1 − S_D(u)`, als müsse die Quelle sterben *und* nicht gefunden werden: Am Ende jeder
+  Geisterspur wurde „Person“ um 1/(1 − e^(−u/L)) wahrscheinlicher, bei 1,5 s gehalten und L = 39 s
+  etwa 26-mal (10).
 - **Quelle:** bewegt sich wie eine Person (3.1, 3.2), mit demselben Versatz. Geist und Person
   unterscheiden sich durch Entstehungsort, Lebensdauer und Verhalten der Spur, nicht durch ein anderes
   Rauschen.
@@ -243,7 +278,8 @@ Das Modell, je Sensor:
   Bar-Shalom 1993.
 - **Mittel = (Hintergrund + Summe der Personen) × gemeinsamer Pegel** (inkohärente Überlagerung,
   superpositionaler Sensor): `μ_g = u · (b_g + w_m·M_g + (1 − w_m)·Σ_i S_g(x_i))`. S ist das Profil oben
-  mal Strahl mal Sicht (Wände wie beim LD2450). Ruhig zählt das Verzögerte: M ist, was die Personen
+  mal Strahl mal Sicht (Wände wie beim LD2450: der Anteil der Person, den der LD2450 im selben Gehäuse
+  ohne Wand dazwischen sehen könnte, über ihren Versatz gemittelt wie in 4.1; bis 0.10.0 ja/nein). Ruhig zählt das Verzögerte: M ist, was die Personen
   zuletzt hineingaben (geglättet mit 2 s), w_m sein Anteil im Block; bewegt w_m = 0.
 - **Amplitude je Aufenthalt** (Swerling III: langsam, fest über einen Aufenthalt): Eine Stehende mit
   Spur gibt g·S ab, g ~ Gamma(6, 6) in 3 gleich wahrscheinlichen Stufen (gemessen β 5–16, s. o.), neu
@@ -323,7 +359,7 @@ Frame jedes Sensors alles vorgerückt: etwa 23-mal je Sekunde, ein Hauptteil der
   Hypothese mit exaktem Gewicht (Datenassoziation eines PMBM, B_GarciaFernandez2018; δ-GLMB,
   B_Reuter2014).
 - Eine neue Spur verzweigt jede Hypothese: Geist; eine Person, die schon Spuren anderer Sensoren hat;
-  eine bekannte Person ohne Spur; eine unbekannte (5.5). Eine wiedergefundene: ihr Eigentümer; eine
+  eine bekannte Person ohne Spur (mit ihrem r, 5.5); eine unbekannte (5.5). Eine wiedergefundene: ihr Eigentümer; eine
   andere Person nahe der Stelle; Geist/Reflexion.
 - Behalten werden höchstens 12, solange über 10⁻⁷ des stärksten (Abschneiden nach Gewicht,
   B_Vo2017). Auf den 11 h aus 3.1 greift die Grenze von 12 bei 8 % der Schnitte (461 von 5588), im
@@ -462,18 +498,36 @@ Ankünfte und das Vergessen aus 3.4.
 - Eine neue Spur auf einer unbekannten Person hat das Gewicht `∫ Intensität × Erfassungsrate ×
   Dichte der Messung`; daraus wird eine bekannte Person (5.2). Die Intensität bleibt (eine Geburt ist
   ein Punkt des Prozesses).
-- **Zurückgeben:** Eine bekannte Person ohne Spur, die zu weniger als 1 % im Haus ist, geht mit ihrer
-  ganzen Dichte in die Intensität (Bernoulli → Poisson). Das ändert nur P(mehrere davon kommen
-  zurück), um höchstens 0,01²/2. Sonst würde jeder Gast für immer verfolgt. (Die Literatur verwirft
-  Bernoulli-Teile unter 10⁻⁵, B_GarciaFernandez2018 Abschn. VII; hier geht keine Masse verloren.)
+- **Bekannte Personen ohne Spur sind Bernoullis** (`hidden.Hidden.r`, B_GarciaFernandez2018 Gl. 31;
+  der Spurteil eines PMBM): Es gibt sie mit der Wahrscheinlichkeit r, dann mit ihrer Dichte. Was gegen
+  sie spricht (keine neue Spur, kein Wiederfinden, die Energien, 4.1–4.3), wirkt als
+  `1 − r + r ∫ Dichte × Likelihood`: Dichte und r werden zusammen aktualisiert, ohne Regel. Eine neue
+  Spur auf ihr hat das Gewicht `r ∫ …` und macht sie gewiss (r = 1, eine Person mit Spur). r < 1
+  entsteht beim Zusammenlegen (5.6): Sagt eine Hypothese „die Spur war ein Geist“, eine andere „sie
+  war eine neue Person“, und endet die Spur, sind beide über alle laufenden Spuren gleich; zusammen
+  sind sie die Person mit r = Gewicht der zweiten. Vorher blieben das zwei Hypothesen mit
+  verschiedener Personenzahl; wurde die mit weniger Personen abgeschnitten (höchstens 12, 5.1), kam
+  sie nie zurück, und die erfundene Person blieb mit r = 1 (9, 10). Ausgaben zählen r × Dichte; die
+  Anzeige zeigt Personen mit r ≥ 0,5 (Schätzer der Literatur, B_GarciaFernandez2018 Abschn. VI).
+- **Zurückgeben:** Eine bekannte Person ohne Spur, die zu weniger als 1 % existiert und im Haus ist
+  (r × P(im Haus) < 0,01), geht mit r × ihrer Dichte in die Intensität (Bernoulli → Poisson). Das
+  ändert nur P(mehrere davon kommen zurück), um höchstens 0,01²/2. Sonst würde jeder Gast für immer
+  verfolgt. (Die Literatur verwirft Bernoulli-Teile unter 10⁻⁵, B_GarciaFernandez2018 Abschn. VII,
+  oder r < 10⁻³, B_Reuter2017 S. 166; hier geht keine Masse verloren.) Mit 5 % statt 1 %: report_eval
+  gleich, Log-Evidenz −8.
 
 ### 5.6 Zusammenlegen
 Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
 - Personen mit denselben Spuren: Gauß-Mischungen vereinigt, je Betriebsart per Momentenabgleich.
-- Personen ohne Spur sind austauschbar: so gepaart, dass die Summe der L1-Abstände minimal ist, dann
-  gemischt (eigene Herleitung; beliebige Reihenfolge erzeugt „je zu 50 % hier und dort“ statt „einer
-  hier, einer dort“, B_Reuter2014 Fig. 1–3). Für mehr als eine Person ist das die
+- Personen ohne Spur sind austauschbar: so gepaart, dass die Summe der L1-Abstände (von r × Dichte)
+  minimal ist, dann gemischt (eigene Herleitung; beliebige Reihenfolge erzeugt „je zu 50 % hier und
+  dort“ statt „einer hier, einer dort“, B_Reuter2014 Fig. 1–3). Für mehr als eine Person ist das die
   Multi-Bernoulli-Näherung.
+- Auch Hypothesen mit verschieden vielen Personen ohne Spur werden eine (seit 7.10.): Wo eine
+  Hypothese eine Person weniger hat, steht dort „niemand“ (r = 0); gemischt wird daraus ein
+  Bernoulli mit r = Σ Gewicht × r (`Hidden.mixture`). Für genau eine fehlende Person exakt; vorher
+  nicht zusammengelegt (9: „Bekannte Personen sammeln sich an“). Ein Neustart speichert dadurch
+  eine Hypothese statt einer je Zahl (5.3).
 
 ## 6. Ausgaben
 - **Je beobachtetem Raum:** Verteilung der Personenzahl (5.1); an Home Assistant gehen die
@@ -485,7 +539,8 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
 - **Bereiche ohne Sensor:** P(jemand dort); belegt wie oben, wenn der Bereich nur ein Raum ist.
 - **Bewegt / ruhig, „wird gleich betreten“:** aus den Personen der wahrscheinlichsten Hypothese
   (geht-Gewicht > 0,5 und > 0,15 m/s; Vorausschau 1 s ab 0,3 m/s).
-- Anzeige: Personen der wahrscheinlichsten Hypothese, ihre Dichten als Wärmekarten.
+- Anzeige: Personen der wahrscheinlichsten Hypothese, die eher existieren als nicht (r ≥ 0,5, 5.5),
+  ihre Dichten (r × Dichte) als Wärmekarten.
 
 ## 7. Evidenz
 Die Summe der Normierungen ist die Log-Evidenz der Aufnahmen (`Tracker.loglik`; Summe der

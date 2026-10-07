@@ -69,6 +69,7 @@ class Model:
     # and s over all setups, 40 % living 3 s on average, 60 % 39 s (setup of 4.10. 18:06, 10.8 h)
     ghost_types = ((0.4 * 1.8e-5, 3.0), (0.6 * 1.8e-5, 39.0))
     ghost_end_exact = True  # a ghost's track ending: died or not found again (Tracker._ghost_end)
+    ghost_end_unheld = False  # ... ended without being held: as before, it died in that frame (comparison)
     ghost_prior_time = 4 * 3600.0  # s: weight of that rate in each cell of a ghost map, as watching time
     # 4.3 LD2410C: its energies per 0.75 m gate of slant distance, moving (gates 0-8) and still (2-8),
     # each ~ Gamma(shape, mean background + the people's expected energy), 100 censored. Measured 6.10.
@@ -119,6 +120,9 @@ class Model:
     ld_amp_levels = 3
     # 5 inference: hypotheses over the tracks' owners, cut by weight (Vo et al. 2017). The evidence
     # is not converged in these two (MODEL.md 5.1): compare model variants at more than one setting
+    # a known person without a track exists on with exp(-t / record_life) (existence as a Markov
+    # chain, Musicki & Evans 2005); None: until evidence says otherwise (MODEL.md 5.5)
+    record_life = 1800.0
     max_hyps = 12
     hyp_floor = 1e-7  # hypotheses with less weight are dropped
 
