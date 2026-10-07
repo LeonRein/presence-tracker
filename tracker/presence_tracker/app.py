@@ -19,6 +19,7 @@ import aiohttp
 from aiohttp import web
 
 from . import __version__, code_hash, ha
+from . import calibration
 from .calibration import Calibrator
 from .model import Config
 from .filter import Tracker
@@ -119,7 +120,6 @@ class App:
         self.last_frame_t = -math.inf
         self.calibrator = getattr(self, "calibrator", None) or Calibrator(self.config)
         self.calibrator.config = self.config
-        self.tracker.listeners.append(self._on_tracker_event)
 
     def _model_started(self, t: float | None):
         """The model starts (app start, model failure, reset, new floor plan): when (None: at its
@@ -130,10 +130,6 @@ class App:
         self.model_start = t
         self.start_learned = json.loads(json.dumps(self.tracker.learned()))
         self.start_state = self.tracker.started_from  # the saved state it started from (None: nothing known)
-
-    def _on_tracker_event(self, event, data):
-        if event == "frame":
-            self.calibrator.on_frame(*data)
 
     # ------------------------------------------------------------------ input
 
@@ -159,7 +155,9 @@ class App:
         if self.replay and t < self.last_frame_t - 10:
             log.info("replay restarted, resetting tracker")
             self._reset_tracker()
+            self.calibrator.reset()
             t = self.clocks[sensor_id](recv, frame.get("uptime_ms"))
+        self.calibrator.on_frame(sensor_id, t, frame)
         try:
             self.tracker.process_frame(sensor_id, t, frame)
         except Exception:  # noqa: BLE001 - see _model_failed
@@ -252,7 +250,7 @@ class App:
         snap = self.tracker.snapshot()
         snap["zones"] = {k: v.to_dict() for k, v in self.zone_states.items()}
         snap["status"] = self.sensor_status
-        snap["calibration"] = self.calibrator.status() if self.calibrator.active else None
+        snap["calibration"] = self.calibrator.status()
         elapsed = time.monotonic() - self.stats["since"]
         snap["load"] = {"cpu": round(100 * self.stats["cpu"] / max(elapsed, 1e-3), 2),
                         "fps": round(self.stats["frames"] / max(elapsed, 1e-3), 1)}
@@ -404,13 +402,15 @@ class App:
 
     async def h_calibration(self, request):
         action = request.match_info["action"]
-        if action == "start":
-            self.calibrator.start()
-        elif action == "stop":
-            self.calibrator.stop()
+        if action == "reset":  # a sensor was turned or moved for real: its old measurements are wrong
+            self.calibrator.reset()
         elif action == "solve":
-            return web.json_response(self.calibrator.solve())
-        else:
+            # seconds of numpy: in a thread, the frames keep coming (the data is copied first)
+            body = await request.json() if request.can_read_body else {}
+            data = self.calibrator.data()
+            return web.json_response(await asyncio.to_thread(
+                calibration.solve, self.config, data, bool(body.get("mirror"))))
+        elif action != "status":
             raise web.HTTPNotFound()
         return web.json_response(self.calibrator.status())
 

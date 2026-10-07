@@ -128,14 +128,15 @@ const LIVE = {
   },
   calib() {
     const c = state.live?.calibration;
-    if (!c) return '<p class="note">Keine Aufnahme aktiv.</p>';
-    const frames = Object.entries(c.frames).map(([id, n]) => `<div class="item"><span class="swatch" style="background:${sensorColor(id)}"></span><span class="grow">${esc(sensorById(id)?.name || id)}</span><span class="meta">${n} Frames mit genau 1 Ziel</span></div>`).join('');
+    if (!c) return '';
+    const since = c.since ? new Date(c.since * 1000).toLocaleString('de-DE', { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '–';
+    const frames = Object.entries(c.frames).map(([id, n]) => `<div class="item"><span class="swatch" style="background:${sensorColor(id)}"></span><span class="grow">${esc(sensorById(id)?.name || id)}</span><span class="meta">${n} Messungen in Bewegung</span></div>`).join('');
     const pairs = Object.entries(c.pairs).map(([k, n]) => {
       const [a, b] = k.split('|');
-      const ok = n >= 150 ? 'ok' : n >= 30 ? 'warn' : 'bad';
-      return `<div class="item"><span class="grow">${esc(sensorById(a)?.name || a)} ↔ ${esc(sensorById(b)?.name || b)}</span><span class="badge ${ok}">${n} Paare</span></div>`;
+      const ok = n >= 60 ? 'ok' : n >= 15 ? 'warn' : 'bad';
+      return `<div class="item"><span class="grow">${esc(sensorById(a)?.name || a)} ↔ ${esc(sensorById(b)?.name || b)}</span><span class="badge ${ok}">${n} s</span></div>`;
     }).join('');
-    return `${frames}<h3>Gemeinsam gesehen</h3>${pairs || '<p class="note">Noch keine Überschneidung. Durch Bereiche gehen, die zwei Sensoren sehen.</p>'}`;
+    return `<h3>Gesammelt seit ${since}</h3>${frames}<h3>Gleichzeitig gesehen</h3>${pairs || '<p class="note">Noch nichts. Auch Sensoren, die sich nur in einer Tür überschneiden, werden über den Grundriss und die Übergänge kalibriert.</p>'}`;
   },
 };
 
@@ -634,35 +635,37 @@ function zoneDetail(el, z) {
 function calibrationPanel(panel, view) {
   const c = state.config;
   const placed = c.sensors.filter(s => s.placed && s.enabled);
-  const active = !!state.live?.calibration;
   const result = state.calibResult;
   panel.append(h(`<div>
     <h2>Kalibrierung</h2>
     <ol class="steps">
-      <li>Sensoren genau an ihrer Position einzeichnen. Die Blickrichtung muss nur grob stimmen.</li>
-      <li>Alle anderen verlassen die Räume der beteiligten Sensoren. Aufnahme starten und <b>allein</b> 2–3 Minuten in normalem Tempo durch alle Bereiche gehen, die zwei Sensoren gleichzeitig sehen: kreuz und quer, auch nah an den Rändern. Nur Messungen in Bewegung zählen, Stehenbleiben bringt nichts.</li>
+      <li>Sensoren genau an ihrer Position einzeichnen, mit Montagehöhe und der x-Richtung, wie sie eingebaut sind. Die Blickrichtung muss nur grob stimmen.</li>
+      <li>Die App sammelt laufend, wo Gehende gemessen werden (die letzten 24 Stunden). Ein Tag normales Leben reicht meist. Schneller geht es allein: ein paar Minuten kreuz und quer durch jeden Raum mit Sensor, an den Wänden entlang und mehrmals durch die Türen zwischen ihnen.</li>
       <li>Berechnen, Ergebnis prüfen und übernehmen.</li>
     </ol>
-    <p class="note">Die eingezeichneten Positionen bleiben. Aus den Messungen folgen je Sensor die Blickrichtung, der Maßstab (wie viel zu kurz oder zu lang er misst) und die x-Richtung: so, dass die Punkte einer Person von zwei Sensoren übereinanderliegen. Ein Sensor ohne genug gemeinsame Messungen mit einem anderen bleibt, wie er ist.</p>
+    <p class="note">Die eingezeichneten Positionen und die x-Richtung bleiben. Blickrichtung und Maßstab (wie viel zu kurz oder zu lang ein Sensor misst) folgen für alle Sensoren gemeinsam aus drei Dingen: Was zwei Sensoren gleichzeitig sehen, muss übereinanderliegen. Wer aus dem Blickfeld eines Sensors in das eines anderen geht, geht dazwischen weiter. Und wer geht, ist in einem Raum und geht durch Türen, nicht durch Wände. Übernommen wird nur, was die Messungen sicher bestimmen.</p>
     <div class="row" style="margin-top:10px">
-      <button class="btn ${active ? '' : 'primary'}" id="toggle" ${placed.length < 2 ? 'disabled' : ''}>${active ? 'Aufnahme stoppen' : 'Aufnahme starten'}</button>
-      <button class="btn ${active ? 'primary' : ''}" id="solve" ${placed.length < 2 ? 'disabled' : ''}>Berechnen</button>
+      <button class="btn primary" id="solve" ${placed.length < 1 ? 'disabled' : ''}>Berechnen</button>
+      <button class="btn" id="reset">Neu sammeln</button>
     </div>
-    ${placed.length < 2 ? '<p class="note">Dafür müssen mindestens zwei Sensoren platziert sein.</p>' : ''}
+    <p class="note"><i>Neu sammeln</i> nach dem Drehen oder Versetzen eines Sensors: seine alten Messungen passen dann nicht mehr.</p>
+    <label class="check"><input type="checkbox" id="mirror" ${state.calibMirror ? 'checked' : ''}> Auch die x-Richtung prüfen (nur nötig, wenn unklar ist, wie ein Sensor eingebaut ist)</label>
     <div data-live="calib"></div>
     <div id="result"></div>
     <h3>Sichtprüfung</h3>
-    <p class="note">Die Messpunkte aller Sensoren werden auf der Karte gezeigt. Wo zwei Sensoren denselben Bereich sehen, müssen die Punkte einer Person übereinanderliegen und mitlaufen.</p>
+    <p class="note">Die Messpunkte aller Sensoren werden auf der Karte gezeigt. Wo zwei Sensoren denselben Bereich sehen, müssen die Punkte einer Person übereinanderliegen und mitlaufen; Wege führen durch Türen, nicht durch Wände.</p>
   </div>`));
-  panel.querySelector('#toggle').onclick = async () => {
-    await api('api/calibration/' + (active ? 'stop' : 'start'), { method: 'POST' });
-    if (!active) state.calibResult = null;
-    toast(active ? 'Aufnahme gestoppt' : 'Aufnahme läuft. Jetzt allein durch die Überschneidungen gehen.');
+  panel.querySelector('#mirror').onchange = e => { state.calibMirror = e.target.checked; };
+  panel.querySelector('#reset').onclick = async () => {
+    await api('api/calibration/reset', { method: 'POST' });
+    state.calibResult = null;
+    toast('Gesammelte Messungen verworfen. Die App sammelt neu.');
     setTimeout(() => emit('tab'), 300);
   };
   panel.querySelector('#solve').onclick = async () => {
     try {
-      state.calibResult = await api('api/calibration/solve', { method: 'POST', body: '{}' });
+      toast('Rechnet …');
+      state.calibResult = await api('api/calibration/solve', { method: 'POST', body: JSON.stringify({ mirror: !!state.calibMirror }) });
       emit('tab');
     } catch (e) { toast(e.message, 5000); }
   };
@@ -671,31 +674,35 @@ function calibrationPanel(panel, view) {
 
 function calibrationResult(el, r) {
   if (r.error) { el.innerHTML = `<p class="note" style="color:var(--bad)">${esc(r.error)}</p>`; return; }
-  const label = { ok: 'gut', warn: 'unsicher', bad: 'unbrauchbar' };
+  const label = { ok: 'gut', warn: 'teilweise', bad: 'bleibt' };
   const entries = Object.entries(r.sensors);
+  const pm = (v, sd, d) => `${fmt(v, d)} <span class="meta">± ${fmt(sd, d)}</span>`;
   const rows = entries.map(([id, s]) => {
     const cur = sensorById(id);
-    return `<tr><td>${esc(cur?.name || id)}</td>
-      <td>${s.turn > 0 ? '+' : ''}${fmt(s.turn, 1)}°</td><td>${fmt(cur?.scale ?? 1, 3)} → ${fmt(s.scale, 3)}</td>
+    const turn = s.apply.heading ? `${s.turn > 0 ? '+' : ''}${pm(s.turn, s.heading_sd, 1)}°` : '–';
+    const scale = s.apply.scale ? `${fmt(cur?.scale ?? 1, 3)} → ${pm(s.scale, s.scale_sd, 3)}` : '–';
+    const out = s.outside.map(v => Math.round(100 * v));
+    return `<tr><td>${esc(cur?.name || id)}</td><td>${turn}</td><td>${scale}</td>
       <td>${s.mirror !== cur?.mirror ? '<b>ändern</b>' : '–'}</td>
       <td><span class="badge ${s.quality}">${label[s.quality]}</span></td></tr>
-      <tr><td colspan="5" class="note">${Math.round(100 * s.inliers / s.pairs)} % von ${s.pairs} gemeinsamen Messungen passen zusammen, mittlere Abweichung ${fmt(s.rms * 100, 0)} cm.${s.reason ? ' ' + esc(s.reason) : ''}</td></tr>`;
+      <tr><td colspan="5" class="note">${s.points} Punkte in Bewegung, ${s.pairs} s gleichzeitig mit anderen Sensoren gesehen (${s.agree} passend), ${s.handovers} Übergänge. Außerhalb der Sicht: ${out[0]} % → ${out[1]} %.${s.reason ? ' ' + esc(s.reason) : ''}</td></tr>`;
   }).join('');
   const name = id => esc(sensorById(id)?.name || id);
-  const usable = entries.filter(([, s]) => s.quality !== 'bad');
-  const skipped = entries.length - usable.length;
+  const usable = entries.filter(([, s]) => s.apply.heading || s.apply.scale);
   el.append(h(`<div class="card" style="margin-top:12px">
     <b>Ergebnis</b>
     <table class="data" style="margin-top:8px"><tr><th>Sensor</th><th>Drehung</th><th>Maßstab</th><th>Spiegel</th><th></th></tr>${rows || '<tr><td colspan="5">nichts berechnet</td></tr>'}</table>
-    ${entries.length ? `<p class="note">${Math.round(100 * r.inside)} % des Laufs liegen in den Räumen.</p>` : ''}
-    ${r.unsolved.length ? `<p class="note">Bleiben, wie sie sind: ${r.unsolved.map(name).join(', ')}. Zu wenig gemeinsame Messungen in Bewegung mit einem anderen Sensor.</p>` : ''}
-    ${skipped ? `<p class="note">Unbrauchbare Ergebnisse werden nicht übernommen.</p>` : ''}
-    ${usable.length ? `<button class="btn primary" id="apply">Übernehmen</button>` : ''}
+    ${entries.length && r.inside != null ? `<p class="note">${Math.round(100 * r.inside)} % der Punkte in Bewegung liegen da, wo ihr Sensor hinsieht.</p>` : ''}
+    ${r.unsolved.length ? `<p class="note">Bleiben, wie sie sind: ${r.unsolved.map(name).join(', ')}. Keine Messungen in Bewegung.</p>` : ''}
+    ${usable.length ? `<button class="btn primary" id="apply">Übernehmen</button>` : '<p class="note">Nichts sicher bestimmt, nichts zu übernehmen.</p>'}
   </div>`));
   el.querySelector('#apply')?.addEventListener('click', () => {
     edit(c => {
       for (const [id, s] of usable) {
-        Object.assign(c.sensors.find(x => x.id === id), { heading: s.heading, mirror: s.mirror, scale: s.scale });
+        const sc = c.sensors.find(x => x.id === id);
+        if (s.apply.heading) sc.heading = s.heading;
+        if (s.apply.scale) sc.scale = s.scale;
+        if (s.mirror !== sc.mirror && s.apply.heading) sc.mirror = s.mirror;
       }
     });
     state.calibResult = null;
