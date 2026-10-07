@@ -4,13 +4,14 @@ the tracker said P(occupied) > the light threshold (MODEL.md 6) for longer than 
 a person the LD2450 suppresses (sitting) also counts here, so read the episodes, not only the sum.
 
 usage: phantom.py --config FILE --recordings DIR [--tracker DIR] [--from [YYYY-MM-DD ]HH:MM] [--to ...]
-                  [--window 30] [--min 30] [--every 1]"""
+                  [--window 30] [--min 30] [--every 1] [--patch FILE.py]..."""
 import argparse
 import bisect
 import collections
 import glob
 import json
 import os
+import runpy
 import sys
 import time
 
@@ -28,8 +29,11 @@ def main():
     ap.add_argument("--window", type=float, default=30.0)
     ap.add_argument("--min", dest="min_len", type=float, default=30.0)
     ap.add_argument("--every", type=float, default=1.0)
+    ap.add_argument("--patch", action="append", default=[], help="Python file run before the replay (as in report_eval.py)")
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(a.tracker))
+    for p in a.patch:
+        runpy.run_path(p)
     from presence_tracker.filter import Tracker
     from presence_tracker.frames import SensorClock
     from presence_tracker.model import Config

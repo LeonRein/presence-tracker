@@ -200,12 +200,23 @@ Ziele des LD2450 im selben Gehäuse (der unterdrückt Sitzende und hat Geister: 
   n ≈ 2: eine Amplitude (Radargleichung). Der Schweif ist kein Sonderfall eines Raums (Arbeitszimmer
   allein und die übrigen vier: τ 0,42 / 0,39, ℓ 1,59 / 1,67 m). Nach dem Winkel flach bis 45–60°
   (Strahl voll bis 50°, 0 ab 70°, angenommen darüber). Die Amplitude einzelner Aufenthalte streut um
-  das Profil (`tools/ld2410/amplitude.py`, Aufenthalte einer Person ≥ 30 s, 6.10. 18–23 Uhr, Gewinn g
-  auf dem Profil je Aufenthalt): log g Streuung 0,93 ruhig / 0,66 bewegt (nach Abzug der
-  Schätzunsicherheit), als Gamma(β, β) β 1,6 / 2,8, 10–90 % g 0,14–2,3; innerhalb eines Aufenthalts
-  beständig (Hälften korreliert 0,88 / 0,71), ruhig und bewegt derselbe Gewinn (0,88); er geht mit der
-  Erkennbarkeit des LD2450 (Wiederfinderate je Aufenthalt, innerhalb Sensor und 1 m Entfernung,
-  Spearman 0,62). Im Modell ist er nicht (10).
+  das Profil (Gewinn g auf dem Profil je Aufenthalt einer Person ≥ 30 s). Nur aus Frames, die auch der
+  Filter als Messung nimmt (`tools/ld2410/amplitude2.py`: das LD2450-Ziel nicht gehalten und nicht
+  hinter einer Wand): innerhalb eines Sensors log g Streuung 0,47 ruhig (6.10. 18–23 Uhr, 88
+  Aufenthalte) bzw. 0,25 (7.10. 6–8 Uhr, 39), als Gamma(β, β) β 5–16; ruhig und bewegt derselbe
+  Gewinn (0,82–0,88); mit der Wiederfinderate des LD2450 innerhalb Sensor und 1 m Entfernung Spearman
+  0,37 bewegt / 0,47 ruhig. Die erste Messung (`amplitude.py`: 0,93, β 1,6, Flur −1,1, Spearman 0,62)
+  nahm auch gehaltene Ziele: Der LD2450 hält ein eingefrorenes Ziel bis 35 s, nachdem die Person
+  gegangen ist, und die Küche hat ihre Echos hinter der Wand; dort war wenig Energie, daher die
+  niedrigsten Gewinne und ein Teil der Kopplung an κ. Je Sensor (Mittel von log g ruhig, beide Tage):
+  Arbeitszimmer −0,2 / +0,2, Esszimmer +0,3 / −0,1, Flur −0,2 / +0,3, Küche +0,9 / +1,5 (je ein
+  Aufenthalt), Wohnzimmer +1,0 / +1,1 (alle in 5–7,5 m). Wo im Profil die Abweichung liegt
+  (`tools/ld2410/shape2.py`, gemessen/Profil je Abstand des Rings hinter der Person): Die Hauptkeule
+  passt in Arbeitszimmer, Flur und Küche (0,9–1,3), der Schweif hinter der Person ist je Raum
+  verschieden (Küche ×2,5–4,6, Flur ×1,5–2,4, Arbeitszimmer ×1–1,3, Esszimmer ×0,5–0,7); im
+  Wohnzimmer liegt alles ×1,5–5 höher. Vorbehalt: Bezug ist „genau ein LD2450-Ziel“, und der LD2450
+  unterdrückt Sitzende; wo jemand sitzt (Ess-, Wohnzimmer), zählt dessen Energie mit. Nach dem
+  Winkel kein beständiger Verlauf (6.10. +0,17 je 10°, 7.10. 0,0). Im Modell ist nichts davon (10).
 - **Zeit:** Die Ruhig-Energien folgen einer Person mit etwa 2 s (zwei Fälle: Kommen und Gehen; nah
   gekappt bei 100, darum dort 3 s länger voll). Korrelationszeit des Log-Likelihood-Verhältnisses „Person
   / niemand“: 4 s bewegt, 13 s ruhig.
@@ -425,11 +436,12 @@ Lebensdauer der Geister geschätzt (4.2).
   Alltagsaufnahmen, auch ohne große Überschneidung; 10).
 
 ## 9. Bekannte Schwächen und Offenes
-Offen beim LD2410C (4.3): Die Echoquellen schlucken auch, was eine Person mit Spur über das mittlere
-Profil hinaus abgibt (Flur 21:35 und 21:56: Eintretende zu 0,5 statt 0,9 im Flur); eine Amplitude je
-Aufenthalt half dagegen nicht (10). Ob und wie stark er durch Wände und Türen sieht (bisher: gar nicht; die zweite Person im
+Offen beim LD2410C (4.3): Flur 21:35 und 21:56 (Eintretende zu 0,5 statt 0,9 im Flur) liegen nicht
+am LD2410C: ohne seine Echoquellen im Flur 0,54 / 0,46, ganz ohne den Flur-LD2410C 0,51 / 0,62
+(sonst 0,52 / 0,40). Die Person steht in der Tür zum Arbeitszimmer (−1,5 / 5,0), und welche Seite,
+entscheiden 0,2 m. Ob und wie stark er durch Wände und Türen sieht (bisher: gar nicht; die zweite Person im
 Bad erscheint im Arbeitszimmer, wenn doch); die Amplitude einzelner Aufenthalte streut um einen Faktor
-2–4 um das Profil (4.3), das Modell nimmt das mittlere; δ ist gegen teils
+1,3–1,6 um das Profil, der Schweif je Raum um bis zu 3 (4.3), das Modell nimmt das mittlere; δ ist gegen teils
 unkalibrierte LD2450 gemessen (0,07–0,5 m je nach Sensor); die Addition mehrerer Personen ist nicht an
 Zwei-Personen-Zeiten geprüft; α, τ, κ, die Verzögerung und das Vergessen des Hintergrunds sind über die
 Evidenz (7) zu schätzen; das Bewegt-Flag ist ohne Ablation weggelassen. Ein Raumteil, den kein Sensor
@@ -610,6 +622,26 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Wohnzimmer (Licht fälschlich an 0,88 von 41 statt 0, aus 2,0 statt 3,0 von 15). `start_people` = 2 statt
   1: report_eval unverändert (0 / 3,0, Log-Evidenz +83), der Fall auch mit dem Neubeginn um 08:06:15
   richtig.
+- **Maßstab und Schweif je Sensor, Amplitude je Aufenthalt, zweiter Versuch** (7.10., verworfen bzw.
+  offen): Die Streuung war zu groß gemessen (4.3: gehaltene Ziele und Echos), echt sind β 5–16. Geprüft
+  mit report_eval (Basis: fälschlich aus 3,00 von 15, an 0 von 41, Log-Evidenz −1187650):
+  (a) ein Maßstab je Sensor auf dem ganzen Profil, von der App gelernt wie der Hintergrund (Lösung der
+  Likelihood-Gleichung der Gamma-Verteilung, Σ w (e − μ) U/μ² = 0, aus den Personen vor den Frames,
+  Prior log-Streuung 0,5): gelernt Esszimmer 1,7, Wohnzimmer 1,9, Küche 2,4, Flur 0,9, Arbeitszimmer
+  0,9; aus 3,67, Evidenz +717. (b) Wohnzimmer fest ×2,7 (der Offline-Wert): 3,92, +173. (c) ein
+  Faktor auf den Schweif je Sensor, ebenso gelernt (Nachhall des Raums): Küche 3,5, Esszimmer 1,5, die
+  anderen 0,9–1,0; 3,83, +636. In allen dreien kippt das Wohnzimmer um 21:21 (0,89 → 0,46–0,58): Wer
+  einen Sensor lauter macht, lässt die Person, die dort wenig abgibt, woanders hin. Online gelernt
+  nehmen Maßstab und Schweif außerdem die Energie Sitzender, die der Filter nur ungefähr kennt
+  (Esszimmer 1,5–1,7, offline um 1). (d) Amplitude je Aufenthalt Gamma(6) an κ gekoppelt: 3,08,
+  +1598, aber die zweite Person im Bad (21:28–21:30) wieder in der Küche (Bad 0,02–0,05). (e) dieselbe
+  mit eigenen 3 Stufen (unabhängig von κ, a priori unabhängig, also exakt als eigener Vektor neben κ
+  an der Gauß-Mischung): Gamma(6) 3,08 (Wohnzimmer 21:21 eine Sekunde unter der Schwelle), +1361,
+  Bad und Küche richtig, Flur 21:56 0,40 → 0,51; leere Räume nachts 0 min wie die Basis; Rechenzeit
+  gleich. Gamma(10) 3,08 / +1027; Gamma(3) 3,17 / +1795, aber das Bad wieder falsch. Die Kopplung an
+  κ ist zu stark (gemessen Spearman 0,4, nicht 1): Sie zieht über die Energie κ und damit das Urteil
+  des LD2450. Keine Variante macht weniger Lichtfehler; (e) ist die einzige ohne neuen Fehler (Branch
+  `ld-amplitude-2-s1`).
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.
