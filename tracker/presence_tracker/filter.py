@@ -97,7 +97,7 @@ class Hyp:
                    list(self.hidden), self.ppp, dict(self.phantom))
 
     def people(self) -> list:
-        """The known people (with existence 1)."""
+        """The known people: with tracks (they exist), without (Bernoullis, Hidden.r)."""
         return list(self.groups.values()) + self.hidden
 
     def objects(self) -> list:
@@ -113,8 +113,11 @@ class Hyp:
         return out
 
     def key(self):
+        """What the hypothesis says about the live tracks. Hypotheses that differ only in the known
+        people without a track (how many, where) are merged (MODEL.md 5.6): a person missing in
+        some of them becomes a Bernoulli with r < 1."""
         return (frozenset(frozenset(v) for v in self.group_segs().values()),
-                frozenset(s for s, k in self.kind.items() if k == "g"), len(self.hidden))
+                frozenset(s for s, k in self.kind.items() if k == "g"))
 
 
 class Tracker:
@@ -402,9 +405,47 @@ class Tracker:
                 for j in range(w.ny):
                     if w.labels[i, j] >= 0:
                         grid[i, j] = self.sensor_model.pd(sid, w.x0 + (i + 0.5) * CELL, w.y0 + (j + 0.5) * CELL) / PD_MAX
+            # the LD2410C sees where the LD2450 in the same housing could see at all (its own beam
+            # aside, ld2410.expected): through no wall
+            los = (grid > 0).astype(float)
+            if self.m.sight_spread:
+                grid, los = self._spread_sight(si, grid), self._spread_sight(si, los)
             self._gcache[si] = grid
+            self._gcache[("los", si)] = los
             self._area[si] = float((grid > 0.05).sum()) * CELL * CELL
         return grid
+
+    def _spread_sight(self, si: int, grid: np.ndarray) -> np.ndarray:
+        """The sight of a person, not of a point (MODEL.md 4.1): the sensor measures the person
+        where its track sits on them, z = x + c + o + w, so it sees them as far as it sees that spot:
+        the sight of points, averaged over the offset's distribution around x (Gaussian, per axis
+        the variance of _offset_var at this distance), over what lies on the person's side of the
+        walls (a body does not reach through a wall; through a door gap it does). Without it a
+        wall's shadow is a sharp edge: a person standing in it is invisible though the track that
+        is theirs sits in sight (6.10. 20:55, the hallway seen from the study), and strips of a
+        room the sight just misses hold people no sensor can see (the kitchen along its wall,
+        x 2.2-2.4)."""
+        w = self.world
+        s = self.config.sensors[si]
+        cx = w.x0 + (np.arange(w.nx) + 0.5) * CELL
+        cy = w.y0 + (np.arange(w.ny) + 0.5) * CELL
+        dist = np.hypot(cx[:, None] - s.x, cy[None, :] - s.y)
+        p = self.p
+        var = 0.5 * ((p.range_sigma_base + p.range_sigma_slope * dist) ** 2
+                     + (p.lateral_sigma_base + p.lateral_sigma_slope * dist) ** 2)
+        inside = w.labels == OBSERVED
+        reach_r = 2.5 * math.sqrt(float(var[inside].max())) if inside.any() else 0.0
+        offs, mask = w.reach(min(reach_r, 1.2))
+        num = np.zeros_like(grid)
+        den = np.zeros_like(grid)
+        pad = int(np.abs(offs).max()) if len(offs) else 0
+        gp = np.pad(grid, pad)
+        for k, (di, dj) in enumerate(offs):
+            wk = np.exp(-0.5 * (di * di + dj * dj) * CELL * CELL / var) * mask[k]
+            num += wk * gp[pad + di:pad + di + w.nx, pad + dj:pad + dj + w.ny]
+            den += wk
+        # in the places without a sensor nobody is in view (MODEL.md 2): as the points' sight
+        return np.where((w.labels == OBSERVED) & (den > 0), num / np.maximum(den, 1e-300), grid)
 
     def _g(self, si: int, pos: np.ndarray) -> np.ndarray:
         """How well sensor si sees the points (..., 2), 0..1 (MODEL.md 4.1, from the geometry)."""
@@ -422,6 +463,13 @@ class Tracker:
         s = self.config.sensors[si]
         dx, dy = pos[..., 0] - s.x, pos[..., 1] - s.y
         return np.hypot(dx, dy), np.arctan2(dy, dx)
+
+    def _los(self, si: int, pos: np.ndarray) -> np.ndarray:
+        """How much of a person at the points (n, 2) is in the line of sight of sensor si (0..1,
+        the LD2410C's sight; _grid)."""
+        self._grid(si)
+        i, j = self.world.cell_of(pos.reshape(-1, 2))
+        return self._gcache[("los", si)][i, j]
 
     def _rates(self, si: int, pos: np.ndarray, skip=(), masked=True, base=None) -> np.ndarray:
         """(2, n) rates (1/s) [walkers, still people] at which sensor si starts a track on somebody
@@ -602,12 +650,12 @@ class Tracker:
                 and self.config.sensors[si].enabled and self.config.sensors[si].placed]
 
     def _recycle(self):
-        """Known people almost surely out of the house join the unknown ones (MODEL.md 5.5):
-        otherwise every guest who ever came would be followed forever."""
+        """Known people almost surely out of the house or not existing join the unknown ones (MODEL.md
+        5.5): otherwise every guest who ever came would be followed forever."""
         cache = {}
         changed = False
         for hy in self.hyps:
-            gone = [u for u in hy.hidden if u.out > 1 - GIVE_UP]
+            gone = [u for u in hy.hidden if u.in_house() < GIVE_UP]
             if not gone:
                 continue
             key = (id(hy.ppp),) + tuple(sorted(id(u) for u in gone))
@@ -842,6 +890,7 @@ class Tracker:
         for listener in self.listeners:
             listener("track_end", (self.sensors[si], info["z0"], p_ghost, life, data_lost))
         self._live_by_sensor[si].remove(seg)
+        ghost_end = self._ghost_end(info, t)
         cache = {}
         for hy in self.hyps:
             kind = hy.kind[seg]
@@ -849,15 +898,43 @@ class Tracker:
             hy.phantom.pop(seg, None)
             if kind == "g":
                 del hy.kind[seg]
-                if not data_lost:
+                if not data_lost and ghost_end is not None:
                     before = _logsumexp(acc)
-                    u = t - (info["lost"]["t"] if info["lost"] else info.get("gt", info["born"]))
-                    for k, (_, life) in enumerate(self._ghost_types()):
-                        acc[k] += math.log(max(-math.expm1(-max(u, FRAME) / life), 1e-300))
+                    acc += ghost_end
                     hy.logw += _logsumexp(acc) - before
                 continue
             self._release(hy, kind, seg, cache)
             del hy.kind[seg]
+
+    def _ghost_end(self, info, t) -> np.ndarray | None:
+        """Per kind of ghost, the log factor of its track ending now beyond what the person's
+        alternative gets (MODEL.md 4.2). The track ends when the sensor gives up a target it has
+        not found again (sensortracks.py); for a person that is "not found again for u s" (_held,
+        S(u)). A ghost's source is either still there and not found again, S_d(u) S(u), or it
+        died at some tau < u before being found again, int f_d(tau) S(tau) dtau (it can't be found
+        when it is gone): together S(u) (S_d(u) + int f_d S / S(u)) - the S(u) of _held times this.
+        Ended without being held first: the same for both, 0. (Until 0.10.0: log(1 - S_d(u)), as if
+        the source had to die and also not be found: a ghost's track ending made it ~25 times less
+        likely than a person, MODEL.md 10.)"""
+        lost = info["lost"]
+        types = self._ghost_types()
+        if not self.m.ghost_end_exact:
+            u = t - (lost["t"] if lost else info.get("gt", info["born"]))
+            return np.array([math.log(max(-math.expm1(-max(u, FRAME) / life), 1e-300)) for _, life in types])
+        if lost is None:
+            return None
+        u = t - lost["t"]
+        if u <= 0:
+            return None
+        s_u = max(self._no_find(lost["kind"], u), 1e-300)
+        tau = u * np.concatenate([[0.0], np.geomspace(1e-4, 1.0, 48)])  # S drops within 0.1-0.3 s
+        s_tau = np.array([self._no_find(lost["kind"], x) for x in tau])
+        out = []
+        for _, life in types:
+            f = np.exp(-tau / life) / life * s_tau
+            died = float(((f[1:] + f[:-1]) * np.diff(tau)).sum() / 2)
+            out.append(math.log(math.exp(-u / life) + died / s_u))
+        return np.array(out)
 
     def _release(self, hy, gid, seg, cache):
         """In hypothesis hy, the person of group gid no longer owns seg (it ended, or it is somebody
@@ -953,7 +1030,12 @@ class Tracker:
                 return None, -math.inf
             return derived(("tiles", id(obj)), lambda: Gauss.from_tiles(obj, tl, f_lat[0], f_lat[1], seg, z, var, m))
 
-        children = []
+        children, cats = [], []  # cats: what each child says the track is (for listeners)
+
+        def add(ch, cat):
+            children.append(ch)
+            cats.append(cat)
+
         for h, hy in enumerate(self.hyps):
             cur = hy.kind.get(seg) if refind else None
 
@@ -990,18 +1072,18 @@ class Tracker:
                     ch = hy.child(hy.logw + pf + _logsumexp(stay) - _logsumexp(acc) + L)
                     ch.ghost[seg] = stay
                     ch.phantom[seg] = new
-                    children.append(ch)
+                    add(ch, "refind_ghost")
                 else:
                     new, L = attach(hy.groups[cur])
                     if L > -math.inf:
                         ch = hy.child(hy.logw + pf + L)
                         ch.groups[cur] = new
-                        children.append(ch)
+                        add(ch, "owner")
                     ch = released(hy.child(hy.logw + pf + math.log(m.find_clutter / (2 * math.pi * m.find_radius ** 2))))
                     ch.kind[seg] = "g"
                     ch.ghost[seg] = _log(ghost_rates / ghost_rates.sum())
                     ch.phantom[seg] = source()
-                    children.append(ch)
+                    add(ch, "clutter")
                 base = pf
             else:
                 lam = ghost_rates * (map_rate / ghost_rates.sum())
@@ -1017,7 +1099,7 @@ class Tracker:
                 ch.kind[seg] = "g"
                 ch.ghost[seg] = _log(lam / lam.sum())
                 ch.phantom[seg] = source()
-                children.append(ch)
+                add(ch, "ghost")
                 base = 0.0
             # somebody with tracks (of other sensors, or held ones)
             for gid, obj in hy.groups.items():
@@ -1029,7 +1111,7 @@ class Tracker:
                 ch = released(hy.child(hy.logw + base + L))
                 ch.groups[gid] = new
                 ch.kind[seg] = gid
-                children.append(ch)
+                add(ch, "tracked")
             # somebody without a track: from their tiles
             counts = {}
             for u in hy.hidden:
@@ -1043,7 +1125,7 @@ class Tracker:
                 gid = next(self._gids)
                 ch.groups[gid] = new
                 ch.kind[seg] = gid
-                children.append(ch)
+                add(ch, "known")
             # somebody nobody knew of (the unknown ones stay as they are: a birth is one point of
             # the Poisson process, B_GarciaFernandez2018 eq. 18-24)
             new, L = attach(hy.ppp)
@@ -1052,9 +1134,11 @@ class Tracker:
                 gid = next(self._gids)
                 ch.groups[gid] = new
                 ch.kind[seg] = gid
-                children.append(ch)
+                add(ch, "new")
         if not children:
             return
+        for listener in self.listeners:
+            listener("branch", (self.sensors[si], seg, z, refind, [(c.logw, k) for c, k in zip(children, cats)]))
         # the factor by which the map at z moved the odds of "ghost" (for what the map learns, _end)
         map_odds = _logsumexp(ghost_ms) - _logsumexp(ghost_ls) if not refind and ghost_ms else 0.0
         top = max(c.logw for c in children)
@@ -1149,9 +1233,14 @@ class Tracker:
                 for u in common:
                     rest.remove(next(r for r in rest if r is u))
                 rests.append(rest)
+            # a hypothesis with fewer of them: the missing ones do not exist there (r = 0)
+            size = max(len(r) for r in rests)
+            if any(len(r) < size for r in rests):
+                nobody = Hidden.nobody(self.tiles)
+                rests = [r + [nobody] * (size - len(r)) for r in rests]
             rests = [rests[0]] + [self._pair(rests[0], r) for r in rests[1:]]
-            mixed = [self._mix_hidden([(w, rest[j]) for w, rest in zip(wn, rests)]) for j in range(len(rests[0]))]
-            new.hidden = common + mixed
+            mixed = [self._mix_hidden([(w, rest[j]) for w, rest in zip(wn, rests)]) for j in range(size)]
+            new.hidden = common + [u for u in mixed if u.r > 0]
             new.ppp = self._mix_hidden([(w, h.ppp) for w, h in zip(wn, hs)])
             out.append(new)
         return out
@@ -1212,7 +1301,7 @@ class Tracker:
         side = dx * s._sin - dy * s._cos
         angle = np.degrees(np.abs(np.arctan2(side, np.maximum(ahead, 1e-9))))
         slant = np.sqrt(dx * dx + dy * dy + (s.height - self.p.target_height) ** 2)
-        return angle, slant, (ahead > 0) & (self._g(si, pos) > 0)
+        return angle, slant, np.where(ahead > 0, self._los(si, pos), 0.0)
 
     def _ld_frame(self, si, rt, t, ld):
         """The LD2410C's energies of this frame (MODEL.md 4.3), gathered until they are weighed
@@ -1274,7 +1363,7 @@ class Tracker:
             return share * np.concatenate([h.walk[idx], h.still.sum(axis=(0, 1))[idx]]), np.concatenate([sw, ss])
 
         if isinstance(obj, Hidden):
-            return tiles(obj, 1.0)
+            return tiles(obj, obj.r)
         w = obj.weights()
         angle, slant, sight = self._ld_geometry(si, obj.pos)
         s_still, s_walk = ld2410.expected(self.m, angle, slant, sight)
@@ -1564,10 +1653,10 @@ class Tracker:
         return int(np.argmax(self.count_distribution()["_observed"]))
 
     def persons(self) -> list:
-        """The known people of the most probable hypothesis, for the display: those with a track
-        first."""
+        """The known people of the most probable hypothesis that more probably exist than not
+        (Garcia-Fernandez et al. 2018, sec. VI), for the display: those with a track first."""
         hy = self.hyps[int(np.argmax([h.logw for h in self.hyps]))]
-        return [self._display(k + 1, obj) for k, obj in enumerate(hy.people())]
+        return [self._display(k + 1, obj) for k, obj in enumerate(hy.people()) if getattr(obj, "r", 1.0) >= 0.5]
 
     def _display(self, pid, obj) -> dict:
         """Where to draw a person: with a measuring track the mean of the mixture (it moves as
@@ -1575,7 +1664,7 @@ class Tracker:
         pr = self._place_probs(obj)
         best = int(np.argmax(pr))
         out = {"id": pid, "places": {self.world.places[i]: round(float(v), 3) for i, v in enumerate(pr) if v >= 0.005},
-               "lost": isinstance(obj, Hidden), "obj": obj}
+               "lost": isinstance(obj, Hidden), "r": round(float(getattr(obj, "r", 1.0)), 3), "obj": obj}
         if best != OBSERVED:
             out.update({"x": None, "y": None, "vx": 0.0, "vy": 0.0, "sigma": 0.0, "walk": 0.0})
             return out

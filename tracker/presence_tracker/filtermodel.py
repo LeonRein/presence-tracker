@@ -54,6 +54,7 @@ class Model:
     refind = {"coast": (0.13, 1.0, 0.03), "frozen": (0.2, 2.0, 0.02)}
     find_radius = 0.7  # m: the sensor finds its lost target only on somebody near where it holds it
     find_clutter = 0.05  # ... or on a reflection near the spot, as likely as on this many people there
+    sight_spread = True  # the sight of a person: of the spot their track sits on (Tracker._spread_sight)
     track_life = (60.0, 30.0)  # s [STILL, WALK]: how long a track lasts (measured median), for tracks there at the start
     res_range, res_cross = 0.6, 0.9  # m: two people this far apart are resolved half of the time (Svensson 2012)
     const_share = 0.57  # share of the offset's variance that is constant over a track (measured)
@@ -67,6 +68,7 @@ class Model:
     # Estimated by EM on 21 h of recordings without truth (6.10., tools/ghostmap.py): 1.8e-5 per m^2
     # and s over all setups, 40 % living 3 s on average, 60 % 39 s (setup of 4.10. 18:06, 10.8 h)
     ghost_types = ((0.4 * 1.8e-5, 3.0), (0.6 * 1.8e-5, 39.0))
+    ghost_end_exact = True  # a ghost's track ending: died or not found again (Tracker._ghost_end)
     ghost_prior_time = 4 * 3600.0  # s: weight of that rate in each cell of a ghost map, as watching time
     # 4.3 LD2410C: its energies per 0.75 m gate of slant distance, moving (gates 0-8) and still (2-8),
     # each ~ Gamma(shape, mean background + the people's expected energy), 100 censored. Measured 6.10.

@@ -54,6 +54,7 @@ class SimSensor:
     still_dropout: float = 0.0  # chance per second that a still person is dropped (stays dropped for still_gap s)
     still_gap: float = 20.0
     ghost_rate: float = 0.0  # LD2450 ghosts per minute
+    reflections: tuple = ()  # ((t0, t1, x, y), ...): a fixed reflection its LD2450 reports then (not the LD2410C)
     ld2410: bool = True  # the LD2410C's energies in the frames
     resolution: float = 0.0  # m, people closer than this to each other come out as one target
     blind_to: tuple = ()  # indices of people this sensor doesn't see from blind_after on (hidden behind someone)
@@ -150,6 +151,12 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
     if t < s._ghost_until:
         gx, gy = s._ghost_pos
         targets.append((math.hypot(gx, gy), {"x": round(gx * 1000), "y": round(gy * 1000), "speed": 0, "resolution": 360}))
+    for t0, t1, x, y in s.reflections:
+        if t0 <= t <= t1:
+            lx, ly = c.to_local(x, y)
+            targets.append((math.hypot(lx, ly), {"x": round((lx + rng.gauss(0, s.noise)) * 1000),
+                                                 "y": round((ly + rng.gauss(0, s.noise)) * 1000),
+                                                 "speed": 0, "resolution": 360}))
     targets.sort(key=lambda item: item[0])
     if s.resolution:
         # the radar can't separate people close together: one target in between

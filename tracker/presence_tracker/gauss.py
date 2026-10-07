@@ -457,7 +457,7 @@ class Gauss:
         fs = np.asarray(f_still) * dens  # (n,) or per detectability (K, n)
         qs = hidden.still * (fs[None, None, :] if fs.ndim == 1 else fs[None, :, :])  # (L, K, n)
         mass = float(qw.sum() + qs.sum())
-        if not mass > 0:
+        if not (mass > 0 and hidden.r > 0):
             return None, -math.inf
         mx, Px, w = np.zeros((2, 2)), np.zeros((2, 2)), np.zeros(2)
         for k, q in ((STILL, qs.sum(axis=(0, 1))), (WALK, qw)):
@@ -475,7 +475,9 @@ class Gauss:
         gow = gow / gow.sum() if gow.sum() > 0 else sh.go_w_ongoing.copy()
         kw = qs.sum(axis=(0, 2))
         kw = kw / kw.sum() if kw.sum() > 0 else sh.kappa_w.copy()
-        return cls._make(seg, var, w, mx, Px, mv, Pv, gow, kw, z, m.const_share, m.white), math.log(mass)
+        # times the probability that the person exists (a known person without a track is a
+        # Bernoulli, hidden.py; the track says they do)
+        return cls._make(seg, var, w, mx, Px, mv, Pv, gow, kw, z, m.const_share, m.white), math.log(mass) + math.log(hidden.r)
 
     def to_tiles(self, tiles):
         """The density of this person over the tiles (MODEL.md 5.4), when their last track ends:

@@ -11,6 +11,11 @@ computing time of 0.6.21). In a PMBM filter it is the "undetected" part (William
 Garcia-Fernandez et al. 2018), here one density per person. A person whose tracks are all held lies
 here too.
 
+A known person here is a Bernoulli (Garcia-Fernandez et al. 2018, eq. 31): with the probability r
+the person exists (MODEL.md 5.5), and then the density below. r < 1 comes from hypotheses that differ
+only in whether a track was a person (merged, Tracker._merged); evidence weighs it like the density
+(weigh). What is read from it (in_view, walking, places, integrate) is times r.
+
 State of an unseen person, as masses that sum to 1:
   walk[c]          walking in tile c: walkers spread to the neighbouring tiles and through doors into
                    the regions behind them (the diffusion limit of MODEL.md 3.2, tiling.py)
@@ -40,7 +45,7 @@ class Hidden:
     hypotheses and changed only by what applies to all of them (motion, no track started); what
     differs between hypotheses makes a new object."""
 
-    __slots__ = ("tiles", "walk", "still", "region", "out", "clock")
+    __slots__ = ("tiles", "walk", "still", "region", "out", "clock", "r")
 
     def __init__(self, tiles):
         self.tiles = tiles
@@ -49,6 +54,7 @@ class Hidden:
         self.region = np.zeros((tiles.R, tiles.A))
         self.out = 0.0
         self.clock = 0.0
+        self.r = 1.0  # probability that the person exists (an intensity: always 1)
 
     @classmethod
     def anywhere(cls, tiles, share_view=1 / 3, share_regions=1 / 3) -> "Hidden":
@@ -82,7 +88,7 @@ class Hidden:
         h = type(self).__new__(type(self))
         h.tiles = self.tiles
         h.walk, h.still, h.region = self.walk.copy(), self.still.copy(), self.region.copy()
-        h.out, h.clock = self.out, self.clock
+        h.out, h.clock, h.r = self.out, self.clock, self.r
         return h
 
     def to_dict(self) -> dict:
@@ -101,7 +107,7 @@ class Hidden:
             a = np.where(a < SAVE_CUT, 0.0, a).astype("<f2")
             return base64.b64encode(zlib.compress(a.tobytes(), 9)).decode()
         return {"walk": pack(self.walk), "still": pack(self.still), "region": pack(self.region),
-                "out": float(self.out), "scale": float(scale)}
+                "out": float(self.out), "scale": float(scale), "r": float(self.r)}
 
     @classmethod
     def from_dict(cls, tiles, d: dict) -> "Hidden":
@@ -118,22 +124,45 @@ class Hidden:
             return a.reshape(like.shape)
         h.walk, h.still, h.region = unpack(d["walk"], h.walk), unpack(d["still"], h.still), unpack(d["region"], h.region)
         h.out = float(d["out"])
-        if not (math.isfinite(h.out) and h.out >= 0) or (cls is Hidden and not h.total() > 0):
+        h.r = float(d.get("r", 1.0)) if cls is Hidden else 1.0
+        if (not (math.isfinite(h.out) and h.out >= 0) or not 0.0 <= h.r <= 1.0
+                or (cls is Hidden and not h.total() > 0 and h.r > 0)):
             raise ValueError("saved density is empty or broken")  # a person is somewhere; nobody unknown may be
         h._normalize()  # a person's masses sum to 1
         return h
 
     @staticmethod
     def mixture(parts) -> "Hidden":
-        """sum_i w_i * density_i for [(w_i, Hidden)], weights summing to 1."""
-        w0, h0 = parts[0]
-        h = h0.copy()
-        h.scale(w0)
-        for w, o in parts[1:]:
-            h.walk += w * o.walk
-            h.still += w * o.still
-            h.region += w * o.region
-            h.out += w * o.out
+        """sum_i w_i * Bernoulli_i for [(w_i, Hidden)], weights summing to 1: exists with sum_i w_i
+        r_i, then the density sum_i w_i r_i density_i / that. A part with r_i = 0 (nobody: a
+        hypothesis without this person, Tracker._merged) adds only to not existing."""
+        r = sum(w * o.r for w, o in parts)
+        if not r > 0:
+            h = parts[0][1].copy()
+            h.r = 0.0
+            return h
+        h = None
+        for w, o in parts:
+            k = w * o.r / r
+            if k <= 0:
+                continue
+            if h is None:
+                h = o.copy()
+                h.scale(k)
+                continue
+            h.walk += k * o.walk
+            h.still += k * o.still
+            h.region += k * o.region
+            h.out += k * o.out
+        h.r = min(r, 1.0)
+        return h
+
+    @classmethod
+    def nobody(cls, tiles) -> "Hidden":
+        """A person who does not exist (r = 0): the partner of a known person in a hypothesis that
+        lacks them, when hypotheses are merged (Tracker._merged)."""
+        h = cls.at_place(tiles, len(tiles.world.places) - 1)
+        h.r = 0.0
         return h
 
     def scale(self, k: float):
@@ -223,34 +252,49 @@ class Hidden:
 
     def weigh(self, f_walk: np.ndarray, f_still: np.ndarray) -> float:
         """Multiply by a likelihood per tile: walkers f_walk (n,), still people f_still (n,) or per
-        detectability (K, n) (outside the view: 1). Returns the log of the mass that is left (the
-        factor for the hypotheses holding this person), and normalizes."""
+        detectability (K, n) (outside the view: 1; not existing: 1). Returns the log of the factor
+        for the hypotheses holding this person, 1 - r + r * (mass that is left), and normalizes:
+        the Bernoulli update of Garcia-Fernandez et al. 2018 eq. 31 (r = 1: the mass that is left)."""
         if not self.tiles.n:
             return 0.0
         self._times(f_walk, f_still)
-        return self._normalize()
+        q = self._normalize()
+        if self.r >= 1.0:
+            return q
+        if q == -math.inf:  # nothing left where the person could be: they do not exist
+            r, self.r = self.r, 0.0
+            return math.log1p(-r)
+        z = 1.0 - self.r + self.r * math.exp(q)
+        self.r = self.r * math.exp(q) / z
+        return math.log(z)
 
     def integrate(self, f_walk: np.ndarray, f_still: np.ndarray) -> float:
-        """sum of density x f over the tiles in view (f as in weigh)."""
+        """sum of r x density x f over the tiles in view (f as in weigh)."""
         if not self.tiles.n:
             return 0.0
-        return float(self.walk @ f_walk + (self.still.sum(axis=0) * f_still).sum())
+        return self.r * float(self.walk @ f_walk + (self.still.sum(axis=0) * f_still).sum())
 
     def distance(self, other: "Hidden") -> float:
-        """L1 distance between two densities (for pairing exchangeable people, MODEL.md 5.6)."""
-        return float(np.abs(self.walk - other.walk).sum() + np.abs(self.still - other.still).sum()
-                     + np.abs(self.region - other.region).sum() + abs(self.out - other.out))
+        """L1 distance between two Bernoullis, r x density (for pairing exchangeable people, MODEL.md
+        5.6)."""
+        a, b = self.r, other.r
+        return float(np.abs(a * self.walk - b * other.walk).sum() + np.abs(a * self.still - b * other.still).sum()
+                     + np.abs(a * self.region - b * other.region).sum() + abs(a * self.out - b * other.out))
 
     def in_view(self) -> np.ndarray:
-        """Mass per tile in view (n,)."""
-        return self.walk + self.still.sum(axis=(0, 1))
+        """Expected number per tile in view (n,): r x the mass."""
+        return self.r * (self.walk + self.still.sum(axis=(0, 1)))
 
     def walking(self) -> np.ndarray:
-        return self.walk
+        return self.r * self.walk
 
     def places(self) -> np.ndarray:
-        """Probability per place (observed, regions..., outside)."""
-        return np.concatenate([[self.in_view().sum()], self.region.sum(axis=1), [self.out]])
+        """Probability per place (observed, regions..., outside); 1 - r: nowhere (does not exist)."""
+        return self.r * np.concatenate([[(self.walk.sum() + self.still.sum())], self.region.sum(axis=1), [self.out]])
+
+    def in_house(self) -> float:
+        """P(the person exists and is in the house)."""
+        return self.r * max(1.0 - self.out / max(self.total(), 1e-300), 0.0)
 
 
 class Undetected(Hidden):
@@ -275,11 +319,12 @@ class Undetected(Hidden):
         return cls(tiles)
 
     def add(self, person: Hidden):
-        """A person given up on (almost surely out of the house) joins the unknown ones."""
-        self.walk += person.walk
-        self.still += person.still
-        self.region += person.region
-        self.out += person.out
+        """A person given up on (almost surely out of the house or not existing) joins the unknown
+        ones with r x their density."""
+        self.walk += person.r * person.walk
+        self.still += person.r * person.still
+        self.region += person.r * person.region
+        self.out += person.r * person.out
 
     def _arrive(self, dt: float):
         tl, m = self.tiles, self.tiles.tr.m

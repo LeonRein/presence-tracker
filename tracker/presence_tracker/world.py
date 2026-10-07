@@ -37,6 +37,7 @@ class World:
             self.x0 = self.y0 = 0.0
             self.nx = self.ny = 1
         self._masks = {}
+        self._reach = {}
         self.labels = np.full((self.nx, self.ny), -1, dtype=np.int16)
         for i in range(self.nx):
             for j in range(self.ny):
@@ -73,6 +74,32 @@ class World:
             inward = watch - np.array(q.center, dtype=float)
             inward /= max(float(np.linalg.norm(inward)), 1e-6)
             self.portals.append((self.index[q.region], watch, inward))
+
+    def reach(self, radius: float) -> tuple:
+        """The cells within radius of each cell that a straight line from its centre reaches
+        without crossing a wall (the same side of the walls; through a door gap): (offsets (K, 2)
+        in cells, mask (K, nx, ny)). Cached per radius."""
+        key = round(radius, 3)
+        hit = self._reach.get(key)
+        if hit is None:
+            n = int(radius / CELL)
+            offs = np.array([(di, dj) for di in range(-n, n + 1) for dj in range(-n, n + 1)
+                             if di * di + dj * dj <= (radius / CELL) ** 2], dtype=int).reshape(-1, 2)
+            ii, jj = np.nonzero(self.labels >= 0)
+            p0 = np.stack([self.x0 + (ii + 0.5) * CELL, self.y0 + (jj + 0.5) * CELL], axis=1)
+            mask = np.zeros((len(offs), self.nx, self.ny), dtype=bool)
+            for k, (di, dj) in enumerate(offs):
+                ti, tj = ii + di, jj + dj
+                ok = (ti >= 0) & (ti < self.nx) & (tj >= 0) & (tj < self.ny)
+                ok[ok] = self.labels[ti[ok], tj[ok]] >= 0
+                if di == 0 and dj == 0:
+                    mask[k, ii[ok], jj[ok]] = True
+                    continue
+                sel = np.nonzero(ok)[0]
+                cross = self.crosses_wall(p0[sel], p0[sel] + np.array([di, dj], dtype=float) * CELL)
+                mask[k, ii[sel[~cross]], jj[sel[~cross]]] = True
+            hit = self._reach[key] = (offs, mask)
+        return hit
 
     def cell_of(self, xy: np.ndarray) -> tuple:
         """Raster indices (clipped to the raster) of the points (n, 2)."""
