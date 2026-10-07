@@ -55,6 +55,27 @@ def test_a_person_explains_what_the_background_does_not():
     assert uniform.log_ratio((b + far)[None, :], b, lik)[0] < 1.0
 
 
+def test_the_amplitude_grid_carries_a_weak_reflector():
+    # MODEL.md 4.3: the posterior of a stay's amplitude g on a grid in log g with the prior's mass per
+    # cell. The quadrature's lowest node was 0.58: a person giving back a third of the profile (7.10.
+    # 22:12, Bad) was explained worse than an echo source at its level 0.3.
+    from presence_tracker.filtermodel import Shapes
+    m = Model()
+    sh = Shapes(m)
+    amp, w = sh.amp, sh.amp_w
+    assert abs(float(w @ amp) - 1.0) < 1e-6
+    assert abs(float(w @ (amp - 1) ** 2) - 1 / m.ld_amp_shape) < 0.02  # Gamma(6, 6): variance 1/6
+    assert amp.min() < 0.3 and amp.max() > 2.0
+    lik = ld2410.Likelihood(m)
+    b = ld2410.prior(m)
+    S = ld2410.expected(m, [0], [1.8], [True])[STILL][0]
+    st = _stats(np.minimum(b + 0.3 * S, 100), n=330)  # 30 s
+    lr = st.log_ratio(b[None, :] + amp[:, None] * S[None, :], b, lik)
+    post = w * np.exp(lr - lr.max())
+    post /= post.sum()
+    assert float(post @ amp) < 0.45
+
+
 def test_the_background_is_learned_per_sensor_and_starts_over_when_moved(tmp_path):
     m = Model()
     cfg = Config.from_dict({"sensors": [{"id": "a", "x": 0, "y": 0, "heading": 0, "placed": True}], "zones": []})

@@ -119,10 +119,14 @@ class Model:
     ld_prior_time = 600.0  # s
     ld_forget = 6 * 3600.0  # s
     # the amplitude of a standing person with a track on the profile, per stay (Swerling III: slow, as
-    # kappa: new at each stop, now and then within a stay): Gamma(shape, shape) in equally probable
-    # levels, independent of kappa. Measured 6./7.10. within a sensor: shape 5-16 (MODEL.md 4.3)
+    # kappa: new at each stop, now and then within a stay): Gamma(shape, shape), independent of kappa.
+    # Measured 6./7.10. within a sensor: shape 5-16 (MODEL.md 4.3). The filter carries its posterior,
+    # not its moments: a grid of cells evenly spaced in log g with the prior's mass in each (a
+    # point-mass filter over g, as the tiles are over the place), not the quadrature (3 nodes from
+    # 0.58 up: a person reflecting a third of the profile was worse explained than an echo source
+    # with its level 0.3; 7.10. 22:12, Bad)
     ld_amp_shape = 6.0
-    ld_amp_levels = 3
+    ld_amp_levels = 9
     # 3.4/5.5 a known person without a track exists on with exp(-t / record_life), wherever they are
     # (existence as a Markov chain, Musicki & Evans 2005); measurements that support them lift it again.
     # The scale: a real sitter in view went at most 18.2 s without any supporting measurement
@@ -172,8 +176,8 @@ class Shapes:
         self.go_w_ongoing = w / w.sum()
         levels = gamma_quadrature if m.gamma_levels == "quadrature" else gamma_levels
         self.kappa, self.kappa_w = levels(m.kappa_shape, m.kappa_levels)
-        # 4.3 the amplitude of a standing person on the LD2410C's profile, its own levels
-        self.amp, self.amp_w = levels(m.ld_amp_shape, m.ld_amp_levels)
+        # 4.3 the amplitude of a standing person on the LD2410C's profile, its own grid
+        self.amp, self.amp_w = gamma_log_grid(m.ld_amp_shape, m.ld_amp_levels)
 
     def stay_prior(self, ongoing: bool = False) -> np.ndarray:
         """(L, K) prior of a stay's kind and detectability (independent a priori)."""
@@ -190,6 +194,24 @@ def gamma_quadrature(shape: float, k: int) -> tuple:
     x, v = np.linalg.eigh(J)
     w = v[0] ** 2
     return x / shape, w / w.sum()
+
+
+def gamma_log_grid(shape: float, k: int, tail: float = 1e-3) -> tuple:
+    """Gamma(shape, rate shape) (mean 1) on a grid for its posterior: k cells evenly spaced in log x
+    between the prior's tail and 1 - tail quantiles (the outer cells reach to 0 and infinity), each
+    at its conditional mean with the prior's mass in it. (nodes, weights)"""
+    x = np.exp(np.linspace(math.log(1e-8), math.log(60.0 / shape + 60.0), 200001))
+    pdf = np.exp((shape - 1) * np.log(x) - shape * x + shape * math.log(shape) - math.lgamma(shape))
+    dx = np.diff(x)
+    mass = np.concatenate([[0.0], np.cumsum(0.5 * (pdf[1:] + pdf[:-1]) * dx)])
+    first = np.concatenate([[0.0], np.cumsum(0.5 * (pdf[1:] * x[1:] + pdf[:-1] * x[:-1]) * dx)])
+    q = mass / mass[-1]
+    lo, hi = x[np.searchsorted(q, tail)], x[np.searchsorted(q, 1 - tail)]
+    edges = np.exp(np.linspace(math.log(lo), math.log(hi), k + 1))
+    idx = np.concatenate([[0], np.searchsorted(x, edges[1:-1]), [len(x) - 1]])
+    w = np.array([mass[b] - mass[a] for a, b in zip(idx[:-1], idx[1:])])
+    vals = np.array([(first[b] - first[a]) / (mass[b] - mass[a]) for a, b in zip(idx[:-1], idx[1:])])
+    return vals / float(w @ vals / w.sum()), w / w.sum()
 
 
 def gamma_levels(shape: float, k: int) -> tuple:
