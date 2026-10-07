@@ -63,6 +63,9 @@ wifi:
   password: !secret wifi_password
   # Mains powered; WiFi modem sleep would add up to ~100 ms latency per frame
   power_save_mode: none
+  # No roaming scans after connecting: they stalled the loop for seconds 5 and 10 min after each
+  # (re)connect (measured 7.10.2026; all boards run with it since)
+  post_connect_roaming: false
   ap:
     password: !secret wifi_ap_password
 

@@ -74,6 +74,11 @@ Die UART-Puffer (`rx_buffer_size: 2048`) fassen einige Sekunden Radar-Frames. Ei
 Frame in der Warteschlange verworfen (voll) oder unterwegs verloren; ein Sprung in `uptime_ms` bei
 fortlaufendem `seq` heißt: Frame schon vor dem Senden verloren.
 
+Nach dem Verbinden sucht ESPHome sonst nach 5 und 10 min einen besseren Access Point; diese Suche hielt
+die Hauptschleife sekundenlang an. `wifi: post_connect_roaming: false` schaltet sie ab (7.10.2026:
+Arbeitszimmer mit allem seit 13:13 ohne Neustart; Flur und Wohnzimmer mit alter Firmware im selben
+Zeitraum dreimal neu gestartet, bei denselben Netz-Hängern).
+
 Ob der Sensor online ist, steht retained in `presence/<name>/status` (`online` / `offline`, per Last Will).
 Zusätzlich veröffentlicht ESPHome alle nicht-internen Entitäten unter `presence/<name>/…`.
 
