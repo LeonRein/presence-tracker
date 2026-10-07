@@ -173,7 +173,7 @@ DOOR_LIMITS = {"width": ("Breite der Tür", 0.0, 20.0, True, False)}
 LAYER_LIMITS = {
     "x": ("x des Bildes", -1e4, 1e4, False, False),
     "y": ("y des Bildes", -1e4, 1e4, False, False),
-    "scale": ("Maßstab des Bildes", 0.0, 1.0, True, False),
+    "scale": ("Maßstab des Bildes", 0.0, 10.0, True, False),  # m per pixel; an SVG drawn in meters: about 1
     "rotation": ("Drehung des Bildes", -3600.0, 3600.0, False, False),
     "opacity": ("Deckkraft des Bildes", 0.0, 1.0, False, False),
 }
@@ -211,10 +211,18 @@ def _check_points(where: str, pts):
         raise ValueError(f"{where}: Punkte sind keine endlichen Koordinaten.")
 
 
+ZONE_KINDS = ("room", "area", "entry")
+ZONE_SHAPES = ("rect", "circle", "polygon")
+WALL_KINDS = ("wall", "divider")
+
+
 def check_config(d: dict):
     """Rejects what the model can't run with (ValueError with a German message for the UI): the
     parameters and sensor values outside PARAM_LIMITS / SENSOR_LIMITS, coordinates that are no finite
-    numbers. Only what is present is checked; what is missing takes its default."""
+    numbers, sensors or zones with the same id, walls that are no segment, zones of an unknown kind
+    or shape or without what their shape needs. Only what is present is checked; what is missing
+    takes its default. (A circle without a center passed until 0.18 and failed every tick after,
+    also after every restart.)"""
     if not isinstance(d, dict):
         raise ValueError("Konfiguration ist kein Objekt.")
     params = d.get("params") or {}
@@ -228,10 +236,16 @@ def check_config(d: dict):
         raise ValueError("Schwelle „Ziel“ je Raum ist kein Objekt.")
     for room, v in per_room.items():
         _check_value(f"Raum {room}: ", v, PARAM_LIMITS["target_threshold"])
+    ids = set()
     for s in d.get("sensors") or []:
         if not isinstance(s, dict) or not isinstance(s.get("id"), str) or not s["id"]:
             raise ValueError("Sensor ohne ID.")
         where = f"Sensor {s.get('name') or s['id']}: "
+        if any(c in s["id"] for c in "/+#"):
+            raise ValueError(f"{where}Die ID darf kein /, + oder # enthalten (sie ist Teil des MQTT-Topics).")
+        if s["id"] in ids:
+            raise ValueError(f"Sensor-ID {s['id']} doppelt.")
+        ids.add(s["id"])
         for k, lim in SENSOR_LIMITS.items():
             if k in s:
                 _check_value(where, s[k], lim)
@@ -239,23 +253,48 @@ def check_config(d: dict):
             if k in s and not isinstance(s[k], bool):
                 raise ValueError(f"{where}{k} ist nicht ja/nein.")
     for i, w in enumerate(d.get("walls") or []):
-        _check_points(f"Wand {i + 1}", w.get("points") if isinstance(w, dict) else None)
+        pts = w.get("points") if isinstance(w, dict) else None
+        _check_points(f"Wand {i + 1}", pts)
+        if len(pts) != 2 or pts[0][0] == pts[1][0] and pts[0][1] == pts[1][1]:
+            raise ValueError(f"Wand {i + 1}: braucht genau zwei verschiedene Punkte.")
+        if w.get("kind", "wall") not in WALL_KINDS:
+            raise ValueError(f"Wand {i + 1}: unbekannte Art {w.get('kind')!r}.")
     for door in d.get("doors") or []:
         if not isinstance(door, dict) or not (_finite(door.get("x")) and _finite(door.get("y"))):
             raise ValueError("Tür ohne endliche Position.")
         if "width" in door:
             _check_value("", door["width"], DOOR_LIMITS["width"])
+    ids = set()
     for z in d.get("zones") or []:
         if not isinstance(z, dict):
             raise ValueError("Zone ist kein Objekt.")
-        name = z.get("name") or z.get("id")
+        if not isinstance(z.get("id"), str) or not z["id"]:
+            raise ValueError("Zone ohne ID.")
+        name = z.get("name") or z["id"]
+        if z["id"] in ids:
+            raise ValueError(f"Zonen-ID {z['id']} doppelt.")
+        ids.add(z["id"])
+        kind, shape = z.get("kind", "area"), z.get("shape", "rect")
+        if kind not in ZONE_KINDS:
+            raise ValueError(f"Zone {name}: unbekannte Art {kind!r}.")
+        if shape not in ZONE_SHAPES:
+            raise ValueError(f"Zone {name}: unbekannte Form {shape!r}.")
         if "points" in z:
             _check_points(f"Zone {name}", z["points"])
+        n = len(z.get("points") or [])
+        if shape == "rect" and n != 2:
+            raise ValueError(f"Zone {name}: ein Rechteck braucht zwei Ecken.")
+        if shape == "polygon" and n < 3:
+            raise ValueError(f"Zone {name}: eine Fläche braucht mindestens drei Eckpunkte.")
+        if shape == "circle" and z.get("center") is None:
+            raise ValueError(f"Zone {name}: ein Kreis braucht einen Mittelpunkt.")
         if z.get("center") is not None:
             _check_points(f"Zone {name}", [z["center"]])
         if "radius" in z and not (_finite(z["radius"]) and z["radius"] >= 0):
             raise ValueError(f"Zone {name}: Radius ist keine Zahl ≥ 0.")
     for layer in (d.get("background") or {}).get("layers") or []:
+        if not isinstance(layer, dict):
+            raise ValueError("Bildebene ist kein Objekt.")
         for k, lim in LAYER_LIMITS.items():
             if k in layer:
                 _check_value("", layer[k], lim)

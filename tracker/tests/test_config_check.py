@@ -90,3 +90,68 @@ def test_the_ui_gets_the_limits(app):
     limits = asyncio.run(run())["limits"]
     assert limits["params"]["light_cost"] == [0.0, 1000.0, True, False]
     assert limits["sensor"]["height"][:2] == [0.1, 4.0]
+
+
+def _area(**kw):
+    return {"id": "z", "name": "Z", "kind": "area", "shape": "rect", "points": [[1, 1], [2, 2]], **kw}
+
+
+@pytest.mark.parametrize("change, message", [
+    (lambda d: d["sensors"].append(dict(d["sensors"][0])), "doppelt"),
+    (lambda d: d["sensors"][0].update(id="a/b"), "MQTT"),
+    (lambda d: d["walls"].append({"points": [[1, 1]], "kind": "wall"}), "zwei verschiedene Punkte"),
+    (lambda d: d["walls"].append({"points": [[1, 1], [2, 2], [3, 3]], "kind": "wall"}), "zwei verschiedene Punkte"),
+    (lambda d: d["walls"].append({"points": [[1, 1], [1, 1]], "kind": "wall"}), "zwei verschiedene Punkte"),
+    (lambda d: d["walls"].append({"points": [[1, 1], [2, 2]], "kind": "glass"}), "Art"),
+    (lambda d: d["zones"].append(_area(kind="foo")), "Art"),
+    (lambda d: d["zones"].append(_area(shape="blob")), "Form"),
+    (lambda d: d["zones"].append(_area(shape="circle", points=[], radius=1.0)), "Mittelpunkt"),
+    (lambda d: d["zones"].append(_area(shape="polygon", points=[[1, 1], [2, 2]])), "drei"),
+    (lambda d: d["zones"].append(_area(points=[[1, 1]])), "zwei Ecken"),
+    (lambda d: d["zones"].append(_area(id=None)), "ohne ID"),
+    (lambda d: d["zones"].append(dict(d["zones"][0])), "doppelt"),
+])
+def test_what_the_model_cannot_run_with_is_refused_with_400(app, tmp_path, change, message):
+    """Until 0.18 a one-point wall gave a 500, and a circle without a center was saved: every tick
+    after it failed, also after every restart."""
+    before = (tmp_path / "tracker.json").read_text()
+    data = app.config.to_dict()
+    change(data)
+    status, body = put(app, data)
+    assert status == 400 and message in body["error"], body
+    assert (tmp_path / "tracker.json").read_text() == before
+
+
+def test_a_plan_drawn_in_meters_may_be_scaled_above_1(app):
+    """An SVG drawn in meters (one unit a meter): "Ausrichten" gives a scale of about 1.02 m per unit,
+    refused until 0.18 - and with it every later edit, until the image was removed."""
+    data = app.config.to_dict()
+    data["background"] = {"layers": [{"x": 0, "y": 0, "scale": 1.02, "rotation": 0, "opacity": 0.5}]}
+    assert put(app, data)[0] == 200
+    data["background"]["layers"][0]["scale"] = 11
+    assert put(app, data)[0] == 400
+
+
+def test_a_configuration_the_model_fails_with_is_refused_and_the_old_one_holds(app, tmp_path, monkeypatch):
+    """App and model never disagree about the configuration: if the model fails with a new one, the
+    old one holds in both, and the file is not written."""
+    from presence_tracker.filter import Tracker
+    before = (tmp_path / "tracker.json").read_text()
+    old = app.config
+    calls = []
+    real = Tracker.zone_states
+
+    def fail(self):
+        if self.config is not old:
+            calls.append(1)
+            raise TypeError("'NoneType' object is not subscriptable")
+        return real(self)
+
+    monkeypatch.setattr(Tracker, "zone_states", fail)
+    data = app.config.to_dict()
+    data["zones"].append(_area())
+    status, body = put(app, data)
+    assert status == 400 and "läuft mit dieser Konfiguration nicht" in body["error"] and calls
+    assert app.config is old and app.tracker.config is old
+    assert (tmp_path / "tracker.json").read_text() == before
+    app.tracker.zone_states()  # the model runs

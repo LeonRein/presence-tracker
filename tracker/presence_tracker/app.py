@@ -480,7 +480,10 @@ class App:
 
     async def h_put_config(self, request):
         """An edit in the web UI. Values outside the limits (model.check_config) are refused with
-        400 and a message: an emptied field must not switch every light on."""
+        400 and a message: an emptied field must not switch every light on. The new configuration
+        holds only once the model runs with it (reconfigure, and the zones' states once, as every tick
+        computes them); else the model goes on with the old one (rebuilt: reconfigure may have changed
+        half of it) and the edit is refused with 400 - the web UI then reloads what holds."""
         try:
             data = await request.json()
         except ValueError:
@@ -489,21 +492,27 @@ class App:
             config = Config.from_dict(data, check=True)
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
-        except (TypeError, KeyError, AttributeError) as e:
-            return web.json_response({"error": f"Konfiguration unvollständig oder falsch: {e}"}, status=400)
-        self.config = config
+        except Exception as e:  # noqa: BLE001 - whatever the check let through: refused, not a 500
+            return web.json_response({"error": f"Konfiguration unvollständig oder falsch: {e!r}"}, status=400)
         # only sensors recalibrated: the people stay; else the model starts over as after a restart (MODEL.md 5.3)
-        restarted = self.tracker.reconfigure(config)
+        try:
+            restarted = self.tracker.reconfigure(config)
+            self.tracker.zone_states()
+        except Exception as e:  # noqa: BLE001 - the old configuration holds
+            self._model_failed("a new configuration")
+            return web.json_response({"error": f"Das Modell läuft mit dieser Konfiguration nicht: {e!r}. "
+                                               "Es gilt die vorige."}, status=400)
+        self.config = config
         if restarted:
             self._model_started(self.tracker.now)
         self.calibrator.config = config
+        if self.client is not None:
+            await self.discovery.sync(config.zones)
         try:
             config.save(self.config_path)
         except OSError as e:
             log.exception("tracker.json not saved")
             return web.json_response({"error": f"In Gebrauch, aber nicht gespeichert: {e}"}, status=500)
-        if self.client is not None:
-            await self.discovery.sync(config.zones)
         # rooms are derived from the walls here; the editor takes them over
         return web.json_response({"ok": True, "restarted": restarted,
                                   "rooms": [z.to_dict() for z in config.zones_of("room")]})
