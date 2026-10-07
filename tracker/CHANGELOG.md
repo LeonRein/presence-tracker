@@ -17,6 +17,15 @@
   sonst sagt die App, in welchem Tab sie war, statt still etwas Unsichtbares zurückzunehmen. Löschen per
   Entf/Rücktaste, *Von Karte nehmen*, *Neu sammeln* und *Neu beginnen* fragen nach. Die Hinweisbox über
   der Karte fängt keine Klicks mehr ab (eine Wand unter ihr lässt sich ziehen).
+- **Live-Ansicht:** Oben steht *Besetzt: …*, besetzte Räume stehen in der Liste zuerst und sind
+  hervorgehoben (auch auf der Karte). Rohdaten der Sensoren sind standardmäßig aus, der Schalter wird im
+  Browser gemerkt. Je Person eine Farbe für Punkt, Wolke und Spur; der zusätzliche, nicht an Wänden
+  abgeschnittene 2σ-Kreis entfällt. Die Spur bricht bei Sprüngen (über 1 m oder durch eine Wand) ab.
+  Raum-% und Person-% sind beschriftet (P(jemand im Raum) gegen P(diese Person dort)). *wird betreten*
+  und *Ziel* (jetzt mit Wahrscheinlichkeit und Quelle) bleiben 2 s stehen und erscheinen nur an noch
+  nicht besetzten Räumen. Die Listen werden nur noch zeilenweise und höchstens zweimal je Sekunde
+  erneuert: Tooltips bleiben, Zeilen springen nicht. Badges und Kartenbeschriftungen haben mindestens
+  4,5 : 1 Kontrast.
 
 ## 0.17.0
 

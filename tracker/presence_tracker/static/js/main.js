@@ -1,5 +1,5 @@
 import { refreshCoverage, renderPanel, seenTotal, updateLive } from './panels.js';
-import { TAB_NAMES, emit, loadConfig, onChange, redo, redoState, select, setTool, state, undo, undoState } from './store.js';
+import { TAB_NAMES, emit, loadConfig, onChange, redo, redoState, select, setTool, state, undo, undoState, updateHolds, heldBadges } from './store.js';
 import { AlignTool, DoorTool, PlaceSensorTool, SelectTool, WallTool, ZoneTool } from './tools.js';
 import { esc, toast } from './util.js';
 import { MapView } from './view.js';
@@ -87,7 +87,7 @@ document.getElementById('zoom-in').onclick = () => view.zoom(1.4);
 document.getElementById('zoom-out').onclick = () => view.zoom(1 / 1.4);
 
 window.addEventListener('keydown', ev => {
-  if (ev.target.matches('input, select, textarea')) return;
+  if (ev.target.matches?.('input, select, textarea')) return;
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') { ev.preventDefault(); ev.shiftKey ? redo() : undo(); return; }
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'y') { ev.preventDefault(); redo(); return; }
   if (view.controller?.key?.(ev)) { ev.preventDefault(); return; }
@@ -98,6 +98,7 @@ window.addEventListener('keydown', ev => {
 
 let liveFrame = 0;
 let zoneKey = '';
+let panelAt = 0;  // the panel's live lists: at most twice a second (the map follows every message)
 function connect() {
   const url = new URL('api/live', location.href);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -107,13 +108,15 @@ function connect() {
     if (msg.type !== 'live') return;
     const hadCalib = !!state.live?.calibration;
     state.live = msg;
+    updateHolds(msg.zones);
     if (!liveFrame) liveFrame = requestAnimationFrame(() => {
       liveFrame = 0;
       view.renderLive();
-      // zone fills and labels follow the occupancy
-      const key = JSON.stringify(msg.zones);
+      // zone fills and labels follow the occupancy and the held "wird betreten"
+      const key = JSON.stringify(msg.zones) + Object.keys(state.live.zones || {}).map(id => !!heldBadges(id).approach).join();
       if (state.tab === 'live' && key !== zoneKey) { zoneKey = key; view.render(); }
-      updateLive(panel);
+      const now = performance.now();
+      if (now - panelAt > 450) { panelAt = now; updateLive(panel); }
       updateStatus();
       if (hadCalib !== !!msg.calibration && state.tab === 'calibration') renderPanel(panel, view, 'live');
     });

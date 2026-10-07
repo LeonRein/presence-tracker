@@ -15,10 +15,38 @@ export const state = {
   selectable: [],       // element kinds that can be selected in the current tab
   showCoverage: false,
   sensorMap: null,      // {sensor, layer: 'prior' | 'clutter'} shown on the map
-  showRaw: true,
+  showRaw: loadPref('showRaw', false),  // the raw sensor data on the live map (remembered per browser)
+  holds: {},            // zone id -> {approach, target}: badges held for HOLD_MS after they went off
   calibResult: null,
   limits: {},           // allowed values of the number fields, from the server (model.PARAM_LIMITS)
 };
+
+// small per-browser preferences; storage may be missing or blocked (private mode)
+export function loadPref(key, fallback) {
+  try { const v = localStorage.getItem('presence.' + key); return v == null ? fallback : JSON.parse(v); } catch { return fallback; }
+}
+export function savePref(key, value) {
+  try { localStorage.setItem('presence.' + key, JSON.stringify(value)); } catch { /* not remembered */ }
+}
+
+// "wird betreten" and "Ziel" are often on for a single message (0.2 s): held for HOLD_MS so that they
+// can be seen, with the values of their last moment on
+export const HOLD_MS = 2000;
+export function updateHolds(zones, now = performance.now()) {
+  for (const [id, st] of Object.entries(zones || {})) {
+    const hold = state.holds[id] ??= {};
+    if (st.approaching) hold.approach = { until: now + HOLD_MS, p: st.p_enter, eta: st.eta, person: st.person };
+    if (st.target) hold.target = { until: now + HOLD_MS, p: st.p_target, source: st.target_source, from: st.target_from };
+  }
+}
+// {approach, target} of a zone, as now or held; null where off
+export function heldBadges(id, now = performance.now()) {
+  const hold = state.holds[id] || {};
+  return {
+    approach: hold.approach && hold.approach.until > now ? hold.approach : null,
+    target: hold.target && hold.target.until > now ? hold.target : null,
+  };
+}
 
 export function onChange(fn) { listeners.add(fn); }
 export function emit(what = 'all') { for (const fn of listeners) fn(what); }

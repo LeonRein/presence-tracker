@@ -16,7 +16,16 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   ist eine Dichte über Kacheln des Grundrisses (Quadrate von 0,4 m, an den Raumgrenzen geschnitten), hinter
   Türen und außer Haus. Nichts davon ist zufällig gezogen:
   Gleiche Daten ergeben immer dasselbe Ergebnis. Die Karte im Tab *Live* zeigt die Verteilung jeder Person
-  als Wärmekarte, den Punkt am wahrscheinlichsten Ort.
+  als Wärmekarte, an den Wänden abgeschnitten, und den Punkt am wahrscheinlichsten Ort, beides in einer
+  Farbe je Person (Pfeil: geht; blass: gerade nicht gesehen). Die Spur bricht ab, wo die Schätzung springt
+  (mehr als 1 m oder durch eine Wand). Die Rohdaten der Sensoren (Sichtfelder, Messpunkte) sind
+  standardmäßig aus; der Schalter steht unter *Anzeige* und wird im Browser gemerkt.
+- **Tab *Live*:** Ganz oben steht, welche Räume besetzt sind (Licht an), darunter die Personenzahl. In der
+  Raumliste stehen die besetzten Räume zuerst. Die Prozentzahl am Raum ist die Wahrscheinlichkeit, dass
+  *jemand* im Raum ist (besetzt ab der Schwelle aus *Kosten: Licht ohne Person*); die an einer Person ist die
+  Wahrscheinlichkeit, dass *diese Person* dort ist. *wird betreten* und *Ziel* (mit Wahrscheinlichkeit und
+  Quelle *Bewegung* oder *Karte*) stehen nur an Räumen, die noch nicht besetzt sind, und bleiben 2 s
+  sichtbar, auch wenn sie nur kurz an waren.
 - **Niemand taucht aus dem Nichts auf und niemand verschwindet einfach.** Personen kommen und gehen nur
   durch Türen. Wer durch eine Tür in einen Bereich ohne Sensor geht, ist dahinter (Balkon, Schlafzimmer),
   wie lange Besuche dort dauern, ist angenommen. Wer durch die Wohnungstür ins Treppenhaus geht, ist

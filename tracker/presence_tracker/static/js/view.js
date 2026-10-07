@@ -1,7 +1,7 @@
 // SVG map: projection, pan/zoom, and drawing of the plan, sensors, zones and live data.
 // Everything is drawn in screen pixels; world coordinates are meters with y pointing up.
-import { api, state, sensorColor } from './store.js';
-import { ZONE_KINDS, doorPlacement, esc, fmt, rad, sightSegments, visibilityPolygon, zoneCenter, zoneOutline } from './util.js';
+import { api, heldBadges, state, sensorColor } from './store.js';
+import { PERSON_COLORS, ZONE_KINDS, dist, doorPlacement, esc, fmt, personColor, rad, segmentsCross, sightSegments, visibilityPolygon, zoneCenter, zoneOutline } from './util.js';
 
 // rooms marked as entry (stairwell) look like entry zones
 const zoneStyle = z => (z.kind === 'room' && z.entry ? ZONE_KINDS.entry : ZONE_KINDS[z.kind] || ZONE_KINDS.area);
@@ -188,7 +188,9 @@ export class MapView {
       const dataKind = z.kind === 'room' ? 'room' : 'zone';
       const selected = sel?.kind === dataKind && sel.id === z.id;
       const fillOpacity = occupied ? 0.28 : selected ? 0.16 : (z.kind === 'room' ? 0.05 : 0.12);
-      const cls = `zone${selected ? ' selected' : ''}${zs?.approaching && state.tab === 'live' ? ' approaching' : ''}`;
+      // "wird betreten" pulses (held 2 s), only where nobody is yet
+      const approaching = state.tab === 'live' && !zs?.occupied && heldBadges(z.id).approach;
+      const cls = `zone${selected ? ' selected' : ''}${occupied ? ' occupied' : ''}${approaching ? ' approaching' : ''}`;
       const common = `class="${cls}" fill="${kind.color}" fill-opacity="${fillOpacity}" stroke="${kind.color}" data-kind="${dataKind}" data-id="${esc(z.id)}" ${pe(dataKind)}`;
       if (z.shape === 'circle') {
         const [x, y] = this.P(...z.center);
@@ -244,7 +246,8 @@ export class MapView {
         const zs = zoneStates[z.id];
         const [x, y] = this.P(...(z.anchor || zoneCenter(z)));
         const count = state.tab === 'live' && zs && !grouped.has(z.id) ? ` · ${zs.count}` : '';
-        labels.push(`<text class="zone-label" x="${x}" y="${y}" text-anchor="middle" fill="${kind.color}" pointer-events="none">${esc(z.name)}${count}</text>`);
+        const occ = state.tab === 'live' && zs?.occupied;
+        labels.push(`<text class="zone-label${occ ? ' occupied' : ''}" x="${x}" y="${y}" text-anchor="middle" fill="${kind.text}" pointer-events="none">${esc(z.name)}${count}</text>`);
       }
     }
 
@@ -327,34 +330,53 @@ export class MapView {
         }
       }
     }
-    out.push(this.clouds(live));
-    // trails
+    // the uncertainty: only the cloud (cut off at the walls); a circle around the dot would claim
+    // "maybe next door" through the wall
+    const segs = sightSegments(c);
+    out.push(this.clouds(live, segs));
+    // trails, broken where the estimate jumped (more than 1 m between two messages, or through a wall):
+    // a line there would draw a path nobody walked
     const now = live.t;
     for (const tr of live.tracks || []) {
       if (tr.x == null) continue;
       const trail = this.trails.get(tr.id) || [];
-      if (!trail.length || trail[trail.length - 1][2] < now - 0.05) trail.push([tr.x, tr.y, now]);
+      const last = trail[trail.length - 1];
+      if (!last || last[2] < now - 0.05) {
+        const p = [tr.x, tr.y];
+        const jump = last && (dist(last, p) > 1 || segs.some(([a, b]) => segmentsCross(last, p, a, b)));
+        trail.push([tr.x, tr.y, now, !!jump]);
+      }
       while (trail.length && trail[0][2] < now - 6) trail.shift();
       this.trails.set(tr.id, trail);
     }
     const ids = new Set((live.tracks || []).map(t => t.id));
     for (const id of this.trails.keys()) if (!ids.has(id)) this.trails.delete(id);
-    for (const trail of this.trails.values()) {
-      if (trail.length > 1) out.push(`<polyline points="${this.pts(trail)}" fill="none" stroke="var(--moving)" stroke-opacity="0.35" stroke-width="2"/>`);
+    for (const [id, trail] of this.trails) {
+      let piece = [];
+      const flush = () => {
+        if (piece.length > 1) out.push(`<polyline points="${this.pts(piece)}" fill="none" stroke="${personColor(id)}" stroke-opacity="0.45" stroke-width="2"/>`);
+      };
+      for (const p of trail) {
+        if (p[3]) { flush(); piece = []; }
+        piece.push(p);
+      }
+      flush();
     }
+    // the dot in the person's colour: an arrow when walking, pale and dashed when not seen just now
     for (const tr of live.tracks || []) {
       if (tr.x == null) continue; // behind a door: shown with the room, not as a point
       const [x, y] = this.P(tr.x, tr.y);
       const moving = !tr.lost && tr.walk > 0.5 && Math.hypot(tr.vx, tr.vy) > 0.15;
-      const color = tr.lost ? 'var(--lost)' : moving ? 'var(--moving)' : 'var(--still)';
-      const sr = Math.max(tr.sigma * 2 * this.s, 14);
-      out.push(`<circle cx="${x}" cy="${y}" r="${sr}" fill="${color}" fill-opacity="0.1" stroke="${color}" stroke-opacity="0.4"/>`);
+      const color = personColor(tr.id);
       if (moving) {
         const [vx, vy] = this.P(tr.x + tr.vx, tr.y + tr.vy);
-        out.push(`<line x1="${x}" y1="${y}" x2="${vx}" y2="${vy}" stroke="${color}" stroke-width="2.5" stroke-linecap="round"/>`);
+        out.push(`<line x1="${x}" y1="${y}" x2="${vx}" y2="${vy}" stroke="${color}" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-${(tr.id - 1) % PERSON_COLORS.length})"/>`);
       }
-      out.push(`<circle cx="${x}" cy="${y}" r="10" fill="${color}" ${tr.lost ? 'fill-opacity="0.55"' : ''} stroke="var(--surface)" stroke-width="2"/>
+      out.push(`<circle cx="${x}" cy="${y}" r="10" fill="${color}" ${tr.lost ? 'fill-opacity="0.4" stroke-dasharray="3 2"' : ''} stroke="var(--surface)" stroke-width="2"/>
         <text class="track-label" x="${x}" y="${y + 4}" text-anchor="middle">${tr.id % 100}</text>`);
+    }
+    if ((live.tracks || []).length) {
+      out.unshift(`<defs>${PERSON_COLORS.map((col, n) => `<marker id="arrow-${n}" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${col}"/></marker>`).join('')}</defs>`);
     }
     this.gDyn.innerHTML = out.join('');
   }
@@ -362,7 +384,7 @@ export class MapView {
   // where each person may be (filter._cloud): with a track their Gaussians, drawn as ellipses out to
   // 3 standard deviations with a Gaussian fall-off, cut off at the walls (what is in sight from their
   // mean); without, the tiles they may be in (squares cut by their room), by mass per m^2
-  clouds(live) {
+  clouds(live, segs) {
     const out = [];
     const clouds = live.clouds || [];
     if (live.tiling !== this.tilingId && !this.tilingLoading && clouds.some(cl => cl.tiles.length)) {
@@ -377,7 +399,6 @@ export class MapView {
         `<stop offset="${o}" stop-color="${color}" stop-opacity="${Math.exp(-0.5 * (3 * o) ** 2).toFixed(3)}"/>`).join('');
       out.push(`<defs>${PERSON_COLORS.map((c, n) => `<radialGradient id="gauss-${n}">${stops(c)}</radialGradient>`).join('')}</defs>`);
     }
-    const segs = clouds.some(cl => cl.gauss.length) ? sightSegments(state.config) : [];
     if (tiling && clouds.some(cl => cl.tiles.length)) {
       const rooms = new Set(tiling.tiles.map(t => t[2]));
       out.push(`<defs>${state.config.zones.filter(z => rooms.has(z.id)).map(z =>
@@ -403,15 +424,12 @@ export class MapView {
         out.push(`<clipPath id="${clip}"><polygon points="${this.pts(visibilityPolygon([mx, my], segs, R))}"/></clipPath>`);
         const [x, y] = this.P(mx, my);
         out.push(`<ellipse cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="${(3 * sx * this.s).toFixed(1)}" ry="${(3 * sy * this.s).toFixed(1)}"
-          fill="url(#gauss-${(cl.id - 1) % PERSON_COLORS.length})" fill-opacity="${(0.15 + 0.55 * w).toFixed(2)}" clip-path="url(#${clip})"/>`);
+          fill="url(#gauss-${PERSON_COLORS.indexOf(color)})" fill-opacity="${(0.15 + 0.55 * w).toFixed(2)}" clip-path="url(#${clip})"/>`);
       });
     }
     return out.join('');
   }
 }
-
-const PERSON_COLORS = ['#2f6fde', '#d9822b', '#2e9d5a', '#a855c7', '#c2413b', '#0f8f9c'];
-function personColor(id) { return PERSON_COLORS[(id - 1) % PERSON_COLORS.length]; }
 
 export function bgToWorld(l, u, v) {
   const r = rad(l.rotation || 0), k = l.scale;

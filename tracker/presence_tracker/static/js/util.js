@@ -1,10 +1,15 @@
 // Small helpers shared by the UI modules.
 
+// one colour per person: their dot, cloud and trail
+export const PERSON_COLORS = ['#2f6fde', '#d9822b', '#2e9d5a', '#a855c7', '#c2413b', '#0f8f9c'];
+export function personColor(id) { return PERSON_COLORS[((id - 1) % PERSON_COLORS.length + PERSON_COLORS.length) % PERSON_COLORS.length]; }
+
 export const SENSOR_COLORS = ['#e8590c', '#0c8599', '#9c36b5', '#2b8a3e', '#c2255c', '#5c7cfa', '#a16207', '#0b7285'];
+// color: fills and strokes; text: labels on the map (darker in light mode, for 4.5:1 contrast)
 export const ZONE_KINDS = {
-  room: { label: 'Raum', color: '#2f6fde' },  // from the walls, not drawn
-  area: { label: 'Bereich', color: '#1f9d55', note: 'Wird an Home Assistant gemeldet (z. B. Sofa, Esstisch)' },
-  entry: { label: 'Eingang', color: '#d48806', note: 'Hier kommen Personen von außen herein oder verlassen das Haus (z. B. die Haustür in einem Raum mit Sensor)' },
+  room: { label: 'Raum', color: '#2f6fde', text: 'var(--accent-text)' },  // from the walls, not drawn
+  area: { label: 'Bereich', color: '#1f9d55', text: 'var(--ok-text)', note: 'Wird an Home Assistant gemeldet (z. B. Sofa, Esstisch)' },
+  entry: { label: 'Eingang', color: '#d48806', text: 'var(--warn-text)', note: 'Hier kommen Personen von außen herein oder verlassen das Haus (z. B. die Haustür in einem Raum mit Sensor)' },
 };
 
 // the rooms the sensors see: every room of the home (not an entry room: the stairwell is outside)

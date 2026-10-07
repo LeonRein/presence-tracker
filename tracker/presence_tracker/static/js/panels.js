@@ -1,8 +1,8 @@
 // Side panel per tab.
 import { computeCoverage } from './coverage.js';
-import { api, edit, emit, select, sensorById, sensorColor, setTool, state } from './store.js';
+import { api, edit, emit, heldBadges, savePref, select, sensorById, sensorColor, setTool, state } from './store.js';
 import { AlignTool, PlaceSensorTool, WallTool, ZoneTool, autoFitImage, deleteSelection } from './tools.js';
-import { ZONE_KINDS, bindNumber, dist, esc, fmt, h, regionOfRoom, roomsWithSensor, toast, uid, zoneOutline } from './util.js';
+import { ZONE_KINDS, bindNumber, dist, esc, fmt, h, personColor, regionOfRoom, roomsWithSensor, toast, uid, zoneOutline } from './util.js';
 import { loadSize } from './view.js';
 
 let skipRender = false;
@@ -23,13 +23,47 @@ export function renderPanel(panel, view, what) {
   updateLive(panel);
 }
 
-// parts of the panel that change with every live message
+// parts of the panel that change with the live messages. Only what changed is replaced: a list
+// gives its rows with a key ([key, html]) and only changed rows are rebuilt, so tooltips and the
+// rows' places hold while the rest updates
 export function updateLive(panel) {
   for (const el of panel.querySelectorAll('[data-live]')) {
     const fn = LIVE[el.dataset.live];
-    if (fn) el.innerHTML = fn(el.dataset);
+    if (!fn) continue;
+    const out = fn(el.dataset);
+    if (Array.isArray(out)) patchRows(el, out);
+    else if (el._html !== out) { el.innerHTML = out; el._html = out; }
   }
 }
+
+function patchRows(el, rows) {
+  if (el._html !== undefined) { el.innerHTML = ''; el._html = undefined; }  // was a note, now rows
+  const old = new Map([...el.children].map(c => [c.dataset.key, c]));
+  let prev = null;
+  for (const [key, html] of rows) {
+    let node = old.get(key);
+    old.delete(key);
+    if (!node || node._html !== html) {
+      const fresh = h(html);
+      fresh.dataset.key = key;
+      fresh._html = html;
+      if (node) node.replaceWith(fresh);
+      node = fresh;
+    }
+    const want = prev ? prev.nextElementSibling : el.firstElementChild;
+    if (node !== want) el.insertBefore(node, want);
+    prev = node;
+  }
+  for (const n of old.values()) n.remove();
+}
+
+const pct = p => `${Math.round(p * 100)}\u00a0%`;
+// P(somebody there) above which a room is occupied (light on): light_cost / (light_cost + 1)
+function occupiedAbove() {
+  const k = state.config.params?.light_cost ?? 2;
+  return k / (k + 1);
+}
+const people = n => `${n}\u00a0${n === 1 ? 'Person' : 'Personen'}`;
 
 // where a person of the model is: the room they are drawn in, or the most probable places
 function whereText(t) {
@@ -38,7 +72,7 @@ function whereText(t) {
   const name = k => k === 'observed' ? (t.room ? names[t.room] : 'in Räumen mit Sensor')
     : k === 'outside' ? 'außer Haus' : (regions[k]?.rooms || []).map(id => names[id] || id).join(', ') || k;
   return Object.entries(t.places || {}).sort((a, b) => b[1] - a[1]).slice(0, 2)
-    .map(([k, v]) => `${esc(name(k))} ${Math.round(v * 100)} %`).join(' · ');
+    .map(([k, v]) => `${esc(name(k))} ${pct(v)}`).join(' · ');
 }
 
 // people in the rooms the sensors see (the house total counts guesses about rooms without a sensor)
@@ -60,24 +94,35 @@ const LIVE = {
     const live = state.live;
     const zones = [...roomsWithSensor(state.config, live), ...state.config.zones.filter(z => z.kind === 'area')];
     if (!zones.length) return '<p class="note">Noch keine Räume oder Bereiche mit Sensor. Im Tab „Zonen“ einzeichnen, Sensoren platzieren.</p>';
-    return zones.map(z => {
-      const st = live?.zones?.[z.id];
+    // occupied first (what the lights follow), else in the order of the plan
+    const rows = zones.map((z, i) => ({ z, i, st: live?.zones?.[z.id] }))
+      .sort((a, b) => (b.st?.occupied ? 1 : 0) - (a.st?.occupied ? 1 : 0) || a.i - b.i);
+    const c = occupiedAbove();
+    return rows.map(({ z, st }) => {
       const color = ZONE_KINDS[z.kind].color;
-      const badges = st ? [
-        st.count ? `<span class="badge ${st.occupied ? 'on' : ''}">${st.count} ${st.count === 1 ? 'Person' : 'Personen'}</span>` : `<span class="badge ${st.occupied ? 'on' : ''}">${st.occupied ? 'besetzt' : 'leer'}</span>`,
-        st.probability != null ? `<span class="badge" title="Wahrscheinlichkeit, dass jemand da ist; besetzt (Licht an) ab der Schwelle aus den Kosten">${Math.round(st.probability * 100)} %</span>` : '',
-        st.moving ? `<span class="badge ok">${st.moving} bewegt</span>` : '',
-        st.still ? `<span class="badge">${st.still} ruhig</span>` : '',
-        st.approaching ? `<span class="badge warn" title="Wahrscheinlichkeit, dass jemand Gehendes gleich hereinkommt (Vorausschau in den Einstellungen)">gleich ${Math.round((st.p_enter ?? 0) * 100)} %${st.eta != null ? ` · ${fmt(st.eta, 1)} s` : ''}</span>` : '',
-        st.target ? `<span class="badge warn" title="Ziel: Jemand Gehendes geht als Nächstes hierher. ${st.target_source === 'karte' ? 'Entschieden von der gelernten Karte' : 'Entschieden von der Bewegung (wie „wird betreten“)'}">Ziel ${Math.round((st.p_target ?? 0) * 100)} %${st.target_source === 'karte' ? ' · Karte' : ''}</span>` : '',
-      ].join('') : '';
-      return `<div class="item"><span class="swatch" style="background:${color}"></span><span class="grow">${esc(z.name)}</span>${badges}</div>`;
-    }).join('');
+      const occ = !!st?.occupied;
+      // "wird betreten" / "Ziel" (held 2 s) matter for a dark room only: where somebody already is,
+      // the light is on anyway
+      const held = occ ? {} : heldBadges(z.id);
+      const extra = st ? [
+        st.count ? `<span>${people(st.count)}${st.moving ? ` · ${st.moving} bewegt` : ''}${st.still ? ` · ${st.still} ruhig` : ''}</span>` : '',
+        held.approach ? `<span class="badge warn" title="Jemand Gehendes kommt gleich herein: ${pct(held.approach.p ?? 0)} (Vorausschau in den Einstellungen)">wird betreten${held.approach.eta > 0 ? ` · in ${fmt(held.approach.eta, 1)}\u00a0s` : ''}</span>` : '',
+        held.target ? `<span class="badge warn" title="Jemand Gehendes geht als Nächstes hierher. Entschieden von ${held.target.source === 'karte' ? 'der gelernten Karte, wohin Gänge von dort gingen' : 'der Bewegung (wie „wird betreten“)'}">Ziel ${pct(held.target.p ?? 0)} · ${held.target.source === 'karte' ? 'Karte' : 'Bewegung'}</span>` : '',
+      ].filter(Boolean).join('') : '';
+      return [z.id, `<div class="item room-row${occ ? ' occupied' : ''}"><span class="swatch" style="background:${color}"></span>
+        <span class="grow">${esc(z.name)}</span>
+        ${st ? `<span class="badge ${occ ? 'on' : ''}">${occ ? 'besetzt' : 'leer'}</span>` : ''}
+        ${st?.probability != null ? `<span class="badge num" title="Wahrscheinlichkeit, dass jemand im Raum ist; besetzt ab ${pct(c)}">${pct(st.probability)}</span>` : ''}
+        ${extra ? `<div class="meta sub">${extra}</div>` : ''}</div>`];
+    });
   },
   total() {
     const t = seenTotal();
     if (!t) return '–';
-    return `<b style="font-size:28px">${t.count}</b> <span class="note">${t.count === 1 ? 'Person' : 'Personen'} in den Räumen mit Sensor · ${t.moving} bewegt · ${t.still} ruhig</span>`;
+    const live = state.live;
+    const occupied = state.config.zones.filter(z => (z.kind === 'room' && !z.entry || z.kind === 'area') && live?.zones?.[z.id]?.occupied);
+    return `<div class="occupied-line">${occupied.length ? `Besetzt: <b>${occupied.map(z => esc(z.name)).join(', ')}</b>` : 'Kein Raum besetzt'}</div>
+      <div><b style="font-size:22px">${t.count}</b> <span class="note">${t.count === 1 ? 'Person' : 'Personen'} in den Räumen mit Sensor · ${t.moving} bewegt · ${t.still} ruhig</span></div>`;
   },
   people() {
     const tracks = state.live?.tracks || [];
@@ -85,33 +130,35 @@ const LIVE = {
     return tracks.map(t => {
       const moving = t.x != null && !t.lost && t.walk > 0.5 && Math.hypot(t.vx, t.vy) > 0.15;
       const state_ = t.x == null ? '' : t.lost ? '<span class="badge">nicht gesehen</span>' : moving ? '<span class="badge ok">bewegt</span>' : '<span class="badge">ruhig</span>';
-      return `<div class="item" style="flex-wrap:wrap"><span class="grow">Person ${t.id}</span>${state_}
-        <div class="meta" style="flex-basis:100%;white-space:normal">${whereText(t)}</div></div>`;
-    }).join('');
+      return [String(t.id), `<div class="item" style="flex-wrap:wrap"><span class="swatch dot" style="background:${personColor(t.id)}"></span><span class="grow">Person ${t.id}</span>${state_}
+        <div class="meta sub">${whereText(t)}</div></div>`];
+    });
   },
   sensorHealth() {
     const live = state.live;
     const ids = [...new Set([...state.config.sensors.map(s => s.id), ...Object.keys(live?.sensors || {})])].sort();
+    if (!ids.length) return '<p class="note">Noch keine Daten von Sensoren.</p>';
+    // fixed columns: name | status, the measurements below; nothing jumps when a number changes
     return ids.map(id => {
       const sv = live?.sensors?.[id];
       const s = sensorById(id);
       const online = sv?.online;
-      return `<div class="item"><span class="swatch" style="background:${sensorColor(id)}"></span>
+      const n = sv ? sv.detections.length : 0;
+      return [id, `<div class="item sensor-row"><span class="swatch" style="background:${sensorColor(id)}"></span>
         <span class="grow">${esc(s?.name || id)}</span>
-        ${s?.placed ? '' : '<span class="badge warn">nicht platziert</span>'}
-        <span class="badge ${online ? 'ok' : 'bad'}">${online ? 'online' : 'offline'}</span>
-        <span class="meta">${sv ? sv.detections.length : 0} ${sv?.detections.length === 1 ? 'Ziel' : 'Ziele'}${sv?.ld2410?.present ? ` · LD2410C ${fmt(sv.ld2410.distance, 1)} m` : ''}</span></div>`;
-    }).join('') || '<p class="note">Noch keine Daten von Sensoren.</p>';
+        <span>${s?.placed ? '' : '<span class="badge warn">nicht platziert</span> '}<span class="badge ${online ? 'ok' : 'bad'}">${online ? 'online' : 'offline'}</span></span>
+        <span class="meta sub">${n} ${n === 1 ? 'Ziel' : 'Ziele'} · LD2410C ${sv?.ld2410?.present ? `${fmt(sv.ld2410.distance, 1)}\u00a0m` : 'nichts'}</span></div>`];
+    });
   },
   unobserved() {
     const regions = Object.values(state.live?.regions || {});
     if (!regions.length) return '<p class="note">Alle Räume haben einen Sensor.</p>';
     const fmtS = s => s >= 5400 ? `${Math.round(s / 3600)} h` : s >= 90 ? `${Math.round(s / 60)} min` : `${s} s`;
     const names = Object.fromEntries(state.config.zones.map(z => [z.id, z.name]));
-    return regions.map(r => `<div class="item" style="flex-wrap:wrap"><span class="grow" style="white-space:normal">${(r.rooms || []).map(id => esc(names[id] || id)).join(', ') || esc(r.name)}</span>
+    return regions.map(r => [r.name, `<div class="item" style="flex-wrap:wrap"><span class="grow" style="white-space:normal">${(r.rooms || []).map(id => esc(names[id] || id)).join(', ') || esc(r.name)}</span>
       ${r.open ? '<span class="badge" title="Von hier aus kann man das Haus verlassen (Tür nach draußen, Eingang)">Ausgang</span>' : ''}
-      ${r.probabilities.length ? r.probabilities.map(p => `<span class="badge ${p >= 0.5 ? 'on' : ''}" title="Wahrscheinlichkeit, dass diese Person hier ist">${Math.round(p * 100)} %</span>`).join('') : '<span class="badge">leer</span>'}
-      <div class="meta" style="flex-basis:100%;white-space:normal">${(r.rooms || []).length > 1 ? 'Ohne Sensor über Türen verbunden, deshalb zusammen. ' : ''}Aufenthalt typisch ${fmtS(r.dwell.median)}, 90 % unter ${fmtS(r.dwell.p90)} (Annahme)</div></div>`).join('');
+      ${r.probabilities.length ? r.probabilities.map(p => `<span class="badge ${p >= 0.5 ? 'on' : ''}" title="Wahrscheinlichkeit, dass diese Person hier ist">${pct(p)}</span>`).join('') : '<span class="badge">leer</span>'}
+      <div class="meta sub">${(r.rooms || []).length > 1 ? 'Ohne Sensor über Türen verbunden, deshalb zusammen. ' : ''}Aufenthalt typisch ${fmtS(r.dwell.median)}, 90\u00a0% unter ${fmtS(r.dwell.p90)} (Annahme)</div></div>`]);
   },
   sensorNow(ds) {
     const sv = state.live?.sensors?.[ds.id];
@@ -178,26 +225,35 @@ function livePanel(panel, view) {
       <p class="note">Speichert die Sensordaten der letzten 15 Minuten mit der Konfiguration, zum genauen Nachspielen. Die Meldungen sind die Wahrheitsdaten für die Bewertung.</p>
       <div class="list" id="rep-list"></div>
     </details>
-    <h3>Räume mit Sensor</h3><div class="list" data-live="zones"></div>
+    <h3>Räume mit Sensor</h3>
+    <p class="note">% = Wahrscheinlichkeit, dass jemand im Raum ist. Besetzt (Licht an) ab ${pct(occupiedAbove())}, aus den Kosten in den Einstellungen.</p>
+    <div class="list" data-live="zones"></div>
     <h3>Räume ohne Sensor</h3><div class="list" data-live="unobserved"></div>
-    <p class="note">Aus dem Grundriss: Räume, die kein Sensor überwiegend sieht, über Türen zu Gruppen verbunden. Wer hineingeht, ist dort. Die Wahrscheinlichkeit, dass jemand noch drin ist, sinkt mit der Zeit, je nachdem, wie lange Besuche dort üblicherweise dauern. Die Prozente sind je Person.</p>
+    <p class="note">Aus dem Grundriss: Räume, die kein Sensor überwiegend sieht, über Türen zu Gruppen verbunden. Wer hineingeht, ist dort. Die Wahrscheinlichkeit, dass jemand noch drin ist, sinkt mit der Zeit, je nachdem, wie lange Besuche dort üblicherweise dauern. % = Wahrscheinlichkeit, dass diese Person dort ist, je Person.</p>
     <h3>Sensoren</h3><div class="list" data-live="sensorHealth"></div>
     <h3>Personen im Modell</h3><div class="list" data-live="people"></div>
-    <p class="note">Das Modell verfolgt die Bewohner (Einstellungen). Wo jemand am wahrscheinlichsten ist; auf der Karte die Wolke seiner Möglichkeiten.</p>
+    <p class="note">Je Person die zwei wahrscheinlichsten Orte; % = Wahrscheinlichkeit, dass diese Person dort ist (nicht dieselbe Zahl wie beim Raum). Auf der Karte in ihrer Farbe: der Punkt und die Wolke, wo sie sein kann.</p>
     <h3>Anzeige</h3>
-    <label class="check"><input type="checkbox" id="raw" ${state.showRaw ? 'checked' : ''}> Rohdaten der Sensoren zeigen</label>
     <div class="legend">
-      <span><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="var(--moving)"/></svg>bewegt</span>
-      <span><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="var(--still)"/></svg>ruhig</span>
-      <span><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="var(--lost)"/></svg>verdeckt</span>
+      <span><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="${personColor(1)}"/></svg>Person (eine Farbe je Person)</span>
+      <span><svg width="18" height="12"><line x1="2" y1="6" x2="14" y2="6" stroke="var(--muted)" stroke-width="2.5"/><path d="M12 2 L17 6 L12 10 z" fill="var(--muted)"/></svg>geht</span>
+      <span><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="var(--muted)" fill-opacity="0.4" stroke="var(--muted)" stroke-dasharray="2 1.5"/></svg>gerade nicht gesehen</span>
+    </div>
+    <label class="check"><input type="checkbox" id="raw" ${state.showRaw ? 'checked' : ''}> Rohdaten der Sensoren zeigen (Sichtfelder, Messpunkte)</label>
+    <div class="legend" id="raw-legend" ${state.showRaw ? '' : 'hidden'}>
       <span><svg width="12" height="12"><circle cx="6" cy="6" r="3" fill="var(--muted)"/></svg>Messpunkt</span>
       <span><svg width="12" height="12"><circle cx="6" cy="6" r="3.5" fill="none" stroke="var(--muted)" stroke-width="1.5"/></svg>verworfen (hinter einer Wand oder eingefroren)</span>
       <span><svg width="16" height="12"><path d="M1 10 A 9 9 0 0 1 15 10" stroke="var(--muted)" stroke-dasharray="2 3" fill="none" stroke-width="2"/></svg>LD2410C-Abstand</span>
     </div>
     <div class="row" style="margin-top:12px"><button class="btn" id="reset">Neu beginnen</button></div>
-    <p class="note">Das Modell vergisst, wo wer ist: Jeder Bewohner kann wieder überall sein, auch außer Haus. Die nächsten Messungen entscheiden neu.</p>
+    <p class="note">Das Modell vergisst, wo wer ist: Jede Person kann wieder überall sein, auch außer Haus. Die nächsten Messungen entscheiden neu.</p>
   </div>`));
-  panel.querySelector('#raw').onchange = e => { state.showRaw = e.target.checked; view.render(); };
+  panel.querySelector('#raw').onchange = e => {
+    state.showRaw = e.target.checked;
+    savePref('showRaw', state.showRaw);
+    panel.querySelector('#raw-legend').hidden = !state.showRaw;
+    view.render();
+  };
   panel.querySelector('#reset').onclick = async () => {
     if (!confirm('Neu beginnen? Das Modell vergisst, wo wer ist. Bis die Sensoren wieder jemanden sehen, können Räume als leer gelten und Lichter ausgehen.')) return;
     await api('api/tracks/reset', { method: 'POST' });
