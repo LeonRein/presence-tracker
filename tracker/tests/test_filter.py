@@ -117,6 +117,37 @@ def test_somebody_else_coming_in_is_counted():
     assert present(samples, 70, end - 1) == {2}
 
 
+def test_a_recalibrated_sensor_keeps_the_people():
+    # report 7.10. 08:07: two people in the house, start_people 1; a sensor's heading is corrected
+    # while both sit in view. The people stay as they were (a recalibration says nothing about
+    # them); starting over, the one known person could take only one of them and the other's
+    # track would be a ghost for good (no unknown person left to explain it)
+    config = flat_config(entry=True, people=1)
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.6, 1.0), start=1, pauses={2: 160}))
+    b = Person(walk((-1.0, 4.0), FLUR_DOOR, (2.0, 2.5), (2.1, 2.5), start=40, pauses={2: 100}))
+    end = min(a.waypoints[-1][0], b.waypoints[-1][0])
+    turned = Config.from_dict({**config.to_dict(), "sensors": [{**s, "heading": s["heading"] + 1.5}
+                                                               if s["id"] == "a" else s
+                                                               for s in config.to_dict()["sensors"]]})
+    crowd = Tracker(config, start=0.0, people=["flur"])
+    samples = []
+    done = False
+    for t, sid, frame in simulate([a, b], sim_sensors(config), end, walls=config.wall_segments):
+        if t >= 100 and not done:
+            crowd.reconfigure(turned)
+            crowd.check()
+            done = True
+        crowd.process_frame(sid, t, frame)
+        if t >= 90 and int(t * 2) != int((t - 0.1) * 2):
+            dist = crowd.count_distribution()["wohn"]
+            samples.append((t, float(dist[2]) if len(dist) > 2 else 0.0))
+    assert crowd.config.sensors[0].heading == 46.5
+    assert all(p > 0.9 for t, p in samples), [(round(t), round(p, 3)) for t, p in samples if p <= 0.9]
+    # another parameter (or floor plan): nothing known any more
+    other = Config.from_dict({**turned.to_dict(), "params": {**turned.to_dict()["params"], "light_cost": 3.0}})
+    assert crowd.reconfigure(other) and len(crowd.hyps) == 1 and not crowd.segs
+
+
 def test_a_short_track_in_an_empty_room_is_a_ghost():
     # nobody home, known: a target shows up mid-room for a second and is gone again
     config = flat_config(people=2)

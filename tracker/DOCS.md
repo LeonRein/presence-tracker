@@ -27,6 +27,11 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   **lernt die App selbst** (Geisterkarte). Wird ein Sensor verschoben, hinzugefügt oder entfernt, beginnt
   die Karte neu, weil sich die Sensoren gegenseitig stören können. Bis sie ein paar Stunden gelernt hat,
   werden Geister an festen Stellen (Möbel, Ladestation) leichter für Personen gehalten.
+- **Sensor drehen oder neu kalibrieren** (gleicher Grundriss): Was über die Personen bekannt ist, bleibt.
+  Nur die Spuren dieses Sensors beginnen neu, wie nach einer Datenlücke. Ein geänderter Grundriss
+  (Wände, Räume, Türen) oder andere Parameter lassen das Modell ohne Wissen neu beginnen; dann sollte
+  *Personen beim Start* die Zahl der Bewohner sein, sonst kann das Modell eine von ihnen nur für einen
+  Geist halten.
 - Der **LD2410C** zählt mit seinen Energien je 0,75-m-Entfernungsring (bewegt und ruhig): Wo eine Person
   Energie machen müsste und keine ist, ist niemand; Energie, die niemand erklärt, spricht für jemanden in
   diesem Ring, auch wenn der LD2450 ihn verloren hat. Was eine andere Person schon erklärt, sagt über die
@@ -43,7 +48,7 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   angezeigt hat (unter `/data/reports`, je Meldung etwa 0,2–0,7 MB, in der Liste herunterladbar). Daraus
   entsteht die Wahrheitstabelle für die Bewertung; `tools/replay.py --report DATEI` spielt eine Meldung
   nach und zeigt, wie weit das Nachspiel von der Anzeige der App abweicht. Begann das Modell innerhalb der
-  15 Minuten (Start der App, *Spuren zurücksetzen*, neue Konfiguration), beginnt das Nachspiel dort mit dem
+  15 Minuten (Start der App, *Spuren zurücksetzen*, neuer Grundriss), beginnt das Nachspiel dort mit dem
   damals Gelernten und glaubt genau, was die App glaubte; sonst beginnt es ohne Wissen am Anfang der
   Daten und hat das bis zum gemeldeten Moment vergessen.
 

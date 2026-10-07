@@ -175,15 +175,65 @@ class Tracker:
         self._live_by_sensor = {si: [] for si in range(len(self.sensors))}
 
     def reconfigure(self, config):
+        """A new configuration. If only sensors changed (turned, moved, recalibrated, switched on
+        or off) and the world the people live in stays the same, what is known about the people
+        stays: a recalibration tells something about a sensor, nothing about them. The changed
+        sensors start over as after lost data (MODEL.md 4.1, 5.3): their tracks end without
+        information, their next frame is a start. Otherwise (walls, rooms, doors, parameters, the
+        set of sensors, the observed area) everything starts over. Returns whether it started over."""
+        changed = self._changed_sensors(self.config, config)
         self.config = config
         self.p = config.params
         self.sensor_model.config = config
         self.sensor_model.rebuild()
-        self.dwell = Dwell(self.p, [rid for rid, r in config.regions.items() if r["open"]])
-        self._build()
+        if changed is not None:
+            self._recalibrated(changed)
+        else:
+            self.dwell = Dwell(self.p, [rid for rid, r in config.regions.items() if r["open"]])
+            self._build()
         self.use_ghost_map(self.ghost_map)  # it holds only while the sensors are where they were
         self.ld_background.use(config)
-        self.reset_people()
+        if changed is None:
+            self.reset_people()
+        return changed is None
+
+    def _changed_sensors(self, old, new):
+        """The ids of the sensors that differ between two configurations if nothing else differs
+        (the same sensors, floor plan and parameters, the same observed area), else None."""
+        a, b = old.to_dict(), new.to_dict()
+        sa, sb = a.pop("sensors"), b.pop("sensors")
+        a.pop("background")
+        b.pop("background")
+        if a != b or [s["id"] for s in sa] != [s["id"] for s in sb] or old.regions != new.regions:
+            return None
+        if not np.array_equal(World(new).labels, self.world.labels):
+            return None
+        return [x["id"] for x, y in zip(sa, sb) if x != y]
+
+    def _recalibrated(self, changed):
+        """Sensors changed, the people's world not (reconfigure): the people stay as they are; the
+        changed sensors' tracks end as at lost data, their next frame counts as a start."""
+        if any(self._live_by_sensor[self.sidx[sid]] for sid in changed):
+            self._flush(self.now)  # the ends weigh and release everybody: all at now
+        for sid in changed:
+            si = self.sidx[sid]
+            for seg in list(self._live_by_sensor[si]):
+                self._end(si, seg, self.now, True)
+            self.tracks[sid] = SensorTracks(sid, self._ids)
+            if sid in self.runtime:
+                self.runtime[sid].last_frame = -math.inf  # the next frame is a start (_evidence)
+            for d in (self._ld_stats, self._ld_memory, self._ld_echo):
+                d.pop(si, None)
+        if changed and self.hyps:
+            self._merge()
+            self._prune()
+            self._normalize()
+        self.world.config = self.config
+        self._gcache, self._area, self._ghost_total, self._out_cache = {}, {}, {}, {}
+        self.tiles.g, self.tiles.dist = {}, {}
+        for si in range(len(self.sensors)):
+            self._g(si, np.zeros((1, 2)))
+        self._version += 1
 
     def use_ghost_map(self, gm) -> bool:
         """Use a learned ghost map (MODEL.md 4.2) if it was learned with the sensors where they are

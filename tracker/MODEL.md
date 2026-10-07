@@ -143,7 +143,8 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 **Start und Datenlücken:** Was ein Sensor beim ersten Frame (oder nach einer Lücke) schon verfolgt,
 wird nicht als Geburt gewertet: Eine Person ist zu einem beliebigen Zeitpunkt mit dem Anteil
 `a·L / (1 + a·L)` erfasst (a Erfassungsrate, L Lebensdauer einer Spur, gemessen 60 s stehend, 30 s
-gehend); Geister entsprechend mit ihrer Lebensdauer.
+gehend); Geister entsprechend mit ihrer Lebensdauer. Ebenso nach einer neuen Lage oder Kalibrierung
+des Sensors (5.3): Seine Spuren enden ohne Information, sein nächster Frame ist ein Start.
 
 ### 4.2 Geister
 Eine Spur, die zu keiner Person gehört.
@@ -349,6 +350,13 @@ Start („nichts bekannt“): `start_people` = 2 bekannte Personen, je 1/3 im be
 unbekannten. Ein Poisson-Start erwartet auch nach zwei gefundenen Personen noch genauso viele weitere
 (seine Zahlen sind unabhängig): Simulation, zwei kommen herein, danach P(3 im Haus) = 0,35.
 
+Neu beginnt das Modell nur, wenn sich die Welt der Personen ändert (Wände, Räume, Türen, Parameter,
+welche Sensoren es gibt, der beobachtete Bereich). Wird nur ein Sensor gedreht, verschoben oder neu
+kalibriert, bleibt, was über die Personen bekannt ist (die Konfiguration sagt etwas über den Sensor,
+nichts über sie); seine Spuren beginnen neu wie nach einer Datenlücke (4.1). Ein Neubeginn mit
+`start_people` unter der Zahl der Anwesenden kann eine von ihnen nur als Geist erklären (10, Meldung
+7.10. 08:07).
+
 ### 5.4 Wechsel der Darstellung
 - **Kacheln → Gauß**, wenn eine Spur auf der Person beginnt oder wiedergefunden wird: je Kachel
   Masse × Erfassungsrate × Dichte der Messung (Kachel-Gauß gefaltet mit dem Messrauschen), die
@@ -450,6 +458,10 @@ Näherungen, die man prüfen oder ersetzen kann:
 - Wer ins Schlafzimmer oder zur Treppe geht, bleibt wegen des breiten Aufenthalts-Priors lange
   „bekannt“ (6 h nach dem Gehen noch zu 21 % im Haus) und kostet so lange Rechenzeit.
 - ν, das Vergessen und `start_people` sind angenommen.
+- Eine neue Kalibrierung (Richtung, Maßstab) lässt weiterhin die Geisterkarte aller Sensoren und den
+  LD2410C-Hintergrund dieses Sensors neu beginnen, obwohl sich der Sensor selbst nicht bewegt hat (die
+  App kann Drehen und Kalibrieren nicht unterscheiden). Für die Meldung 7.10. 08:07 war das nicht die
+  Ursache (Hintergrund im Nachspiel unverändert).
 
 Nicht geprüft (Ablationen ausstehend): λ_d = 0,85 gegen langsamere Richtungswechsel; OU-Näherung
 gegen weißes Rauschen in der Beschleunigung; Swerling-I gegen logistisch; Geisterkarte gegen globale
@@ -579,6 +591,25 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   ihre Energie mit niedrigem g, und eine ungesehene Person nahe dem Sensor nimmt den Rest. Mit
   Gehenden zusätzlich das Arbeitszimmer 21:36 (0,86 → 0,33). Die Streuung ist echt, aber solange
   Kalibrierung und Profilform nicht stimmen, nutzt das Modell die Freiheit für Fehlpassungen.
+- **Neubeginn bei neuer Kalibrierung** (bis 0.10.0, Meldung 7.10. 08:07 „Person verloren“: Leon am
+  Schreibtisch, der LD2450 misst ihn minutenlang, der LD2410C ruhig Ring 2–3 bei 100): Jede neue
+  Konfiguration, auch nur Richtung und Maßstab eines Sensors, ließ das Modell ohne Wissen beginnen:
+  `start_people` (in Leons Konfiguration 1) bekannte Personen, keine unbekannten (Intensität im Blick
+  danach ~10⁻⁸; Neuankömmlinge nur über die Treppe, ν = 1/(2 Tage)). Waren dabei beide Bewohner in Sicht,
+  erklärte die eine bekannte Person die andere (im Esszimmer), die Spur am Schreibtisch blieb ein Geist:
+  Nachgespielt (Gelerntes ab 6.10. 19:28, App-Start 06:50:17, neue Kalibrierung 07:44:30) mit einem
+  weiteren Neubeginn um 08:05:30, 08:06:00, 08:06:15 (Modellfehler) bzw. 08:05:30, 08:05:55, 08:06:15
+  (Konfiguration): in 4 von 6 Fällen Arbeitszimmer P(belegt) 0,000 bis 08:08, die Person-Alternative der
+  Spur binnen 15 s unter 10⁻⁷ abgeschnitten und nie wieder da, die Energien von einer immer neu
+  beginnenden Echoquelle erklärt (P(an) 1,000), der Hintergrund unverändert (5,4). Der Neubeginn um
+  07:44:30 allein schadete nicht (Leon allein in Sicht). Jetzt bleiben die Personen bei neuer Kalibrierung
+  (5.3): dieselben Konfigurationen (Richtung 325° statt 324°) um 08:05:30, 08:05:55, 08:06:15 ergeben
+  1,000 bis 08:08. Ein Neubeginn nach einem Modellfehler bleibt wie bisher. Verworfen: eine Intensität
+  unbekannter Personen beim Start (Poisson, 0,1 bzw. 0,5 Personen „irgendwo“, B_GarciaFernandez2018):
+  behebt den Fall, holt aber um 21:28 (6.10., 10 min nach einem App-Start) eine dritte Person ins leere
+  Wohnzimmer (Licht fälschlich an 0,88 von 41 statt 0, aus 2,0 statt 3,0 von 15). `start_people` = 2 statt
+  1: report_eval unverändert (0 / 3,0, Log-Evidenz +83), der Fall auch mit dem Neubeginn um 08:06:15
+  richtig.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

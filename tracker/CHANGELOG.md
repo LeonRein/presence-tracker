@@ -14,6 +14,13 @@
   längeres Fenster oder ein gespeicherter Zustand des Modells (1,5 MB je Meldung) bringen nichts.
 - Das Herunterladen einer Meldung ist im Test geprüft: Die App schickt sie unverändert als
   `application/gzip` ohne `Content-Encoding`, so dass auch der Browser hinter Ingress sie nicht entpackt.
+- **Einen Sensor zu drehen oder neu zu kalibrieren, setzt die Personen nicht mehr zurück.** Bisher begann
+  das Modell bei jeder neuen Konfiguration ohne Wissen. Waren dabei zwei Personen in Sicht und
+  `start_people` 1, blieb eine von ihnen ein Geist, auch wenn der LD2450 sie minutenlang maß und der
+  LD2410C bei 100 lag (Meldung 7.10. 08:07, Arbeitszimmer; nachgespielt in 4 von 6 Neubeginnen um
+  08:05–08:06 P(belegt) 0,000 bis 08:08). Jetzt beginnen nur die Spuren des geänderten Sensors neu wie
+  nach einer Datenlücke; ohne Wissen beginnt das Modell nur bei neuem Grundriss oder neuen Parametern
+  (MODEL.md 5.3, 10). `tools/report_eval.py` unverändert (Licht fälschlich an 0 von 41, aus 3,0 von 15).
 
 ## 0.10.0
 

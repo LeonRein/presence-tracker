@@ -326,8 +326,9 @@ class App:
         except (TypeError, ValueError, KeyError) as e:
             return web.json_response({"error": str(e)}, status=400)
         self.config = config
-        self.tracker.reconfigure(config)  # a moved sensor: the ghost map starts over (MODEL.md 4.2)
-        self._model_started(self.tracker.now)
+        # a new floor plan: the model starts over; only sensors recalibrated: the people stay (MODEL.md 5.3)
+        if self.tracker.reconfigure(config):
+            self._model_started(self.tracker.now)
         self.calibrator.config = config
         config.save(self.config_path)
         if self.client is not None:
