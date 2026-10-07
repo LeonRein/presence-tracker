@@ -225,3 +225,7 @@ details.card > summary { cursor: pointer; }
 .calib-sensor .row { margin-bottom: 4px; flex-wrap: nowrap; }
 .calib-sensor .grow { flex: 1; min-width: 0; }
 .calib-sensor p.note { margin: 4px 0 0; overflow-wrap: anywhere; }
+.calib-progress { flex-wrap: wrap; }
+.calib-progress progress { flex-basis: 100%; height: 4px; accent-color: var(--ok); margin: 2px 0 0 18px; width: calc(100% - 18px); }
+details.pairs { margin-top: 12px; }
+details.pairs > summary { cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 6px; }

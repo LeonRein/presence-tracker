@@ -179,13 +179,31 @@ const LIVE = {
     const c = state.live?.calibration;
     if (!c) return '';
     const since = c.since ? new Date(c.since * 1000).toLocaleString('de-DE', { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '–';
-    const frames = Object.entries(c.frames).map(([id, n]) => `<div class="item"><span class="swatch" style="background:${sensorColor(id)}"></span><span class="grow">${esc(sensorById(id)?.name || id)}</span><span class="meta">${n} Messungen in Bewegung</span></div>`).join('');
+    // per sensor: its walking points (as the result counts them) and its hours with walking data
+    // towards the min_hours a proposal needs
+    const need = c.min_hours || 3;
+    const ids = Object.keys(c.points || c.frames);
+    const frames = ids.map(id => {
+      const hrs = c.hours?.[id] ?? 0;
+      const n = c.points?.[id] ?? c.frames[id];
+      return `<div class="item calib-progress"><span class="swatch" style="background:${sensorColor(id)}"></span><span class="grow">${esc(sensorById(id)?.name || id)}</span>
+        <span class="meta">${n} Punkte</span>
+        <span class="badge ${hrs >= need ? 'ok' : ''}" title="Stunden mit Gehenden; ein Vorschlag braucht ${need}">${Math.min(hrs, need)}/${need}\u00a0h</span>
+        <progress max="${need}" value="${Math.min(hrs, need)}" aria-label="Stunden mit Gehenden"></progress></div>`;
+    }).join('');
+    const ready = ids.filter(id => (c.hours?.[id] ?? 0) >= need).length;
+    return `<h3>Gesammelt seit ${since}</h3>
+      <p class="note">Punkte in Bewegung: höchstens einer je Sekunde und Spur, wie die Berechnung sie zählt. ${ready} von ${ids.length} Sensoren haben Gehende aus ${need} verschiedenen Stunden${ready < ids.length ? '; für die übrigen schlägt die Berechnung noch nichts vor' : ''}.</p>${frames}`;
+  },
+  calibPairs() {
+    const c = state.live?.calibration;
+    if (!c) return '';
     const pairs = Object.entries(c.pairs).map(([k, n]) => {
       const [a, b] = k.split('|');
-      const ok = n >= 60 ? 'ok' : n >= 15 ? 'warn' : 'bad';
-      return `<div class="item"><span class="grow">${esc(sensorById(a)?.name || a)} ↔ ${esc(sensorById(b)?.name || b)}</span><span class="badge ${ok}">${n} s</span></div>`;
+      const ok = n >= 60 ? 'ok' : n >= 15 ? 'warn' : '';
+      return `<div class="item"><span class="grow">${esc(sensorById(a)?.name || a)} ↔ ${esc(sensorById(b)?.name || b)}</span><span class="badge ${ok}">${n}\u00a0s</span></div>`;
     }).join('');
-    return `<h3>Gesammelt seit ${since}</h3>${frames}<h3>Gleichzeitig gesehen</h3>${pairs || '<p class="note">Noch nichts. Auch Sensoren, die sich nur in einer Tür überschneiden, werden über den Grundriss und die Übergänge kalibriert.</p>'}`;
+    return pairs || '<p class="note">Noch nichts. Auch Sensoren, die sich nur in einer Tür überschneiden, werden über den Grundriss und die Übergänge kalibriert.</p>';
   },
 };
 
@@ -713,10 +731,11 @@ function calibrationPanel(panel, view) {
       <button class="btn primary" id="solve" ${placed.length < 1 ? 'disabled' : ''}>Berechnen</button>
       <button class="btn" id="reset">Neu sammeln</button>
     </div>
-    <p class="note"><i>Neu sammeln</i> nach dem Drehen oder Versetzen eines Sensors: seine alten Messungen passen dann nicht mehr.</p>
     <label class="check"><input type="checkbox" id="mirror" ${state.calibMirror ? 'checked' : ''}> Auch die x-Richtung prüfen (nur nötig, wenn unklar ist, wie ein Sensor eingebaut ist)</label>
-    <div data-live="calib"></div>
     <div id="result"></div>
+    <p class="note"><i>Neu sammeln</i> nach dem Drehen oder Versetzen eines Sensors: seine alten Messungen passen dann nicht mehr.</p>
+    <div data-live="calib"></div>
+    <details class="pairs"><summary>Gleichzeitig gesehen: Sekunden, in denen zwei Sensoren je genau einen Gehenden sahen</summary><div class="list" data-live="calibPairs"></div></details>
     <h3>Sichtprüfung</h3>
     <p class="note">Die Messpunkte aller Sensoren werden auf der Karte gezeigt. Wo zwei Sensoren denselben Bereich sehen, müssen die Punkte einer Person übereinanderliegen und mitlaufen; Wege führen durch Türen, nicht durch Wände.</p>
   </div>`));
@@ -731,20 +750,41 @@ function calibrationPanel(panel, view) {
     toast('Gesammelte Messungen verworfen. Die App sammelt neu.');
     setTimeout(() => emit('tab'), 300);
   };
-  panel.querySelector('#solve').onclick = async () => {
+  panel.querySelector('#solve').onclick = async e => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Rechnet …';
     try {
-      toast('Rechnet …');
       state.calibResult = await api('api/calibration/solve', { method: 'POST', body: JSON.stringify({ mirror: !!state.calibMirror }) });
+      state.calibScroll = true;
       emit('tab');
-    } catch (e) { toast(e.message, 5000); }
+    } catch (err) {
+      toast(err.message, 5000);
+      btn.disabled = false;
+      btn.textContent = 'Berechnen';
+    }
   };
-  if (result) calibrationResult(panel.querySelector('#result'), result);
+  if (result) {
+    const el = panel.querySelector('#result');
+    calibrationResult(el, result);
+    // the result is what was asked for: in view, right under the button
+    if (state.calibScroll) { state.calibScroll = false; requestAnimationFrame(() => el.scrollIntoView({ block: 'start', behavior: 'smooth' })); }
+  }
 }
 
 function calibrationResult(el, r) {
   if (r.error) { el.innerHTML = `<p class="note" style="color:var(--bad)">${esc(r.error)}</p>`; return; }
   const label = { ok: 'gut', warn: 'teilweise', bad: 'bleibt' };
+  const cls = { ok: 'ok', warn: 'warn', bad: '' };  // "bleibt" is mostly "not enough data yet", no error
   const entries = Object.entries(r.sensors);
+  const need = r.min_hours || 3;
+  const name = id => esc(sensorById(id)?.name || id);
+  // what holds for several sensors, said once
+  const few = entries.filter(([, s]) => s.few);
+  const common = [
+    few.length ? `<p class="note"><b>Noch zu wenig Daten:</b> ${few.map(([id, s]) => `${name(id)} (${s.stretches}/${need}\u00a0h)`).join(', ')}. Ein Vorschlag braucht Gehende aus mindestens ${need} verschiedenen Stunden: Ein einzelner Gang zeigt nicht, ob die Lage auch im Alltag passt. Später erneut berechnen, die App sammelt weiter.</p>` : '',
+    entries.some(([, s]) => s.walk_more) ? '<p class="note">Wo etwas unsicher bleibt, hilft es, mehr kreuz und quer durch den Raum des Sensors und durch die Türen zu den Nachbarräumen zu gehen.</p>' : '',
+  ].join('');
   const pm = (v, sd, d) => `${fmt(v, d)} <span class="meta">± ${fmt(sd, d)}</span>`;
   // one block per sensor (the side panel is too narrow for a table with the explanations)
   const rows = entries.map(([id, s]) => {
@@ -753,16 +793,16 @@ function calibrationResult(el, r) {
     const scale = s.apply.scale ? `${fmt(cur?.scale ?? 1, 3)} → ${pm(s.scale, s.scale_sd, 3)}` : 'bleibt';
     const out = s.outside.map(v => Math.round(100 * v));
     return `<div class="calib-sensor">
-      <div class="row"><b class="grow">${esc(cur?.name || id)}</b><span class="badge ${s.quality}">${label[s.quality]}</span></div>
+      <div class="row"><b class="grow">${esc(cur?.name || id)}</b><span class="badge ${cls[s.quality]}">${label[s.quality]}</span></div>
       <dl class="kv"><dt>Drehung</dt><dd>${turn}</dd><dt>Maßstab</dt><dd>${scale}</dd>
         ${s.mirror !== cur?.mirror ? '<dt>x-Richtung</dt><dd><b>ändern</b></dd>' : ''}</dl>
-      <p class="note">${s.points} Punkte in Bewegung, ${s.pairs} s gleichzeitig mit anderen Sensoren gesehen (${s.agree} passend), ${s.handovers} Übergänge. Außerhalb der Sicht: ${out[0]} % → ${out[1]} %.${s.reason ? ' ' + esc(s.reason) : ''}</p>
+      <p class="note">${s.points} Punkte in Bewegung aus ${s.stretches}/${need}\u00a0h, ${s.pairs}\u00a0s gleichzeitig mit anderen Sensoren gesehen (${s.agree} passend), ${s.handovers} Übergänge. Außerhalb der Sicht: ${out[0]}\u00a0% → ${out[1]}\u00a0%.${s.reason && !s.few ? ' ' + esc(s.reason) : ''}</p>
     </div>`;
   }).join('');
-  const name = id => esc(sensorById(id)?.name || id);
   const usable = entries.filter(([, s]) => s.apply.heading || s.apply.scale);
   el.append(h(`<div class="card" style="margin-top:12px">
     <b>Ergebnis</b>
+    ${common}
     <div style="margin-top:8px">${rows || '<p class="note">Nichts berechnet.</p>'}</div>
     ${entries.length && r.inside != null ? `<p class="note">${Math.round(100 * r.inside)} % der Punkte in Bewegung liegen da, wo ihr Sensor hinsieht.</p>` : ''}
     ${r.unsolved.length ? `<p class="note">Bleiben, wie sie sind: ${r.unsolved.map(name).join(', ')}. Keine Messungen in Bewegung.</p>` : ''}

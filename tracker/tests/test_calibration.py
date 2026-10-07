@@ -142,7 +142,12 @@ def test_a_single_walk_proposes_nothing():
     for sid, r in result["sensors"].items():
         assert not r["apply"]["heading"] and not r["apply"]["scale"]
         assert r["heading"] == guess.sensor_by_id[sid].heading
-        assert "erst aus 1 Stunde" in r["reason"]
+        assert r["few"] and r["reason"] == "Erst 1 von 3 Stunden mit Gehenden."
+    # the progress before a solve counts as the solve does
+    calibrator = _collect(truth, guess, [person], person.waypoints[-1][0], walls=truth.wall_segments, hours=1)
+    status = calibrator.status()
+    assert status["min_hours"] == MIN_STRETCHES and set(status["hours"].values()) == {1}
+    assert status["points"] == {sid: r["points"] for sid, r in result["sensors"].items()}
 
 
 def test_no_pose_that_puts_more_walking_out_of_sight():

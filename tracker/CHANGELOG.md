@@ -26,6 +26,12 @@
   nicht besetzten Räumen. Die Listen werden nur noch zeilenweise und höchstens zweimal je Sekunde
   erneuert: Tooltips bleiben, Zeilen springen nicht. Badges und Kartenbeschriftungen haben mindestens
   4,5 : 1 Kontrast.
+- **Kalibrierung:** Das Ergebnis steht direkt unter *Berechnen* und wird ins Bild gerollt; der Knopf ist
+  während der Rechnung gesperrt. Gemeinsame Gründe stehen einmal oben („Noch zu wenig Daten: … (1/3 h)“),
+  je Sensor nur das Eigene; die Entwicklungsnotiz zum 7.10. ist aus dem Text. Je Sensor ein Fortschritt
+  „Stunden mit Gehenden x/3“. Vorher und nachher dieselbe Zahl: *Punkte in Bewegung*, wie die Berechnung
+  sie zählt (`Calibrator.status()` liefert `points`, `hours`, `min_hours`; `solve` je Sensor `few`,
+  `walk_more`). *bleibt* ist grau statt rot, die Paarliste ist eingeklappt.
 
 ## 0.17.0
 

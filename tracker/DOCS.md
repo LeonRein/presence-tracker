@@ -111,6 +111,10 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
    sich Grundriss und gemeinsame Messungen,
    sagt die App das: Dann stimmt meist die eingezeichnete Position des Sensors nicht. Nach dem Drehen
    oder Versetzen eines Sensors *Neu sammeln*.
+   Unter *Gesammelt seit* steht je Sensor, wie viele Punkte in Bewegung er hat (höchstens einer je
+   Sekunde und Spur, so zählt auch die Berechnung) und wie viele der nötigen 3 Stunden mit Gehenden
+   schon da sind. Das Ergebnis steht direkt unter *Berechnen*; was für mehrere Sensoren gilt (zu wenig
+   Stunden, mehr herumgehen), steht dort einmal, je Sensor nur das Eigene.
 
 **Sensormodell** (Tab *Sensoren*, Sensor auswählen): Karten, wo der Sensor wie zuverlässig erkennt (angenommen und
 aus dem Betrieb gelernt) und wo er Geister meldet, dazu der gelernte Messfehler nach Abstand. Die App lernt das

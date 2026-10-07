@@ -135,6 +135,16 @@ def thin(t: np.ndarray, key: np.ndarray, every: float) -> np.ndarray:
     return np.array(sorted(keep), dtype=int)
 
 
+def walking_times(config: Config, sid: str, a: np.ndarray) -> np.ndarray:
+    """The times of one sensor's walking points as Problem takes them (one per EVERY seconds and
+    LD2450 track, at least MIN_RANGE away on the floor): for the progress before a solve."""
+    s = config.sensor_by_id[sid]
+    z = ground(s, a[:, LX], a[:, LY], s.mirror, config.params.target_height)
+    idx = np.flatnonzero((np.abs(a[:, V]) >= MIN_SPEED) & (np.abs(z) >= MIN_RANGE))
+    idx = idx[thin(a[idx, T], a[idx, SEG], EVERY)]
+    return a[idx, T]
+
+
 def ground(s, lx, ly, mirror: bool, target_height: float) -> np.ndarray:
     """Raw LD2450 meters -> floor point in the sensor frame as complex x + iy (as SensorConfig.to_world
     without scale and pose)."""
@@ -790,12 +800,11 @@ def solve(config: Config, data: dict, check_mirror: bool = False) -> dict:
         good_heading = sd_h <= DETERMINED_HEADING and gap >= SECOND_MODE and not conflict and not few and not worse
         ruler = sid in F.rulers
         good_scale = sd_k <= DETERMINED_SCALE and ruler and not conflict and not few and not worse
+        # per sensor only what is its own; what holds for all (why 3 hours, walk more) the web UI says once
         reasons = []
+        walk_more = False
         if few:
-            reasons.append(f"Messungen in Bewegung erst aus {stretches} Stunde{'n' if stretches != 1 else ''}. "
-                           "Ein einzelner Gang zeigt nicht, ob die Lage auch im Alltag passt (am 7.10. drehte ein "
-                           f"Gang allein den Flur um 17°). Nach mindestens {MIN_STRETCHES} Stunden mit normalem "
-                           "Leben erneut berechnen; die App sammelt weiter.")
+            reasons.append(f"Erst {stretches} von {MIN_STRETCHES} Stunden mit Gehenden.")
         elif worse:
             reasons.append(f"Mit dem neuen Wert lägen mehr Punkte in Bewegung außerhalb der Sicht "
                            f"({100 * after[sid]:.0f} % statt {100 * before[sid]:.0f} %). Bleibt wie bisher.")
@@ -810,9 +819,7 @@ def solve(config: Config, data: dict, check_mirror: bool = False) -> dict:
                 reasons.append("Maßstab: zu wenig gemeinsame Messungen mit anderen Sensoren.")
             elif not good_scale:
                 reasons.append(f"Maßstab unsicher (± {sd_k:.2f}).")
-            if reasons:
-                reasons.append("Bleibt wie bisher. Mehr kreuz und quer durch seinen Raum und durch die Türen zu den "
-                               "Nachbarräumen gehen.")
+            walk_more = bool(reasons)
         quality = "ok" if good_heading and good_scale else "warn" if good_heading or good_scale else "bad"
         mine0 = [v[2] for k, v in agree0.items() if sid in k and v[1]]
         mine1 = [v[2] for k, v in agree1.items() if sid in k and v[1]]
@@ -826,7 +833,7 @@ def solve(config: Config, data: dict, check_mirror: bool = False) -> dict:
             "jackknife": [round(jh, 2), round(jk, 4)] if jack else None,
             "turn": round(angle_diff(r["heading"], s.heading), 1),
             "apply": {"heading": good_heading, "scale": good_scale},
-            "quality": quality, "reason": " ".join(reasons),
+            "quality": quality, "reason": " ".join(reasons), "few": few, "walk_more": walk_more,
             "points": int(len(prob.points[sid].z)), "tracks": int(prob.points[sid].ntracks),
             "pairs": sum(len(q.za) for q in prob.pairs if q.kind == "pair" and sid in (q.a, q.b)),
             "handovers": sum(len(q.za) for q in prob.pairs if q.kind == "handover" and sid in (q.a, q.b)),
@@ -851,7 +858,7 @@ def solve(config: Config, data: dict, check_mirror: bool = False) -> dict:
                                 apply={"heading": True, "scale": True})
                 out[sid]["reason"] = (f"Gespiegelt passen die Messungen besser (log {gain:.0f}). " + out[sid]["reason"]).strip()
     inside = [1 - after[sid] for sid in fit if sid in after]
-    return {"sensors": out, "unsolved": [s for s in placed if s not in fit],
+    return {"sensors": out, "unsolved": [s for s in placed if s not in fit], "min_hours": MIN_STRETCHES,
             "inside": round(float(np.mean(inside)), 3) if inside else None,
             "scale_prior": [round(math.exp(F.mu), 3), round(F.tau, 3)]}
 
@@ -924,19 +931,27 @@ class Calibrator:
         return out
 
     def status(self) -> dict:
-        """Since when, walking measurements per sensor and seconds in which two sensors each had
-        exactly one moving target (recounted every 30 s)."""
+        """Since when, walking measurements per sensor ("frames"), the walking points of each as solve
+        counts them ("points") and its hours with walking data ("hours", a proposal needs "min_hours"),
+        and seconds in which two sensors each had exactly one moving target (recounted every 30 s)."""
         now = time.monotonic()
         if self._status is None or now - self._status_t > 30:
             data = {sid: a for sid, a in self.data().items() if sid in self.config.sensor_by_id}
             frames = {sid: len(a) for sid, a in data.items()}
+            points, hours = {}, {}
+            for sid, a in data.items():
+                t = walking_times(self.config, sid, a)
+                points[sid] = len(t)
+                per_hour = collections.Counter((t // STRETCH).astype(int).tolist())
+                hours[sid] = sum(n >= MIN_POINTS for n in per_hour.values())
             bins = {sid: np.unique(np.floor(a[a[:, SINGLE] > 0, T] / EVERY)) for sid, a in data.items()}
             pairs = {}
             for a, b in itertools.combinations(sorted(bins), 2):
                 n = len(np.intersect1d(bins[a], bins[b], assume_unique=True))
                 if n:
                     pairs[f"{a}|{b}"] = n
-            self._status, self._status_t = {"since": self.since, "frames": frames, "pairs": pairs}, now
+            self._status, self._status_t = {"since": self.since, "frames": frames, "points": points, "hours": hours,
+                                            "min_hours": MIN_STRETCHES, "pairs": pairs}, now
         return self._status
 
     def solve(self, check_mirror: bool = False) -> dict:
