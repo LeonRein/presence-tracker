@@ -1,6 +1,6 @@
 # Das Wahrscheinlichkeitsmodell des Presence Trackers
 
-Stand: Code 0.9.0 (Entwicklung, 6.10.2026). Beschreibt, was der Code rechnet; was fehlt oder nur genähert ist,
+Stand: Code 0.10.0 (Entwicklung, 7.10.2026). Beschreibt, was der Code rechnet; was fehlt oder nur genähert ist,
 steht in 9. Zahlen sind **gemessen** (auf Aufnahmen), **geschätzt** (EM auf Aufnahmen ohne Wahrheit)
 oder **angenommen**. Literaturkürzel wie im Literaturordner (`~/Documents/presence-tracker-literatur`).
 Die Abschnittsnummern werden im Code zitiert (`MODEL.md 4.1`); beim Umbau beibehalten.

@@ -1,6 +1,13 @@
 # Changelog
 
-## Unveröffentlicht
+## 0.10.0
+
+Gemessen mit `tools/report_eval.py` gegen eine Wahrheit aus Leons Fehlermeldungen vom 6.10., von Hand
+geschalteten Deckenlichtern und der Nacht (alle im Bett): Licht fälschlich aus in 3,0 statt 4,0 von 15
+belegten Fenstern, fälschlich an in 0 von 41 leeren Fenstern und nachts 0 s (vorher auch 0 in den
+Fenstern; im leeren Raum 8,1 Minuten mit den Energien ohne Echoquellen). Die beiden Meldungen „die zweite Person im
+Arbeitszimmer, obwohl im Schlafzimmer“ (22:40, 22:42) kommen jetzt richtig heraus.
+
 
 - **Der LD2410C zählt mit seinen Energien je Entfernungsring** (bewegt und ruhig) statt mit Flag und
   gemeldeter Entfernung (MODEL.md 4.3). Die gemeldete Entfernung erfand Personen: Leon allein am
@@ -16,6 +23,12 @@
   Geisterkarte); wird ein Sensor verschoben, beginnt es für ihn neu.
 - `tools/ld2410/`: Messungen der Energien, die Prüfung „Licht an im leeren Raum“ (`phantom.py`) und eine
   Diagnose (`diag.py`).
+- `tools/report_eval.py`: spielt die Aufnahmen so ab, wie die App lief (Neustarts, gelernte Karten), und
+  bewertet je Raum gegen eine Wahrheitstabelle aus Meldungen, Lichtschaltungen und Nächten.
+- Behoben: Der alte LD2410C-Code konnte bei langem „an“ abstürzen (`log(0)`).
+- Rechenzeit: Zählverteilungen aller Räume auf einmal und die Bewegung der Kacheldichten in zwei statt sechs
+  Durchgängen (−4 %, gleiche Ergebnisse); OpenBLAS auf einem Thread (−7 % CPU, die Threads warteten nur).
+  Insgesamt etwa so viel wie 0.9.3 (3-Sensor-Bezugsstunde 2,6 % eines Kerns, 0.6.21: 4,4 %).
 
 ## 0.9.3
 
