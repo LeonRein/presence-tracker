@@ -1404,6 +1404,11 @@ class Tracker:
         prev, rt.ld_e = rt.ld_e, None
         if not mg or not sg or len(mg) != 9 or len(sg) != 9:
             return
+        if not any(mg) and not any(sg[2:]):
+            # every energy 0: no measurement but the firmware's "no value" (mm(): NaN -> 0). Without
+            # anybody moving ring 0 is 9-16 (MODEL.md 4.3); none of 1.5 million recorded frames had all
+            # 0. Weighed, it outvoted two LD2450 tracks of somebody sitting there (P 4e-6, BUGS 14)
+            return
         e = rt.ld_e = np.array(list(mg) + list(sg[2:]), dtype=float)
         st = self._ld_stats.get(si)
         if st is None:
