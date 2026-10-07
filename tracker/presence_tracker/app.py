@@ -27,6 +27,7 @@ from .destination import DestinationMap
 from .ghostmap import GhostMap
 from .sources import Clock, ReplayClock, mqtt_source, replay_source
 from .frames import SensorClock, parse_frame
+from .sensortracks import SensorTracks
 from .util import Throttled, atomic_write
 
 log = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ REPORT_KINDS = {  # new kinds only add keys: old reports keep theirs
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}
 SEND_TIMEOUT = 5.0  # s a browser may take for one live message; a slower one is cut off
 DOWN_AFTER = 3  # model failures without RETRY s of running between: the model is down
+RESET_HOLD = 300.0  # s of each sensor's frames the LD2410C background does not learn from after a reset
 RETRY = 60.0  # s: while down, the model is rebuilt and tried again this often (a rebuild is seconds of CPU)
 
 
@@ -719,8 +721,19 @@ class App:
         return web.FileResponse(path, headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     async def h_reset_tracks(self, request):
-        self.tracker.reset_people()  # nothing known about where anybody is: the data decides again
-        self._model_started(self.tracker.now)
+        """"Tracks zurücksetzen": nothing known about where anybody is, the data decide again. The
+        sensors' tracks start over too, as after lost data (MODEL.md 4.1): their next frames are a start,
+        so whoever a sensor is tracking now counts. Until 0.18 their running tracks stayed and fed
+        measurements to tracks the model no longer had: somebody sitting was gone for good, and the
+        LD2410C learned them as background. That learns nothing for RESET_HOLD s now either."""
+        tr = self.tracker
+        tr.reset_people()
+        for sid in tr.tracks:
+            tr.tracks[sid] = SensorTracks(sid, tr._ids)
+        for rt in tr.runtime.values():
+            rt.last_frame = -math.inf
+        tr.ld_background.pause(RESET_HOLD)
+        self._model_started(tr.now)
         return web.json_response({"ok": True})
 
     # -------------------------------------------------- Home Assistant (Dobby)

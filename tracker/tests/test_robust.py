@@ -378,3 +378,31 @@ def test_a_model_that_fails_again_and_again_is_unavailable(tmp_path, monkeypatch
     asyncio.run(main())
     assert not app.down and mqtt.availability() == ["offline", "online", "offline", "online"]
     assert caplog.text.count("FAILS AGAIN AND AGAIN") == 1 and "runs again" in caplog.text
+
+
+def test_reset_tracks_sees_whoever_sits_there_again(tmp_path):
+    """"Tracks zurücksetzen" while somebody sits in view with an unbroken LD2450 track: until 0.18 the
+    sensors' running tracks fed a track the model no longer had, the person was gone for good (P 0.004
+    after 5 min) and the LD2410C learned them as background. Now the sensors' next frames are a start
+    and the background learns nothing for RESET_HOLD s."""
+    config = flat_config(entry=True)
+    config.save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    c = config.params.light_cost / (config.params.light_cost + 1.0)
+    sit = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.52, 1.0), start=1, pauses={2: 600}))
+    p, done, bg = {}, False, None
+    for t, sid, frame in simulate([sit], sim_sensors(config), 300.0, walls=config.wall_segments):
+        if t >= 60.0 and not done:
+            asyncio.run(app.h_reset_tracks(None))
+            done = True
+            assert not app.tracker.segs
+            bg = json.loads(json.dumps(app.tracker.ld_background.to_dict()))
+            assert set(bg["held"]) == {"a", "b"}
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
+        app.tick(1000.0 + t)
+        p.setdefault(int(t), app.zone_states["wohn"].probability)
+    assert all(p[t] > c for t in p if 70 <= t), {t: v for t, v in p.items() if t >= 70 and v <= c}
+    assert app.tracker.segs
+    now = app.tracker.ld_background.to_dict()
+    assert now["num"] == bg["num"] and now["den"] == bg["den"]  # learned nothing since the reset
+    assert app.start_learned["ld_background"]["held"] == bg["held"]  # in a report: the replay holds too

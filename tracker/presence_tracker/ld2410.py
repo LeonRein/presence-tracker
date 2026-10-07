@@ -277,6 +277,14 @@ class Background:
         self.echoes = {}  # sensor id -> expected number of echo sources begun (forgotten like den)
         self.poses = {}
         self.echo_rate, self.echo_time = echo_rate, echo_time  # prior of the echo rate: per s, weight s
+        self.held = {}  # sensor id -> s of its frames still not learned from (pause)
+        self._skipped = set()  # the sensors whose last frames were not learned from (their echoes neither)
+
+    def pause(self, seconds: float):
+        """Learn nothing from the next `seconds` s of each sensor's frames: after "Tracks zurücksetzen"
+        the filter knows nothing about the people for a while, and whom it does not see yet would be
+        learned as background (and could make somebody sitting there invisible later)."""
+        self.held = {sid: float(seconds) for sid in self.poses}
 
     def b(self, sid: str) -> np.ndarray:
         n = self.num.get(sid)
@@ -291,9 +299,17 @@ class Background:
         return (self.echo_rate * self.echo_time + n) / (self.echo_time + T)
 
     def learn_echoes(self, sid: str, began: float):
+        if sid in self._skipped:
+            self._skipped.discard(sid)
+            return
         self.echoes[sid] = self.echoes.get(sid, 0.0) + began
 
     def learn(self, sid: str, share: np.ndarray, st: Stats):
+        if self.held.get(sid, 0.0) > 0:
+            self.held[sid] -= st.time
+            self._skipped.add(sid)
+            return
+        self._skipped.discard(sid)
         k = math.exp(-st.time / self.forget)
         if sid in self.echoes:
             self.echoes[sid] *= k
@@ -312,16 +328,20 @@ class Background:
                 self.poses[s.id] = pose
 
     def to_dict(self) -> dict:
+        held = {k: round(float(v), 3) for k, v in self.held.items() if v > 0}
         return {"poses": {k: list(v) for k, v in self.poses.items()},
                 "num": {k: [round(float(x), 4) for x in v] for k, v in self.num.items()},
                 "den": {k: round(float(v), 3) for k, v in self.den.items()},
-                "echoes": {k: round(float(v), 4) for k, v in self.echoes.items()}}
+                "echoes": {k: round(float(v), 4) for k, v in self.echoes.items()},
+                **({"held": held} if held else {})}
 
     def load_dict(self, d: dict):
         self.poses = {k: tuple(v) for k, v in d.get("poses", {}).items()}
         self.num = {k: np.array(v, dtype=float) for k, v in d.get("num", {}).items() if len(v) == CELLS}
         self.den = {k: float(v) for k, v in d.get("den", {}).items() if k in self.num}
         self.echoes = {k: float(v) for k, v in d.get("echoes", {}).items() if k in self.num}
+        self.held = {k: float(v) for k, v in d.get("held", {}).items()}
+        self._skipped = set()
 
     def save(self, path):
         tmp = str(path) + ".tmp"
