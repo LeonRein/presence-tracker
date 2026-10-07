@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.16.0
+
 - **„Wird betreten“ ist eine Vorhersage** (MODEL.md 6, 10 „Vorausschauend einschalten“). Statt eines
   Flags aus der wahrscheinlichsten Hypothese (ihr Mittel 1 s geradeaus, auch durch Wände) rechnet das
   Modell jede Person, die mit Spur geht, mit seinem eigenen Bewegungsmodell voraus (Wände halten auf,
