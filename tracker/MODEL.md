@@ -627,14 +627,42 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
 - **Belegt (Licht):** `P(belegt) > c` mit `c = K_an / (K_an + K_dunkel)`, der Schwelle mit den
   kleinsten erwarteten Kosten (Bayes-Entscheidung; I_GneitingRaftery2007 S. 364–365, Satz 3).
   `light_cost` = K_an / K_dunkel = 2 (angenommen: Licht ohne Person ist der schlimmste Fehler), also
-  c = 2/3. Das verzögerte Ausschalten bleibt in Home Assistant.
+  c = 2/3. Das verzögerte Ausschalten bleibt in Home Assistant (bzw. Node-RED): Die App schaltet keine
+  Lichter, sie liefert je Raum *besetzt*, *wird betreten* (unten) und die Wahrscheinlichkeiten dazu.
 - **Bereiche ohne Sensor:** P(jemand dort); belegt wie oben, wenn der Bereich nur ein Raum ist.
 - **Außer Haus** (auch das Treppenhaus): keine Zahl, kein Zustand, keine Entität in Home Assistant und
   in der Anzeige. Die Zahl im Haus (`presence_haus_count`) zählt alles außer *außer Haus*. Entitäten, die
   der Broker von früher hält (etwa die alten der Treppe), löscht die App beim Verbinden (`ha.py`: leere
   Konfiguration und leerer Zustand, beibehalten).
-- **Bewegt / ruhig, „wird gleich betreten“:** aus den Personen der wahrscheinlichsten Hypothese
-  (geht-Gewicht > 0,5 und > 0,15 m/s; Vorausschau 1 s ab 0,3 m/s).
+- **Bewegt / ruhig:** aus den Personen der wahrscheinlichsten Hypothese (geht-Gewicht > 0,5 und
+  > 0,15 m/s).
+- **Wird betreten** (`Tracker.entering`, je beobachtetem Raum und Bereich): `p_enter` = P(jemand, der
+  gerade mit Spur geht, ist binnen der Vorausschau T = `lead_time` darin). Je Person mit Spur (5.2)
+  rückt nur ihre Komponente *geht* vor (Stehende schwanken um Zentimeter, wer aufsteht, geht irgendwohin):
+  die OU-Näherung aus 3.2 in einem Schritt auf T/2 und auf T, Wände wie in 5.2 über die Sigma-Punkte der
+  Bewegung (Türlücken sind keine Wand), die Masse je Raum wie für die Ausgaben (Punkte hinter einer Wand,
+  vom Mittel aus gesehen, zählen nicht). Wer vorher anhält (Rate s/ℓ, 3.2), bleibt, wo er anhielt; die
+  Zeit des Anhaltens auf den drei Knoten 0, T/2, T. Der Anstieg max(P(dort bei T/2), P(dort bei T)) −
+  P(dort jetzt), mindestens 0, ist die Wahrscheinlichkeit, dass sie hineinkommt (eine untere Schranke für
+  „irgendwann darin“; wer drin ist, bleibt). Gegeben eine Hypothese sind die Personen unabhängig:
+  `p_enter` = Σ_h w_h (1 − Π (1 − Anstieg)), über alle Hypothesen (5.1). Nichts gezogen, ein Horizont,
+  nur für Personen, die zu mindestens 2 % gehen. Dazu für die Person, die am wahrscheinlichsten
+  hereinkommt, Weg und Zeit bis in den Raum (gerade weiter mit ihrem Tempo, nicht durch Wände) und ihre
+  Nummer in der Anzeige. Räume ohne Sensor: keine Vorhersage. **An**, wenn `p_enter > c_v` mit
+  `c_v = K_v / (K_v + K_d)` (Bayes-Entscheidung wie oben): K_v ein Einschalten auf Verdacht, nach dem
+  niemand hereinkommt (mit der Regel in Home Assistant/Node-RED: 30 s Licht im leeren Raum), K_d ein
+  Eintritt ins Dunkle; `approach_cost` = K_v / K_d = 0,05 (Leons Versuch „1 s / 1 m vorher“, 7.10.),
+  also c_v = 0,048. Mit den linearen Kosten von `light_cost` (30 s Licht ohne Person gegen ~1 s Dunkel
+  mit Person) lohnte sich keine Vorhersage (c_v = 60/61); ein dunkler Eintritt zählt deshalb als eigenes
+  Ereignis. Gemessen (10, „Vorausschauend einschalten“): mit T = 2 s und c_v = 0,048 brennt das Licht vor
+  60 % der Eintritte in dunkle Räume mindestens 1 s, vor 62 % mindestens 1 m vorher (heute 2 %), für
+  4,0 vergebliche 30-s-Lichter je Stunde (Tagesmittel; ohne Wohnzimmer 2,2). `p_enter` ist vorsichtig:
+  Von den Momenten mit `p_enter` 0,05–0,1 vor einem leeren Raum kam in 28 % binnen T + 1 s jemand herein,
+  bei 0,1–0,2 in 45 %, bei 0,3–0,5 in 76 %; das OU-Modell vergisst die Richtung nach 1,2 s, vor Türen
+  geht man gerader (9). Die Schwelle aus den Kosten wirkt also auf eine zu kleine Wahrscheinlichkeit:
+  c_v = 0,048 entspricht einer gemessenen Trefferquote um 0,25.
+  Bis 0.15.0 war „wird betreten“ ein Flag aus den Personen der wahrscheinlichsten Hypothese: ihr Mittel
+  1 s geradeaus (ab 0,3 m/s), durch Wände hindurch.
 - Anzeige: Personen der wahrscheinlichsten Hypothese, die eher existieren als nicht (r ≥ 0,5, 5.5),
   ihre Dichten (r × Dichte) als Wärmekarten.
 
@@ -752,6 +780,16 @@ Näherungen, die man prüfen oder ersetzen kann:
   Wand laufen mit den Personen mit). Der Wohnzimmer-Maßstab ist auf 8 m (durch die Tür in den Flur) 1,07,
   auf 2–6 m 1,13: ein Entfernungsversatz statt eines Maßstabs ist ungeprüft. Ein Faktor auf
   sin(Azimut) je Sensor (Phasen-Monopuls) machte die Fenster nicht einheitlicher.
+
+- **„Wird betreten“ kennt nur das allgemeine Gehen** (6): Die OU-Näherung vergisst die Richtung mit
+  τ = 1,2 s, das Mittel eines Gehenden läuft höchstens v·τ ≈ 1,2 m weit. Vor Türen geht man gerader
+  (Autokorrelation der Geschwindigkeit in den letzten 3 s vor einem Durchgang 0,94 / 0,78 / 0,52 nach
+  0,4 / 1 / 2 s, über alle Wege 0,64 / 0,46 / 0,17). Folgen: `p_enter` ist zu klein (6), und wer in
+  weniger als etwa 1,3 m an einer Tür vorbeigeht, erreicht in der Simulation `p_enter` 0,05–0,16 (bei
+  c_v = 0,048: Verdacht), wer geradewegs auf sie zugeht 0,3–0,4. Der Raumteiler Wohn-/Esszimmer ist
+  keine Wand: Dort entsteht fast die Hälfte der vergeblichen Verdachte, unabhängig von der Schwelle
+  (10). Abhilfe wäre ein zielgerichtetes Gehen (je Tür eine Komponente mit Zug zur Tür; J_Luber2014
+  Abschn. 6.5, G_Liao2003), erst wenn diese Stufe nicht reicht.
 
 Nicht geprüft (Ablationen ausstehend): λ_d = 0,85 gegen langsamere Richtungswechsel; OU-Näherung
 gegen weißes Rauschen in der Beschleunigung; Swerling-I gegen logistisch; Form der Erkennbarkeit.
@@ -1326,6 +1364,63 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   1 ausschließt. Für das Licht ist der Fall harmlos (der Raum bleibt besetzt). Die Tests in
   `tests/test_together.py` halten fest: zwei, die zusammen stehen, bleiben (mit zwei Sensoren) zwei;
   eine Kopie neben einem Gehenden ist eine Minute später keine zweite Person.
+- **Vorausschauend einschalten** (7.10., 6: „wird betreten“). Leon: „Ich würde gerne versuchen, ob es
+  mit 1 s / 1 m Vorlauf beim Einschalten und 2 Minuten Nachlauf machbar ist. […] Ich will nicht, dass
+  die Präsenz-App direkt Lichter steuert.“ *Wahrheit:* Türdurchgänge aus den eigenen Spuren der LD2450
+  (eine Spur durch eine Türöffnung, Übergaben zwischen Sensoren, Spuren in Bereiche ohne Sensor; gegen
+  die von Hand geschalteten Deckenlichter 74 % gefunden, im Median 0,45 s vor dem Tastendruck), Aufnahmen
+  6.10. 18:00 – 7.10. 18:25 nachgespielt wie in der App (Takt 0,2 s, Konfiguration je Zeitraum), 23,0 h
+  bewertet: 418 Eintritte in Räume mit Sensor, 329 davon in einen dunklen (P(belegt) 4–6 s vorher unter
+  c). *Vorlauf* = Eintritt minus der Moment, ab dem das Licht bis dahin an war; *Weg* = wo die Person da
+  war (ihre Spur). *Vergeblich* = mit der Regel aus DOCS.md (auf Verdacht an, ohne *besetzt* binnen 30 s
+  wieder aus; *besetzt* aus → 2 min Nachlauf, ein Verdacht darin hält ≥ 30 s), Verdachte, nach denen der
+  Raum nie besetzt war; je Stunde über 23 h gemittelt (also auch die Nacht). Anteil der Eintritte mit
+  Licht mindestens so lange / so weit vorher:
+
+  | Signal | ≥ 0,5 s | ≥ 1 s | ≥ 2 s | ≥ 1 m | 1 s und 1 m | Median | vergeblich je h | Licht vergeblich |
+  |---|---|---|---|---|---|---|---|---|
+  | *besetzt* allein (bis jetzt) | 3 % | 2 % | 2 % | 2 % | 2 % | −0,34 s | 0 | 0 |
+  | Flag bis 0.15.0 (1 s) | 44 % | 9 % | 2 % | 10 % | 5 % | 0,47 s | 2,0 | 1,2 min/h |
+  | Flag 2 s | 68 % | 46 % | 5 % | 50 % | 42 % | 0,95 s | 4,1 | 2,7 min/h |
+  | Flag 2 s, nicht durch Wände | 58 % | 36 % | 4 % | 39 % | 32 % | 0,78 s | 2,5 | 1,6 min/h |
+  | `p_enter` T = 1 s, c_v 0,048 | 74 % | 39 % | 6 % | 45 % | 30 % | 0,91 s | 2,9 | 1,9 min/h |
+  | T = 1,5 s, c_v 0,048 | 76 % | 57 % | 9 % | 60 % | 50 % | 1,08 s | 3,4 | 2,3 min/h |
+  | **T = 2 s, c_v 0,048** | **76 %** | **60 %** | **10 %** | **62 %** | **55 %** | **1,14 s** | **4,0** | **2,7 min/h** |
+  | T = 2 s, c_v 0,10 | 72 % | 40 % | 6 % | 46 % | 34 % | 0,93 s | 2,8 | 1,8 min/h |
+  | T = 2 s, c_v 0,15 | 65 % | 24 % | 3 % | 29 % | 19 % | 0,76 s | 2,4 | 1,5 min/h |
+  | T = 2 s, c_v 0,20 | 58 % | 13 % | 3 % | 17 % | 9 % | 0,60 s | 2,1 | 1,3 min/h |
+  | T = 2 s, c_v 0,30 | 32 % | 6 % | 2 % | 6 % | 4 % | 0,32 s | 1,6 | 0,9 min/h |
+  | T = 3 s, c_v 0,048 | 78 % | 66 % | 14 % | 64 % | 59 % | 1,29 s | 4,2 | 2,9 min/h |
+
+  Je Raum (T = 2 s, c_v 0,048; Anteil ≥ 1 s, vergeblich je h): Flur 59 % / 0,30, Arbeitszimmer 61 % /
+  0,22, Esszimmer 59 % / 0,61, Küche 69 % / 0,70, Wohnzimmer 62 % / 1,79, Bad 3 von 5 / 0,26,
+  Schlafzimmer 2 von 4 / 0,09. Ohne Wohnzimmer 60 % / 61 % bei 2,2 vergeblichen je Stunde. Im
+  Wohnzimmer bleiben 1,6–1,8 je Stunde bei jeder Schwelle (auch das alte Flag 1,05): Der offene Raumteiler
+  zum Esszimmer ist keine Wand; dort entweder Ess- und Wohnzimmer als eine Lichtgruppe oder ohne
+  Vorausschau. Was das zeigt:
+  - 1 s / 1 m vorher geht für etwa 60 % der Eintritte, mit ~4 vergeblichen 30-s-Lichtern je Stunde im
+    Tagesmittel (~1 h Licht im leeren Raum je Tag). Aus Ort und Geschwindigkeit allein zielt man im Median
+    erst 1,0 s / 1,4 m vor der Tür auf sie (Tempo an der Tür 1,07 m/s); mehr gäbe nur Wissen über Wege
+    und Absichten.
+  - **Zeit oder Weg:** Eine Vorausschau als Weg (je Gehendem D / Tempo, D = 1 / 1,5 / 2 m, auch kombiniert
+    mit T = 1 s) lag gleichauf mit der Zeit, die ihm im Tempo entspricht (c_v 0,05; D = 1,5 m: 55 % ≥ 1 s,
+    61 % ≥ 1 m, 3,8 vergeblich je h; T = 1,5 s: 54 % / 59 %, 3,4; D = 2 m: 61 % / 63 %, 3,9; T = 2 s:
+    60 % / 61 %, 3,9): Bei ~1 m/s an der Tür sind 1 s und 1 m dasselbe. Nur die Zeit, ein Parameter
+    weniger.
+  - **Gegen das alte Flag:** Bei gleich vielen vergeblichen Verdachten wie das Flag mit 2 s (4,1 je h)
+    60 % statt 46 % ≥ 1 s; bei der Hälfte (Flag 2 s ohne Wände, 2,5 je h) etwa gleich (`p_enter`
+    T = 2 s, c_v 0,10: 40 % statt 36 %). Der Gewinn liegt beim großen Vorlauf. Wände zu beachten halbiert
+    beim Flag die kurzen Fehl-Ein (15,5 → 8,1 je h, Zählung der Untersuchung).
+  - **Kalibrierung:** `p_enter` ist zu klein (6). Momente vor einem leeren Raum, Anteil mit Eintritt
+    oder *besetzt* binnen T + 1 s (T = 2 s): `p_enter` 0,02–0,05 → 21 %, 0,05–0,1 → 28 %, 0,1–0,2 → 45 %,
+    0,2–0,3 → 55 %, 0,3–0,5 → 76 %, ab 0,5 → 93 %. Reihenfolge richtig, Höhe nicht: die OU-Näherung (9).
+  - *Besetzt* unverändert: report_eval an 0 / aus 1,50 von 41 / 15 (bis 6.10.) und 0 / 0 von 13 / 7
+    (7.10.), Log-Evidenz bitgleich zu 93feb02; leere Nacht (`phantom.py`) 0 min.
+  - **Rechenzeit** (6.10. 21:00–21:20, config7, ein Kern, je drei Läufe): 26,3 → 27,5 s, 2,19 → 2,29 %
+    eines Kerns (+0,1 Prozentpunkte); je Takt mit Ausgaben 0,37 → 0,54 ms. Im Nachspiel über 23 h im
+    Mittel 0,13 ms je Aufruf (p99 2,5 ms). Der Prototyp der Untersuchung (5 Horizonte in Schritten von
+    0,2 s) brauchte 4,8 ms je Aufruf.
+
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

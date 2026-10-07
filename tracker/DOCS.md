@@ -1,8 +1,8 @@
 # Presence Tracker
 
 Führt die Rohdaten mehrerer Radarsensoren (LD2450 + LD2410C, Firmware aus [`esphome/`](../esphome/README.md))
-zu einem Bild zusammen: wo im Haus wie viele Personen sind, ob sie sich bewegen, und welche Zone gleich
-betreten wird. Wer wer ist, spielt keine Rolle.
+zu einem Bild zusammen: wo im Haus wie viele Personen sind, ob sie sich bewegen, und wie wahrscheinlich
+eine Zone gleich betreten wird. Wer wer ist, spielt keine Rolle.
 
 ## Wie es funktioniert
 
@@ -118,11 +118,50 @@ Gerät **Presence Tracker**, für jeden Raum und Bereich:
 | `binary_sensor.presence_<zone>_occupancy` | Jemand ist in der Zone |
 | `sensor.presence_<zone>_count` | Anzahl Personen, Attribute `moving` / `still` |
 | `binary_sensor.presence_<zone>_moving` | Mindestens eine Person bewegt sich |
-| `binary_sensor.presence_<zone>_approaching` | Jemand geht auf die Zone zu und ist in etwa 1 s drin (*Vorausschau* in den Einstellungen) |
+| `binary_sensor.presence_<zone>_approaching` | *wird betreten*: Jemand, der gerade geht, kommt wahrscheinlich gleich herein (Vorhersage, siehe unten) |
 
 Dazu `presence_haus_*` für das ganze Haus (ohne *außer Haus*). Ein Raum mit *Eingang* (Treppenhaus)
 bekommt keine Entitäten; hatte er von einer früheren Version welche, entfernt die App sie beim nächsten
-Verbinden mit dem Broker. Mit *wird betreten* kann das Licht schon angehen, bevor jemand den Raum betritt.
+Verbinden mit dem Broker.
+
+**Besetzt** ist an, solange die Wahrscheinlichkeit, dass jemand im Raum ist, über der Schwelle aus
+*Kosten: Licht ohne Person* liegt (bei 2: 67 %, Attribut `probability` am Personenzähler). Es geht im
+Median etwa 0,3 s nach dem Betreten an und nach dem Verlassen meist binnen einer halben Sekunde aus.
+
+**Wird betreten** ist eine Vorhersage: Das Modell rechnet jede Person, die gerade geht, mit seinem
+eigenen Bewegungsmodell voraus (sie kann umdrehen, anhalten, abbiegen; Wände halten sie auf, Türen
+nicht) und rechnet aus, wie wahrscheinlich sie binnen der *Vorausschau* in die Zone kommt, über alle
+Hypothesen des Modells. Es ist an, wenn diese Wahrscheinlichkeit über der Schwelle aus *Kosten:
+Einschalten auf Verdacht* liegt. Für Räume ohne Sensor gibt es keine Vorhersage (aus). Attribute:
+
+| Attribut | Bedeutung |
+|---|---|
+| `p_enter` | Wahrscheinlichkeit, dass binnen der Vorausschau jemand hereinkommt (5-%-Schritte) |
+| `eta` | in wie vielen Sekunden die wahrscheinlichste Person drin ist, bei ihrem Tempo |
+| `distance` | wie viele Meter sie noch hat |
+| `person` | ihre Nummer in der Anzeige (Tab *Live*) |
+
+Die App schaltet selbst keine Lichter. Was aus den beiden Sensoren wird (Licht an, Verzögerung beim
+Ausschalten, Nachtmodus, Helligkeit), entscheidet die Automation in Home Assistant oder Node-RED.
+Eine einfache Regel je Raum, die nie schlechter ist als *besetzt* allein:
+- *besetzt* an → Licht an, ein laufendes Ausschalten abbrechen;
+- *wird betreten* an, Licht aus → Licht an „auf Verdacht“; wird der Raum binnen 30 s nicht *besetzt*,
+  wieder aus;
+- *besetzt* aus → nach 2 min aus, wenn bis dahin weder *besetzt* noch *wird betreten* wieder an war.
+
+*Wird betreten* irrt öfter als *besetzt*: Wer nah an einer Tür vorbeigeht oder davor umdreht, kann das
+Licht für 30 s einschalten. Gemessen (MODEL.md 6, 10) mit den Vorgaben (*Vorausschau* 2 s, *Kosten:
+Einschalten auf Verdacht* 0,05): Das Licht brennt vor 60 % der Eintritte mindestens 1 s (1 m) vorher,
+dafür im Tagesmittel etwa 4 vergebliche Verdachte je Stunde; die meisten an offenen Raumgrenzen ohne
+Wand (Wohn-/Essbereich), dort besser ohne *wird betreten*. Höhere Kosten: weniger Verdachte, weniger
+Vorlauf. Wer nicht vorausschauen will, nimmt nur *besetzt*.
+
+**Mit Node-RED** (`node-red-contrib-home-assistant-websocket`): je Raum eine Instanz eines Subflows mit
+den beiden Sensoren als Eingang (`server-state-changed`) und dem Licht als Umgebungsvariable; die
+Zustände aus, Verdacht, an, Nachlauf in einer Funktion, geschaltet mit `light.turn_on` / `light.turn_off`
+(Helligkeit und Farbe kann dann Adaptive Lighting übernehmen). Schaltet jemand das Licht von Hand ein
+oder aus, sollte die Automatik für diesen Raum pausieren, bis er eine Weile leer war: erkennbar daran,
+dass der Wechsel nicht kurz nach einem eigenen Befehl mit genau diesem Ziel kam.
 
 ## Optionen
 

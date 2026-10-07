@@ -2,6 +2,21 @@
 
 ## Unveröffentlicht
 
+- **„Wird betreten“ ist eine Vorhersage** (MODEL.md 6, 10 „Vorausschauend einschalten“). Statt eines
+  Flags aus der wahrscheinlichsten Hypothese (ihr Mittel 1 s geradeaus, auch durch Wände) rechnet das
+  Modell jede Person, die mit Spur geht, mit seinem eigenen Bewegungsmodell voraus (Wände halten auf,
+  Türen nicht, wer anhält, bleibt stehen), über alle Hypothesen: `p_enter` = P(binnen der Vorausschau
+  kommt jemand herein). *Wird betreten* ist an, wenn `p_enter` über der Schwelle aus den Kosten liegt
+  (neu: *Kosten: Einschalten auf Verdacht*, `approach_cost` = 0,05; Vorausschau `lead_time` jetzt 2 s;
+  *Mindesttempo* entfällt). Attribute der Entität `binary_sensor.presence_<raum>_approaching` (Namen
+  und IDs bleiben): `p_enter`, `eta`, `distance`, `person`; im Tab *Live* mit Prozent, Zeit und Weg.
+  Gemessen auf 23 h (6./7.10., 329 Eintritte in dunkle Räume): Licht mindestens 1 s / 1 m vor dem
+  Eintritt bei 60 / 62 % (bisheriges Flag 9 / 10 %, *besetzt* allein 2 / 2 %), mit der Regel „auf
+  Verdacht an, nach 30 s ohne *besetzt* aus“ 4,0 vergebliche Verdachte je Stunde (bisher 2,0). *Besetzt*
+  ist unverändert (report_eval: an 0 / aus 1,50 von 41 / 15 und 0 / 0 von 13 / 7, Log-Evidenz gleich;
+  leere Nacht 0 min). Die App schaltet weiter keine Lichter: DOCS.md beschreibt die Regel für Home
+  Assistant / Node-RED.
+
 - **Geprüft, am Modell nichts geändert** (MODEL.md 10, „Bewegung als Merkmal einer Person?“ und „Zwei
   an einer Stelle“):
   - *Bewegung als Zeichen einer Person:* Geister des LD2450 sind in den Aufnahmen so selten, dass sich
