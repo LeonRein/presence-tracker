@@ -1157,8 +1157,11 @@ class Tracker:
         w = obj.weights()
         angle, slant, sight = self._ld_geometry(si, obj.pos)
         s_still, s_walk = ld2410.expected(self.m, angle, slant, sight)
-        masses = [np.array([(1 - obj.a) * w[STILL], (1 - obj.a) * w[WALK]])]
-        S = [np.stack([s_still[STILL], s_walk[WALK]])]
+        # the standing component per level of its amplitude (4.3), then the walking one
+        sh = self.shapes
+        aw = sh.amp_w if obj.amw is None else obj.amw
+        masses = [(1 - obj.a) * np.concatenate([w[STILL] * aw, [w[WALK]]])]
+        S = [np.vstack([sh.amp[:, None] * s_still[STILL][None, :], s_walk[WALK][None, :]])]
         if obj.away is not None and obj.a > 0:
             m_, S_ = tiles(obj.away, obj.a)
             masses.append(m_)
@@ -1333,8 +1336,15 @@ class Tracker:
         if isinstance(obj, Hidden):
             tiles(obj, logf)
             return
-        d_away = tiles(obj.away, logf[2:]) if obj.away is not None and obj.a > 0 and n else 0.0
-        obj.reweigh(logf[:2], d_away)
+        A = len(self.shapes.amp)
+        d_away = tiles(obj.away, logf[A + 1:]) if obj.away is not None and obj.a > 0 and n else 0.0
+        # the amplitude's levels: their probabilities, and the factor of the standing component
+        aw = self.shapes.amp_w if obj.amw is None else obj.amw
+        top = float(logf[:A].max())
+        f = np.exp(logf[:A] - top)
+        s = float(aw @ f)
+        obj.amw = aw * f / s if s > 0 else aw.copy()
+        obj.reweigh(np.array([top + math.log(s) if s > 0 else -math.inf, logf[A]]), d_away)
 
     def _ld_runtime(self, s, rt, t, ld):
         """LD2410C state for the display (presence with the app's own hold time)."""

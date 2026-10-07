@@ -72,9 +72,9 @@ def _log(w):
 
 
 class Gauss:
-    __slots__ = ("logw", "mean", "cov", "gow", "kw", "slots", "var", "phantom", "a", "away", "t")
+    __slots__ = ("logw", "mean", "cov", "gow", "kw", "slots", "var", "phantom", "a", "away", "t", "amw")
 
-    def __init__(self, logw, mean, cov, gow, kw, slots=None, var=None, phantom=False, a=0.0, away=None, t=None):
+    def __init__(self, logw, mean, cov, gow, kw, slots=None, var=None, phantom=False, a=0.0, away=None, t=None, amw=None):
         self.logw = np.asarray(logw, dtype=float)  # (2,) log weights of [STILL, WALK], normalized
         self.mean = mean  # (2 modes, 2 axes, d)
         self.cov = cov  # (2 modes, 2 axes, d, d)
@@ -86,10 +86,14 @@ class Gauss:
         self.a = a  # weight of the part gone through a door
         self.away = away  # ... its density (hidden.Hidden), or None
         self.t = t  # the time it was moved to (None: made at the tracker's last move of everybody)
+        # (A,) probability of each level of the LD2410C amplitude (for the standing component, MODEL.md
+        # 4.3), independent of kappa; None: its prior
+        self.amw = amw
 
     def copy(self) -> "Gauss":
         return Gauss(self.logw.copy(), self.mean.copy(), self.cov.copy(), self.gow.copy(), self.kw.copy(), self.slots,
-                     self.var, self.phantom, self.a, self.away.copy() if self.away is not None else None, self.t)
+                     self.var, self.phantom, self.a, self.away.copy() if self.away is not None else None, self.t,
+                     None if self.amw is None else self.amw.copy())
 
     @property
     def segs(self) -> set:
@@ -223,6 +227,9 @@ class Gauss:
             q = -math.expm1(-m.kappa_switch * dt)
             kw = (1 - q) * self.kw + q * shapes.kappa_w
             self.kw = (w_ss * kw + w_ws * shapes.kappa_w) / tot_s
+            if self.amw is not None:  # the LD2410C amplitude likewise (4.3)
+                amw = (1 - q) * self.amw + q * shapes.amp_w
+                self.amw = (w_ss * amw + w_ws * shapes.amp_w) / tot_s
         self.logw = _log(np.array([tot_s, tot_w]))
         top = self.logw.max()
         self.logw -= top + math.log(float(np.exp(self.logw - top).sum()))
@@ -398,7 +405,7 @@ class Gauss:
         order = [X, V] + [i for s in segs for i in (g.slots[s], g.slots[s] + 1)]
         return Gauss(g.logw.copy(), g.mean[:, :, order], g.cov[:, :, order][:, :, :, order], g.gow.copy(), g.kw.copy(),
                      {s: 2 + 2 * j for j, s in enumerate(segs)}, {s: g.var[s] for s in segs}, g.phantom, g.a,
-                     g.away, g.t)
+                     g.away, g.t, None if g.amw is None else g.amw.copy())
 
     @staticmethod
     def mixture(parts) -> "Gauss":
@@ -423,9 +430,14 @@ class Gauss:
             kw = sum(wi * g.kw for wi, (_, g) in zip(ws, parts)) / ws.sum()
         else:
             gow, kw = g0.gow.copy(), g0.kw.copy()
+        amw = None
+        if any(g.amw is not None for _, g in parts):
+            n = next(len(g.amw) for _, g in parts if g.amw is not None)
+            each = [np.full(n, 1.0 / n) if g.amw is None else g.amw for _, g in parts]
+            amw = sum(wi * x for wi, x in zip(ws, each)) / ws.sum() if ws.sum() > 0 else each[0].copy()
         tot = np.array([comps[0][0], comps[1][0]])
         return Gauss(_log(tot / tot.sum()) if tot.sum() > 0 else np.log([0.5, 0.5]), np.stack([comps[0][1], comps[1][1]]),
-                     np.stack([comps[0][2], comps[1][2]]), gow, kw, g0.slots, g0.var, g0.phantom, a, away, g0.t)
+                     np.stack([comps[0][2], comps[1][2]]), gow, kw, g0.slots, g0.var, g0.phantom, a, away, g0.t, amw)
 
     # ------------------------------------------------------------ making one
 

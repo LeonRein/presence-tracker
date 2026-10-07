@@ -216,7 +216,8 @@ Ziele des LD2450 im selben Gehäuse (der unterdrückt Sitzende und hat Geister: 
   verschieden (Küche ×2,5–4,6, Flur ×1,5–2,4, Arbeitszimmer ×1–1,3, Esszimmer ×0,5–0,7); im
   Wohnzimmer liegt alles ×1,5–5 höher. Vorbehalt: Bezug ist „genau ein LD2450-Ziel“, und der LD2450
   unterdrückt Sitzende; wo jemand sitzt (Ess-, Wohnzimmer), zählt dessen Energie mit. Nach dem
-  Winkel kein beständiger Verlauf (6.10. +0,17 je 10°, 7.10. 0,0). Im Modell ist nichts davon (10).
+  Winkel kein beständiger Verlauf (6.10. +0,17 je 10°, 7.10. 0,0). Im Modell ist davon nur die
+  Amplitude je Aufenthalt (unten; Maßstab und Schweif je Sensor: 10).
 - **Zeit:** Die Ruhig-Energien folgen einer Person mit etwa 2 s (zwei Fälle: Kommen und Gehen; nah
   gekappt bei 100, darum dort 3 s länger voll). Korrelationszeit des Log-Likelihood-Verhältnisses „Person
   / niemand“: 4 s bewegt, 13 s ruhig.
@@ -233,6 +234,12 @@ Das Modell, je Sensor:
   superpositionaler Sensor): `μ_g = u · (b_g + w_m·M_g + (1 − w_m)·Σ_i S_g(x_i))`. S ist das Profil oben
   mal Strahl mal Sicht (Wände wie beim LD2450). Ruhig zählt das Verzögerte: M ist, was die Personen
   zuletzt hineingaben (geglättet mit 2 s), w_m sein Anteil im Block; bewegt w_m = 0.
+- **Amplitude je Aufenthalt** (Swerling III: langsam, fest über einen Aufenthalt): Eine Stehende mit
+  Spur gibt g·S ab, g ~ Gamma(6, 6) in 3 gleich wahrscheinlichen Stufen (gemessen β 5–16, s. o.), neu
+  bei jedem Stehenbleiben, innerhalb mit 1/(600 s) neu gezogen wie κ, aber unabhängig von κ (a priori
+  unabhängig und von verschiedenen Sensoren gemessen: als eigener Vektor neben κ an der
+  Gauß-Mischung exakt). Gehende und Personen ohne Spur: g = 1 (auf den Kacheln geht g verloren wie die
+  Geschwindigkeit).
 - **Gemeinsamer Pegel u** je Block (1 s) und Art: 1/u ~ Gamma(κ, κ), κ = 16 bewegt, 50 ruhig (gemessen,
   s. o.), gemischt mit 2 % Schüben, 1/u ~ Gamma(4) mit u um 2,5 (angenommen; nur nach oben: ein
   niedriger Pegel darf eine fehlende Person nicht entschuldigen). Konjugiert: exakt herausintegriert.
@@ -640,7 +647,7 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Bad und Küche richtig, Flur 21:56 0,40 → 0,51; leere Räume nachts 0 min wie die Basis; Rechenzeit
   gleich. Gamma(10) 3,08 / +1027; Gamma(3) 3,17 / +1795, aber das Bad wieder falsch. Die Kopplung an
   κ ist zu stark (gemessen Spearman 0,4, nicht 1): Sie zieht über die Energie κ und damit das Urteil
-  des LD2450. Keine Variante macht weniger Lichtfehler; (e) ist die einzige ohne neuen Fehler (Branch
+  des LD2450. Keine Variante macht weniger Lichtfehler; (e) ist die einzige ohne neuen Fehler und ist drin (Branch
   `ld-amplitude-2-s1`).
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier

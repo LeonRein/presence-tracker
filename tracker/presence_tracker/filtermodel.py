@@ -98,6 +98,11 @@ class Model:
     ld_background = (13.0, 9.0, 4.5, 5.0)
     ld_prior_time = 600.0  # s
     ld_forget = 6 * 3600.0  # s
+    # the amplitude of a standing person with a track on the profile, per stay (Swerling III: slow, as
+    # kappa: new at each stop, now and then within a stay): Gamma(shape, shape) in equally probable
+    # levels, independent of kappa. Measured 6./7.10. within a sensor: shape 5-16 (MODEL.md 4.3)
+    ld_amp_shape = 6.0
+    ld_amp_levels = 3
     # 5 inference: hypotheses over the tracks' owners, cut by weight (Vo et al. 2017)
     max_hyps = 12
     hyp_floor = 1e-7  # hypotheses with less weight are dropped
@@ -140,6 +145,8 @@ class Shapes:
         w = self.go_w / self.go
         self.go_w_ongoing = w / w.sum()
         self.kappa, self.kappa_w = gamma_levels(m.kappa_shape, m.kappa_levels)
+        # 4.3 the amplitude of a standing person on the LD2410C's profile, its own levels
+        self.amp, self.amp_w = gamma_levels(m.ld_amp_shape, m.ld_amp_levels)
 
     def stay_prior(self, ongoing: bool = False) -> np.ndarray:
         """(L, K) prior of a stay's kind and detectability (independent a priori)."""
