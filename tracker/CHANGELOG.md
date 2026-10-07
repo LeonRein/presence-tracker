@@ -2,6 +2,19 @@
 
 ## Unveröffentlicht
 
+- **Personen an der Wand, an der der Sensor hängt** (Meldungen 7.10. abends, Bad und Schlafzimmer):
+  Ein Ziel gilt erst als Reflexion hinter einer Wand, wenn kein Punkt im Umkreis von 0,4 m in Sicht ist.
+  Bisher wurde nur entlang der Sichtlinie zurückgegangen; ein Sensor in der Ecke blickt an seiner Wand
+  entlang, und ein Ziel wenige Zentimeter jenseits davon war keine Messung (ruhige Ziele verworfen:
+  Bad 11 % → 2 %, Schlafzimmer 20 % → 0,4 %, Flur 39 % → 16 %).
+- **LD2410C-Amplitude je Aufenthalt auf einem Gitter** statt 3 Quadraturpunkten: 9 Zellen in log g
+  (0,21–2,28) mit der Masse von Gamma(6, 6). Eine Person, die nur ein Drittel des Profils zurückgibt,
+  wird nicht mehr von einer Echoquelle verdrängt (MODEL.md 4.3).
+- Zusammen (Nachspiel ab 17:13 wie die App, 12 Hypothesen): Bad mit der zweiten Person 22:09–22:20
+  P(belegt) 0,00 → 0,94 / 0,92 / 0,98, Licht fälschlich aus 3,69 → 0,14 von 11 Fenstern, an 0 von 43;
+  Meldungen bis 6.10. und 7.10. früh Licht gleich (aus 1,50 von 15 / 0 von 7, an 0), Log-Evidenz
+  +488 / +880; leere Nacht 0 min (MODEL.md 10, „Meldungen 7.10. abends“).
+
 ## 0.19.0
 
 Robustheit (zwei Reviews von 0.18.0). Der Node-RED-Flow behält bei *nicht verfügbar* den letzten

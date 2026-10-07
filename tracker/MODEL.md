@@ -143,7 +143,11 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 - Schrägentfernung → Boden (Sensorhöhe, Reflexionshöhe 1,0 m), Maßstab des Sensors aus der
   Kalibrierung.
 - Keine Information: Ziele mehr als 0,4 m hinter einer Wand (Sichtlinie ab 20 cm vor dem Sensor),
-  außerhalb aller Räume, in geschlossenen Räumen ohne Sensor, näher als 0,3 m am Sensor.
+  außerhalb aller Räume, in geschlossenen Räumen ohne Sensor, näher als 0,3 m am Sensor. „Hinter einer
+  Wand“ heißt: kein Punkt im Umkreis von 0,4 m ist in Sicht (der Messfehler einer Person, die es ist;
+  geprüft zurück entlang der Sichtlinie und am Fußpunkt auf jeder Wand im Umkreis). Bis 0.18.0 nur
+  entlang der Sichtlinie: Ein Sensor an einer Wand blickt an ihr entlang, und ein Ziel 5 cm jenseits
+  dieser Wand lag entlang der Sichtlinie 0,4 m dahinter (10, „Meldungen 7.10. abends“).
 - Die drei Plätze rücken auf; Ziele werden über die Nähe verknüpft (≤ 0,6 m je Frame).
 - Gehaltene Frames sind keine Messung: ≥ 3 Frames mit derselben Geschwindigkeit ≠ 0 (der Sensor lässt
   ein verlorenes Ziel weiterlaufen) oder bitgleiche Koordinaten (eingefroren).
@@ -317,8 +321,14 @@ Das Modell, je Sensor:
   ohne Wand dazwischen sehen könnte, über ihren Versatz gemittelt wie in 4.1; bis 0.10.0 ja/nein). Ruhig zählt das Verzögerte: M ist, was die Personen
   zuletzt hineingaben (geglättet mit 2 s), w_m sein Anteil im Block; bewegt w_m = 0.
 - **Amplitude je Aufenthalt** (Swerling III: langsam, fest über einen Aufenthalt): Eine Stehende mit
-  Spur gibt g·S ab, g ~ Gamma(6, 6) als 3 Quadraturpunkte wie κ (0,58 / 1,22 / 2,20 mit 0,41 / 0,54 /
-  0,05; gemessen β 5–16, s. o.), neu
+  Spur gibt g·S ab, g ~ Gamma(6, 6) (gemessen β 5–16, s. o.). Der Filter führt den Posterior von g,
+  nicht seine Momente: ein Gitter von 9 Zellen gleichen Abstands in log g zwischen dem 0,1-%- und dem
+  99,9-%-Quantil, je am bedingten Mittel mit der Masse des Priors in der Zelle (0,21 / 0,30 / 0,40 /
+  0,54 / 0,72 / 0,97 / 1,28 / 1,70 / 2,28 mit 0,004 / 0,013 / 0,041 / 0,108 / 0,211 / 0,282 / 0,228 /
+  0,096 / 0,018; ein Punktmassenfilter über g wie die Kacheln über den Ort, 0_Arulampalam2002 Abschn.
+  II-B). Bis 0.18.0 3 Quadraturpunkte wie κ (0,58 / 1,22 / 2,20): Eine Person, die ein Drittel des
+  Profils zurückgab, erklärte die Energie schlechter als eine Echoquelle mit ihrer Stufe 0,3 (10,
+  „Meldungen 7.10. abends“). Neu
   bei jedem Stehenbleiben, innerhalb mit 1/(600 s) neu gezogen wie κ, aber unabhängig von κ (a priori
   unabhängig und von verschiedenen Sensoren gemessen: als eigener Vektor neben κ an der
   Gauß-Mischung exakt). Gehende und Personen ohne Spur: g = 1 (auf den Kacheln geht g verloren wie die
@@ -862,6 +872,21 @@ Näherungen, die man prüfen oder ersetzen kann:
   keine Wand: Dort entsteht fast die Hälfte der vergeblichen Verdachte, unabhängig von der Schwelle
   (10). Abhilfe wäre ein zielgerichtetes Gehen (je Tür eine Komponente mit Zug zur Tür; J_Luber2014
   Abschn. 6.5, G_Liao2003), erst wenn diese Stufe nicht reicht.
+
+- **Der Versatz einer Spur bleibt, solange sie lebt** (Meldung 7.10. 18:31: „Der LD2450 ortet mich
+  immer leicht oberhalb meiner Position. Müsste sich meine Position nicht annähern?“). Mit einem Sensor
+  sind Ort x und Versatz c der Spur nicht zu trennen (`z = x + c + o + w`); was c ist, legt der Moment
+  fest, in dem die Spur beginnt, danach ändert keine Messung mehr die Aufteilung. Nachgespielt (config10):
+  18:58:17 begann die Arbeitszimmer-Spur auf Leon in der Tür, 0,5 m neben der Flur-Spur derselben
+  Person; c = (0,32; 0,26) m. Die Spur lebte 50 min (der LD2450 hält einen Sitzenden), und die ganze
+  Zeit lag die Messung im Mittel (0,28; 0,24) m neben der Schätzung, nach oben rechts. 18:30–18:41
+  (Spur begonnen ohne zweiten Sensor) nur (−0,04; +0,01). Die 57 % konstanter Versatz sind an Spuren um
+  60 s gemessen; über einen Weg von der Tür zum Schreibtisch ist der Fehler zweier Sensoren nicht
+  derselbe (Kalibrierung und Winkel hängen vom Ort ab). Abhilfe wäre ein Versatz, der mit dem Weg oder
+  der Zeit dekorreliert (Gauß-Markov mit gemessener Länge); zu messen an Paaren langer Spuren.
+- **Kalibrierung des Schlafzimmers** (Meldungen 7.10. abends): offline 47,9° ± 2,8° / 1,04 ± 0,04 statt
+  50,2° / 1,02 (aus der alten App-Rechnung), aber Grundriss allein 44°, Paare allein 51°; frei
+  gefittet wandert die Lage 0,8 m an der Wand entlang. Lage des Sensors und der Wände nachmessen.
 
 Nicht geprüft (Ablationen ausstehend): λ_d = 0,85 gegen langsamere Richtungswechsel; OU-Näherung
 gegen weißes Rauschen in der Beschleunigung; Swerling-I gegen logistisch; Form der Erkennbarkeit.
@@ -1561,6 +1586,47 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
     Home Assistant): 27,7 → 28,7 s, 2,31 → 2,39 % eines Kerns (+4 %; auf Home Assistant etwa ×8, also
     18,5 → 19,1 %). `Tracker.targets` im Nachspiel über 26 h im Mittel 0,04 ms je Takt (p99 0,3 ms).
 
+- **Meldungen 7.10. abends** (Bad und Schlafzimmer mit eigenem Sensor; config10; Wahrheit aus den
+  Texten und den Wegen der Sensoren, Arbeitsordner). Nachgespielt wie die App ab dem Start 17:13 (Starts
+  17:48, 18:04, 18:41, 19:38, 21:39). 0.19.0: Licht fälschlich aus in 3,69 von 11 belegten Fenstern, an
+  0 von 43. Die zweite Person saß 22:09–22:20 im Bad an der Westwand (Spur des Bad-LD2450 bei (−5,1; 4,2–4,7),
+  LD2410C ruhig Ring 2–3 bei 30–100): Bad P = 0,00 in allen drei Fenstern. Zwei Ursachen, beide
+  nachgewiesen:
+  1. *Hinter der Wand, an der der Sensor hängt* (4.1): Bad- und Schlafzimmersensor hängen in Ecken
+     derselben Westwand und blicken an ihr entlang. „0,4 m zurück entlang der Sichtlinie“ lag für ein
+     Ziel 5–10 cm jenseits dieser Wand noch hinter ihr: 11 % der ruhigen Ziele des Bad-LD2450 und 20 %
+     des Schlafzimmer-LD2450 waren keine Messung (7.10. 18–23 Uhr; Flur 39 %, Küche 39 %). Jetzt quer
+     zur Wand gemessen: 2 % / 0,4 % (Flur 16 %, Küche 26 %, dort die Echos hinter der Außenwand). Allein
+     diese Änderung: Bad 0,00 → 0,87 / 0,75 / 0,98.
+  2. *Amplitude je Aufenthalt als 3 Quadraturpunkte* (4.3): Die Person gab ein Drittel des Profils
+     zurück (Gamma-Likelihood je Sekunde, 22:12:40–22:13:05, über 25 s: g = 0,3–0,4 am besten, +95,8
+     gegen niemand; g = 0,58 +93,7, 1,22 +78,7). Mit der untersten Stufe 0,58 erklärte eine Echoquelle
+     (Stufe 0,3) die Energie besser: Je Sekunde gewann „die Spur ist ein Geist, eine Quelle im Bad“
+     +0,3 bis +0,8 log über „die Spur ist sie“ (LD2410C des Bads und die Frames zu gleichen Teilen),
+     bis die Person-Hypothese nach 20–60 s unter 10⁻⁷ fiel. Mit dem Gitter in log g (4.3): Bad 0,94 /
+     0,92 / 0,98.
+  Geprüft und **nicht** die Ursache: der gelernte Hintergrund (Bad ruhig 4,7–4,9 die ganze Zeit, das
+  Schlafzimmer 7,5–8,3 bei gemessen 7–8 im leeren Raum: er nahm keine Person auf); die Kalibrierung
+  (Bad offline 53,7° ± 2,4° / 1,011 ± 0,045 statt 55,06° / 0,991, im Rahmen der Unsicherheit;
+  Schlafzimmer 47,9° ± 2,8° / 1,04, aber Grundriss 44° gegen Paare 51°: Lage nachmessen). Verworfen:
+  eine Person mit Spur nicht als Alternative zu einer Echoquelle zu wiegen (Bad unverändert 0,00, dafür
+  im Flur 7.10. 09:49 Licht fälschlich an 0,32 von 13); die Schwelle 10⁻⁷ erst nach dem Zusammenlegen
+  der Kinder in `_branch` (Licht gleich, Log-Evidenz +416 / +107 / −13, Rechenzeit +5 %: nicht in
+  diesem Zweig). Zwei im Bett (22:20–22:26): P(=2) im Fenster 22:22–22:24 0,00 → 0,29; ohne das
+  Abklingen der Existenz (5.5) 1,00: Die zweite liegt ungesehen neben der ersten, und keine Messung
+  stützt sie (9, „Zwei in einer Spur“); das Licht ist richtig. Die Meldung 18:32 (Geist im
+  Schlafzimmer, 10 min) ist ohne die Datei der Meldung nicht nachzuspielen (die App hatte bis 18:29
+  andere Kalibrierungen); nachgespielt ab 18:04 steigt die Intensität der Unbekannten im Schlafzimmer
+  von 0,11 auf 0,21, P(belegt) bleibt unter 0,2.
+
+  | | Abend (11 / 43) | 6.10. (15 / 41) | 7.10. früh (7 / 13) | leere Nacht |
+  |---|---|---|---|---|
+  | 0.19.0 | aus 3,69, an 0; −710 089 | aus 1,50, an 0; −1 121 532 | aus 0, an 0; −449 439 | 0 min |
+  | + quer zur Wand (auf 0.18.0) | aus 0,54, an 0; −703 333 | aus 1,50, an 0 | aus 0, an 0 | 0 min |
+  | **+ Gitter in log g** | **aus 0,14, an 0; −702 755** | **aus 1,50, an 0; −1 121 044** | **aus 0, an 0; −448 559** | **0 min** |
+
+  Die Zahlen hinter Türen (6.10., Bad und Schlafzimmer ohne Sensor) verschieben sich in beide
+  Richtungen; sie zählen nur für das Herauskommen.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.
