@@ -70,6 +70,9 @@ def main():
                             top = np.argsort(-mm)[:3]
                             print("      " + "; ".join(f"tile at {np.round(self.tiles.centers[c], 1)} {mm[c]:.2f}"
                                                       f"{'' if c in idx_seen else ' (LD2410C: unseen)'}" for c in top))
+                if si in getattr(self, "_ld_echo", {}):
+                    ec = self._ld_echo[si]
+                    print(f"   echo on {ec.on():.3f}, expected energy", " ".join(f"{v:4.0f}" for v in ec.p[1:] @ ec.S))
                 hy = self.hyps[0]
                 print(time.strftime("%H:%M:%S", time.localtime(self.now)),
                       f"P({a.room}) {1 - self.count_distribution()[a.room][0]:.2f}  hyps {len(self.hyps)}")

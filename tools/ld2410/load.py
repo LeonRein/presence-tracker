@@ -18,7 +18,16 @@ REC = "/home/leon/checkout/presence-tracker/recordings/20261006-*.jsonl"
 CACHE = os.path.expanduser("~/.cache/presence-tracker/ld2410_frames.npz")
 
 
-def load(pattern=REC, cache=CACHE):
+def load(pattern=REC, cache=None):
+    """The frames of the recordings matching pattern (cached; the cache is named after the files and
+    their sizes, so a growing recording is read again)."""
+    if cache is None:
+        if pattern == REC:
+            cache = CACHE
+        else:
+            import hashlib
+            key = "|".join(f"{f}:{os.path.getsize(f)}" for f in sorted(glob.glob(pattern)))
+            cache = os.path.join(os.path.dirname(CACHE), "ld2410_" + hashlib.sha1(key.encode()).hexdigest()[:12] + ".npz")
     if os.path.exists(cache):
         z = np.load(cache, allow_pickle=True)
         return z["data"].item()

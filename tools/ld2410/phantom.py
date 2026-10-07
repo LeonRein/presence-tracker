@@ -3,7 +3,7 @@ the stretches in which no LD2450 of any sensor had a target in the room (none wi
 the tracker said P(occupied) > the light threshold (MODEL.md 6) for longer than D s. Without truth:
 a person the LD2450 suppresses (sitting) also counts here, so read the episodes, not only the sum.
 
-usage: phantom.py --config FILE --recordings DIR [--tracker DIR] [--from HH:MM] [--to HH:MM]
+usage: phantom.py --config FILE --recordings DIR [--tracker DIR] [--from [YYYY-MM-DD ]HH:MM] [--to ...]
                   [--window 30] [--min 30] [--every 1]"""
 import argparse
 import bisect
@@ -35,7 +35,7 @@ def main():
     from presence_tracker.model import Config
 
     config = Config.from_dict(json.load(open(a.config)))
-    t0, t1 = (time.mktime(time.strptime(f"{a.day} {v}", "%Y-%m-%d %H:%M")) for v in (a.t_from, a.t_to))
+    t0, t1 = (time.mktime(time.strptime(v if " " in v else f"{a.day} {v}", "%Y-%m-%d %H:%M")) for v in (a.t_from, a.t_to))
     tracker = Tracker(config)
     rooms = [z for z in config.zones_of("room") if z.id in tracker.rooms]
     c = config.params.light_cost / (config.params.light_cost + 1.0)
@@ -56,7 +56,7 @@ def main():
     samples = []  # (t, {room: P(occupied)})
     nxt = nstep = 0.0
     cpu = time.process_time()
-    for path in sorted(glob.glob(os.path.join(a.recordings, a.day.replace("-", "") + "-*.jsonl"))):
+    for path in sorted(glob.glob(os.path.join(a.recordings, "*.jsonl"))):
         for line in open(path):
             m = json.loads(line)
             if not m["topic"].endswith("/frame") or not t0 <= m["t"] <= t1:
