@@ -1,7 +1,7 @@
 """Calibrate the LD2450s from everyday recordings, also sensors that hardly overlap with another.
 
 usage: python tools/calibrate_offline.py --config FILE [--recordings DIR] [--from T] [--to T]
-                                         [--fit ID,...] [--positions] [--no-pairs] [--no-plan]
+                                         [--fit ID,...] [--positions ID,...] [--no-pairs] [--no-plan]
                                          [--bootstrap N] [--profile ID] [--mirrors] [--out FILE]
 
 The app's calibration (calibration.py) needs one person walking alone through areas that two
@@ -32,8 +32,9 @@ Garcia 2014: camera poses from trajectories and a map of the walkable area):
 
 Parameters per fitted sensor: heading and scale; the drawn positions are the ruler of the whole
 (as in the app), the sensors not fitted stay as they are. --positions adds a shift of the drawn
-position (prior +-0.3 m per axis); it ignores that a sensor hangs on a wall, so it is a diagnosis,
-not a result. Heading prior +-10 deg around the drawn one (assumed). Fitted by EM with
+position of these sensors (prior +-0.3 m per axis); it ignores that a sensor hangs on a wall (check
+that the result does), and with all positions free nothing fixes the size of the whole: every
+scale shrinks. Heading prior +-10 deg around the drawn one (assumed). Fitted by EM with
 Gauss-Newton steps (walls as one-sided springs to the nearest visible free point, as
 point-to-plane ICP). Uncertainty: Laplace (Gauss-Newton Hessian) and block bootstrap over 2-min
 blocks (the errors of one LD2450 track are correlated over tens of seconds, MODEL.md 4.1); both
@@ -296,7 +297,8 @@ class Problem:
             q = phi[self.npar * i:][:self.npar]
             r += [q[0] / PRIOR["heading"], (q[1] - mu) / tau]
             if self.positions:
-                r += [q[2] / PRIOR["shift"], q[3] / PRIOR["shift"]]
+                sd = PRIOR["shift"] if sid in self.positions else 1e-4
+                r += [q[2] / sd, q[3] / sd]
         return np.array(r)
 
     def start(self):
@@ -476,6 +478,40 @@ def checks(prob, phi, eps_plan=None):
     return out
 
 
+def _crossing(p, q, segments) -> np.ndarray:
+    """For steps p -> q (complex arrays): does it cross any of the segments?"""
+    hit = np.zeros(len(p), bool)
+    for (ax, ay), (bx, by) in segments:
+        a, b = complex(ax, ay), complex(bx, by)
+        cross = lambda u, v, w: ((v - u) * np.conj(w - u)).imag
+        d1, d2 = cross(a, b, p), cross(a, b, q)
+        d3, d4 = cross(p, q, a), cross(p, q, b)
+        hit |= (d1 * d2 < 0) & (d3 * d4 < 0)
+    return hit
+
+
+def crossings(prob, phi):
+    """People walk through doors, not walls (Woodman & Harle 2008): per sensor, the steps of its
+    walking tracks (one LD2450 track, < 0.5 s apart) that cross a wall line, and how many of them
+    pass through an opening."""
+    from presence_tracker.floorplan import wall_pieces
+    pieces = [(a, b) for a, b, k in wall_pieces(prob.config.walls) if k == "wall"]
+    out = {}
+    for sid, a in prob.data.items():
+        if not len(a):
+            continue
+        s = prob.config.sensor_by_id[sid]
+        z = ground(s, a[:, 2], a[:, 3], prob.mirror[sid], prob.th)
+        keep = (np.abs(a[:, 4]) >= MIN_SPEED) & (np.abs(z) >= MIN_RANGE)
+        t, seg, w = a[keep, 0], a[keep, 1], prob.world(phi, sid, z[keep])
+        step = (seg[1:] == seg[:-1]) & (np.diff(t) <= 0.5)
+        p, q = w[:-1][step], w[1:][step]
+        line = _crossing(p, q, pieces)
+        wall = _crossing(p[line], q[line], prob.config.wall_segments)
+        out[sid] = (int(line.sum()), int(line.sum() - wall.sum()))
+    return out
+
+
 def track_ends(prob):
     """Per sensor and LD2450 track: first and last measured point beyond MIN_RANGE (t, z) and the
     points of its last second (for the velocity at the end)."""
@@ -541,7 +577,7 @@ def main():
     ap.add_argument("--from", dest="start")
     ap.add_argument("--to", dest="end")
     ap.add_argument("--fit", help="sensor ids (without presence-) to fit, default all placed")
-    ap.add_argument("--positions", action="store_true", help="also fit a shift of the drawn positions")
+    ap.add_argument("--positions", default="", help="sensor ids whose drawn position may shift")
     ap.add_argument("--no-pairs", action="store_true")
     ap.add_argument("--no-plan", action="store_true")
     ap.add_argument("--bootstrap", type=int, default=0)
@@ -571,6 +607,7 @@ def main():
     full = lambda x: x if x.startswith("presence-") else "presence-" + x
     fit = [full(x) for x in a.fit.split(",")] if a.fit else placed
 
+    a.positions = [full(x) for x in a.positions.split(",") if x]
     prob = Problem(config, data, fit, a.positions)
     print("walking points:", {short(k): len(v.z) for k, v in prob.points.items()},
           "pairs:", {f"{short(q.a)}|{short(q.b)}": len(q.za) for q in prob.pairs})
@@ -617,6 +654,7 @@ def main():
     before, after = checks(prob, phi0), checks(prob, phi)
     ends = track_ends(prob)
     h0, h1 = handovers(prob, phi0, ends), handovers(prob, phi, ends)
+    c0, c1 = crossings(prob, phi0), crossings(prob, phi)
     print("\nwalking points out of sight (> 0.3 m / > 1 m from what the sensor can see), drawn -> fitted:")
     for sid in prob.points:
         (b3, b1), (a3, a1) = before["outside"][sid], after["outside"][sid]
@@ -627,6 +665,9 @@ def main():
         a_, b_ = k.split("|")
         print(f"  {short(a_) + '|' + short(b_):26s} n={n:5d}  {g0:5d} ({m0.real:5.2f},{m0.imag:5.2f}) {d0:.2f}"
               f"  ->  {g1:5d} ({m1.real:5.2f},{m1.imag:5.2f}) {d1:.2f}")
+    print("steps of walking tracks across a wall line: through an opening / all; drawn -> fitted:")
+    for sid in c0:
+        print(f"  {short(sid):14s} {c0[sid][1]:4d} / {c0[sid][0]:4d}  ->  {c1[sid][1]:4d} / {c1[sid][0]:4d}")
     print("handovers (a track ends, another sensor's starts within 2 s where the walk leads): "
           "ends with a start within 1 m, median distance; drawn -> fitted:")
     for k in h0:
