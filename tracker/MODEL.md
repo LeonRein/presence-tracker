@@ -546,7 +546,7 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   4,42 / 3,17 statt 3,0 von 15 Fenstern (an weiterhin 0 von 41). Der Flur um 21:56 wird besser (0,40 →
   0,57, mit (d) 0,55), der um 21:35 und das Wohnzimmer um 21:24 nicht; schlechter werden das Wohnzimmer
   um 21:21 (0,89 → 0,52–0,81) und die zweite Person im Bad (21:30: 0,86 → 0,02–0,08): Mit freier
-  Amplitude erklärt die Person in der Küche (unkalibrierter Sensor, misst etwa 1 m zu weit hinten)
+  Amplitude erklärt die Person in der Küche (auf einer Spur, die teils aus Mehrwegechos hinter der Wand besteht, siehe „Küchensensor hinter der Wand“)
   ihre Energie mit niedrigem g, und eine ungesehene Person nahe dem Sensor nimmt den Rest. Mit
   Gehenden zusätzlich das Arbeitszimmer 21:36 (0,86 → 0,33). Die Streuung ist echt, aber solange
   Kalibrierung und Profilform nicht stimmen, nutzt das Modell die Freiheit für Fehlpassungen.
