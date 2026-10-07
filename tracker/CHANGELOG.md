@@ -2,6 +2,31 @@
 
 ## Unveröffentlicht
 
+- **Geprüft, am Modell nichts geändert** (MODEL.md 10, „Bewegung als Merkmal einer Person?“ und „Zwei
+  an einer Stelle“):
+  - *Bewegung als Zeichen einer Person:* Geister des LD2450 sind in den Aufnahmen so selten, dass sich
+    keine Verteilung ihrer Bewegung messen lässt: in der leeren Nacht 6./7.10. (7,3 h, fünf Sensoren)
+    eine einzige Spur in einem beobachteten Raum, allein zu Hause (7.10. 09:10–16:50) 2 sichere Geister
+    unter 171 Spuren, nur 0,4 % der Sekunden mit Zielen zeigen zwei mehr als 2 m auseinander. Ein
+    Gewicht ohne gemessene Verteilung wäre eine Regel. Nachgespielt 7.10.: Spuren, die in 5 s mindestens
+    1 m gehen, sind im Median schon bei der Geburt zu 0,95 Person. Geprüft dazu „sonst niemand in der
+    Nähe“ als Entstehungsrate der Geister fern von Gehenden, gemessen in stiller Zeit (kein Ziel im Haus
+    30 s lang): höchstens 3,2·10⁻⁶ statt 1,8·10⁻⁵ je m² und s. Licht und Zahlen gleich, Log-Evidenz
+    +81 / +2226, Rechenzeit +21–24 %: nicht übernommen.
+  - *Zwei an einer Stelle (Bad 7.10. 17:15–17:31, aus den Daten bestimmt):* Licht richtig, aber Bad = 2
+    nur zu 0,01–0,06. Die zweite Person wird beim Betreten des Bads im Schlafzimmer vermutet (ungesehen
+    im Bad zu gehen kostet, ins Schlafzimmer nicht), und danach unterscheidet keine Messung zwei von
+    einer Person mit mehr Amplitude (die Energien des LD2410C sprechen nach 17:33 mit einer Person
+    ebenso für „zwei“). Geprüft: kein Abklingen der Existenz, wo eine Person von einem gemessenen Ziel
+    nicht zu trennen wäre (Überleben abhängig vom Ort; die Abhängigkeit von der Geschwindigkeit folgt
+    aus der unabhängigen Bewegung). In der Simulation zwei Stehende mit einem Sensor P(=2) 0,70 → 0,95;
+    auf den Aufnahmen Bad 0,01 → 0,01 / 0,06 → 0,06, Arbeitszimmer 7.10. 08:45 0,05 → 0,05, Licht
+    gleich (bis 6.10. an 0 / aus 1,50 von 41 / 15; 7.10. an 0,11 / aus 0 von 13 / 7), Log-Evidenz −7 /
+    −20, leere Nacht 0 min, Rechenzeit +3–5 %. Nicht übernommen.
+- Neue Tests (`tests/test_together.py`): zwei, die zusammen stehen, bleiben zwei; eine Mehrwegekopie
+  neben einem Gehenden ist eine Minute später keine zweite Person; wer allein hereinkommt, macht 5 s
+  nach dem ersten Frame Licht.
+
 ## 0.15.0
 
 - **Kalibrierung: Ergebnis lesbar.** Je Sensor ein Block (Drehung alt → neu, Maßstab, Bewertung,

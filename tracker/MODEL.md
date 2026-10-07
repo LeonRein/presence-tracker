@@ -732,6 +732,10 @@ Näherungen, die man prüfen oder ersetzen kann:
   Person (eine überzählige, die näher an der Tür ist, als die wirkliche ungesehen hätte gehen können),
   ist dieselbe Person zweimal da; die überzählige verblasst jetzt binnen etwa einer halben Stunde,
   entsteht aber weiter. Eine Hypothese „diese beiden sind dieselbe“ kennt das Modell nicht.
+- **Zwei in einer Spur werden nach Minuten eine** (10, „Zwei an einer Stelle“): Stehen zwei so dicht,
+  dass der LD2450 nur ein Ziel meldet, stützt keine Messung die zweite (das LD2410C trennt zwei nicht
+  von einer mit größerer Amplitude); ihre Existenz klingt ab (5.5), und wer beim Betreten eines Raums
+  ohne eigene Spur bleibt, wird eher hinter einer Tür vermutet. 7.10. Bad: Licht richtig, Zahl 1 statt 2.
 - Der Start ohne Wissen kostet Rechenzeit: Solange Intensität in Sicht ist, hat jede neue Spur eine
   kleine Alternative „neue Person“, und daraus werden nach dem Zusammenlegen viele Bernoullis mit
   r von wenigen %, je eine Dichte (latency.py 21 Uhr: 30 s statt 18,5 s mit einer bekannten Person
@@ -1214,6 +1218,114 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   bekannte Person im Haus und verblasste mit 2 min wie jeder (5.5). Jetzt geht zurück, wer zu weniger als
   1 % existiert, wo er auch ist (5.5): bis 6.10. an 0 / aus 1,50, −1121573 (vorher −1121572); 7.10.
   0 / 0, −449450 (vorher 0,11 / 0, −449502); leere Nacht 0 min.
+- **Bewegung als Merkmal einer Person?** (7.10., Leons Vorschlag, nicht übernommen.) Leon: Ein Ziel
+  des LD2450, das sich bewegt, eine Weile bleibt und neben dem sonst niemand ist, ist ein sicheres
+  Zeichen einer neuen Person; das soll beim Urteil Geist oder Person mehr zählen. Im Modell bewegt sich
+  die Quelle eines Geists wie eine Person (4.2): Tempo, Weglänge und Richtung sagen nichts; es trennen
+  Entstehungsort (Karte, Türen), Lebensdauer und die anderen Sensoren. Die Literaturform wäre ein
+  Merkmal mit eigenem Likelihood-Verhältnis je Klasse (merkmalsgestütztes Tracking, Amplitude bei Lerro
+  & Bar-Shalom 1993; Klassen mit eigener Bewegung, Bar-Shalom, Kirubarajan & Gokberk 2005) oder eine
+  eigene Bewegung der Geisterquellen, beides mit Verteilungen aus den Daten, nicht mit einem Gewicht.
+  *Gemessen* (alle Aufnahmen 6.10. 18:00 bis 7.10. 17:58, die Spuren, wie der Filter sie sieht, config8;
+  `kin.py` im Arbeitsordner):
+  - Leere Nacht 22:56–06:15 (beide im Bett, Schlafzimmer ohne Sensor): in 7,3 h und fünf Sensoren
+    eine einzige Spur in einem beobachteten Raum (05:23, der Arbeitszimmer-Sensor durch seine Tür in
+    den Flur, 18 s, 1,3 m in den ersten 5 s, Geschwindigkeit springend ±2,5 m/s); insgesamt 18 s mit
+    einem gemessenen Ziel.
+  - Eine Person zu Hause (7.10. 09:10–16:50, Telefone): 171 Spuren; 144 bestätigt ein zweiter Sensor
+    (≥ 50 % ihrer gemeinsamen Zeit näher als 1 m), 2 sind sicher Geister (fern einer bestätigten
+    Spur), 25 unbestätigt (meist Küche, deren Sicht sich mit keiner anderen überschneidet). In 110 von
+    26 110 Sekunden mit Zielen lagen zwei Ziele mehr als 2 m auseinander (0,4 %; obere Grenze für
+    Geister fern der Person, Kalibrierfehler eingeschlossen).
+  - Die 144 bestätigten Personenspuren in ihren ersten 5 s: Weg (zwischen den Mitteln je Sekunde)
+    Median 0,80 m, ≥ 1 m 46 %, ≥ 1 m und Leben ≥ 5 s 37 %; Leben Median 9,8 s (10–90 % 2–120 s).
+  Geister des LD2450 sind hier nach dem Verwerfen hinter Wänden (4.1) so selten, dass sich keine
+  Verteilung ihrer Bewegung schätzen lässt (drei Spuren, die eine der Nacht bewegte sich); was es an
+  Mehrwegekopien nahe bei Personen gibt, ist von den Versätzen zwischen Sensoren nicht zu trennen. Ein
+  Merkmal ohne gemessene Verteilung wäre ein Gewicht von Hand (1.4). *Wie schnell bestätigt der Filter
+  jetzt?* Nachgespielt 7.10. 06:50–17:58 wie die App (Neustarts, config8; `judge.py` im Arbeitsordner),
+  P(Geist) jeder Spur nach 0, 1, 2, 3, 5, 10 s: Von den 148 Spuren, die in 5 s mindestens 1 m gingen und
+  so lange lebten, sind im Median schon bei der Geburt 0,05 und nach 5 s 0,00 Geist; 16–18 % liegen
+  nach 5 s über 0,5, fast alle zweite Spuren einer Person, die schon eine hat (sie zählt ohnehin).
+  Nur 6 begannen mehr als 1,5 m von jeder anderen Spur; eine davon hielt der Filter länger als 5 s für
+  einen Geist: 17:32:14 die Person, die das Bad verließ (2,1 m in 5 s; P(Geist) 1,00 / 0,92 nach 5 s /
+  0,51 nach 10 s / 0,02 am Ende nach 25 s), weil die zweite Person im Bad verblasst war (unten, „Zwei
+  an einer Stelle“): Ihr fehlte nicht die Bewegung als Merkmal, sondern jede bekannte Person, die dort
+  hätte gehen können. *Die andere Hälfte des Vorschlags, „sonst niemand in der Nähe“,* gehört in die
+  Entstehungsrate der Geister (4.2): fern von Gehenden nur die Karte λ_s, mit Gehenden im Blick dazu
+  λ_e. Wie oft Spuren entstehen, wenn kein LD2450 in den 30 s davor irgendwo im Haus ein Ziel gemessen
+  hat (aus den Sensoren bestimmt, ohne Wahrheit; `quiet.py` im Arbeitsordner): 14 Spuren in je 8,2 h
+  stiller Zeit der fünf Sensoren, 9 davon näher als 1,5 m an einer Tür (meist Leute, die aus Bad oder
+  Schlafzimmer kommen), 2 am Schreibtisch (Leon nach langem ungesehenem Sitzen). Auch alle 14 als
+  Geister gezählt sind das höchstens 3,2·10⁻⁶ /m²/s, fern von Türen 1,1·10⁻⁶; das Prior-Mittel der Karte
+  ist 1,8·10⁻⁵ (per EM über Tag und Nacht geschätzt, wo λ_e = 3·10⁻⁴ angenommen ist und Echos der Gehenden
+  mit in λ_s landen können). Geprüft mit 3,2·10⁻⁶ als Prior-Mittel (λ_e unverändert): Licht auf allen
+  Sätzen gleich (bis 6.10. an 0 / aus 1,50; 7.10. an 0,11 / aus 0; Bad-Fenster gleich; leere Nacht 0 min),
+  Zahlen gemischt (Arbeitszimmer 6.10. 21:36 0,44 → 0,52, Flur 7.10. 9:49 0,14 → 0,09 besser; Bad ohne
+  Sensor 6.10. 21:36 0,96 → 0,71, Schlafzimmer 7.10. 08:52 0,24 → 0,16 schlechter), im Haus je Stunde
+  gegen die Telefone gleich (0,22 daneben), die Spur von 17:32:14 nach 5 s weiter 0,90 Geist; Log-Evidenz
+  +81 / +2226 / Bad +46 bzw. −6; Rechenzeit in report_eval +21–24 % (unter Last). Die Evidenz spricht für
+  eine kleinere Rate fern von Personen, Licht und Zahl ändern sich nicht: nicht übernommen. Offen: λ_s und
+  λ_e gemeinsam per EM schätzen (I_Kantas2015, wie die Karte); dann trüge die Rate ohne Gehende, was Leon
+  mit „sonst niemand in der Nähe“ meint. Simulation (ein Sensor, Start ohne Person im Raum): Wer
+  durch die Tür hereinkommt, ist nach 3–4 s eine Person (P(Geist) der Spur 0,96 → 0,14 nach 3 s → 0,01
+  nach 4 s; ohne Wissen 0,78 → 0,04 nach 4 s); wer mitten im Raum auftaucht (ohne Tür), nach 6–7 s.
+  Das trägt schon die Lebensdauer der Geister (40 % mit 3 s) und dass Personen nur durch Türen kommen. Die
+  Tests in `tests/test_together.py` halten fest: Wer allein hereinkommt, macht 5 s nach dem ersten Frame
+  Licht; eine Kopie 0,8 m neben einem Gehenden (6 s, ein Sensor) ist eine Minute später keine zweite
+  Person (dazwischen bis 1,5 erwartete Personen im ohnehin besetzten Raum).
+- **Zwei an einer Stelle: Wer steht, kann zwei sein?** (7.10., Leons Vorschlag, nicht übernommen.)
+  Leon: Zwei Personen standen um 17:22 lange an einer Stelle im Bad, angezeigt wurde nach einer Weile
+  nur eine; wer steht, könnte zwei sein, wer geht, kaum (niemand geht dieselbe Route dicht neben einem
+  anderen). *Die Episode aus den Daten* (Spuren aller sechs LD2450 in Hauskoordinaten mit config9 und
+  die Energien des Bad-LD2410C, je 5–30 s): 17:12:45 geht Person A vom Schreibtisch durch den Flur ins
+  Bad (Flur-, dann zwei Bad-Spuren); die zweite Person ist im Ess- und Wohnbereich, steht 17:14:00–17:14:45
+  im Flur an der Badtür (Flur-, Wohnzimmer- und Arbeitszimmer-Sensor) und geht 17:14:50 hinein. Von
+  17:15:05 bis 17:31:35 misst kein Sensor außerhalb des Bads ein Ziel, der Bad-LD2450 genau eine Spur
+  (bei (−4,4…−3,3; 3,4…4,3), 0,05–0,15 m/s), sein LD2410C ruhig Ring 2–4 bei 100 und Ring 5–8 etwa
+  doppelt so hoch wie bei einer Person allein im selben Abstand vorher (35–47 / 24–30 / 17–29 statt
+  15–22 / 10–15 / 7–9). 17:31:35 geht eine hinaus (Flur → Wohnzimmer → Küche), die andere bleibt bis
+  etwa 17:40. Wahrheitsfenster (Arbeitsordner, nicht im Repository): Bad = 2 von 17:15:30 bis 17:31:00,
+  Bad = 1 von 17:13:10 bis 17:14:00 und von 17:33 bis 17:39, die übrigen beobachteten Räume dabei leer.
+  *Was das Modell tut* (Stand 0f6da68, Start ohne Wissen um 16:00; config8 mit Bad 45° / config9 mit
+  55°): Licht in allen Fenstern richtig (Bad besetzt, sonst leer), aber Bad = 2 nur zu 0,06 / 0,01; nach
+  17:33 (eine Person) mit config8 zu 0,97 zwei. Ursache ist nicht das Abklingen allein: Als die drei
+  Spuren der zweiten Person an der Badtür enden (17:14:48), liegt sie 3 s später zu 0,89 im Schlafzimmer
+  (ohne Sensor). Ungesehen im Bad zu gehen kostet die Erfassungsrate Gehender (0,5 /s), ins Schlafzimmer
+  zu gehen nichts; die erste Bad-Spur (17:14:51) bekommt sie nur zu 0,30 (Geist 0,31, A 0,39), ihre
+  zweite lebt 16 s und endet 0,7 m neben A. Danach stützt nichts eine zweite Person: der LD2450 sieht ein
+  Ziel, und die Energien des LD2410C trennen eins und zwei hier nicht. Gerechnet mit der Likelihood aus
+  4.3 je Sekunde (Amplitude beider über ihre Stufen gemittelt, Hintergrund des leeren Bads): zwei an
+  A's Platz gegen A allein im Fenster mit zweien +0,74 je Sekunde, aber nach 17:33 mit einer Person
+  ebenso +0,89 / +1,08, an der Stelle bei der Wand (eine Person) −0,70 / −0,36. Im Filter nimmt die
+  Amplitude je Aufenthalt (4.3) den Überschuss. Im Arbeitszimmer trennen sie besser (7.10. 08:43–08:44,
+  zwei in einer Spur: +1,26 je Sekunde; Leon allein am Schreibtisch 09:52–10:04: −0,16), dort nahm die
+  Echoquelle den Überschuss (oben, „Energie auf mehrere Personen aufteilen?“; P(=2) 0,05).
+  *Literaturform* (Koch & van Keuk 1997; Svensson et al. 2012, A_Svensson2012; Beard et al. 2015,
+  A_Beard2015): Eine unaufgelöste Messung entsteht aus einer Gruppe; die Likelihood ist eine Summe über
+  die Aufteilungen der Ziele in Gruppen (A_Beard2015 Gl. 16–18). Für die zweite Person heißt das: Neben
+  einem gemessenen Ziel spricht ihr Fehlen nicht gegen sie (das ist q in 4.1, schon im Modell), aber die
+  gemeinsame Messung hebt ihre Existenz auch nicht – sie ist mit und ohne sie gleich wahrscheinlich.
+  Was sie dann hält oder nicht, ist allein ihr Überleben. Die Abhängigkeit von der Geschwindigkeit
+  braucht keine eigene Annahme: Die zweite Person bewegt sich unabhängig; geht A, verlässt die
+  Auflösungszelle sie, und „keine eigene Spur“ spricht wieder gegen sie (Simulation unten: niemand geht
+  mit). *Geprüft:* Überleben abhängig vom Ort (p_S(x), B_GarciaFernandez2018 Abschn. II), kein Abklingen
+  dort, wo sie von einem gemessenen Ziel nicht zu trennen wäre: `p_S = exp(−Δt/τ · (1 − u(x)))`,
+  `u(x) = 1 − Π_k q_k(x)` über die messenden Spuren k (q wie in 4.1). Simulation mit einem Sensor, zwei
+  stehen 0,25 m nebeneinander 5 min: P(=2) 0,70 → 0,95; mit zwei Sensoren 0,97 / 0,99; danach geht eine
+  hinaus, eine weg: 1,00 / 1,00 (niemand bleibt, niemand folgt); eine Mehrwegekopie neben einem Gehenden
+  unverändert. Auf den Aufnahmen (12 Hypothesen): Bad 2 0,01 → 0,01 (config9), 0,06 → 0,06 (config8),
+  Arbeitszimmer 08:45 0,05 → 0,05; Licht bis 6.10. an 0 / aus 1,50 wie vorher, Log-Evidenz −7; 7.10.
+  an 0,11 / aus 0 wie vorher, −20; Bad-Fenster Licht gleich; leere Nacht 0 min; im Haus erwartet je
+  Stunde gegen die Telefone (7.10. 06:50–17:58) gleich (im Mittel 0,22 daneben); Rechenzeit +3–5 %
+  (report_eval). Es hilft nicht, weil die zweite Person zu dem Zeitpunkt, an dem sie mit A
+  verschmilzt, schon im Schlafzimmer vermutet wird und ihre Masse an A's Platz klein ist; das Überleben
+  dort erhält
+  nur diesen kleinen Teil. Was fehlt, ist eine Messung, die zwei von einem mit größerer Amplitude
+  unterscheidet; ohne sie ist „eine stehende Person kann zwei sein“ genau das Festhalten ohne Beleg, das
+  1 ausschließt. Für das Licht ist der Fall harmlos (der Raum bleibt besetzt). Die Tests in
+  `tests/test_together.py` halten fest: zwei, die zusammen stehen, bleiben (mit zwei Sensoren) zwei;
+  eine Kopie neben einem Gehenden ist eine Minute später keine zweite Person.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.
