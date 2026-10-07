@@ -117,7 +117,7 @@ def test_somebody_else_coming_in_is_counted():
 
 
 def test_a_recalibrated_sensor_keeps_the_people():
-    # report 7.10. 08:07: two people in the house, start_people 1; a sensor's heading is corrected
+    # report 7.10. 08:07: two people in the house, one known at the start; a sensor's heading is corrected
     # while both sit in view. The people stay as they were (a recalibration says nothing about
     # them); starting over, the one known person could take only one of them and the other's
     # track would be a ghost for good (no unknown person left to explain it)
@@ -142,9 +142,12 @@ def test_a_recalibrated_sensor_keeps_the_people():
             samples.append((t, float(dist[2]) if len(dist) > 2 else 0.0))
     assert crowd.config.sensors[0].heading == 46.5
     assert all(p > 0.9 for t, p in samples), [(round(t), round(p, 3)) for t, p in samples if p <= 0.9]
-    # another parameter (or floor plan): nothing known any more
+    # another parameter: the model starts over as after a restart, from what it knew (the tracks
+    # end, the people go to the tiles, MODEL.md 5.3): both are still there
     other = Config.from_dict({**turned.to_dict(), "params": {**turned.to_dict()["params"], "light_cost": 3.0}})
-    assert crowd.reconfigure(other) and len(crowd.hyps) == 1 and not crowd.segs
+    assert crowd.reconfigure(other) and not crowd.segs and crowd.started_from is not None
+    dist = crowd.count_distribution()["wohn"]
+    assert len(dist) > 2 and dist[2] > 0.9, dist
 
 
 def test_a_short_track_in_an_empty_room_is_a_ghost():

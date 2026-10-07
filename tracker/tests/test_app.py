@@ -124,3 +124,56 @@ def test_a_report_without_the_model_start_has_what_was_learned_at_the_report(tmp
     assert meta["report"]["model_start"] < 1001 and meta["report"]["learned_at"] == 1040.0
     learned = json.loads(json.dumps(app.tracker.learned()))
     assert meta["ghost_map"] == learned["ghost_map"] != app.start_learned["ghost_map"]
+
+
+def test_a_restarted_app_keeps_the_people_and_reports_from_where(tmp_path):
+    """The app saves what it knows about the people (people.json, MODEL.md 5.3) and starts from it
+    again, moved on over the time it did not run; a report then holds that state, and its replay
+    believes what the app did."""
+    config = flat_config(entry=True)
+    config.save(tmp_path / "tracker.json")
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.6, 1.0), start=2, pauses={2: 300}))
+    frames = list(simulate([a], sim_sensors(config), 140.0, walls=config.wall_segments))
+    app = App(tmp_path, publish=False)
+    for t, sid, frame in frames:
+        if t >= 60:
+            break
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
+        app.tick(1000.0 + t)
+    app._save_learned()  # as at the exit
+    again = App(tmp_path, publish=False)  # 20 s later
+    assert again.tracker.started_from is not None and again.start_people is again.tracker.started_from
+    for t, sid, frame in frames:
+        if t < 80:
+            continue
+        again.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
+        assert again.tick(1000.0 + t)
+        assert 1 - again.tracker.count_distribution()["wohn"][0] > 0.9
+
+    class Request:
+        async def json(self):
+            return {"kind": "ghost", "room": "wohn"}
+
+    again.clock = lambda: 1140.0
+    asyncio.run(again.h_report(Request()))
+    path, = (tmp_path / "reports").glob("*.jsonl.gz")
+    lines = [json.loads(x) for x in gzip.open(path, "rt").read().splitlines()]
+    meta, messages = lines[0], lines[1:]
+    assert meta["people"] == json.loads(json.dumps(again.start_people))
+    shown = [(m["t"], m["payload"]) for m in messages if m["topic"] == "app/shown"]
+    replay = Tracker(Config.from_dict(meta["config"]))
+    replay.load_learned(meta)
+    assert replay.restore_people(meta["people"])
+    clocks = collections.defaultdict(SensorClock)
+    k, diff = 0, 0.0
+    for m in messages:
+        if not m["topic"].endswith("/frame") or m["t"] < meta["report"]["model_start"]:
+            continue
+        sid = m["topic"].split("/")[1]
+        t = clocks[sid](m["t"], m["payload"].get("uptime_ms"))
+        replay.process_frame(sid, t, m["payload"])
+        replay.step(t)
+        while k < len(shown) and shown[k][0] <= t:
+            diff = max(diff, abs(1 - replay.count_distribution()["wohn"][0] - shown[k][1]["zones"]["wohn"][1]))
+            k += 1
+    assert k >= len(shown) - 1 and diff < 0.002, diff

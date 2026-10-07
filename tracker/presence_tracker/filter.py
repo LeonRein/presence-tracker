@@ -182,9 +182,14 @@ class Tracker:
         self.started_from = None  # the saved state the people were restored from (restore_people)
 
     def unknown_start(self) -> Undetected:
-        """Nothing known (MODEL.md 5.3): no known people, the unknown ones (3.4) as the model
-        expects them."""
-        return Undetected.none(self.tiles)
+        """Nothing known (MODEL.md 5.3): no known people; unknown ones (5.5) as a Poisson intensity
+        with start_unknown people expected, anywhere (in view standing, their stays seen at a
+        random moment; behind doors; out). No fixed number: the data make known people of them,
+        through the tracks there at the start (4.1) and the ways in. Without any in view, whoever
+        sits in view at the start can only be a ghost (the desk at 22:19 and 08:06); with all of
+        them behind doors more come out of the doors than anybody does (6./7.10.: light wrongly
+        on 0.57 instead of 0.14 of 41)."""
+        return Undetected.anywhere(self.tiles, people=self.m.start_unknown)
 
     def _clear(self):
         """No live tracks, no data of the sensors gathered yet."""

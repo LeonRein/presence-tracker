@@ -39,6 +39,10 @@ class Model:
     # house is forgotten (whoever comes back after that is a newcomer)
     guest_rate = 1 / (2 * 86400)  # 1/s per way in
     forget_rate = 1 / 86400  # 1/s
+    # 5.3 nothing known (no saved state): this many unknown people expected, a third each in view,
+    # behind doors and out of the house (assumed; the log evidence over the app starts of 6./7.10.
+    # rises with it: 0.3 / 1 / 3 people -279 / 0 / +265, the light errors stay the same)
+    start_unknown = 1.0
     # 4.1 the sensor's tracks. A person in view gets a track at a rate rho * P_D(r): P_D of a
     # fluctuating target (Swerling I) at the signal-to-noise ratio of the radar equation, falling
     # with r^-4 (Skolnik), half at r50 [STILL, WALK]. Fitted by maximum likelihood (Poisson) to what
