@@ -6,6 +6,20 @@ import { ZONE_KINDS, bindNumber, dist, esc, fmt, h, personColor, regionOfRoom, r
 import { loadSize } from './view.js';
 
 let skipRender = false;
+
+// a list row that selects something: also by keyboard (Tab, Enter or Space); the map needs a pointer
+function clickable(item, fn) {
+  item.tabIndex = 0;
+  item.setAttribute('role', 'button');
+  item.onclick = fn;
+  item.onkeydown = e => {
+    if (e.target !== item || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    fn(e);
+    // the panel is rebuilt: keep the keyboard on the row just chosen
+    setTimeout(() => document.querySelector('#panel .item.selected')?.focus(), 0);
+  };
+}
 let zoneKind = 'area';
 
 // edits from panel inputs: don't rebuild the panel under the user's cursor
@@ -216,7 +230,7 @@ function gateBars(ld) {
     const x = i * (w + gap);
     return `<rect x="${x}" y="${hgt - mv * hgt / 100}" width="${w / 2 - 1}" height="${mv * hgt / 100}" fill="var(--moving)"/>
       <rect x="${x + w / 2}" y="${hgt - sv * hgt / 100}" width="${w / 2 - 1}" height="${sv * hgt / 100}" fill="var(--still)"/>
-      <text x="${x + w / 2}" y="${hgt + 12}" font-size="9" text-anchor="middle" fill="var(--muted)">${fmt(i * 0.75, 1)}</text>`;
+      <text x="${x + w / 2}" y="${hgt + 12}" font-size="9" text-anchor="middle" fill="var(--muted)">${fmt(i * 0.75, 2)}</text>`;
   }).join('');
   return `<h3>LD2410C-Energie pro Stufe</h3>
     <svg viewBox="0 -2 ${9 * (w + gap)} ${hgt + 16}" width="100%" style="max-width:300px">${bars}</svg>
@@ -237,7 +251,7 @@ function livePanel(panel, view) {
       </div>
       <div class="row">
         <label class="field">Vor wie vielen Minuten?<input type="number" id="rep-ago" min="0" max="15" step="1" value="0" style="width:6em"></label>
-        <label class="field grow">Was war los? (optional)<input id="rep-text" placeholder="z. B. saß auf dem Sofa, wurde nach 1 min verloren"></label>
+        <label class="field grow" style="flex-basis:100%">Was war los? (optional)<input id="rep-text" placeholder="z. B. saß auf dem Sofa, wurde nach 1 min verloren"></label>
       </div>
       <div class="row"><button class="btn primary" id="rep-send">Melden</button></div>
       <p class="note">Speichert die Sensordaten der letzten 15 Minuten mit der Konfiguration, zum genauen Nachspielen. Die Meldungen sind die Wahrheitsdaten für die Bewertung.</p>
@@ -283,7 +297,9 @@ function livePanel(panel, view) {
 // error reports: what looked wrong, saved with the last minutes of sensor data (app.h_report)
 async function reportForm(el) {
   const rooms = state.config.zones.filter(z => z.kind === 'room');
-  el.querySelector('#rep-room').innerHTML = rooms.map(z => `<option value="${esc(z.id)}">${esc(z.name)}</option>`).join('')
+  // no room preselected: the first of the list was taken as the room of the error unnoticed
+  el.querySelector('#rep-room').innerHTML = '<option value="?" selected disabled>Bitte wählen</option>'
+    + rooms.map(z => `<option value="${esc(z.id)}">${esc(z.name)}</option>`).join('')
     + '<option value="">ganzes Haus</option>';
   const list = el.querySelector('#rep-list');
   const load = async () => {
@@ -300,6 +316,8 @@ async function reportForm(el) {
     if (!data.reports.length) list.append(h('<p class="note">Noch keine Meldungen.</p>'));
   };
   el.querySelector('#rep-send').onclick = async () => {
+    const roomSel = el.querySelector('#rep-room');
+    if (roomSel.value === '?') { toast('Bitte den Raum wählen (oder „ganzes Haus“).'); roomSel.focus(); return; }
     try {
       const r = await api('api/reports', { method: 'POST', body: JSON.stringify({
         room: el.querySelector('#rep-room').value, kind: el.querySelector('#rep-kind').value,
@@ -346,10 +364,10 @@ function planPanel(panel, view) {
   for (const z of rooms) {
     const item = h(`<div class="item ${sel?.kind === 'room' && sel.id === z.id ? 'selected' : ''}">
       <span class="swatch" style="background:${z.entry ? ZONE_KINDS.entry.color : ZONE_KINDS.room.color}"></span>
-      <span class="grow">${esc(z.name)}</span>${z.entry ? '<span class="badge warn" title="Öffentlicher Raum vor der Wohnungstür: außer Haus">Eingang</span>' : ''}
+      <span class="grow">${esc(z.name)}</span>${z.entry ? '<span class="badge warn" title="Öffentlicher Raum vor der Wohnungstür (Treppenhaus): außer Haus">außer Haus</span>' : ''}
       ${state.live && !z.entry ? (regionOfRoom(state.live, z.id) ? '<span class="badge">ohne Sensor</span>' : '<span class="badge ok">Sensor</span>') : ''}
       <span class="meta">${fmt(zoneArea(z), 1)} m²</span></div>`);
-    item.onclick = () => select({ kind: 'room', id: z.id });
+    clickable(item, () => select({ kind: 'room', id: z.id }));
     roomList.append(item);
   }
   if (!rooms.length) roomList.append(h('<p class="note">Noch keine geschlossenen Räume.</p>'));
@@ -359,7 +377,7 @@ function planPanel(panel, view) {
     const item = h(`<div class="item ${sel?.kind === 'layer' && sel.id === l.id ? 'selected' : ''}">
       <input type="checkbox" ${l.visible ? 'checked' : ''} title="anzeigen">
       <span class="grow">${esc(l.name)}</span><span class="meta">${Math.round((l.opacity ?? 0.6) * 100)} %</span></div>`);
-    item.onclick = e => { if (e.target.tagName !== 'INPUT') select({ kind: 'layer', id: l.id }); };
+    clickable(item, e => { if (e.target.tagName !== 'INPUT') select({ kind: 'layer', id: l.id }); });
     item.querySelector('input').onchange = e => edit(c => { c.background.layers.find(x => x.id === l.id).visible = e.target.checked; });
     list.append(item);
   }
@@ -416,9 +434,9 @@ function roomDetail(el, z) {
   const outside = 'Außer Haus: Wer hier ist, hat die Wohnung verlassen. Keine Personenzahl, nichts an Home Assistant; die Tür hierher ist die Wohnungstür.';
   el.append(h(`<div class="card">
     <label class="field">Raum<input type="text" value="${esc(z.name)}" id="name"></label>
-    <label class="check" style="margin-top:8px"><input type="checkbox" id="entry" ${z.entry ? 'checked' : ''}> Eingang: öffentlicher Raum vor der Wohnungstür (Treppenhaus). Gehört nicht zur Wohnung; wer hineingeht, ist außer Haus</label>
+    <label class="check" style="margin-top:8px"><input type="checkbox" id="entry" ${z.entry ? 'checked' : ''}> Außer Haus: öffentlicher Raum vor der Wohnungstür (Treppenhaus). Gehört nicht zur Wohnung; wer hineingeht, hat sie verlassen</label>
     <p class="note">Fläche ${fmt(zoneArea(z))} m². ${z.entry ? outside : seen}</p>
-    <p class="note">Die Form folgt den Wänden: zum Ändern die Wände verschieben (Tab Grundriss).</p>
+    <p class="note">Die Form folgt den Wänden: zum Ändern die Wände verschieben${state.tab === 'plan' ? '' : ' (Tab Grundriss)'}.</p>
   </div>`));
   el.querySelector('#name').onchange = e => panelEdit(c => { c.zones.find(x => x.id === z.id).name = e.target.value; });
   el.querySelector('#entry').onchange = e => edit(c => { c.zones.find(x => x.id === z.id).entry = e.target.checked; });
@@ -529,7 +547,7 @@ function sensorsPanel(panel, view) {
       <span class="grow">${esc(s?.name || id)}</span>
       ${s?.placed ? '' : '<button class="btn" data-place>Platzieren</button>'}
       <span class="badge ${online ? 'ok' : 'bad'}">${online ? 'online' : 'offline'}</span></div>`);
-    item.onclick = () => select({ kind: 'sensor', id });
+    clickable(item, () => select({ kind: 'sensor', id }));
     item.querySelector('[data-place]')?.addEventListener('click', e => { e.stopPropagation(); setTool({ name: 'place', id }); });
     list.append(item);
   }
@@ -556,13 +574,13 @@ function sensorDetail(el, s) {
     </div>
     <p class="note">Maßstab: wahre Entfernung geteilt durch die gemessene. 1,04 = der Sensor misst 4 % zu kurz. Stellt die Kalibrierung ein.</p>
     <label class="check"><input type="checkbox" data-k="mirror" ${s.mirror ? 'checked' : ''}> x-Achse gespiegelt</label>
+    <p class="note">Prüfen: Vor dem Sensor nach rechts gehen (vom Sensor aus gesehen). Der Punkt auf der Karte muss mitgehen, sonst Haken setzen. Die Kalibrierung erkennt das auch selbst.</p>
     <h3>Was der Sensor sieht</h3>
     <p class="note">Nur zum Anschauen: blendet eine Karte über den Grundriss ein. Das ändert nichts am Tracking.</p>
     <label class="field">Karte einblenden<select id="smap">${[['', 'keine'], ['prior', 'Erkennung: aus der Geometrie'],
       ['ghosts', 'Geister: im Betrieb gelernt']].map(([k, l]) =>
       `<option value="${k}" ${(state.sensorMap?.sensor === s.id ? state.sensorMap.layer : '') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <p id="smap-info" class="note"></p>
-    <p class="note">Prüfen: Vor dem Sensor nach rechts gehen (vom Sensor aus gesehen). Der Punkt auf der Karte muss mitgehen, sonst Haken setzen. Die Kalibrierung erkennt das auch selbst.</p>
     <label class="check"><input type="checkbox" data-k="enabled" ${s.enabled ? 'checked' : ''}> Für die Verfolgung verwenden</label>
     <h3>Jetzt gemessen (Sensorkoordinaten)</h3>
     <div data-live="sensorNow" data-id="${esc(s.id)}"></div>
@@ -682,7 +700,7 @@ function zonesPanel(panel, view) {
     for (const z of zones) {
       const item = h(`<div class="item ${sel?.id === z.id ? 'selected' : ''}"><span class="swatch" style="background:${meta.color}"></span>
         <span class="grow">${esc(z.name)}</span></div>`);
-      item.onclick = () => select({ kind: z.kind === 'room' ? 'room' : 'zone', id: z.id });
+      clickable(item, () => select({ kind: z.kind === 'room' ? 'room' : 'zone', id: z.id }));
       list.append(item);
     }
     groups.append(list);
@@ -842,15 +860,21 @@ const PARAMS = [
     ['ld2410_hold', 'Haltezeit (Anzeige)', 's', 'Lücken in der LD2410C-Präsenz bis zu dieser Länge werden in der Anzeige überbrückt.', 0.1],
   ]],
   ['Ausgabe', [
-    ['light_cost', 'Kosten: Licht ohne Person', '×', 'Eine Sekunde Licht ohne Person ist so schlimm wie so viele Sekunden Dunkel mit Person. Ein Raum gilt als besetzt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt: bei 2 über 67 %.', 0.5],
-    ['lead_time', 'Vorausschau „wird betreten“', 's', 'So weit rechnet das Modell jeden Gehenden mit seinem eigenen Bewegungsmodell voraus (Wände halten auf, Türen nicht). Weil es Richtung und Tempo mit der Zeit vergisst, kommt das Signal später als diese Zeit vor dem Eintritt: mit 2 s bei 60 % der Eintritte mindestens 1 s (1 m) vorher (MODEL.md 6).', 0.1],
+    ['light_cost', 'Kosten: Licht ohne Person', '×', 'Eine Sekunde Licht ohne Person ist so schlimm wie so viele Sekunden Dunkel mit Person. Ein Raum gilt als besetzt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.5],
+    ['lead_time', 'Vorausschau „wird betreten“', 's', 'So weit rechnet das Modell jeden Gehenden mit seinem eigenen Bewegungsmodell voraus (Wände halten auf, Türen nicht). Weil es Richtung und Tempo mit der Zeit vergisst, kommt das Signal später als diese Zeit vor dem Eintritt: gemessen mit 2 s: bei 60 % der Eintritte mindestens 1 s (1 m) vorher.', 0.1],
     ['approach_cost', 'Kosten: Einschalten auf Verdacht', '×', 'Ein Einschalten auf Verdacht, nach dem niemand hereinkommt, ist so schlimm wie so viele Eintritte in einen dunklen Raum. „Wird betreten“ gilt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.01],
-    ['target_threshold', 'Schwelle „Ziel“', '', '„Ziel“ ist an, wenn die Wahrscheinlichkeit, dass ein Gehender als Nächstes in den Raum geht, mindestens so hoch ist. Sie entsteht aus der Bewegung (wie „wird betreten“) und der gelernten Karte, wohin die Gänge von dort bisher gingen; wo die Karte noch nichts weiß, ist „Ziel“ genau „wird betreten“. Schwelle = K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein vergebliches Licht ist so schlimm wie 4 späte. Je Raum unten anders einstellbar (MODEL.md 6).', 0.05],
+    ['target_threshold', 'Schwelle „Ziel“', '', '„Ziel“ ist an, wenn die Wahrscheinlichkeit, dass ein Gehender als Nächstes in den Raum geht, mindestens so hoch ist. Sie entsteht aus der Bewegung (wie „wird betreten“) und der gelernten Karte, wohin die Gänge von dort bisher gingen; wo die Karte noch nichts weiß, ist „Ziel“ genau „wird betreten“. Schwelle = K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein vergebliches Licht ist so schlimm wie 4 späte. Je Raum unten anders einstellbar.', 0.05],
   ]],
 ];
 
 // what describes the home and the output; the rest are the model's measured numbers
-const HOME_GROUPS = ['Personen', 'Ausgabe'];
+const HOME_GROUPS = ['Ausgabe'];
+
+// the threshold that follows from a cost, shown next to it
+const DERIVED = {
+  light_cost: k => `Damit: besetzt ab ${Math.round(100 * k / (k + 1))}\u00a0%.`,
+  approach_cost: k => `Damit: „wird betreten“ ab ${Math.round(100 * k / (k + 1))}\u00a0%.`,
+};
 
 function roomName(id) {
   return state.config.zones.find(z => z.id === id)?.name || id;
@@ -858,7 +882,7 @@ function roomName(id) {
 
 // the threshold of "Ziel" per room: empty = the default above
 function targetRooms(p) {
-  const el = h(`<div><h3>Schwelle „Ziel“ je Raum</h3><p class="note">Leer: die Schwelle oben. Gemessen (MODEL.md 10): 0,8 halbiert die vergeblichen Lichter gegenüber „wird betreten“, kommt aber seltener früh; 0,5 kommt öfter früh und ist trotzdem seltener vergeblich.</p></div>`);
+  const el = h(`<div><h3>Schwelle „Ziel“ je Raum</h3><p class="note">Leer: die Schwelle oben. Gemessen: 0,8 halbiert die vergeblichen Lichter gegenüber „wird betreten“, kommt aber seltener früh; 0,5 kommt öfter früh und ist trotzdem seltener vergeblich.</p></div>`);
   for (const z of roomsWithSensor(state.config, state.live)) {
     const v = (p.target_thresholds || {})[z.id];
     const row = h(`<div class="param"><label class="field">${esc(z.name)}
@@ -885,8 +909,12 @@ function settingsPanel(panel) {
     target.append(h(`<h3>${group}</h3>`));
     for (const [key, label, unit, desc, step] of items) {
       const el = h(`<div class="param"><label class="field">${label}${unit ? ` (${unit})` : ''}
-        <input type="number" step="${step}" value="${p[key]}"></label>${desc ? `<div class="desc">${desc}</div>` : ''}</div>`);
-      bindNumber(el.querySelector('input'), state.limits.params?.[key], v => panelEdit(c => { c.params[key] = v; }));
+        <input type="number" step="${step}" value="${p[key]}"></label>${desc ? `<div class="desc">${desc}</div>` : ''}
+        ${DERIVED[key] ? `<div class="desc derived">${DERIVED[key](p[key])}</div>` : ''}</div>`);
+      bindNumber(el.querySelector('input'), state.limits.params?.[key], v => {
+        panelEdit(c => { c.params[key] = v; });
+        if (DERIVED[key]) el.querySelector('.derived').textContent = DERIVED[key](v);
+      });
       target.append(el);
     }
   }

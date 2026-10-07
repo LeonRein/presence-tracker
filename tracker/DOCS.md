@@ -60,8 +60,9 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   (erste Installation, neuer Grundriss, *Spuren zurücksetzen*) weiß es nichts: Wer in Sicht ist, wird
   gefunden, gleich wie viele; wer hinter einer Tür oder außer Haus ist, wenn er herauskommt. Weitere
   (Gäste) kommen über die Wege nach draußen dazu; wer sicher außer Haus ist, wird vergessen.
-- **Fehler melden** (Tab *Live*): Wenn etwas nicht stimmt (Person verloren, Geist, Person am falschen Ort,
-  ungenaues Tracking, hohe Latenz), den Raum und die Art des Fehlers wählen. Die App
+- **Fehler melden** (Tab *Live*): Wenn etwas nicht stimmt (Licht fälschlich an oder aus, Licht zu spät,
+  Person verloren, Geist, Person am falschen Ort, ungenaues Tracking, hohe Latenz), den Raum (keine
+  Vorauswahl) und die Art des Fehlers wählen. Die App
   speichert dazu die Sensordaten der letzten 15 Minuten mit der Konfiguration, dem Gelernten
   (Geisterkarte, LD2410C-Hintergrund), dem Stand des Codes und dem, was sie in dieser Zeit sekündlich
   angezeigt hat (unter `/data/reports`, je Meldung etwa 0,2–0,7 MB, in der Liste herunterladbar). Daraus
@@ -87,7 +88,7 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
    Die **Räume** entstehen automatisch als geschlossene Flächen zwischen Wänden, Türen und Raumgrenzen.
    Auch Räume ohne Sensor einzeichnen (Balkon, Küche, Flur): Daraus weiß die App, wo Personen
    herkommen können.
-   Sie werden nur benannt. *Eingang* markiert den öffentlichen Raum vor der Wohnungstür (Treppenhaus):
+   Sie werden nur benannt. *Außer Haus* markiert den öffentlichen Raum vor der Wohnungstür (Treppenhaus):
    Er gehört nicht zur Wohnung, die Tür dorthin ist die Wohnungstür. Wer hindurchgeht, ist außer Haus;
    wer hereinkommt, kommt von draußen. Für ihn gibt es keine Personenzahl und keine Entitäten, und was ein
    Sensor durch die offene Tür dort sieht (Nachbarn), zählt nicht. Den Raum trotzdem zeichnen: Er legt
@@ -149,7 +150,7 @@ Gerät **Presence Tracker**, für jeden Raum und Bereich:
 | `binary_sensor.presence_<zone>_approaching` | *wird betreten*: Jemand, der gerade geht, kommt wahrscheinlich gleich herein (Vorhersage, siehe unten) |
 | `binary_sensor.presence_<raum>_ziel` | *Ziel* (nur Räume): Jemand, der gerade geht, geht als Nächstes in diesen Raum; aus der Bewegung und einer gelernten Karte (siehe unten) |
 
-Dazu `presence_haus_*` für das ganze Haus (ohne *außer Haus*). Ein Raum mit *Eingang* (Treppenhaus)
+Dazu `presence_haus_*` für das ganze Haus (ohne *außer Haus*). Ein Raum mit *Außer Haus* (Treppenhaus)
 bekommt keine Entitäten; hatte er von einer früheren Version welche, entfernt die App sie beim nächsten
 Verbinden mit dem Broker.
 

@@ -35,7 +35,10 @@ STATIC = (pathlib.Path(__file__).parent / "static").resolve()
 BLOCKED_DUMP = 15.0  # s the event loop may be busy before the watchdog logs where it is
 REPORT_WINDOW = 15 * 60.0  # s of sensor data kept for an error report
 CODE = code_hash()
-REPORT_KINDS = {
+REPORT_KINDS = {  # new kinds only add keys: old reports keep theirs
+    "light_on": "Licht fälschlich an (niemand da)",
+    "light_off": "Licht fälschlich aus (jemand da)",
+    "light_late": "Licht kam zu spät",
     "lost": "Person verloren",
     "ghost": "Geist (Person, wo niemand ist)",
     "wrong_place": "Person am falschen Ort",

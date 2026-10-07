@@ -12,6 +12,7 @@
   --bad: #d64545;
   /* text in the signal colours: 4.5:1 or more on their badges and on the map */
   --accent-text: #1f56b8;
+  --on-accent: #ffffff;
   --ok-text: #16733f;
   --warn-text: #8f5b00;
   --bad-text: #b42318;
@@ -38,6 +39,7 @@
     --warn: #f0b429;
     --bad: #f06464;
     --accent-text: #7aa8f7;
+    --on-accent: #0f1420;
     --ok-text: #3ccf7a;
     --warn-text: #f0b429;
     --bad-text: #f47a7a;
@@ -53,7 +55,7 @@
 :root[data-theme="dark"] {
   --bg: #111418; --surface: #1a1e24; --surface-2: #232830; --line: #2e343d; --text: #e6e9ee;
   --muted: #9099a6; --accent: #5b93f5; --accent-soft: #5b93f533; --ok: #3ccf7a; --warn: #f0b429;
-  --bad: #f06464; --bad-text: #f47a7a; --accent-text: #7aa8f7; --ok-text: #3ccf7a; --warn-text: #f0b429; --still: #a78bfa; --moving: #5b93f5; --lost: #6b7480; --wall: #d6dbe2; --map-bg: #15181d;
+  --bad: #f06464; --bad-text: #f47a7a; --accent-text: #7aa8f7; --on-accent: #0f1420; --ok-text: #3ccf7a; --warn-text: #f0b429; --still: #a78bfa; --moving: #5b93f5; --lost: #6b7480; --wall: #d6dbe2; --map-bg: #15181d;
   color-scheme: dark;
 }
 
@@ -146,6 +148,10 @@ input[type=text], input[type=number], select {
   width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2);
 }
 input:focus, select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+input:focus-visible, select:focus-visible, button:focus-visible, .item:focus-visible, summary:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+.param .desc.derived { color: var(--text); font-weight: 600; }
 input.invalid { border-color: var(--bad); outline-color: color-mix(in srgb, var(--bad) 30%, transparent); }
 .field-error { color: var(--bad-text); font-size: 12px; }
 input[type=range] { width: 100%; accent-color: var(--accent); }
@@ -154,7 +160,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   display: inline-flex; align-items: center; gap: 6px;
 }
 .btn:hover { background: var(--surface-2); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.danger { color: var(--bad); }
 .btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }

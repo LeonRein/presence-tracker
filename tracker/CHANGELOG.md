@@ -37,6 +37,13 @@
   Schriftzug, und der Kopf bricht um statt abzuschneiden. Am Handy steht der Verbindungszustand über den
   Tabs. Veraltete Daten (getrennt oder 3 s ohne Nachricht) sind markiert: Karte grau, Listen blass, roter
   Balken mit dem Alter des Stands. CPU im Kopf als „Modell 12,3 % CPU“ mit Erklärung (% eines Kerns).
+- **Kleineres:** *Fehler melden* kennt *Licht fälschlich an*, *Licht fälschlich aus* und *Licht kam zu
+  spät* (neue Schlüssel `light_on`, `light_off`, `light_late`; alte Meldungen bleiben gültig) und wählt
+  keinen Raum mehr vor. Das Raum-Häkchen *Eingang* heißt jetzt *Außer Haus* (der Zonentyp *Eingang*
+  bleibt). Keine Verweise auf MODEL.md und auf eine Bewohner-Einstellung mehr in der Oberfläche; neben den
+  Kosten steht die Schwelle, die daraus folgt („besetzt ab 67 %“). Listenzeilen (Räume, Sensoren, Zonen,
+  Ebenen) per Tastatur erreichbar, sichtbarer Fokusrahmen. LD2410C-Stufen mit zwei Nachkommastellen, die
+  Prüfanleitung zur gespiegelten x-Achse steht unter ihrem Häkchen.
 
 ## 0.17.0
 
