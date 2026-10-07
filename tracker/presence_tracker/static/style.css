@@ -195,3 +195,8 @@ table.data td { padding: 4px 4px; border-bottom: 1px solid var(--line); }
 .row .field.grow { flex: 1; min-width: 140px; }
 .field input, .field select { width: 100%; }
 details.card > summary { cursor: pointer; }
+.calib-sensor { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.calib-sensor:last-child { border-bottom: none; }
+.calib-sensor .row { margin-bottom: 4px; flex-wrap: nowrap; }
+.calib-sensor .grow { flex: 1; min-width: 0; }
+.calib-sensor p.note { margin: 4px 0 0; overflow-wrap: anywhere; }

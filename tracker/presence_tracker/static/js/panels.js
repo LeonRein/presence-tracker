@@ -678,21 +678,24 @@ function calibrationResult(el, r) {
   const label = { ok: 'gut', warn: 'teilweise', bad: 'bleibt' };
   const entries = Object.entries(r.sensors);
   const pm = (v, sd, d) => `${fmt(v, d)} <span class="meta">± ${fmt(sd, d)}</span>`;
+  // one block per sensor (the side panel is too narrow for a table with the explanations)
   const rows = entries.map(([id, s]) => {
     const cur = sensorById(id);
-    const turn = s.apply.heading ? `${s.turn > 0 ? '+' : ''}${pm(s.turn, s.heading_sd, 1)}°` : '–';
-    const scale = s.apply.scale ? `${fmt(cur?.scale ?? 1, 3)} → ${pm(s.scale, s.scale_sd, 3)}` : '–';
+    const turn = s.apply.heading ? `${fmt(cur?.heading ?? 0, 1)}° → ${fmt(s.heading, 1)}° <span class="meta">(${s.turn > 0 ? '+' : ''}${pm(s.turn, s.heading_sd, 1)}°)</span>` : 'bleibt';
+    const scale = s.apply.scale ? `${fmt(cur?.scale ?? 1, 3)} → ${pm(s.scale, s.scale_sd, 3)}` : 'bleibt';
     const out = s.outside.map(v => Math.round(100 * v));
-    return `<tr><td>${esc(cur?.name || id)}</td><td>${turn}</td><td>${scale}</td>
-      <td>${s.mirror !== cur?.mirror ? '<b>ändern</b>' : '–'}</td>
-      <td><span class="badge ${s.quality}">${label[s.quality]}</span></td></tr>
-      <tr><td colspan="5" class="note">${s.points} Punkte in Bewegung, ${s.pairs} s gleichzeitig mit anderen Sensoren gesehen (${s.agree} passend), ${s.handovers} Übergänge. Außerhalb der Sicht: ${out[0]} % → ${out[1]} %.${s.reason ? ' ' + esc(s.reason) : ''}</td></tr>`;
+    return `<div class="calib-sensor">
+      <div class="row"><b class="grow">${esc(cur?.name || id)}</b><span class="badge ${s.quality}">${label[s.quality]}</span></div>
+      <dl class="kv"><dt>Drehung</dt><dd>${turn}</dd><dt>Maßstab</dt><dd>${scale}</dd>
+        ${s.mirror !== cur?.mirror ? '<dt>x-Richtung</dt><dd><b>ändern</b></dd>' : ''}</dl>
+      <p class="note">${s.points} Punkte in Bewegung, ${s.pairs} s gleichzeitig mit anderen Sensoren gesehen (${s.agree} passend), ${s.handovers} Übergänge. Außerhalb der Sicht: ${out[0]} % → ${out[1]} %.${s.reason ? ' ' + esc(s.reason) : ''}</p>
+    </div>`;
   }).join('');
   const name = id => esc(sensorById(id)?.name || id);
   const usable = entries.filter(([, s]) => s.apply.heading || s.apply.scale);
   el.append(h(`<div class="card" style="margin-top:12px">
     <b>Ergebnis</b>
-    <table class="data" style="margin-top:8px"><tr><th>Sensor</th><th>Drehung</th><th>Maßstab</th><th>Spiegel</th><th></th></tr>${rows || '<tr><td colspan="5">nichts berechnet</td></tr>'}</table>
+    <div style="margin-top:8px">${rows || '<p class="note">Nichts berechnet.</p>'}</div>
     ${entries.length && r.inside != null ? `<p class="note">${Math.round(100 * r.inside)} % der Punkte in Bewegung liegen da, wo ihr Sensor hinsieht.</p>` : ''}
     ${r.unsolved.length ? `<p class="note">Bleiben, wie sie sind: ${r.unsolved.map(name).join(', ')}. Keine Messungen in Bewegung.</p>` : ''}
     ${usable.length ? `<button class="btn primary" id="apply">Übernehmen</button>` : '<p class="note">Nichts sicher bestimmt, nichts zu übernehmen.</p>'}
