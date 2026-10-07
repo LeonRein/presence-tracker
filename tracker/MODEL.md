@@ -663,6 +663,77 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
   c_v = 0,048 entspricht einer gemessenen Trefferquote um 0,25.
   Bis 0.15.0 war „wird betreten“ ein Flag aus den Personen der wahrscheinlichsten Hypothese: ihr Mittel
   1 s geradeaus (ab 0,3 m/s), durch Wände hindurch.
+- **Ziel** (`Tracker.targets`, `destination.py`, je beobachtetem Raum): P(ein Gehender geht als Nächstes
+  in diesen Raum), ohne Horizont. Zwei Quellen:
+  - *Die Bewegung:* `p_enter` von *wird betreten* (oben), unverändert.
+  - *Die gelernte Karte, wohin Gänge gingen* (eine ortsabhängige Karte der Raumnutzung aus Spuren,
+    J_Luber2014 Kap. 6, Abschn. 6.5; Übergänge aus Daten gelernt, G_Liao2003). Je Zelle (0,3 m, an den
+    Räumen geteilt wie die Kacheln), Richtung (16) und Tempo (0,3–0,7 / 0,7–1,1 / ab 1,1 m/s) zählt sie
+    die Gänge je Ausgang: der Raum hinter der ersten Tür, ein Bereich ohne Sensor, außer Haus, oder
+    „bleibt“ (der Gang endet ohne Tür, 2 s Stehen). Jeder Schritt eines Gangs zählt mit einem Kern
+    (0,3 m, 0,3 m/s, wie in der Untersuchung) auf den Zellen um ihn, nur im eigenen Raum und nicht durch
+    Wände, so normiert, dass ein Gang durch die Mitte einer Zelle in ihrer Geschwindigkeit dort 1 zählt.
+    Gefragt wird sie über die Zellen um den Ort (0,15 m) und linear zwischen Richtungen und Tempi.
+  - *Ein Raumteiler ist keine Tür:* Räume, die nur ein Raumteiler trennt, sind für die Gänge ein Raum
+    (dort pendelt man, ZIEL-Untersuchung 3.1; Wohn- und Esszimmer sind eine Lichtgruppe). Ein Gang über
+    den Raumteiler geht weiter, sein Ausgang ist die nächste Tür; die Karte sagt dort für den Raum
+    jenseits des Teilers 0.
+  - *Gelernt in der App aus den eigenen Gehenden* (wie die Geisterkarte 4.2): je Hypothese und Person mit
+    Spur, gewichtet mit dem Gewicht der Hypothese und P(geht) (weiche Zählungen über alle behaltenen
+    Hypothesen, 10 „Geisterkarte“). Eine Person ist ihre früheste laufende Spur; endet sie, übernimmt den
+    Gang, wer binnen 1,5 s höchstens 1 m daneben auftaucht (Übergabe an einer Tür). Der Ausgang: der Raum
+    oder Bereich, in dem die Person zwei Takte nach einer Tür ist, oder „bleibt“ nach 2 s mit P(geht) <
+    ½. Ein Gang, dessen Spuren enden, ohne dass jemand ihn übernimmt, zählt nicht. Vergessen mit 14 Tagen.
+    Gespeichert mit dem Übrigen Gelernten (`destinations.json`, Fehlermeldungen). Andere Räume, Türen oder
+    Bereiche: die Karte beginnt leer; ein neu kalibrierter Sensor ändert nichts an ihr.
+  - *Nur Ausgabe:* Die Karte liest die Hypothesen, sie ändert keinen Zustand und kein Gewicht des Filters.
+    Darum kann sie keinen Fehler des Verfolgens verstärken (10: aus den eigenen Urteilen lernt das Modell
+    seine Fehler; hier lernt nur die Ausgabe).
+
+  **Die Mischung ist ein Dirichlet-Posterior mit der Bewegung als Prior.** Je Gehendem k mit
+  den Gängen n_k an seiner Stelle und Geschwindigkeit, davon der Anteil f_k(R) in den Raum R:
+  `P_k(R) = (n_k f_k(R) + α q(R)) / (n_k + α)` mit dem Gewicht α des Priors in Gängen
+  (`dest_prior_walks` = 1, wie der Prior der Geisterkarte einen Geist je Zelle wiegt: ein Gang allein
+  macht keine Stelle zum Ziel, wenige gleiche tun es). Für den Raum, über die Gehenden und Hypothesen:
+
+  `P(R) = (1 − λ) q_move(R) + λ q_map(R)`, `λ = n / (n + α)`,
+
+  - `q_map(R) = Σ_h w_h (1 − Π_k (1 − P(k geht) f_k(R)))`, wie `p_enter` über alle Hypothesen;
+  - n = die Gänge hinter den Gehenden, die als Nächstes nach R gehen könnten (durch eine Tür; über einen
+    Raumteiler mit f = 0), gemittelt mit P(geht) und dem Gewicht ihrer Hypothese;
+  - `q_move(R)` = `p_enter` auf der Skala der Schwelle des Raums: seine Odds mal odds(c_R) / odds(c_v)
+    (eine Verschiebung der log-Odds, Platt-Skalierung mit Steigung 1). So ist `q_move ≥ c_R` genau
+    dort, wo `p_enter > c_v`: Ohne Gelerntes ist *Ziel* **genau** *wird betreten* (Test; im Code
+    für λ = 0 dieselbe Abfrage `p_enter > c_v`, also bitgleich). Das ist keine Trefferquote (`p_enter`
+    ist zu klein, oben), sondern dieselbe Entscheidung auf der Skala, auf der die Karte kalibriert ist.
+
+  **An**, wenn `P(R) ≥ c_R` mit `c_R = K_Fehl / (K_Fehl + K_spät)` je Raum (Bayes-Entscheidung wie für
+  *besetzt*; K_Fehl ein Licht auf Verdacht ohne Person, K_spät ein Eintritt ins Dunkle).
+  `target_threshold` = 0,8 (K_Fehl = 4 K_spät), je Raum anders (`target_thresholds`). Anders als bei
+  `approach_cost` wirkt die Schwelle hier auf eine kalibrierte Wahrscheinlichkeit (die Karte: von den
+  Momenten mit 0,9–0,95 traten 89 % ein, ZIEL-Untersuchung 3.4), also auf das, was die Kosten meinen.
+  Warum nicht dieselben Kosten wie `approach_cost` (0,05, also c = 0,048)? Bei `p_enter` entspricht
+  0,048 einer gemessenen Trefferquote um 0,25; ein Licht, das bei 25 % auf Verdacht angeht, wäre mit der
+  Karte, die über den ganzen Weg rechnet, 19 Fehl-Ein je Stunde (ZIEL 3.2, P ≥ 0,3). 0,8 liegt dort,
+  wo Fehl-Ein selten sind (1,2 je Stunde in der Untersuchung) und Leons Vorgabe gilt, Licht ohne Person
+  sei der schlimmste Fehler (1.1, `light_cost` = 2 meint c = 2/3). Gemessen in 10 („Ziel“): mit 0,8
+  halb so viele Fehl-Ein wie *wird betreten*, aber seltener früh; mit 0,5 in beidem besser. Die Wahl ist
+  eine der Kosten, also Leons (je Raum einstellbar). Wo die Karte nichts weiß, gilt die Schwelle nicht:
+  dort entscheidet `p_enter > c_v`.
+
+  Attribute: die Wahrscheinlichkeit, aus welchem Raum der Gehende kommt, der am wahrscheinlichsten
+  hingeht, sein Abstand zur nächsten Tür dorthin (Luftlinie) und die Zeit bei seinem Tempo, seine
+  Nummer, die Gänge dahinter (n), das Gewicht der Karte (λ) und welcher Teil entschied (`karte` ab λ ≥
+  ½, sonst `bewegung`). Bereiche und Räume ohne Sensor: kein Ziel. Die Karte lernt in der App nur aus
+  dem, was die App live sieht; nach einem Update beginnt sie leer.
+- **An Home Assistant** (`ha.py`, `ZoneState.to_dict`): Jede Änderung von Zustand oder Attributen einer
+  Entität ist eine Zeile im Recorder von Home Assistant. Deshalb: Wahrscheinlichkeiten in 5-%-Schritten,
+  Zeiten in 0,5 s, Wege in 0,5 m; die Zustände (*besetzt*, Zahl, *Bewegung*, *wird betreten*, *Ziel*)
+  gehen in dem Takt hinaus, in dem sie wechseln; die Attribute einer Entität (`Discovery.steady`) neu mit
+  jedem Wechsel ihres Zustands, sonst nur, wenn eines um mindestens zwei Stufen wanderte (eine Stufe ist
+  Rundungsflackern) und die letzte Änderung mindestens 10 s (Personenzahl: 60 s) her ist. *Wird betreten*
+  und *Ziel* aus: feste Attribute (Wahrscheinlichkeit 0, der Rest leer). Nur die Ausgabe an Home
+  Assistant; die Anzeige der App bekommt die gerundeten Werte ungehalten.
 - Anzeige: Personen der wahrscheinlichsten Hypothese, die eher existieren als nicht (r ≥ 0,5, 5.5),
   ihre Dichten (r × Dichte) als Wärmekarten.
 
@@ -1420,6 +1491,74 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
     eines Kerns (+0,1 Prozentpunkte); je Takt mit Ausgaben 0,37 → 0,54 ms. Im Nachspiel über 23 h im
     Mittel 0,13 ms je Aufruf (p99 2,5 ms). Der Prototyp der Untersuchung (5 Horizonte in Schritten von
     0,2 s) brauchte 4,8 ms je Aufruf.
+
+- **Ziel** (7.10., 6: „Ziel“). Leon: „Ist es möglich, zu bestimmen, mit welcher Wahrscheinlichkeit eine
+  Person gerade in einen anderen Raum läuft? […] Und es nicht von der Zeit/Strecke abhängig machen.“ Die
+  Untersuchung dazu (gelernte Karte gegen Kinematik, zielgerichtete Bewegung und einen Klassifikator,
+  nur Ausgabe) fand: Wer 1 m vor einer Tür auf sie zugeht, geht nur in 75–85 % der Fälle hindurch (Küche
+  33–48 %, Raumteiler 34–72 %); mehr als 0,8 gibt es vor der Tür nur aus Wissen über Wege, und das nur
+  für Routinen (Arbeitszimmer → Flur). Umgesetzt als Karte, die die App aus ihren Gehenden lernt (6).
+  *Nachspiel* wie in der App mit `tools/entries.py` (Takt 0,2 s, Konfiguration je Zeitraum, neues Modell
+  bei jedem Start der App, Gelerntes weiter, Karte von leer an gelernt, *Vorausschau* 1 s wie in allen
+  Konfigurationen und in der App), 6.10. 18:34 – 7.10. 20:40, 25,8 h bewertet, 342 Eintritte in dunkle
+  Räume. Wahrheit und Vorlauf wie „Vorausschauend einschalten“; *Fehl-Ein* hier: das Signal an, der Raum
+  dunkel, kein Eintritt bis Vorausschau + 3 s nach dem Ende und der Raum nicht besetzt (Mittel 0,8–1,1 s;
+  nicht die 30-s-Verdachte von oben). Zeiträume: (a) bis 7.10. 17:09 (kein Schlafzimmersensor, Bad erst ab
+  16:15), (b) ab 17:09 (config10, alle Sensoren). Eintritte in Bad und Schlafzimmer, bevor sie einen Sensor
+  hatten (nur aus einer an der Tür endenden Spur erschlossen: Bad 7, Schlafzimmer 9, ein Raum ohne Sensor
+  7), zählen nicht. Anteil der Eintritte mit Licht ≥ 1 s / ≥ 2 s / ≥ 1 m vorher, Fehl-Ein je Stunde:
+
+  | Signal | ganz | (a) 22,3 h, 255 Eintritte | (b) 3,5 h, 87 Eintritte |
+  |---|---|---|---|
+  | *wird betreten* | 39 / 6 / 52 %, 15,2 | 41 / 7 / 51 %, 13,9 | 33 / 3 / 56 %, 24,0 |
+  | *Ziel* 0,8 | 26 / 3 / 37 %, 8,1 | 28 / 4 / 37 %, 7,1 | 21 / 2 / 39 %, 14,8 |
+  | *Ziel* 0,7 | 34 / 4 / 45 %, 9,0 | 35 / 4 / 45 %, 7,9 | 29 / 2 / 46 %, 16,0 |
+  | *Ziel* 0,6 | 42 / 5 / 51 %, 10,0 | | |
+  | *Ziel* 0,5 | 46 / 8 / 55 %, 11,3 | 49 / 9 / 55 %, 10,2 | 40 / 6 / 55 %, 18,3 |
+
+  - *Ohne Gelerntes gleich:* Nachspiel mit leerer Karte (`--no-learning`): in allen 1 561 880 Raum-Takten
+    *Ziel* = *wird betreten*, alle Zahlen gleich. Mit Lernen: in den 98 % der Raum-Takte, in denen die
+    Karte für keinen Gehenden etwas weiß (meist geht niemand), ebenfalls nie verschieden.
+  - *Lernkurve:* Je Stunde (4–60 Eintritte) war *Ziel* mit 0,8 in keiner Stunde in beidem schlechter als
+    *wird betreten*: Fehl-Ein nie mehr (meist halb so viele, schon in der ersten Stunde 20 statt 50 je h),
+    Vorlauf ≥ 1 s meist weniger (Stunde 3 mit 58 Eintritten 19 statt 34 %, Stunde 21 62 statt 73 %). Mit 0,5
+    ebenfalls nie in beidem schlechter (von 19 Stunden mit Eintritten mehr Vorlauf ≥ 1 s in 11, weniger
+    in einer; mehr Fehl-Ein in 2, dort mit gleichem oder mehr Vorlauf). Das Gewicht der Karte, wenn sie gefragt wird, steigt in den ersten Stunden auf Median 0,6–0,8.
+    Mit config8 (Bad) und config10 (Schlafzimmer) änderten sich die Räume: Die Karte begann zweimal leer
+    (855 Gänge verloren), daher wieder Gewicht 0,2–0,3 am 7.10. ab 16 Uhr.
+  - *Je Raum* (ganz, ≥ 1 s, Fehl-Ein je h, 0,8): Arbeitszimmer 18 statt 28 %, 0,6 statt 1,0; Flur 37 statt
+    35 %, 1,4 statt 2,1; Esszimmer 22 statt 47 %, 2,5 statt 4,1; Küche 17 statt 42 %, 0,6 statt 2,0;
+    Wohnzimmer 30 statt 56 %, 2,3 statt 4,7. Je Tür gewinnt die Routine: Arbeitszimmer → Flur 60 statt
+    36 % (in (b) 86 statt 43 %, n = 7). In (b) allein mit 0,5: Flur 52 statt 31 % (n = 29), Esszimmer 50
+    statt 45 % (22), Küche 67 statt 17 % (6), Arbeitszimmer 8 statt 33 % (12), Bad 0 / 0 % (7),
+    Schlafzimmer 40 / 40 % (5); Fehl-Ein in jedem Raum weniger oder gleich. Dünn.
+  - *Kalibrierung:* Momente mit P(Ziel) 0,8–0,9 vor einem dunklen Raum: 53 % mit Eintritt binnen 5 s, ab
+    0,9 70 % (die Untersuchung: 77 / 89 %, Karte aus 18 h ohne Neubeginn). Die Mischung mit `q_move`, das
+    keine Trefferquote ist (6), und die zweimal neu begonnene Karte drücken das. Darum ist 0,8 hier
+    vorsichtiger, als die Kosten meinen; die Wahl der Schwelle bleibt Leons.
+  - *Recorder* (`ha.py`, Nachspiel derselben 26 h mit den Vorlagen der Entitäten in Jinja wie in Home
+    Assistant, je Takt; alle Zonen): Zeilen je Stunde in der vollsten Stunde (7.10. 17 Uhr) / im Mittel
+    der 25 ganzen Stunden, 0.16.0 → jetzt:
+
+    | Entitäten | vollste Stunde | Mittel |
+    |---|---|---|
+    | Personenzahl (9) | 2 969 → 975 | 741 → 151 |
+    | *wird betreten* (9) | 838 → 274 | 274 → 88 |
+    | *Ziel* (8, neu) | – → 244 | – → 68 |
+    | *besetzt* (9), *Bewegung* (9) | 213, 932 (gleich) | 67, 238 (gleich) |
+    | zusammen | 4 952 → 2 638 | 1 320 → 611 |
+
+    Am Tag 31 500 → 14 600 Zeilen. Ohne die Mindestabstände (nur zwei Stufen) wären es 25 600, vor allem
+    die Wahrscheinlichkeit am Personenzähler (12 000 statt 3 600). Alle Wechsel von *besetzt*, Zahl,
+    *Bewegung* und *wird betreten* (1 734 / 2 807 / 6 219 / 2 269) liegen in beiden Versionen im selben
+    Takt. Leons Messung live (0.16.0, ruhige Stunde): *wird betreten* etwa 74, Personenzahl 75–79 Zeilen
+    je Stunde und Entität; die App veröffentlicht alle 0,1 s, das Nachspiel nur bei Frames, live sind es
+    also eher mehr.
+  - *Besetzt* unverändert: report_eval an 0 / aus 1,50 von 41 / 15 und 0 / 0 von 13 / 7, die Ausgabe
+    Zeile für Zeile gleich 0.16.0 (Log-Evidenz −1 121 572,7 / −449 450,2); leere Nacht 0 min.
+  - *Rechenzeit* (6.10. 21:00–21:20, config7, ein Kern, je drei Läufe, mit dem Bau der Nachrichten an
+    Home Assistant): 27,7 → 28,7 s, 2,31 → 2,39 % eines Kerns (+4 %; auf Home Assistant etwa ×8, also
+    18,5 → 19,1 %). `Tracker.targets` im Nachspiel über 26 h im Mittel 0,04 ms je Takt (p99 0,3 ms).
 
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier

@@ -2,6 +2,31 @@
 
 ## Unveröffentlicht
 
+- **Ziel** (MODEL.md 6, 10 „Ziel“): neue Entität `binary_sensor.presence_<raum>_ziel` je Raum, neben *wird
+  betreten*. P(ein Gehender geht als Nächstes in diesen Raum), ohne Horizont: aus seiner Bewegung (`p_enter`
+  von *wird betreten*) und einer Karte, die die App selbst lernt, wohin die Gänge von jeder Stelle, in jeder
+  Richtung und bei jedem Tempo bisher gingen (`destination.py`, aus ihren eigenen Gehenden über alle
+  Hypothesen, vergessen über 14 Tage, gespeichert in `/data/destinations.json`; nur Ausgabe, der Filter
+  bleibt unberührt). Gemischt als Dirichlet-Posterior mit der Bewegung als Prior (ein Gang Gewicht).
+  **Ohne Gelerntes ist *Ziel* genau *wird betreten*** (Test; Nachspiel mit leerer Karte: in keinem Takt
+  verschieden), man kann es also sofort in Node-RED statt *wird betreten* nehmen. Die Karte lernt nur
+  live, nach dem Update beginnt sie leer; ändern sich Räume oder Türen, beginnt sie neu. Schwelle
+  *Schwelle „Ziel“* (Vorgabe 0,8), je Raum einstellbar. Attribute `probability`, `from`, `distance`,
+  `eta`, `person`, `walks`, `source` (`bewegung` / `karte`), `weight`. Gemessen auf 26 h, Karte von
+  leer an (342 Eintritte in dunkle Räume; ≥ 1 s vorher / Fehl-Ein je h): *wird betreten* 39 % / 15,2,
+  *Ziel* 0,8 26 % / 8,1, *Ziel* 0,5 46 % / 11,3; in keiner Stunde des Lernens in beidem schlechter als
+  *wird betreten*. Werkzeug `tools/entries.py` (Vorlauf und Fehl-Ein beider aus den Türdurchgängen der
+  Aufnahmen, je Raum, Tür, Stunde und Zeitraum).
+- **Weniger Zeilen im Recorder von Home Assistant:** Wahrscheinlichkeiten in 5-%-Schritten, Zeiten auf
+  0,5 s, Wege auf 0,5 m; Attribute nur neu mit einem Wechsel des Zustands oder wenn eines um mindestens
+  zwei Stufen wanderte (frühestens 10 s, beim Personenzähler 60 s nach der letzten Änderung);
+  *wird betreten* / *Ziel* aus: feste Attribute (`p_enter` dann 0). Die Zustände schalten genau wie in
+  0.16.0 (Nachspiel 26 h: alle Wechsel von *besetzt*, Zahl, *Bewegung*, *wird betreten* im selben Takt).
+  Zeilen am Tag 31 500 → 14 600 trotz der neuen Entität, in der vollsten Stunde 4 950 → 2 640.
+  DOCS.md: wie man die Entitäten aus dem Recorder ausschließt (`recorder: exclude: entity_globs`).
+- *Besetzt* unverändert: report_eval an 0 / aus 1,50 von 41 / 15 und 0 / 0 von 13 / 7, Log-Evidenz
+  gleich 0.16.0.
+
 ## 0.16.0
 
 - **„Wird betreten“ ist eine Vorhersage** (MODEL.md 6, 10 „Vorausschauend einschalten“). Statt eines

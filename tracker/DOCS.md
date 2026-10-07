@@ -119,6 +119,7 @@ Gerät **Presence Tracker**, für jeden Raum und Bereich:
 | `sensor.presence_<zone>_count` | Anzahl Personen, Attribute `moving` / `still` |
 | `binary_sensor.presence_<zone>_moving` | Mindestens eine Person bewegt sich |
 | `binary_sensor.presence_<zone>_approaching` | *wird betreten*: Jemand, der gerade geht, kommt wahrscheinlich gleich herein (Vorhersage, siehe unten) |
+| `binary_sensor.presence_<raum>_ziel` | *Ziel* (nur Räume): Jemand, der gerade geht, geht als Nächstes in diesen Raum; aus der Bewegung und einer gelernten Karte (siehe unten) |
 
 Dazu `presence_haus_*` für das ganze Haus (ohne *außer Haus*). Ein Raum mit *Eingang* (Treppenhaus)
 bekommt keine Entitäten; hatte er von einer früheren Version welche, entfernt die App sie beim nächsten
@@ -136,7 +137,7 @@ Einschalten auf Verdacht* liegt. Für Räume ohne Sensor gibt es keine Vorhersag
 
 | Attribut | Bedeutung |
 |---|---|
-| `p_enter` | Wahrscheinlichkeit, dass binnen der Vorausschau jemand hereinkommt (5-%-Schritte) |
+| `p_enter` | Wahrscheinlichkeit, dass binnen der Vorausschau jemand hereinkommt (5-%-Schritte; in Home Assistant nur, solange *wird betreten* an ist, sonst 0, siehe *Recorder*) |
 | `eta` | in wie vielen Sekunden die wahrscheinlichste Person drin ist, bei ihrem Tempo |
 | `distance` | wie viele Meter sie noch hat |
 | `person` | ihre Nummer in der Anzeige (Tab *Live*) |
@@ -155,6 +156,72 @@ Einschalten auf Verdacht* 0,05): Das Licht brennt vor 60 % der Eintritte mindest
 dafür im Tagesmittel etwa 4 vergebliche Verdachte je Stunde; die meisten an offenen Raumgrenzen ohne
 Wand (Wohn-/Essbereich), dort besser ohne *wird betreten*. Höhere Kosten: weniger Verdachte, weniger
 Vorlauf. Wer nicht vorausschauen will, nimmt nur *besetzt*.
+
+**Ziel** ist die zweite Vorhersage, ohne Horizont: Wie wahrscheinlich geht ein Gehender *als Nächstes* in
+diesen Raum? Die App lernt dafür selbst eine Karte, wohin die Gänge von jeder Stelle, in jeder Richtung
+und bei jedem Tempo bisher gingen (aus ihren eigenen Gehenden, vergessen über 14 Tage, gespeichert in
+`/data/destinations.json`; ändern sich Räume oder Türen, beginnt sie leer). Sie lernt nur aus dem, was
+die App nach dem Update live sieht: Nach dem Update ist sie leer, aus alten Aufnahmen kommt nichts hinein.
+Wo die Karte noch nichts weiß, ist *Ziel* **genau** *wird betreten* (Zustand für Zustand, auch in Home
+Assistant): Man kann es vom ersten Tag an statt *wird betreten* nehmen. Je mehr Gänge sie an einer Stelle
+kennt, desto mehr entscheidet sie: Auf einem Weg, der Routine ist (vom Schreibtisch zur Tür), geht *Ziel*
+früher an als *wird betreten*; wo Gänge oft im Türrahmen enden (Küche), seltener. Über einen Raumteiler sagt die Karte nichts voraus (Wohn- und
+Esszimmer gelten für die Gänge als ein Raum). Attribute:
+
+| Attribut | Bedeutung |
+|---|---|
+| `probability` | die Wahrscheinlichkeit, die entscheidet (an ab der Schwelle des Raums) |
+| `from` | der Raum des Gehenden, der am wahrscheinlichsten hingeht |
+| `distance`, `eta` | sein Abstand zur Tür (Luftlinie, m) und die Zeit bei seinem Tempo (s) |
+| `person` | seine Nummer in der Anzeige |
+| `walks` | wie viele gelernte Gänge hinter der Vorhersage stehen |
+| `source`, `weight` | was entschied: `bewegung` (wie *wird betreten*) oder `karte`; `weight` das Gewicht der Karte (0 … 1) |
+
+Die Schwelle (*Schwelle „Ziel“*, je Raum einstellbar, Tab *Einstellungen*) ist
+K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein Licht ohne Person ist so schlimm wie 4 späte Lichter. Sie
+wirkt nur, wo die Karte etwas weiß. Gemessen (MODEL.md 10, „Ziel“; Aufnahmen 6.10. 18:30 – 7.10. 20:40,
+Karte von leer an gelernt, *Vorausschau* 1 s wie in der App, 342 Eintritte in dunkle Räume; Licht
+mindestens 1 s / 2 s vorher, kurze Fehl-Ein je Stunde):
+
+| Signal | ≥ 1 s | ≥ 2 s | ≥ 1 m | Fehl-Ein je h |
+|---|---|---|---|---|
+| *wird betreten* | 39 % | 6 % | 52 % | 15,2 |
+| *Ziel*, Schwelle 0,8 (Vorgabe) | 26 % | 3 % | 37 % | 8,1 |
+| *Ziel*, Schwelle 0,7 | 34 % | 4 % | 45 % | 9,0 |
+| *Ziel*, Schwelle 0,5 | 46 % | 8 % | 55 % | 11,3 |
+
+Mit 0,8 halbiert *Ziel* die vergeblichen Lichter und kommt dafür seltener früh; mit 0,5 ist es in beiden
+besser als *wird betreten*. Wer früh Licht will, stellt 0,5 ein; wem ein Licht ohne Person schlimmer
+ist, bleibt bei 0,8.
+
+**Ziel statt wird betreten in Node-RED:** im Subflow den Eingang *wird betreten* durch
+`binary_sensor.presence_<raum>_ziel` ersetzen, sonst nichts. Die Regel bleibt dieselbe (auf Verdacht an,
+ohne *besetzt* nach 30 s wieder aus). Beide Entitäten laufen nebeneinander; *wird betreten* bleibt zum
+Vergleich. Nachts im Schlafzimmer sperrt man *Ziel* wie bisher *wird betreten* in Node-RED. Ob *Ziel*
+im Alltag besser ist, zeigt `tools/entries.py` auf den Aufnahmen (Vorlauf vor jedem Eintritt und
+vergebliche Lichter je Stunde, für beide).
+
+**Recorder:** Home Assistant schreibt bei jeder Änderung des Zustands *oder eines Attributs* einer
+Entität eine Zeile in seine Datenbank. Die App rundet deshalb grob (Wahrscheinlichkeiten auf 5 %, Zeiten
+auf 0,5 s, Wege auf 0,5 m) und schickt die Attribute einer Entität nur neu, wenn ihr Zustand umschaltet
+oder sich eines um mindestens zwei Stufen geändert hat und die letzte Änderung mindestens 10 s her ist
+(Personenzähler: 60 s). Solange *wird betreten* oder *Ziel* aus ist, sind ihre Attribute fest
+(Wahrscheinlichkeit 0, der Rest leer). Die Zustände selbst schalten genau wie vorher, im selben Moment.
+Nachgespielt auf 26 h (6./7.10., alle Zonen zusammen): 0.16.0 31 500 Zeilen am Tag, jetzt 14 600, mit
+*Ziel*; in der vollsten Stunde 4 950 → 2 640 (Personenzähler 2 970 → 980, *wird betreten* 840 → 270,
+*Ziel* 240; *besetzt* 210 und *Bewegung* 930 unverändert, das sind nur Zustände). Wer die Vorhersagen
+und Zähler trotzdem nicht im Verlauf haben will, schließt sie in `configuration.yaml` aus (Node-RED
+sieht sie weiter, denn es liest die Zustände live; die Personenzähler haben dann auch keine
+Langzeitstatistik mehr, wer die will, lässt `sensor.presence_*_count` weg):
+
+```yaml
+recorder:
+  exclude:
+    entity_globs:
+      - binary_sensor.presence_*_approaching
+      - binary_sensor.presence_*_ziel
+      - sensor.presence_*_count
+```
 
 **Mit Node-RED** (`node-red-contrib-home-assistant-websocket`): je Raum eine Instanz eines Subflows mit
 den beiden Sensoren als Eingang (`server-state-changed`) und dem Licht als Umgebungsvariable; die
