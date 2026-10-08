@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.25.1
+
 - **Nicht durch die Wand** (MODEL.md 4.1, 10 „Durch die Wand ins Arbeitszimmer“): Eine Messung an einer Wand
   setzte die Person auf die andere Seite. 8.10. 21:35: Die Spur des Bad-LD2450 sprang zur Wand des
   Arbeitszimmers (2 cm davor, danach bis 0,37 m dahinter), das Kalman-Update zog die Person 0,3 m hinter die
