@@ -2,6 +2,22 @@
 
 ## Unveröffentlicht
 
+Meldungen 8.10. abends (Licht im Bad und im Wohnzimmer aus, während dort jemand saß; MODEL.md 10
+„Meldungen 8.10. abends“):
+
+- **LD2410C: Wer nicht in seinem Blick ist, wird nicht gewogen – auch nicht als Person mit Spur.** Bis 0.25
+  zählte jede Komponente einer Person mit Spur als im Blick jedes LD2410C (mit null Energie) und bekam
+  dort `P(keine Echoquelle)`, ihr Teil „durch eine Tür“ dagegen 1. War irgendwo eine Echoquelle
+  wahrscheinlich, wanderten so alle Personen mit Spur im Haus Block für Block durch eine Tür hinaus (8.10.
+  18:47:44–18:48:00 die Person im Bad von 10⁻²⁸ auf 1 „außer Haus“, 18:48:19 die auf dem Sofa); ihre
+  weiteren Spuren wurden Geister, ihr Eintrag lief draußen ab. Jetzt wie bei Kacheln: nur, was dem
+  LD2410C mehr als `FLOOR` gibt, ist in seinem Blick.
+- **Abschneiden: Keine laufende Spur verliert eine ihrer Alternativen ganz** (Geist / Person, MODEL.md
+  5.1). Bis 0.25 blieb eine Spur, deren Alternative „Person“ bei der Geburt unter die Schwelle fiel, für
+  immer ein Geist, wie lange sie auch gemessen wurde (Schlafzimmer 8.10. 00:29–06:14, Schreibtisch 7.10.
+  08:59–09:49): Sagten alle Hypothesen „Geist“, kürzte sich die Lebensdauer der Geister heraus. Jetzt
+  bleibt die stärkste verworfene Hypothese, die das andere sagt; die Messungen entscheiden.
+
 ## 0.25.1
 
 - **Nicht durch die Wand** (MODEL.md 4.1, 10 „Durch die Wand ins Arbeitszimmer“): Eine Messung an einer Wand

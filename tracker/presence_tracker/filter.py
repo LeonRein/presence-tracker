@@ -1421,7 +1421,7 @@ class Tracker:
         # person's is each track's own question (its Bernoulli in a track-oriented PMBM), and what
         # its future measurements say about it (a ghost lives 3 / 39 s, a person stays) can only act
         # on an alternative that is still there. Of the dropped ones, the strongest that holds an
-        # alternative the kept ones lack stays. Until 0.24 a track born where the filter knew nobody
+        # alternative the kept ones lack stays. Until 0.25 a track born where the filter knew nobody
         # stayed a ghost for good: the bed 8.10. 00:29-06:14, the desk 7.10. 08:59-09:49.
         chosen = list(order[:n])
         held = {(s, hy.kind[s] == "g") for i in chosen for hy in groups[i] for s in hy.kind}
@@ -1566,10 +1566,10 @@ class Tracker:
         sh = self.shapes
         aw = obj.amw
         # a component out of its view (as a tile: expected energy below FLOOR) is not in view: mass 0
-        # here, so it is weighed by 1 like the rest out of view (_ld_weigh). Until 0.24 it counted as
+        # here, so it is weighed by 1 like the rest out of view (_ld_weigh). Until 0.25 it counted as
         # in view with nothing put in, and got P(no echo source) where its part gone through a door
         # got 1: every LD2410C with a likely echo source pushed every tracked person in the house
-        # through a door (MODEL.md 10, "Durch die Wand nach draußen", 8.10. 18:47)
+        # through a door (MODEL.md 10, "Meldungen 8.10. abends")
         vs = float(s_still[STILL].max()) > ld2410.FLOOR
         vw = float(s_walk[WALK].max()) > ld2410.FLOOR
         masses = [(1 - obj.a) * np.concatenate([w[STILL] * aw * vs, [w[WALK] * vw]])]
