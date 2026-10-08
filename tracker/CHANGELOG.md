@@ -2,6 +2,18 @@
 
 ## Unveröffentlicht
 
+## 0.20.1
+
+- **Rechenzeit** (Performance-Review von 0.18.0, MODEL.md 10): zwei weitere kompilierte Kernel, für
+  die zensierten Zellen der LD2410C-Likelihood und die Exponenten von `Tiling.gauss_points`. Die
+  Ergebnisse sind bitgleich (`report_eval --trace` zeichengleich, leere Nacht 0 min); die vollste Stunde
+  (7.10. 17 Uhr, 7 Sensoren) kostet 197 statt 218 s CPU (−9,5 %), die ruhige gleich viel.
+- **Keine Stillstände mehr in der Schleife**, die das Modell taktet: Ein Fehlerbericht wird im Thread
+  gebaut und mit gzip-Stufe 6 gepackt (bisher 0,5 s Stillstand hier, Sekunden auf Home Assistant), der
+  Kalibrierstatus der Live-Ansicht im Thread gezählt (bisher 24 ms alle 30 s), die Zielkarte beim
+  Speichern im Thread komprimiert, `calibration.npz` unkomprimiert gespeichert (6 statt 1,5 MB für einen
+  Tag, 4 statt 80 ms). Ältere komprimierte Dateien werden weiter gelesen.
+
 ## 0.20.0
 
 - **Personen an der Wand, an der der Sensor hängt** (Meldungen 7.10. abends, Bad und Schlafzimmer):
@@ -16,15 +28,6 @@
   P(belegt) 0,00 → 0,94 / 0,92 / 0,98, Licht fälschlich aus 3,69 → 0,14 von 11 Fenstern, an 0 von 43;
   Meldungen bis 6.10. und 7.10. früh Licht gleich (aus 1,50 von 15 / 0 von 7, an 0), Log-Evidenz
   +488 / +880; leere Nacht 0 min (MODEL.md 10, „Meldungen 7.10. abends“).
-- **Rechenzeit** (Performance-Review von 0.18.0, MODEL.md 10): zwei weitere kompilierte Kernel, für
-  die zensierten Zellen der LD2410C-Likelihood und die Exponenten von `Tiling.gauss_points`. Die
-  Ergebnisse sind bitgleich (`report_eval --trace` zeichengleich, leere Nacht 0 min); die vollste Stunde
-  (7.10. 17 Uhr, 7 Sensoren) kostet 197 statt 218 s CPU (−9,5 %), die ruhige gleich viel.
-- **Keine Stillstände mehr in der Schleife**, die das Modell taktet: Ein Fehlerbericht wird im Thread
-  gebaut und mit gzip-Stufe 6 gepackt (bisher 0,5 s Stillstand hier, Sekunden auf Home Assistant), der
-  Kalibrierstatus der Live-Ansicht im Thread gezählt (bisher 24 ms alle 30 s), die Zielkarte beim
-  Speichern im Thread komprimiert, `calibration.npz` unkomprimiert gespeichert (6 statt 1,5 MB für einen
-  Tag, 4 statt 80 ms). Ältere komprimierte Dateien werden weiter gelesen.
 
 ## 0.19.0
 
