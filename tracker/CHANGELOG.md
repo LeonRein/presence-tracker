@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.25.0
+
 - **Besetzt: Filter oder der LD2450 des Raums** (MODEL.md 6 „Belegt“, `roomseen.py`, `Tracker.occupancy`): Ein
   Raum ist auch besetzt, solange sein eigener LD2450 in den letzten 10 s ein gemessenes Ziel im Raum hatte
   (nicht gehalten, nicht hinter einer Wand, nicht am Sensor; nur der Sensor, der wie der Raum heißt). Live
