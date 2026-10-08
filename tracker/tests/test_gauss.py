@@ -20,7 +20,7 @@ def walker(v=(0.8, 0.0)) -> Gauss:
     cov = np.zeros((2, 2, 2, 2))
     cov[:, :, 0, 0] = 0.01
     cov[WALK, :, 1, 1] = 0.05
-    return Gauss(np.log([1e-300, 1.0]), mean, cov, sh.go_w.copy(), sh.kappa_w.copy())
+    return Gauss(np.log([1e-300, 1.0]), mean, cov, sh.go_w.copy(), sh.ka_w.copy())
 
 
 def test_a_walk_does_not_depend_on_how_time_is_cut():

@@ -142,6 +142,7 @@ class Tracker:
         self.now = start or 0.0
         self.start = start
         self.loglik = 0.0  # log evidence of everything seen so far
+        self.loglik_cut = 0.0  # ... the part of it that is mass of hypotheses dropped (_cut)
         self._ids = itertools.count(1)
         self._gids = itertools.count(1)
         self.ghost_map = None  # where each sensor starts ghost tracks (ghostmap.py)
@@ -1221,9 +1222,6 @@ class Tracker:
             listener("branch", (self.sensors[si], seg, z, refind, [(c.logw, k) for c, k in zip(children, cats)]))
         # the factor by which the map at z moved the odds of "ghost" (for what the map learns, _end)
         map_odds = _logsumexp(ghost_ms) - _logsumexp(ghost_ls) if not refind and ghost_ms else 0.0
-        top = max(c.logw for c in children)
-        self.hyps = [c for c in children if c.logw > top + math.log(m.hyp_floor)] if top > -math.inf else children
-        self._version += 1
         if refind:
             info["lost"] = None
             info["t"] = info["zt"] = info["gt"] = t
@@ -1232,10 +1230,24 @@ class Tracker:
             self.segs[seg] = {"si": si, "t": t, "zt": t, "var": var, "z": d.pos.copy(), "z0": d.pos.copy(), "born": t,
                               "lost": None, "map_odds": map_odds}
             self._live_by_sensor[si].append(seg)
-        self._merge()
-        self._prune()
+        self._take(children)
 
     # ------------------------------------------------------- bookkeeping
+
+    def _take(self, children: list):
+        """The children of a branch are the hypotheses: those alike merged first, then cut (MODEL.md
+        5.1, 5.6). The key of a hypothesis does not say which person a track went to, so the
+        alternatives "it is person u1's", "u2's", "a new person's" of one parent are one hypothesis
+        whose weight is their sum; cut one by one, many small ones were lost whose sum would have
+        stayed (until 0.21). The cut is decided on the merged weights before the mixtures are made:
+        what is dropped is never mixed."""
+        self.hyps = children
+        if self.m.hyp_merge_first:
+            self._cut(cap=True, merged=True)
+        else:  # (comparison) each child cut alone, before those alike are merged
+            self._cut(cap=False)
+        self._merge()
+        self._prune()
 
     @staticmethod
     def _mix_hidden(parts) -> Hidden:
@@ -1326,16 +1338,55 @@ class Tracker:
         return out
 
     def _prune(self):
-        """Keep the strongest hypotheses (Vo et al. 2017: cutting by weight minimizes the L1 error)."""
-        self._version += 1
-        self.hyps.sort(key=lambda h: -h.logw)
-        top = self.hyps[0].logw
-        if top == -math.inf:  # nothing explains the data (should not happen): keep them, see _normalize
-            self.hyps = self.hyps[:self.m.max_hyps]
-            return
-        self.hyps = [h for h in self.hyps[:self.m.max_hyps] if h.logw > top + math.log(self.m.hyp_floor)]
+        """Keep the strongest hypotheses (after merging those alike, _merge): see _cut."""
+        self._cut(cap=True)
 
-    def _normalize(self):
+    def _cut(self, cap: bool, merged: bool = False):
+        """Keep the strongest hypotheses until what is dropped weighs at most hyp_mass of the whole,
+        and (cap) at most max_hyps of them: cutting by weight minimizes the L1 error, which is then
+        at most twice the mass dropped (B_Vo2017 Abschn. II, III-A; MODEL.md 5.1). merged: weighed
+        as those alike will be after merging (_merge follows), each by the sum of its group. What is
+        dropped counts in the evidence (_normalize): the step's normalizer is the prior predictive
+        of the data, whatever the filter keeps of the posterior afterwards; loglik_cut says how much
+        of the evidence is mass the filter dropped."""
+        self._version += 1
+        m = self.m
+        if merged:
+            by = {}
+            for hy in self.hyps:
+                by.setdefault(hy.key(), []).append(hy)
+            groups = list(by.values())
+        else:
+            groups = [[hy] for hy in self.hyps]
+        glw = np.array([_logsumexp([h.logw for h in g]) for g in groups])
+        order = np.argsort(-glw, kind="stable")
+        if cap and not merged:
+            self.hyps = [groups[i][0] for i in order]
+        lw = glw[order]
+        total = _logsumexp(lw)
+        if total == -math.inf:  # nothing explains the data (should not happen): keep them, see _normalize
+            if cap:
+                keep = {id(h) for i in order[:m.max_hyps] for h in groups[i]}
+                self.hyps = [h for h in self.hyps if id(h) in keep]
+            return
+        w = np.exp(lw - total)
+        if m.hyp_cut == "mass":
+            # from the weakest up, as long as the dropped ones together stay within hyp_mass
+            n = len(w) - int(np.searchsorted(np.cumsum(w[::-1]), m.hyp_mass, side="right"))
+        else:  # (comparison, until 0.21) each below hyp_mass of the strongest
+            n = int(np.count_nonzero(lw > lw[0] + math.log(m.hyp_mass)))
+        n = max(n, 1)
+        if cap:
+            n = min(n, m.max_hyps)
+        if n == len(w):
+            return
+        keep = {id(h) for i in order[:n] for h in groups[i]}
+        self.hyps = [h for h in self.hyps if id(h) in keep]  # in their order (merging takes the first as base)
+        self._normalize(float(w[n:].sum()))
+
+    def _normalize(self, dropped: float = 0.0):
+        """The hypotheses' weights to sum 1; their sum (and the share dropped just before, _cut) is
+        this step's factor of the evidence (MODEL.md 7)."""
         total = _logsumexp([h.logw for h in self.hyps])
         if math.isnan(total) or total == math.inf:
             # a weight not finite: every weight and output after it would be NaN, and NaN shows as
@@ -1348,7 +1399,9 @@ class Tracker:
             return
         for h in self.hyps:
             h.logw -= total
-        self.loglik += total
+        cut = -math.log1p(-min(dropped, 1.0 - 1e-16)) if dropped > 0 else 0.0
+        self.loglik += total + cut
+        self.loglik_cut += cut
 
     def hyp_weights(self) -> np.ndarray:
         lw = np.array([h.logw for h in self.hyps])
@@ -1460,7 +1513,7 @@ class Tracker:
         s_still, s_walk = ld2410.expected(self.m, angle, slant, sight)
         # the standing component per level of its amplitude (4.3), then the walking one
         sh = self.shapes
-        aw = sh.amp_w if obj.amw is None else obj.amw
+        aw = obj.amw
         masses = [(1 - obj.a) * np.concatenate([w[STILL] * aw, [w[WALK]]])]
         S = [np.vstack([sh.amp[:, None] * s_still[STILL][None, :], s_walk[WALK][None, :]])]
         if obj.away is not None and obj.a > 0:
@@ -1656,11 +1709,12 @@ class Tracker:
         A = len(self.shapes.amp)
         d_away = tiles(obj.away, logf[A + 1:]) if obj.away is not None and obj.a > 0 and n else 0.0
         # the amplitude's levels: their probabilities, and the factor of the standing component
-        aw = self.shapes.amp_w if obj.amw is None else obj.amw
         top = float(logf[:A].max())
         f = np.exp(logf[:A] - top)
-        s = float(aw @ f)
-        obj.amw = aw * f / s if s > 0 else aw.copy()
+        ka = obj.ka * f[None, :]  # with the detectability (MODEL.md 4.3)
+        s = float(ka.sum())
+        if s > 0:
+            obj.ka = ka / s
         obj.reweigh(np.array([top + math.log(s) if s > 0 else -math.inf, logf[A]]), d_away)
 
     def _ld_runtime(self, s, rt, t, ld):

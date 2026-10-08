@@ -87,7 +87,7 @@ def main():
     samples = collections.defaultdict(list)  # report name -> [(t, {room: P(somebody)})]
     next_start = 0
     next_step = next_sample = 0.0
-    loglik = 0.0
+    loglik = cut = 0.0  # cut: the part of the evidence that is mass of dropped hypotheses (Tracker._cut)
     segments = []  # log evidence per run of the app
     t_cpu = time.process_time()
     t = starts[0] - starts[0] % 3600
@@ -110,6 +110,7 @@ def main():
                 people = None
                 if tracker is not None:
                     loglik += tracker.loglik
+                    cut += getattr(tracker, "loglik_cut", 0.0)
                     segments.append(tracker.loglik)
                     gm, ldb = tracker.ghost_map, getattr(tracker, "ld_background", None)
                     dm = getattr(tracker, "dest_map", None)
@@ -161,6 +162,7 @@ def main():
                                 + ("" if d["x"] is None else f" ({d['x']:.1f},{d['y']:.1f}){' unseen' if d['lost'] else ''}")
                                 for d in tracker.persons()), flush=True)
     loglik += tracker.loglik if tracker is not None else 0.0
+    cut += getattr(tracker, "loglik_cut", 0.0) if tracker is not None else 0.0
     segments.append(tracker.loglik if tracker is not None else 0.0)
 
     # per report and room: mean P(somebody there), share of the time the light would be wrong
@@ -212,8 +214,8 @@ def main():
     print("log evidence per run of the app: " + ", ".join(
         f"{time.strftime('%d. %H:%M', time.localtime(s))} {v:.1f}" for s, v in zip(starts, segments)))
     print(f"observed rooms: light wrongly on {wrong_on:.2f} of {n_off:.0f} empty room-windows, "
-          f"wrongly off {wrong_off:.2f} of {n_on:.0f} occupied ones; log evidence {loglik:.1f}; "
-          f"CPU {time.process_time() - t_cpu:.0f} s")
+          f"wrongly off {wrong_off:.2f} of {n_on:.0f} occupied ones; log evidence {loglik:.1f} "
+          f"(dropped hypotheses {cut:.1f}); CPU {time.process_time() - t_cpu:.0f} s")
 
 
 if __name__ == "__main__":

@@ -22,14 +22,17 @@ class Model:
     go_share, go_time = 0.58, 5.6
     stay_points = (86400, 5993, 416, 29, 2)  # s
     # 4.1 detectability of a still person in this stay (posture, place): kappa ~ Gamma(shape, shape),
-    # mean 1, in equally probable levels; drawn anew at each stop and now and then within a stay
-    # (Mahler, Vo & Vo 2011; Wilthil et al. 2019: detectability modes as a Markov chain)
+    # mean 1; drawn anew at each stop and now and then within a stay (Mahler, Vo & Vo 2011; Wilthil et
+    # al. 2019: detectability modes as a Markov chain). The filter carries its posterior, not its
+    # moments: a grid of cells evenly spaced in log kappa with the prior's mass in each, as for the
+    # LD2410C amplitude (MODEL.md 4.1). Not the quadrature: its lowest node (0.42) alone decided how
+    # long a still person could stay unseen (after 10 min 200 times too unlikely)
     kappa_shape = 1.0  # assumed until estimated over the evidence (MODEL.md 7)
-    kappa_levels = 3  # 5 levels explained the data no better (MODEL.md 4.1)
+    kappa_levels = 5  # within 25 % of the Gamma for any time unseen; 3 / 7: light the same (MODEL.md 10)
     kappa_switch = 1 / 600  # 1/s (assumed, as in the 0.7.0 draft)
-    # how the Gamma priors of kappa and of the LD2410C amplitude become levels: "bins" (equally
-    # probable, at their means) or "quadrature" (generalised Gauss-Laguerre, exact moments to 2k - 1)
-    gamma_levels = "quadrature"
+    # how the Gamma prior of kappa becomes levels: "grid" (gamma_log_grid); for comparison
+    # "quadrature" (generalised Gauss-Laguerre, until 0.21) or "bins" (equally probable, until 0.7)
+    gamma_levels = "grid"
     # 3.2 walking: a velocity-jump process (measured 6.10. on 8.7 h of LD2450 tracks, walks of >= 2 s)
     speed = 0.85  # m/s
     speed_spread = 0.36  # m/s: spread of the speed between walks (10-90 % 0.44-1.37 m/s)
@@ -119,7 +122,7 @@ class Model:
     ld_prior_time = 600.0  # s
     ld_forget = 6 * 3600.0  # s
     # the amplitude of a standing person with a track on the profile, per stay (Swerling III: slow, as
-    # kappa: new at each stop, now and then within a stay): Gamma(shape, shape), independent of kappa.
+    # kappa: new at each stop, now and then within a stay, together with kappa): Gamma(shape, shape).
     # Measured 6./7.10. within a sensor: shape 5-16 (MODEL.md 4.3). The filter carries its posterior,
     # not its moments: a grid of cells evenly spaced in log g with the prior's mass in each (a
     # point-mass filter over g, as the tiles are over the place), not the quadrature (3 nodes from
@@ -127,6 +130,12 @@ class Model:
     # with its level 0.3; 7.10. 22:12, Bad)
     ld_amp_shape = 6.0
     ld_amp_levels = 9
+    # kappa and the amplitude of one stay are not independent: a posture that reflects little is
+    # seen less by both sensors (Spearman 0.37 moving / 0.47 still between g and the LD2450's rate of
+    # finding a lost track again, within a sensor and 1 m, MODEL.md 4.3). Joined by a Gaussian copula
+    # with this correlation of the normal scores (2 sin(pi rho_S / 6) of the mean rho_S 0.42); 0:
+    # independent (until 0.21)
+    kappa_amp_corr = 0.44
     # 3.4/5.5 a known person without a track exists on with exp(-t / record_life), wherever they are
     # (existence as a Markov chain, Musicki & Evans 2005); measurements that support them lift it again.
     # The scale: a real sitter in view went at most 18.2 s without any supporting measurement
@@ -134,10 +143,14 @@ class Model:
     # r >= exp(-18.2 / 120) = 0.86 in their longest gap; 2 min is the shortest of 45 s, 2, 5, 10,
     # 30 min with no light wrongly on in the reports (MODEL.md 5.5). None: until evidence says otherwise
     record_life = 120.0
-    # 5 inference: hypotheses over the tracks' owners, cut by weight (Vo et al. 2017). The evidence
-    # is not converged in these two (MODEL.md 5.1): compare model variants at more than one setting
+    # 5 inference: hypotheses over the tracks' owners, those alike merged, then cut by weight: the
+    # weakest dropped as long as together they weigh at most hyp_mass, at most max_hyps kept (Vo et
+    # al. 2017: the L1 error is then at most 2 hyp_mass). The evidence is not converged in max_hyps
+    # (MODEL.md 5.1): compare model variants at more than one setting
     max_hyps = 12
-    hyp_floor = 1e-7  # hypotheses with less weight are dropped
+    hyp_mass = 1e-7
+    hyp_cut = "mass"  # (comparison: "relative", until 0.21 each hypothesis below hyp_mass of the strongest)
+    hyp_merge_first = True  # (comparison: False, until 0.21 the children of a branch cut before merging)
     # 6 "Ziel": the learned map of where walks go (destination.py) weighs, in each cell, against the
     # walkers' own motion ("wird betreten") as a Dirichlet prior with the weight of this many walks
     # (as the ghost map's prior weighs one ghost per cell, MODEL.md 4.2, 10): one walk can't make a
@@ -174,14 +187,48 @@ class Shapes:
         # getting up weighted by its mean duration
         w = self.go_w / self.go
         self.go_w_ongoing = w / w.sum()
-        levels = gamma_quadrature if m.gamma_levels == "quadrature" else gamma_levels
+        levels = {"grid": gamma_log_grid, "quadrature": gamma_quadrature, "bins": gamma_levels}[m.gamma_levels]
         self.kappa, self.kappa_w = levels(m.kappa_shape, m.kappa_levels)
-        # 4.3 the amplitude of a standing person on the LD2410C's profile, its own grid
+        # 4.3 the amplitude of a standing person on the LD2410C's profile, its own grid; (K, A) the
+        # joint prior of a stay's detectability and amplitude, and the amplitude's given the former
         self.amp, self.amp_w = gamma_log_grid(m.ld_amp_shape, m.ld_amp_levels)
+        corr = m.kappa_amp_corr if m.gamma_levels == "grid" else 0.0  # the copula needs cells, not nodes
+        self.ka_w = copula_cells(self.kappa_w, self.amp_w, corr)
+        self.amp_given_kappa = self.ka_w / self.ka_w.sum(axis=1, keepdims=True)
 
     def stay_prior(self, ongoing: bool = False) -> np.ndarray:
         """(L, K) prior of a stay's kind and detectability (independent a priori)."""
         return np.outer(self.go_w_ongoing if ongoing else self.go_w, self.kappa_w)
+
+
+def copula_cells(wa: np.ndarray, wb: np.ndarray, rho: float) -> np.ndarray:
+    """(len(wa), len(wb)) the probability of each pair of cells of two variables, each with these
+    masses in its cells (in order, the cells next to each other), joined by a Gaussian copula with
+    correlation rho of the normal scores (Nelsen 2006, An Introduction to Copulas): the bivariate
+    normal's mass on the rectangles between the cells' quantiles. Both marginals exact."""
+    if rho == 0:
+        return np.outer(wa, wb)
+    from statistics import NormalDist
+    nd = NormalDist()
+
+    def edges(w):
+        c = np.cumsum(w)[:-1] / w.sum()
+        return np.array([nd.inv_cdf(min(max(u, 1e-15), 1 - 1e-15)) for u in c])
+    za, zb = edges(wa), edges(wb)
+    x = np.linspace(-9.0, 9.0, 9001)
+    s = math.sqrt(1 - rho * rho)
+    erf = np.vectorize(math.erf)
+    cdf = np.vstack([np.zeros_like(x)] + [0.5 * (1 + erf((z - rho * x) / (s * math.sqrt(2)))) for z in zb]
+                    + [np.ones_like(x)])
+    dens = np.exp(-0.5 * x * x) / math.sqrt(2 * math.pi) * (x[1] - x[0])
+    per_x = np.diff(cdf, axis=0) * dens[None, :]  # (B, x): b's cell given x, times x's mass
+    cell = np.searchsorted(za, x)  # a's cell of each x
+    P = np.zeros((len(wa), len(wb)))
+    np.add.at(P, cell, per_x.T)
+    for _ in range(50):  # the grid's rounding: both marginals exact (iterative proportional fitting)
+        P *= (wa / P.sum(axis=1))[:, None]
+        P *= (wb / P.sum(axis=0))[None, :]
+    return P / P.sum()
 
 
 def gamma_quadrature(shape: float, k: int) -> tuple:

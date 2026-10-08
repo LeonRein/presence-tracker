@@ -63,28 +63,36 @@ def _log(w):
 
 
 class Gauss:
-    __slots__ = ("logw", "mean", "cov", "gow", "kw", "slots", "var", "phantom", "a", "away", "t", "amw")
+    __slots__ = ("logw", "mean", "cov", "gow", "ka", "slots", "var", "phantom", "a", "away", "t")
 
-    def __init__(self, logw, mean, cov, gow, kw, slots=None, var=None, phantom=False, a=0.0, away=None, t=None, amw=None):
+    def __init__(self, logw, mean, cov, gow, ka, slots=None, var=None, phantom=False, a=0.0, away=None, t=None):
         self.logw = np.asarray(logw, dtype=float)  # (2,) log weights of [STILL, WALK], normalized
         self.mean = mean  # (2 modes, 2 axes, d)
         self.cov = cov  # (2 modes, 2 axes, d, d)
         self.gow = gow  # (L,) probability of each kind of stay (for the standing component)
-        self.kw = kw  # (K,) probability of each level of detectability (for the standing component)
+        # (K, A) probability of each level of detectability and of the LD2410C amplitude together (for
+        # the standing component, MODEL.md 4.1, 4.3; filtermodel.Shapes.ka_w)
+        self.ka = ka
         self.slots = dict(slots or {})  # track -> index of its c (o follows)
         self.var = dict(var or {})  # track -> variance of its offset per axis
         self.phantom = phantom  # the source of a ghost track, not a person
         self.a = a  # weight of the part gone through a door
         self.away = away  # ... its density (hidden.Hidden), or None
         self.t = t  # the time it was moved to (None: made at the tracker's last move of everybody)
-        # (A,) probability of each level of the LD2410C amplitude (for the standing component, MODEL.md
-        # 4.3), independent of kappa; None: its prior
-        self.amw = amw
 
     def copy(self) -> "Gauss":
-        return Gauss(self.logw.copy(), self.mean.copy(), self.cov.copy(), self.gow.copy(), self.kw.copy(), self.slots,
-                     self.var, self.phantom, self.a, self.away.copy() if self.away is not None else None, self.t,
-                     None if self.amw is None else self.amw.copy())
+        return Gauss(self.logw.copy(), self.mean.copy(), self.cov.copy(), self.gow.copy(), self.ka.copy(), self.slots,
+                     self.var, self.phantom, self.a, self.away.copy() if self.away is not None else None, self.t)
+
+    @property
+    def kw(self) -> np.ndarray:
+        """(K,) probability of each level of detectability."""
+        return self.ka.sum(axis=1)
+
+    @property
+    def amw(self) -> np.ndarray:
+        """(A,) probability of each level of the LD2410C amplitude."""
+        return self.ka.sum(axis=0)
 
     @property
     def segs(self) -> set:
@@ -209,12 +217,10 @@ class Gauss:
             fresh = shapes.go_w
             kept = stayed / p_stay if p_stay > 0 else fresh
             self.gow = (w_ss * kept + w_ws * fresh) / tot_s
+            # (with the LD2410C amplitude, drawn together, 4.3)
             q = -math.expm1(-m.kappa_switch * dt)
-            kw = (1 - q) * self.kw + q * shapes.kappa_w
-            self.kw = (w_ss * kw + w_ws * shapes.kappa_w) / tot_s
-            if self.amw is not None:  # the LD2410C amplitude likewise (4.3)
-                amw = (1 - q) * self.amw + q * shapes.amp_w
-                self.amw = (w_ss * amw + w_ws * shapes.amp_w) / tot_s
+            ka = (1 - q) * self.ka + q * shapes.ka_w
+            self.ka = (w_ss * ka + w_ws * shapes.ka_w) / tot_s
         self.logw = _log(np.array([tot_s, tot_w]))
         top = self.logw.max()
         self.logw -= top + math.log(float(np.exp(self.logw - top).sum()))
@@ -286,9 +292,10 @@ class Gauss:
         """A likelihood that depends on the standing component's detectability, f_still (K,) per
         level (and f_walk for the walking one): updates the levels' probabilities and returns the
         log factor per component (for reweigh / update)."""
-        s = float(self.kw @ f_still)
+        ka = self.ka * np.asarray(f_still)[:, None]
+        s = float(ka.sum())
         if s > 0:
-            self.kw = self.kw * f_still / s
+            self.ka = ka / s
         return np.array([math.log(s) if s > 0 else -math.inf, math.log(f_walk) if f_walk > 0 else -math.inf])
 
     def add_track(self, seg, var: float, const_share: float):
@@ -343,9 +350,9 @@ class Gauss:
         if list(g.slots) == list(segs):
             return g
         order = [X, V] + [i for s in segs for i in (g.slots[s], g.slots[s] + 1)]
-        return Gauss(g.logw.copy(), g.mean[:, :, order], g.cov[:, :, order][:, :, :, order], g.gow.copy(), g.kw.copy(),
+        return Gauss(g.logw.copy(), g.mean[:, :, order], g.cov[:, :, order][:, :, :, order], g.gow.copy(), g.ka.copy(),
                      {s: 2 + 2 * j for j, s in enumerate(segs)}, {s: g.var[s] for s in segs}, g.phantom, g.a,
-                     g.away, g.t, None if g.amw is None else g.amw.copy())
+                     g.away, g.t)
 
     @staticmethod
     def mixture(parts) -> "Gauss":
@@ -367,17 +374,12 @@ class Gauss:
         g0 = parts[0][1]
         if ws.sum() > 0:
             gow = sum(wi * g.gow for wi, (_, g) in zip(ws, parts)) / ws.sum()
-            kw = sum(wi * g.kw for wi, (_, g) in zip(ws, parts)) / ws.sum()
+            ka = sum(wi * g.ka for wi, (_, g) in zip(ws, parts)) / ws.sum()
         else:
-            gow, kw = g0.gow.copy(), g0.kw.copy()
-        amw = None
-        if any(g.amw is not None for _, g in parts):
-            n = next(len(g.amw) for _, g in parts if g.amw is not None)
-            each = [np.full(n, 1.0 / n) if g.amw is None else g.amw for _, g in parts]
-            amw = sum(wi * x for wi, x in zip(ws, each)) / ws.sum() if ws.sum() > 0 else each[0].copy()
+            gow, ka = g0.gow.copy(), g0.ka.copy()
         tot = np.array([comps[0][0], comps[1][0]])
         return Gauss(_log(tot / tot.sum()) if tot.sum() > 0 else np.log([0.5, 0.5]), np.stack([comps[0][1], comps[1][1]]),
-                     np.stack([comps[0][2], comps[1][2]]), gow, kw, g0.slots, g0.var, g0.phantom, a, away, g0.t, amw)
+                     np.stack([comps[0][2], comps[1][2]]), gow, ka, g0.slots, g0.var, g0.phantom, a, away, g0.t)
 
     # ------------------------------------------------------------ making one
 
@@ -404,7 +406,7 @@ class Gauss:
         return mean, cov
 
     @classmethod
-    def _make(cls, seg, var, w, mx, Px, mv, Pv, gow, kw, z, const_share, white, phantom=False) -> "Gauss":
+    def _make(cls, seg, var, w, mx, Px, mv, Pv, gow, ka, z, const_share, white, phantom=False) -> "Gauss":
         """Both components from the position's posterior per mode (mx, Px: (2 modes, 2 axes)) and
         the walkers' velocity (mv, Pv: (2 axes)), with the new track seg measured at z."""
         mean = np.zeros((2, 2, 4))
@@ -417,7 +419,7 @@ class Gauss:
                 cov[k, a][np.ix_(idx, idx)] = co[a]
         mean[WALK, :, V] = mv
         cov[WALK, :, V, V] = Pv
-        return cls(_log(np.asarray(w, dtype=float) / np.sum(w)), mean, cov, gow, kw, {seg: 2}, {seg: var}, phantom)
+        return cls(_log(np.asarray(w, dtype=float) / np.sum(w)), mean, cov, gow, ka, {seg: 2}, {seg: var}, phantom)
 
     @classmethod
     def source(cls, seg, z, var, m, shapes) -> "Gauss":
@@ -427,7 +429,7 @@ class Gauss:
         Px = np.full((2, 2), s2)
         mx = np.repeat(np.asarray(z, dtype=float)[None, :], 2, axis=0)
         g = cls._make(seg, var, [0.5, 0.5], mx, Px, np.zeros(2), np.full(2, 0.5 * (m.speed ** 2 + m.speed_spread ** 2)),
-                      shapes.go_w_ongoing.copy(), shapes.kappa_w.copy(), z, m.const_share, m.white, phantom=True)
+                      shapes.go_w_ongoing.copy(), shapes.ka_w.copy(), z, m.const_share, m.white, phantom=True)
         # with an even prior x carries all of z's uncertainty: Var x = vc + vo + w^2, Cov(x, c) = -vc
         vc, vo = var * m.const_share, var * (1 - m.const_share)
         for k in (STILL, WALK):
@@ -478,9 +480,11 @@ class Gauss:
         gow = gow / gow.sum() if gow.sum() > 0 else sh.go_w_ongoing.copy()
         kw = qs.sum(axis=(0, 2))
         kw = kw / kw.sum() if kw.sum() > 0 else sh.kappa_w.copy()
+        # the tiles carry no amplitude (4.3): its prior given the detectability
+        ka = kw[:, None] * sh.amp_given_kappa
         # times the probability that the person exists (a known person without a track is a
         # Bernoulli, hidden.py; the track says they do)
-        return cls._make(seg, var, w, mx, Px, mv, Pv, gow, kw, z, m.const_share, m.white), math.log(mass) + math.log(hidden.r)
+        return cls._make(seg, var, w, mx, Px, mv, Pv, gow, ka, z, m.const_share, m.white), math.log(mass) + math.log(hidden.r)
 
     def to_tiles(self, tiles):
         """The density of this person over the tiles (MODEL.md 5.4), when their last track ends:
