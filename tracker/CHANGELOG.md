@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.24.0
+
 - **Schalter „Lernen pausieren“** (`switch.presence_lernen_pausieren`, MODEL.md 10 „Hintergrundaktivität“):
   Solange er an ist, lernt die App nichts – Geisterkarte, Hintergrund und Echorate der LD2410C, Zielkarte,
   Kalibrierdaten –, das Verfolgen und die Lichter laufen wie immer. Für den Saugroboter, Besuch, eine
