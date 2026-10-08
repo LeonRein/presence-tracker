@@ -10,14 +10,17 @@ usage: python tools/report_eval.py --config FILE --truth FILE [--recordings DIR]
                                    [--config-at "YYYY-mm-dd HH:MM:SS=FILE"]...
 
 --downtime: the app did not run for this long before each start (the recorder did: those frames are
-skipped). --forget: every start with nothing known about the people (as before people.json).
+skipped). --forget: every start with nothing known about the people (as before people.json); the truth
+file's "fresh_starts" (optional): the starts at which the app knew nothing about them (its log: "people.json
+unreadable or made for another floor plan").
 --config-at: from then on the app ran with this configuration, taken over as the app does
 (Tracker.reconfigure: only sensors recalibrated, the people stay; else the model starts over).
 
 The truth file (private: it describes who was where) holds the app's starts and per report a window
 (from the event to the report) and counts per room or region without a sensor, only where the
 report says so; a window with "walks": S (e.g. a night, everybody in bed) excuses the moments in which an
-LD2450 measured somebody in that room in the last S seconds (somebody walking through). Printed per report and room: the means of P(somebody there) and of P(the reported
+LD2450 measured somebody in that room in the last S seconds (somebody walking through); a window with
+"score": false is kept as a record but never scored and does not lengthen the replay. Printed per report and room: the means of P(somebody there) and of P(the reported
 number of people) over the window, and the
 share of the window in which the light would be wrong (on without anybody, off with somebody; the
 threshold of MODEL.md 6). --patch: a Python file run before the replay that changes the model (for
@@ -71,8 +74,11 @@ def main():
     def config_of(t):
         return [c for tc, c in configs if tc <= t][-1]
     truth = json.load(open(a.truth))
-    reports = [r for r in truth["reports"] if not a.only or a.only in r["name"]]
+    # "score": false - kept as a record, never scored (e.g. the vacuum robot taken for a person, which
+    # does not count: MODEL.md 1.1)
+    reports = [r for r in truth["reports"] if r.get("score", True) and (not a.only or a.only in r["name"])]
     starts = sorted(parse_time(s) for s in truth["app_starts"])
+    fresh = {parse_time(s) for s in truth.get("fresh_starts", [])}
     end = max(parse_time(r["to"]) for r in reports)
     windows = [(parse_time(r["from"]), parse_time(r["to"]), r) for r in reports]
     c = config.params.light_cost / (config.params.light_cost + 1.0)
@@ -114,7 +120,7 @@ def main():
                     segments.append(tracker.loglik)
                     gm, ldb = tracker.ghost_map, getattr(tracker, "ld_background", None)
                     dm = getattr(tracker, "dest_map", None)
-                    people = None if a.forget else json.loads(json.dumps(tracker.people_state()))
+                    people = None if a.forget or starts[next_start] in fresh else json.loads(json.dumps(tracker.people_state()))
                 tracker = Tracker(config_of(m["t"]))
                 if gm is not None:
                     tracker.use_ghost_map(gm)
