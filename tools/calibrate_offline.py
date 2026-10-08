@@ -4,7 +4,7 @@ hardly overlap with another.
 usage: python tools/calibrate_offline.py --config FILE [--recordings DIR] [--from T] [--to T]
                                          [--fit ID,...] [--positions ID,...] [--no-pairs] [--no-plan]
                                          [--bootstrap N] [--profile ID] [--mirrors] [--cache FILE]
-                                         [--out FILE]
+                                         [--out FILE] [--pauses FILE]
 
 The model is the app's (tracker/presence_tracker/calibration.py: pairs, handovers, floor plan,
 scale prior; MODEL.md 10): the recorded frames go through the same code as in the app's
@@ -18,6 +18,9 @@ sensor hangs on a wall (check that the result does).
 --mirrors: each sensor also fitted with its x axis mirrored (coarse search over the heading); the
 log posterior of both, also divided by the variance inflation of the robust covariance.
 --profile ID: that sensor's scale held at values from 0.7 to 1.3, the rest refitted.
+--pauses: intervals in which learning was paused (private, tools/vacuum_history.py: the vacuum robot);
+the switch "Lernen pausieren" recorded in the recordings counts too. No measurements are kept there, as
+in the app (MODEL.md 10, "Hintergrundaktivität").
 --out: a copy of the config with the fitted values (a private file; never the live config).
 """
 
@@ -41,11 +44,16 @@ def parse_time(s: str) -> float:
     return time.mktime(time.strptime(s, "%Y-%m-%d %H:%M:%S"))
 
 
-def load(config, recordings: str, t0: float, t1: float) -> dict:
+def load(config, recordings: str, t0: float, t1: float, pauses=None) -> dict:
     """The measurement rows of the app's calibration session (calibration.track_frame) per sensor
-    from the recordings between t0 and t1."""
+    from the recordings between t0 and t1, none while learning was paused (pauses, and the switch in
+    the recordings)."""
     from presence_tracker.calibration import track_frame
     from presence_tracker.frames import SensorClock
+    from presence_tracker.pause import Pauses, follow
+
+    pauses = pauses if pauses is not None else Pauses()
+    skip = set()
 
     ids = itertools.count()
     tracks, clocks = {}, collections.defaultdict(SensorClock)
@@ -58,13 +66,14 @@ def load(config, recordings: str, t0: float, t1: float) -> dict:
             continue
         for line in open(path):
             m = json.loads(line)
-            if not m["topic"].endswith("/frame") or not t0 <= m["t"] <= t1:
+            if follow(pauses, m) or not m["topic"].endswith("/frame") or not t0 <= m["t"] <= t1:
                 continue
             sid = m["topic"].split("/")[1]
             if sid not in config.sensor_by_id:
                 continue
             p = m["payload"]
-            track_frame(tracks, ids, rows, sid, clocks[sid](m["t"], p.get("uptime_ms")), p)
+            tt = clocks[sid](m["t"], p.get("uptime_ms"))
+            track_frame(tracks, ids, rows, sid, tt, p, pauses.paused(tt), skip)
     return {sid: np.array(r, float).reshape(-1, 6) for sid, r in rows.items()}
 
 
@@ -88,10 +97,12 @@ def main():
     ap.add_argument("--mirrors", action="store_true")
     ap.add_argument("--cache", help="npz file for the extracted measurements")
     ap.add_argument("--out")
+    ap.add_argument("--pauses", help="intervals in which learning was paused (tools/vacuum_history.py)")
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(a.tracker))
     from presence_tracker import calibration as cal
     from presence_tracker.model import Config
+    from presence_tracker import pause
 
     config = Config.from_dict(json.load(open(a.config)))
     placed = [s.id for s in config.sensors if s.placed and s.enabled]
@@ -104,7 +115,7 @@ def main():
     if a.cache and os.path.exists(a.cache):
         data = dict(np.load(a.cache))
     else:
-        data = load(config, a.recordings, t0, t1)
+        data = load(config, a.recordings, t0, t1, pause.load(a.pauses))
         if a.cache:
             np.savez(a.cache, **data)
     data = {sid: d[(d[:, cal.T] >= t0) & (d[:, cal.T] <= t1)] for sid, d in data.items() if sid in placed}

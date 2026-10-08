@@ -7,7 +7,7 @@ says.
 
 usage: python tools/report_eval.py --config FILE --truth FILE [--recordings DIR] [--patch FILE.py]...
                                    [--only NAME] [--every S] [--trace] [--downtime S] [--forget]
-                                   [--config-at "YYYY-mm-dd HH:MM:SS=FILE"]...
+                                   [--config-at "YYYY-mm-dd HH:MM:SS=FILE"]... [--pauses FILE] [--no-pauses]
 
 --downtime: the app did not run for this long before each start (the recorder did: those frames are
 skipped). --forget: every start with nothing known about the people (as before people.json); the truth
@@ -23,7 +23,11 @@ LD2450 measured somebody in that room in the last S seconds (somebody walking th
 "score": false is kept as a record but never scored and does not lengthen the replay. Printed per report and room: the means of P(somebody there) and of P(the reported
 number of people) over the window, and the
 share of the window in which the light would be wrong (on without anybody, off with somebody; the
-threshold of MODEL.md 6). --patch: a Python file run before the replay that changes the model (for
+threshold of MODEL.md 6).
+Lernen pausieren (MODEL.md 10, "Hintergrundaktivität"): learning pauses where the app's switch was on in the
+recordings (tools/record.py records it) and in the intervals of --pauses (private, e.g. the vacuum robot's
+history before the switch existed: tools/vacuum_history.py); a window that reaches into a pause is not
+scored. --no-pauses: neither (for comparing). --patch: a Python file run before the replay that changes the model (for
 comparing variants: it may change presence_tracker's classes in place).
 """
 
@@ -54,6 +58,8 @@ def main():
     ap.add_argument("--downtime", type=float, default=0.0)
     ap.add_argument("--forget", action="store_true")
     ap.add_argument("--config-at", action="append", default=[], help='"YYYY-mm-dd HH:MM:SS=FILE": from then on')
+    ap.add_argument("--pauses", help="intervals in which learning was paused (tools/vacuum_history.py)")
+    ap.add_argument("--no-pauses", action="store_true", help="learn everywhere, score every window")
     ap.add_argument("--trace", action="store_true", help="print the rooms' P(somebody there) and the people of the "
                                                         "most probable hypothesis in the windows")
     a = ap.parse_args()
@@ -63,8 +69,10 @@ def main():
     from presence_tracker.filter import Tracker
     from presence_tracker.frames import SensorClock
     from presence_tracker.model import Config
+    from presence_tracker import pause
 
     config = Config.from_dict(json.load(open(a.config)))
+    pauses = pause.load(None if a.no_pauses else a.pauses)
     configs = [(-float("inf"), config)]
     for item in a.config_at:
         when, path = item.split("=", 1)
@@ -104,6 +112,8 @@ def main():
             continue
         for line in open(path):
             m = json.loads(line)
+            if not a.no_pauses and pause.follow(pauses, m):  # Lernen pausieren, as the app followed it
+                continue
             if not m["topic"].endswith("/frame") or m["t"] < starts[0]:
                 continue
             if m["t"] > end:
@@ -122,6 +132,7 @@ def main():
                     dm = getattr(tracker, "dest_map", None)
                     people = None if a.forget or starts[next_start] in fresh else json.loads(json.dumps(tracker.people_state()))
                 tracker = Tracker(config_of(m["t"]))
+                tracker.pauses = pauses
                 if gm is not None:
                     tracker.use_ghost_map(gm)
                 if ldb is not None:
@@ -173,9 +184,12 @@ def main():
 
     # per report and room: mean P(somebody there), share of the time the light would be wrong
     wrong_on = wrong_off = n_on = n_off = 0.0
-    for _, _, r in windows:
+    for t0, t1, r in windows:
         ss = samples.get(r["name"], [])
         print(f"{r['name']}: {r['text'][:110]}")
+        if pauses.paused(t0, t1):
+            print("   Lernen pausiert (Hintergrundaktivität): nicht bewertet")
+            continue
         if not ss:
             print("   no data")
             continue

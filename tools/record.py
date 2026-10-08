@@ -23,10 +23,13 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("out_dir", type=pathlib.Path)
-    parser.add_argument("--topic", default="presence/#")
+    # the sensors' frames, and the app's switch "Lernen pausieren" (command and state, retained: also its
+    # state when the recording starts), so the replays pause learning where the app did
+    parser.add_argument("--topic", action="append", help="default: presence/# and presence-tracker/learning_pause/#")
     parser.add_argument("--secrets", type=pathlib.Path, default=ROOT / "esphome" / "secrets.yaml")
     parser.add_argument("--broker", help="overrides mqtt_broker from the secrets")
     args = parser.parse_args()
+    args.topic = args.topic or ["presence/#", "presence-tracker/learning_pause/#"]
 
     secrets = yaml.safe_load(args.secrets.read_text())
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -49,7 +52,7 @@ def main():
         if reason_code.is_failure:
             client.disconnect()
             sys.exit(f"broker refused the connection: {reason_code}")
-        client.subscribe(args.topic)
+        client.subscribe([(topic, 0) for topic in args.topic])
 
     def on_message(client, userdata, msg):
         t = time.time()

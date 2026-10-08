@@ -155,6 +155,7 @@ function updateStatus() {
   document.getElementById('status').innerHTML = `
     <span><span class="dot ${online === sensors.length && online ? 'ok' : 'bad'}"></span>${online}/${sensors.length} Sensoren</span>
     <span title="in den Räumen mit Sensor">${total ? total.count : 0} ${total?.count === 1 ? 'Person' : 'Personen'}</span>
+    ${live.learning_paused?.on ? `<span class="st-paused" title="Schalter &quot;Lernen pausieren&quot; ist an${live.learning_paused.since ? ` (seit ${new Date(live.learning_paused.since * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })})` : ''}: Hintergrundaktivität (Saugroboter, Besuch …). Geistkarte, LD2410C-Hintergrund, Zielkarte und Kalibrierdaten lernen nichts, das Tracking läuft weiter.">Lernen pausiert</span>` : ''}
     ${state.replay ? '<span class="st-extra">Wiedergabe</span>' : ''}
     <span class="st-extra" title="Rechenzeit des Modells auf dem Server, in % eines Prozessorkerns (über 100 %: mehr als ein Kern)">Modell ${Number.isFinite(cpu) ? fmt(cpu, 1) : '–'}\u00a0% CPU</span>`;
 }

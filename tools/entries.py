@@ -33,9 +33,13 @@ usage: python tools/entries.py --from "2026-10-06 18:00:00" --to "2026-10-07 20:
            --config FILE [--config-at "YYYY-mm-dd HH:MM:SS=FILE"]... [--start "YYYY-mm-dd HH:MM:SS"]...
            [--truth-config FILE] [--log OUT.npz] [--from-log IN.npz] [--learned FILE] [--no-learning]
            [--prior WALKS] [--threshold C] [--room-threshold ROOM=C]... [--hourly]
-           [--score-from "YYYY-mm-dd HH:MM:SS"] [--score-to "..."]
+           [--score-from "YYYY-mm-dd HH:MM:SS"] [--score-to "..."] [--pauses FILE] [--no-pauses]
 Entries into a room before it had a sensor (only inferred from a track ending at its door) are not
 scored; their number is printed.
+Lernen pausieren (MODEL.md 10, "Hintergrundaktivität"): nothing is learned where the app's switch was on in
+the recordings (tools/record.py records it) or in the intervals of --pauses (private, e.g. the vacuum robot's
+history before the switch: tools/vacuum_history.py), and nothing is scored there (entries, false ons,
+calibration). --no-pauses: neither, for comparing.
 --from-log scores a replay logged before (--log) again, e.g. with another --prior or thresholds: the
 decision of "Ziel" is recomputed from what was logged (p_enter, the map's probability and its walks).
 """
@@ -66,8 +70,10 @@ def hhmm(t: float) -> str:
     return time.strftime("%d. %H:%M", time.localtime(t))
 
 
-def frames(recordings: str, t0: float, t1: float):
-    """(t, sensor id, payload) of the frames in [t0, t1]."""
+def frames(recordings: str, t0: float, t1: float, pauses=None):
+    """(t, sensor id, payload) of the frames in [t0, t1]; pauses (pause.Pauses): follows the switch
+    "Lernen pausieren" in the recordings."""
+    from presence_tracker.pause import follow
     h = t0 - t0 % 3600
     while h <= t1:
         path = os.path.join(recordings, time.strftime("%Y%m%d-%H", time.localtime(h)) + ".jsonl")
@@ -78,6 +84,8 @@ def frames(recordings: str, t0: float, t1: float):
             try:
                 m = json.loads(line)
             except ValueError:
+                continue
+            if pauses is not None and follow(pauses, m):
                 continue
             if not m["topic"].endswith("/frame") or m["t"] < t0:
                 continue
@@ -278,9 +286,11 @@ def crossings(plan, rows, sensors):
 
 def replay(a, configs, starts, rooms):
     """Step the tracker through the recordings like the app; per step per room: P(occupied), its
-    threshold decision, p_enter, approaching, and "Ziel" with its parts."""
+    threshold decision, p_enter, approaching, and "Ziel" with its parts; and the pauses of learning."""
+    from presence_tracker import pause
     from presence_tracker.filter import Tracker
     from presence_tracker.frames import SensorClock
+    pauses = pause.load(None if a.no_pauses else a.pauses)
     t0, t1 = parse_time(a.__dict__["from"]), parse_time(a.to)
     R = len(rooms)
     cols = ("p", "occ", "pe", "app", "pt", "tgt", "qmap", "walks", "lam")
@@ -293,7 +303,7 @@ def replay(a, configs, starts, rooms):
     cfg_of = lambda t: [c for tc, c in configs if tc <= t][-1]
     walks0, cpu_targets = 0.0, 0.0
     t_cpu = time.process_time()
-    for t_rec, sid, payload in frames(a.recordings, t0, t1):
+    for t_rec, sid, payload in frames(a.recordings, t0, t1, None if a.no_pauses else pauses):
         if tracker is None or t_rec >= starts[nxt_start]:
             if tracker is not None:
                 learned = (tracker.ghost_map, tracker.ld_background, tracker.dest_map)
@@ -309,6 +319,7 @@ def replay(a, configs, starts, rooms):
             if people is not None:
                 tracker.restore_people(people)
             tracker.learn_dest = not a.no_learning
+            tracker.pauses = pauses
             clocks.clear()
             print(f"{hhmm(t_rec)} start, destination map {tracker.dest_map.walks:.0f} walks", flush=True)
         cfg = cfg_of(t_rec)
@@ -350,6 +361,7 @@ def replay(a, configs, starts, rooms):
                               tracker.m.dest_prior_walks])
     out["thresholds"] = np.array([tracker.threshold(z) for z in rooms])
     out["map_walks"] = np.array([tracker.dest_map.walks])
+    out["pauses"] = np.array([[s, np.inf if e is None else e] for s, e in pauses.between(-math.inf)], dtype=float).reshape(-1, 2)
     if a.save_learned:
         json.dump(tracker.learned(), open(a.save_learned, "w"))
     print(f"replayed, CPU {time.process_time() - t_cpu:.0f} s", flush=True)
@@ -395,6 +407,8 @@ def score(log, cross, rows, plan, signals, starts, warmup, lead_time, window=Non
         valid &= ~((t >= s) & (t < s + warmup))
     if window is not None:  # only this period is scored
         valid &= (t >= window[0]) & (t < window[1])
+    for s, e in log.get("pauses", np.zeros((0, 2))):  # learning paused (background activity): not scored
+        valid &= ~((t >= s) & (t < e))
     gap = np.diff(t, prepend=t[0])
     hours = float(np.sum(gap[(gap <= 5) & valid])) / 3600
     base = {z: np.nan_to_num(log["occ"][:, j]) > 0.5 for j, z in enumerate(rooms)}
@@ -592,6 +606,8 @@ def main():
     ap.add_argument("--prior", type=float, help="the map's prior weight in walks (recomputes Ziel)")
     ap.add_argument("--threshold", type=float, help="the threshold of Ziel in all rooms (recomputes Ziel)")
     ap.add_argument("--room-threshold", action="append", default=[], help="ROOM=C (recomputes Ziel)")
+    ap.add_argument("--pauses", help="intervals in which learning was paused (tools/vacuum_history.py)")
+    ap.add_argument("--no-pauses", action="store_true", help="learn everywhere, score everywhere")
     ap.add_argument("--warmup", type=float, default=60.0, help="s after each start not scored")
     ap.add_argument("--hourly", action="store_true", help="the learning curve per hour")
     ap.add_argument("--score-from", help="score only from this time on (YYYY-mm-dd HH:MM:SS); the replay is the same")
@@ -619,6 +635,14 @@ def main():
     print(f"{len(cross)} door crossings, " + ", ".join(f"{k} {v}" for k, v in collections.Counter(c["how"] for c in cross).items()))
     if a.from_log:
         log = dict(np.load(a.from_log))
+        if a.no_pauses:
+            log.pop("pauses", None)
+        elif a.pauses:  # a log of before, or more pauses
+            from presence_tracker import pause
+            ps = pause.load(a.pauses)
+            for s0, e0 in log.get("pauses", np.zeros((0, 2))):
+                ps.add(float(s0), None if np.isinf(e0) else float(e0))
+            log["pauses"] = np.array([[s0, np.inf if e0 is None else e0] for s0, e0 in ps.between(-math.inf)], dtype=float).reshape(-1, 2)
     else:
         rooms = [z.id for z in truth_cfg.zones_of("room") if not z.entry]
         log = replay(a, configs, starts, rooms)

@@ -1,5 +1,6 @@
 """Home Assistant entities via MQTT discovery: one device, four entities per room/area zone of the home
-and a fifth ("Ziel") per room (not for an entry room: the stairwell is outside, MODEL.md 6)."""
+and a fifth ("Ziel") per room (not for an entry room: the stairwell is outside, MODEL.md 6), and the
+switch "Lernen pausieren" (pause.py)."""
 
 import json
 import re
@@ -47,6 +48,17 @@ def _entities(zone_id: str, name: str, room: bool = False) -> list:
 
 
 DISCOVERY = "homeassistant/+/presence_tracker/+/config"  # every discovery config of this device
+# "Lernen pausieren" (pause.py): a switch for Node-RED, while background activity is expected (the vacuum
+# robot, visitors, a cleaning person, a party). Home Assistant publishes its commands retained (the app gets
+# the last one at every connect, also one sent while it was down); the app publishes its state retained.
+PAUSE_COMMAND = f"{PREFIX}/learning_pause/set"
+PAUSE_STATE = f"{PREFIX}/learning_pause/state"
+PAUSE_SWITCH = ("switch", "lernen_pausieren", {
+    "name": "Lernen pausieren", "icon": "mdi:school-outline", "entity_category": "config",
+    "command_topic": PAUSE_COMMAND, "state_topic": PAUSE_STATE, "payload_on": "ON", "payload_off": "OFF",
+    # no availability topic: switchable also while the app is down (Home Assistant drops a command to an
+    # unavailable entity); the app takes the retained command when it connects
+    "retain": True, "device": DEVICE})
 # Each change of an entity's state or attributes is a row in Home Assistant's recorder. The states go
 # out whenever they change; the attributes of each entity (a group of the payload) are held
 # (Discovery.steady): new with every flip of the entity's state, else only when one moved by more than
@@ -143,6 +155,10 @@ class Discovery:
                 cfg = {**cfg, "unique_id": uid,
                        "default_entity_id": f"{component}.presence_{slug(name)}_{suffix}"}
                 wanted[f"homeassistant/{component}/presence_tracker/{uid}/config"] = json.dumps(cfg)
+        component, suffix, cfg = PAUSE_SWITCH
+        uid = f"presence_tracker_{suffix}"
+        cfg = {**cfg, "unique_id": uid, "default_entity_id": f"{component}.presence_{suffix}"}
+        wanted[f"homeassistant/{component}/presence_tracker/{uid}/config"] = json.dumps(cfg)
         self.wanted = wanted
         for topic in set(self.published) - set(wanted):
             await self.publish(topic, "", True)

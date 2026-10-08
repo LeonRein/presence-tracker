@@ -1,14 +1,15 @@
 """Learn where each sensor starts ghost tracks (MODEL.md 4.2) from recordings without truth.
 
 usage: python tools/ghostmap.py --config FILE --window FROM TO [--window ...] --out FILE
-                                [--iterations N] [--jobs N] [--recordings DIR]
+                                [--iterations N] [--jobs N] [--recordings DIR] [--pauses FILE]
 
 EM (Kantas et al. 2015, sec. 5): run the filter with the current map over the windows; every track
 that ends counts at its first position with the filter's probability that it was a ghost (without
 what the map itself said there, MODEL.md 4.2); the time
 each sensor watched is the exposure (Luber 2014, ch. 6: a Poisson process per cell with a Gamma
 prior). The next map is these counts; repeat. The windows are cut into pieces of an hour, run in
-parallel, each from "nothing known"; the first WARMUP s of a piece are not counted.
+parallel, each from "nothing known"; the first WARMUP s of a piece are not counted, nor anything while
+learning was paused (the switch "Lernen pausieren" in the recordings, the intervals of --pauses: MODEL.md 10).
 """
 
 import argparse
@@ -43,15 +44,17 @@ def pieces(windows):
 
 
 def run(args):
-    recordings, config_path, gm_dict, piece = args
+    recordings, config_path, gm_dict, piece, pauses_path = args
     sys.path.insert(0, os.path.abspath(TRACKER))
     from presence_tracker.filter import Tracker
     from presence_tracker.frames import SensorClock
     from presence_tracker.ghostmap import GhostMap, pose_of
     from presence_tracker.model import Config
+    from presence_tracker import pause
 
     config = Config.from_dict(json.load(open(config_path)))
     tr = Tracker(config)
+    tr.pauses = pause.load(pauses_path)  # the filter tells its listeners nothing learnable while paused
     tr.use_ghost_map(GhostMap.from_dict(gm_dict))
     tr.learn_ghosts = False  # batch EM: the map stays fixed within an iteration
     start, end = piece
@@ -79,7 +82,7 @@ def run(args):
                 m = json.loads(line)
             except ValueError:
                 continue
-            if not m["topic"].endswith("/frame") or m["t"] < start:
+            if pause.follow(tr.pauses, m) or not m["topic"].endswith("/frame") or m["t"] < start:
                 continue
             if m["t"] > end:
                 break
@@ -115,6 +118,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--iterations", type=int, default=3)
     ap.add_argument("--jobs", type=int, default=os.cpu_count())
+    ap.add_argument("--pauses", help="intervals in which learning was paused (tools/vacuum_history.py)")
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(TRACKER))
     from presence_tracker.filter import Tracker
@@ -131,7 +135,7 @@ def main():
     kinds = m.ghost_types  # how long ghosts live: printed for the model (filtermodel.ghost_types), not in the map
     for it in range(a.iterations):
         with ProcessPoolExecutor(a.jobs) as ex:
-            results = list(ex.map(run, [(a.recordings, a.config, gm.to_dict(), p) for p in work]))
+            results = list(ex.map(run, [(a.recordings, a.config, gm.to_dict(), p, a.pauses) for p in work]))
         new = GhostMap(gm.x0, gm.y0, gm.nx, gm.ny, gm.prior_rate, gm.prior_time)
         new.poses = gm.poses
         loglik = 0.0

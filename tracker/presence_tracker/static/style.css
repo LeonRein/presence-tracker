@@ -85,6 +85,7 @@ nav button.active { background: var(--accent-soft); color: var(--accent-text); f
 .status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; background: var(--muted); }
 .status .dot.ok { background: var(--ok); }
 .status .dot.bad { background: var(--bad); }
+.status .st-paused { color: var(--warn-text); font-weight: 600; }
 
 main { flex: 1; display: flex; min-height: 0; }
 #map-wrap { position: relative; flex: 1; min-width: 0; background: var(--map-bg); }

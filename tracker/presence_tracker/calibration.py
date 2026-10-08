@@ -111,10 +111,13 @@ T, SEG, LX, LY, V, SINGLE = range(6)  # columns of the measurement rows
 
 # ------------------------------------------------------------------------------ measurements
 
-def track_frame(tracks: dict, ids, rows: dict, sensor_id: str, t: float, frame: dict):
+def track_frame(tracks: dict, ids, rows: dict, sensor_id: str, t: float, frame: dict, paused: bool = False,
+                skip: set | None = None):
     """One LD2450 frame into rows of its walking targets (t, track, raw x, raw y (m), raw radial
     speed (m/s), whether it is the only moving target of its frame), through the sensor's own
-    tracks: coasted and frozen frames are no measurement (sensortracks.py, MODEL.md 4.1)."""
+    tracks: coasted and frozen frames are no measurement (sensortracks.py, MODEL.md 4.1). paused
+    (learning paused, pause.py): no rows, and the tracks walking now go into skip, whose rows are
+    never kept (else such a track's first row after the pause would look like a start, a handover)."""
     dets = [SimpleNamespace(slot=tg.get("slot", 0), local=(tg["x"] / 1000, tg["y"] / 1000), hidden=False)
             for tg in frame.get("targets", []) if tg["y"] > 0]
     ev = tracks.setdefault(sensor_id, SensorTracks(sensor_id, ids)).update(t, frame, dets)
@@ -123,7 +126,10 @@ def track_frame(tracks: dict, ids, rows: dict, sensor_id: str, t: float, frame: 
     moving = sum(abs(v) >= MIN_SPEED for _, _, v in meas)
     for seg, d, v in meas:
         if abs(v) >= MIN_SPEED:  # only walking counts (pairs, handovers, floor plan)
-            rows[sensor_id].append((t, seg, d.local[0], d.local[1], v, moving == 1))
+            if paused and skip is not None:
+                skip.add(seg)
+            if not paused and (skip is None or seg not in skip):
+                rows[sensor_id].append((t, seg, d.local[0], d.local[1], v, moving == 1))
 
 
 def thin(t: np.ndarray, key: np.ndarray, every: float) -> np.ndarray:
@@ -885,16 +891,21 @@ class Calibrator:
         self._rows: dict[str, list] = collections.defaultdict(list)
         self._chunks: dict[str, list] = collections.defaultdict(list)
         self._tracks, self._ids = {}, itertools.count()
+        self._skip = set()  # tracks walking while learning was paused: none of their rows kept
         self._status, self._status_t = None, -math.inf
         self._gen = getattr(self, "_gen", 0) + 1  # a count started before a reset is not taken over
         self.since = None
 
-    def on_frame(self, sensor_id: str, t: float, frame: dict):
-        """A raw LD2450 frame (the MQTT payload) at the sensor's frame time."""
+    def on_frame(self, sensor_id: str, t: float, frame: dict, learn: bool = True):
+        """A raw LD2450 frame (the MQTT payload) at the sensor's frame time. learn False (learning
+        paused, pause.py): the sensor's tracks go on, its measurements are not kept."""
+        if not learn:
+            track_frame(self._tracks, self._ids, self._rows, sensor_id, t, frame, True, self._skip)
+            return
         if self.since is None:
             self.since = t
         rows = self._rows[sensor_id]
-        track_frame(self._tracks, self._ids, self._rows, sensor_id, t, frame)
+        track_frame(self._tracks, self._ids, self._rows, sensor_id, t, frame, False, self._skip)
         if len(rows) >= self.CHUNK:
             chunks = self._chunks[sensor_id]
             chunks.append(np.array(rows, float))

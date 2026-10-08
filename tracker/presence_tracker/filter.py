@@ -31,6 +31,7 @@ from . import gauss
 from .gauss import Gauss
 from .hidden import Hidden, Undetected
 from . import destination
+from .pause import Pauses
 from .sensormodel import PD_MAX, SensorModel
 from .sensortracks import LOST, SensorTracks
 from .tiling import Tiling
@@ -153,6 +154,8 @@ class Tracker:
         self.learn_ghosts = True  # learn the map online (MODEL.md 4.2); off for the offline EM tool
         self.dest_map = None  # where walks go (destination.py, learned online, MODEL.md 6 "Ziel")
         self.learn_dest = True
+        # Lernen pausieren (pause.py): in these intervals nothing of the above learns; the tracking goes on
+        self.pauses = Pauses()
         self._build()
         self.use_ghost_map(None)
         self.use_dest_map(None)
@@ -649,7 +652,10 @@ class Tracker:
         if self.learn_dest and t - self._dest_t >= MAX_STEP - 1e-9:
             # the walks counted into the destination map (MODEL.md 6 "Ziel"): reads the hypotheses only
             self._dest_t = t
-            self._dest_learner.observe(self, self.dest_geo, self.dest_map)
+            if self.pauses.paused(t):  # learning paused: the walks under way are dropped, none counted
+                self._dest_learner = destination.Learner()
+            else:
+                self._dest_learner.observe(self, self.dest_geo, self.dest_map)
 
     def _end_silent(self, t: float):
         """A sensor without a frame for more than LOST s has lost its data: its tracks are over
@@ -814,11 +820,12 @@ class Tracker:
             walkers = self._walkers(si)
             for h, hy in enumerate(self.hyps):
                 hy.logw -= (total + m.ghost_echo * walkers[h] * area) * delta
-            if self.learn_ghosts:
+            learn = not self.pauses.paused(t - delta, t)
+            if self.learn_ghosts and learn:
                 self.ghost_map.add_watch(self.sensors[si], delta)
                 if self.ghost_map.fade(t):
                     self._ghost_total = {}
-            for listener in self.listeners:
+            for listener in self.listeners if learn else ():
                 listener("watch", (self.sensors[si], delta))
         # 2. the sensor's tracks: measured (or found again), lost, still held, gone
         refound = []
@@ -993,10 +1000,11 @@ class Tracker:
         if 0 < p_ghost < 1:  # the map entered the odds once, as a factor at the birth: taken out
             p_ghost = 1 / (1 + math.exp(math.log1p(-p_ghost) - math.log(p_ghost) + info["map_odds"]))
         life = (info["lost"]["t"] if info["lost"] else info.get("gt", info["born"])) - info["born"]
-        if self.learn_ghosts and p_ghost > 0:
+        learn = not self.pauses.paused(info["born"], t)  # a track of a paused time teaches nothing
+        if self.learn_ghosts and learn and p_ghost > 0:
             self.ghost_map.add_birth(self.sensors[si], info["z0"], p_ghost)
             self._ghost_total.pop(si, None)
-        for listener in self.listeners:
+        for listener in self.listeners if learn else ():
             listener("track_end", (self.sensors[si], info["z0"], p_ghost, life, data_lost))
         self._live_by_sensor[si].remove(seg)
         ghost_end = self._ghost_end(info, t)
@@ -1591,8 +1599,9 @@ class Tracker:
         e_pts = echo.points(now)
         # what the background learns (below, MODEL.md 4.3): the people as the filter saw them before
         # these frames, per hypothesis the mean they and the background put in, and the probability
-        # that nobody was in view
-        if self.learn_ghosts:
+        # that nobody was in view; nothing while learning is paused (pause.py)
+        learn = self.learn_ghosts and not self.pauses.paused(self.now - st.time, self.now)
+        if learn:
             mus, nobody = [], 0.0
             for h, hy in enumerate(self.hyps):
                 mu, none = b0.copy(), 1.0
@@ -1700,7 +1709,7 @@ class Tracker:
         parts = np.array(parts)
         top = parts.max(axis=0)
         echo.weigh(np.clip(top + np.log(np.exp(parts - top).sum(axis=0)) - _logsumexp(outs), -700.0, ld2410.LOG_CAP))
-        if self.learn_ghosts:
+        if learn:
             # the background where no echo source is on (as judged with these frames), and the
             # echo sources' rate where nobody is in view
             self.ld_background.learn(sid, b, np.array(mus), prior_w, st, lik.alpha, float(echo.p[0]))

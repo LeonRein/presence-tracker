@@ -216,7 +216,7 @@ def test_a_failed_save_stops_nothing(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(app_module, "atomic_write", full)
     app._save_learned()  # must not raise
     asyncio.run(app._save_in_background())
-    assert sum("not saved" in r.message for r in caplog.records) == 10
+    assert sum("not saved" in r.message for r in caplog.records) == 12  # 6 files, 2 saves
     monkeypatch.undo()
     # the model refuses to save a broken state (a density that is no density): it starts over
     tracker = app.tracker
@@ -242,7 +242,7 @@ def test_saving_runs_in_a_thread_and_loads_again(tmp_path, monkeypatch):
 
     monkeypatch.setattr(app_module, "atomic_write", spy)
     asyncio.run(app._save_in_background())
-    assert threads == [False] * 5
+    assert threads == [False] * 6
     assert not list(tmp_path.glob("*.tmp")) and not list(tmp_path.glob(".*.tmp"))
     again = App(tmp_path, publish=False)
     assert again.tracker.started_from is not None

@@ -4,7 +4,10 @@ the tracker said P(occupied) > the light threshold (MODEL.md 6) for longer than 
 a person the LD2450 suppresses (sitting) also counts here, so read the episodes, not only the sum.
 
 usage: phantom.py --config FILE --recordings DIR [--tracker DIR] [--from [YYYY-MM-DD ]HH:MM] [--to ...]
-                  [--window 30] [--min 30] [--every 1] [--patch FILE.py]..."""
+                  [--window 30] [--min 30] [--every 1] [--patch FILE.py]... [--pauses FILE]
+
+Learning pauses where the switch "Lernen pausieren" was on in the recordings and in the intervals of
+--pauses (private, tools/vacuum_history.py: the vacuum robot); those times are not scored."""
 import argparse
 import bisect
 import collections
@@ -29,6 +32,7 @@ def main():
     ap.add_argument("--window", type=float, default=30.0)
     ap.add_argument("--min", dest="min_len", type=float, default=30.0)
     ap.add_argument("--every", type=float, default=1.0)
+    ap.add_argument("--pauses", help="intervals in which learning was paused (tools/vacuum_history.py)")
     ap.add_argument("--patch", action="append", default=[], help="Python file run before the replay (as in report_eval.py)")
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(a.tracker))
@@ -37,10 +41,12 @@ def main():
     from presence_tracker.filter import Tracker
     from presence_tracker.frames import SensorClock
     from presence_tracker.model import Config
+    from presence_tracker import pause
 
     config = Config.from_dict(json.load(open(a.config)))
     t0, t1 = (time.mktime(time.strptime(v if " " in v else f"{a.day} {v}", "%Y-%m-%d %H:%M")) for v in (a.t_from, a.t_to))
     tracker = Tracker(config)
+    tracker.pauses = pause.load(a.pauses)
     rooms = [z for z in config.zones_of("room") if z.id in tracker.rooms]
     c = config.params.light_cost / (config.params.light_cost + 1.0)
     seen = collections.defaultdict(list)  # room -> times of LD2450 targets in it
@@ -63,7 +69,7 @@ def main():
     for path in sorted(glob.glob(os.path.join(a.recordings, "*.jsonl"))):
         for line in open(path):
             m = json.loads(line)
-            if not m["topic"].endswith("/frame") or not t0 <= m["t"] <= t1:
+            if pause.follow(tracker.pauses, m) or not m["topic"].endswith("/frame") or not t0 <= m["t"] <= t1:
                 continue
             sid = m["topic"].split("/")[1]
             tt = clocks[sid](m["t"], m["payload"].get("uptime_ms"))
@@ -71,7 +77,7 @@ def main():
             if tt >= nstep:
                 tracker.step(tt)
                 nstep = tt + 0.2
-            if tt >= nxt:
+            if tt >= nxt and not tracker.pauses.paused(tt):
                 nxt = tt + a.every
                 counts = tracker.count_distribution()
                 samples.append((tt, {r: 1 - counts[r][0] for r in tracker.rooms}))

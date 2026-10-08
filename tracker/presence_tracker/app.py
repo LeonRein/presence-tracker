@@ -19,12 +19,13 @@ import aiohttp
 from aiohttp import web
 
 from . import __version__, code_hash, ha
-from . import calibration
+from . import calibration, pause
 from .calibration import Calibrator
 from .model import Config, check_config, limits_dict
 from .filter import Tracker
 from .destination import DestinationMap
 from .ghostmap import GhostMap
+from .pause import Pauses
 from .sources import Clock, ReplayClock, mqtt_source, replay_source
 from .frames import SensorClock, parse_frame
 from .sensortracks import SensorTracks
@@ -118,6 +119,16 @@ class App:
         self.failures: list[float] = []  # when the model failed (monotonic), until it ran RETRY s without
         self.paused_until = -math.inf  # while down: the model rests until then (monotonic)
         self.available = None  # what this connection last said on the availability topic (None: nothing yet)
+        # "Lernen pausieren" (pause.py): when it was on, kept with what was learned; the broker's retained
+        # command, at the connect, decides from then on
+        self.pauses = Pauses()
+        self._pause_sent = None  # the switch's state as last published on this connection
+        pause_path = data_dir / "pause.json"
+        if not replay and pause_path.exists():
+            try:
+                self.pauses = Pauses.from_dict(json.loads(pause_path.read_text()))
+            except Exception as e:  # noqa: BLE001 - learning then goes on until the switch says otherwise
+                log.warning("pause.json unreadable (%r): learning not paused", e)
         self._reset_tracker()
         self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
 
@@ -167,6 +178,7 @@ class App:
         0.18 an empty calibration.npz, people.json [1] or ghostmap.json [] kept the app from starting
         at all."""
         self.tracker = Tracker(self.config)
+        self.tracker.pauses = self.pauses  # Lernen pausieren: the app's switch (pause.py)
         # where the sensors start ghost tracks (learned online, MODEL.md 4.2): it holds only while the
         # sensors are where they were when it was learned, else it starts over
         gm_path = self.data_dir / "ghostmap.json"
@@ -255,6 +267,9 @@ class App:
             self.throttled(("message", topic), logging.ERROR, "message on %s not handled", topic, exc_info=True)
 
     def _on_message(self, topic: str, payload: bytes, recv: float):
+        if topic in pause.TOPICS:  # Lernen pausieren (live: the command; in a replayed recording both)
+            self._on_pause(payload, recv)
+            return
         if self.discovery.retained(topic, payload):  # our own entities as the broker keeps them
             return
         parts = topic.split("/")
@@ -284,7 +299,7 @@ class App:
             self.calibrator.reset()
             t = self.clocks[sensor_id](recv, frame.get("uptime_ms"))
         try:
-            self.calibrator.on_frame(sensor_id, t, frame)
+            self.calibrator.on_frame(sensor_id, t, frame, learn=not self.pauses.paused(t))
         except Exception:  # noqa: BLE001 - the calibration's data, not the model: logged only
             self.throttled(("calibration", sensor_id), logging.ERROR, "calibration: frame of %s not taken",
                            sensor_id, exc_info=True)
@@ -299,10 +314,44 @@ class App:
         self.stats["frames"] += 1
         self.stats["cpu"] += time.process_time() - start
 
+    def _on_pause(self, payload: bytes, t: float):
+        """The switch "Lernen pausieren" (pause.py) set to ON or OFF at time t (its receive time: the
+        frames' times are theirs too)."""
+        on = pause.parse(payload)
+        if on is None:
+            self.throttled("pause", logging.WARNING, "Lernen pausieren: %r is neither ON nor OFF", bytes(payload[:50]))
+            return
+        if not self.pauses.set(on, t):
+            return
+        log.info("learning %s (Lernen pausieren)", "paused" if on else "goes on")
+        self.pauses.prune(t - 2 * REPORT_WINDOW)  # a report needs the last REPORT_WINDOW s
+        if not self.replay:
+            try:
+                atomic_write(self.data_dir / "pause.json", self._pause_bytes())
+            except Exception:  # noqa: BLE001 - it is saved again with what was learned
+                log.exception("pause.json not saved")
+
+    def _pause_bytes(self) -> bytes:
+        return json.dumps(self.pauses.to_dict()).encode()
+
+    async def _send_pause(self):
+        """The switch's state to Home Assistant, retained, when it changed (or a new connection)."""
+        if self.client is not None and self.publish_enabled and self._pause_sent != self.pauses.on:
+            if await self._publish(pause.STATE, "ON" if self.pauses.on else "OFF", True):
+                self._pause_sent = self.pauses.on
+
     async def _on_client(self, client):
         self.client = client
         self.available = None
+        self._pause_sent = None
         self.discovery.last_state.clear()  # every state goes out again with the next tick
+        if client is not None:
+            # Lernen pausieren: the broker holds Home Assistant's last command (retained), also one sent
+            # while the app was down; read only, so also without publishing
+            try:
+                await client.subscribe(pause.COMMAND)
+            except Exception as e:  # noqa: BLE001 - a lost connection is handled by the source loop
+                log.debug("subscribe failed: %s", e)
         if client is not None and self.publish_enabled:
             # "online" only once fresh states are out (housekeeping): the broker may hold "online" and the
             # states of a run that ended without its last will, and Home Assistant would show them as now
@@ -341,6 +390,7 @@ class App:
             # to the log - where the app hangs (each call replaces the previous timer)
             faulthandler.dump_traceback_later(BLOCKED_DUMP)
             await asyncio.sleep(0.1)
+            await self._send_pause()
             if self.down:
                 await self._set_available(False)
             if self.tracker.start is None or time.monotonic() < self.paused_until:
@@ -398,6 +448,7 @@ class App:
                  ("ld2410.json", lambda: json.dumps(self.tracker.ld_background.to_dict()).encode()),
                  ("destinations.json", self._destinations_packer),
                  ("people.json", self._people_bytes),
+                 ("pause.json", self._pause_bytes),
                  ("calibration.npz", self.calibrator.snapshot)]
         for name, make in parts:
             try:
@@ -463,6 +514,7 @@ class App:
         snap["zones"] = {k: v.to_dict() for k, v in self.zone_states.items()}
         snap["status"] = self.sensor_status
         snap["calibration"] = self._calibration_status()
+        snap["learning_paused"] = {"on": self.pauses.on, "since": self.pauses.since}
         elapsed = time.monotonic() - self.stats["since"]
         snap["load"] = {"cpu": round(100 * self.stats["cpu"] / max(elapsed, 1e-3), 2),
                         "fps": round(self.stats["frames"] / max(elapsed, 1e-3), 1)}
@@ -735,6 +787,8 @@ class App:
                            "text": str(body.get("text") or "")[:2000], "version": __version__, "code": CODE,
                            "model_start": start, "learned_at": start if covered else now},
                 "config": self.configs[k][1], "config_changes": [[t, c] for t, c in self.configs[k + 1:]],
+                # Lernen pausieren: the intervals from the replay's start on (end None: still paused)
+                "pauses": self.pauses.between(begin),
                 **(self.start_learned if covered else self.tracker.learned()),
                 "people": self.start_state if covered else None}
         self.reports.mkdir(parents=True, exist_ok=True)

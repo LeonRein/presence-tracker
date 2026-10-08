@@ -2,7 +2,7 @@
 
 usage: python tools/replay.py --config FILE --from "YYYY-MM-DD HH:MM:SS" --to "..." [--show FROM]
                               [--every S] [--seed N] [--learned FILE] [--people FILE] [--recordings DIR]
-                              [--tracker DIR]
+                              [--tracker DIR] [--pauses FILE]
        python tools/replay.py --report FILE.jsonl.gz [--from ...] [--to ...] [--show ...] [--every S]
 
 The model starts at --from with nothing known, or with --people (the app's people.json, moved on from
@@ -16,7 +16,9 @@ with what it had learned and knew about the people then, if that is in the repor
 frame with what was learned at the report (what the model knew before is not in the report; 15 min
 from nothing known forget it: 6.10., |dP| < 0.01). Configurations the app took over meanwhile without
 starting its model over (a sensor recalibrated: "config_changes") are taken over at the same times. Below
-each line what the app showed then ("app"), and at the end how far the replay is from it.
+each line what the app showed then ("app"), and at the end how far the replay is from it. Learning
+pauses where the app's did ("Lernen pausieren", MODEL.md 10): the report's intervals; from recordings,
+the switch recorded in them and the intervals of --pauses (private, tools/vacuum_history.py).
 """
 
 import argparse
@@ -49,12 +51,14 @@ def main():
     ap.add_argument("--show")
     ap.add_argument("--every", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--pauses", help="intervals in which learning was paused (tools/vacuum_history.py)")
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(a.tracker))
     from presence_tracker import code_hash
     from presence_tracker.filter import Tracker
     from presence_tracker.frames import SensorClock
     from presence_tracker.model import Config
+    from presence_tracker import pause
 
     if a.report:
         lines = gzip.open(a.report, "rt").read().splitlines()
@@ -73,6 +77,8 @@ def main():
     else:
         config = Config.from_dict(json.load(open(a.config)))
     crowd = Tracker(config, seed=a.seed)
+    # Lernen pausieren: in a report the app's intervals, else the recorded switch and --pauses
+    crowd.pauses = pause.Pauses(meta.get("pauses")) if a.report else pause.load(a.pauses)
     if a.report:
         crowd.load_learned(meta)  # its ghost map and LD2410C background when its model started
         if meta.get("people") and not crowd.restore_people(meta["people"]):  # and what it knew about the people
@@ -123,6 +129,8 @@ def main():
     changes = [(t, Config.from_dict(c)) for t, c in meta.get("config_changes", []) if t is not None] if a.report else []
     for source in sources():
         for m in source:
+            if not a.report and pause.follow(crowd.pauses, m):
+                continue
             if not m["topic"].endswith("/frame") or m["t"] < start:
                 continue
             if m["t"] > end:
