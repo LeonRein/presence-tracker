@@ -424,6 +424,61 @@ def hidden_regions(region, walk, out, ends_p, door_ptr, door_tiles, exits, entri
     return out
 
 
+@njit(cache=True)
+def ld_censored(mu, lm, cols, rows, tables, grid):
+    """ld2410.log_censored for Stats._mu_part's censored cells: per row r of the means mu (k, 16) and
+    cell cols[c], log P(energy >= CAP) interpolated in table rows[c] at lm = log(mu) on the uniform
+    grid exactly as np.interp does (a mean <= 0 as the grid's lowest, NaN stays NaN), (k, len(cols)).
+    The table lookup reuses lm and starts from the uniform grid's index; the caller sums with numpy
+    (@): the same order of the sums as before, results equal bit for bit."""
+    K = mu.shape[0]
+    C = len(cols)
+    G = len(grid)
+    g0 = grid[0]
+    h = (grid[G - 1] - g0) / (G - 1)
+    out = np.empty((K, C))
+    for r in range(K):
+        for c in range(C):
+            fp = tables[rows[c]]
+            m = mu[r, cols[c]]
+            x = lm[r, cols[c]]
+            if m != m:
+                v = m
+            elif m <= 0.0 or x <= g0:
+                v = fp[0]
+            elif x >= grid[G - 1]:
+                v = fp[G - 1]
+            else:
+                j = int((x - g0) / h)
+                if j > G - 2:
+                    j = G - 2
+                while j > 0 and x < grid[j]:
+                    j -= 1
+                while j < G - 2 and x >= grid[j + 1]:
+                    j += 1
+                if x == grid[j]:
+                    v = fp[j]
+                else:
+                    v = (fp[j + 1] - fp[j]) / (grid[j + 1] - grid[j]) * (x - grid[j]) + fp[j]
+            out[r, c] = v
+    return out
+
+
+@njit(cache=True)
+def gauss_exponents(points, mx, my, vx, vy):
+    """tiling.Tiling.gauss_points' exponents -0.5 ((x - mx)^2 / vx + (y - my)^2 / vy) at the points
+    (P, 2), without numpy's temporary arrays. The caller takes np.exp: numpy's vectorized exp is
+    faster than the scalar one and gives the same bits as before (the scalar one differs in the last
+    bit for some 5 % of the values here)."""
+    P = points.shape[0]
+    out = np.empty(P)
+    for i in range(P):
+        dx = points[i, 0] - mx
+        dy = points[i, 1] - my
+        out[i] = -0.5 * (dx * dx / vx + dy * dy / vy)
+    return out
+
+
 def warm():
     """Compile every kernel for the types the tracker calls it with (the image does this when it is
     built, so the app starts without compiling: NUMBA_CACHE_DIR)."""
@@ -440,6 +495,8 @@ def warm():
     sensor_rates(f((1, 2)), f((2, 0)), 0.0, 0.0, f((2, 2)), 0.0, 0.0, 0.1, f(4), 1e-6, 1.0, f((1, 3)), np.ones(2), 0.7)
     hidden_stays(f(3), f((2, 2, 3)), 0.1, f(2), 0.1, f(2), f(2))
     hidden_regions(f((1, 3)), f(3), 0.0, f((1, 3)), i(2), i(0), i(1), i(0), 0.1, f(2))
+    ld_censored(np.ones((1, 16)), f((1, 16)), i(1), i(1), f((1, 5)), np.arange(5.0))
+    gauss_exponents(f((1, 2)), 0.0, 0.0, 1.0, 1.0)
 
 
 if __name__ == "__main__":

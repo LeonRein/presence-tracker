@@ -25,6 +25,7 @@ import math
 
 import numpy as np
 
+from . import kernels
 from .world import CELL, OBSERVED
 
 SIZE = 0.4  # m: side of a tile
@@ -182,7 +183,8 @@ class Tiling:
     def gauss_points(self, mean, var):
         """(points,) the share of N(mean, diag var) at each sample point as in gauss_mass (summing
         to 1), or None if the Gaussian has nothing in view."""
-        d = np.exp(-0.5 * (((self.points - np.asarray(mean)[None, :]) ** 2) / (np.asarray(var)[None, :] + POINT * POINT / 12)).sum(axis=1))
+        v = np.asarray(var, dtype=float) + POINT * POINT / 12
+        d = np.exp(kernels.gauss_exponents(self.points, float(mean[0]), float(mean[1]), float(v[0]), float(v[1])))
         if not self.world.clear(float(mean[0]), float(mean[1]), 3.72 * math.sqrt(float(np.max(var)) + POINT * POINT / 12)):
             near = np.flatnonzero(d > 1e-3)
             if len(near):

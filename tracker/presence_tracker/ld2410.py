@@ -16,6 +16,7 @@ import os
 
 import numpy as np
 
+from . import kernels
 from .filtermodel import STILL, WALK
 
 GATE = 0.75  # m
@@ -112,6 +113,22 @@ def log_censored(alpha: np.ndarray, mu: np.ndarray) -> np.ndarray:
     return out
 
 
+_BY_ALPHA = {}
+
+
+def _censored_tables(alpha: np.ndarray) -> tuple:
+    """For kernels.ld_censored: per cell the row of its table of log P(energy >= CAP) on _GRID
+    (log_censored's), and the tables (one per value of alpha)."""
+    key = alpha.tobytes()
+    hit = _BY_ALPHA.get(key)
+    if hit is None:
+        values = sorted(set(alpha.tolist()))
+        log_censored(np.array(values), np.ones(len(values)))  # fills _TABLES
+        hit = _BY_ALPHA[key] = (np.array([values.index(a) for a in alpha.tolist()], dtype=np.int64),
+                                np.stack([_TABLES[float(v)] for v in values]))
+    return hit
+
+
 def _lgamma(a: np.ndarray) -> np.ndarray:
     return np.vectorize(math.lgamma, otypes=[float])(a) if a.size else a
 
@@ -155,9 +172,11 @@ class Stats:
             terms = np.array([c + math.lgamma(N + k) - (N + k) * np.log(r + A) for c, k, r in comps])
             top = terms.max(axis=0)
             out += top + np.log(np.exp(terms - top).sum(axis=0))
-        c = self.t_cens > 0
-        if c.any():
-            out += log_censored(a[c][None, :], mu[:, c]) @ (self.t_cens[c] / tau[c])
+        c = np.flatnonzero(self.t_cens > 0)
+        if len(c):  # log_censored compiled (kernels.ld_censored)
+            rows, tables = _censored_tables(a)
+            m = np.ascontiguousarray(mu)
+            out += kernels.ld_censored(m, np.log(m), c, rows[c], tables, _GRID) @ (self.t_cens[c] / tau[c])
         return out
 
     def loglik(self, mu: np.ndarray, lik: "Likelihood") -> float:
