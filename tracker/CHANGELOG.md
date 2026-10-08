@@ -2,6 +2,18 @@
 
 ## Unveröffentlicht
 
+- **Schalter „Lernen pausieren“** (`switch.presence_lernen_pausieren`, MODEL.md 10 „Hintergrundaktivität“):
+  Solange er an ist, lernt die App nichts – Geisterkarte, Hintergrund und Echorate der LD2410C, Zielkarte,
+  Kalibrierdaten –, das Verfolgen und die Lichter laufen wie immer. Für den Saugroboter, Besuch, eine
+  Putzkraft, eine Feier; Node-RED schaltet ihn (Saugroboter nicht angedockt, bis 2 min nach dem Andocken).
+  Der Befehl liegt im Broker (*retained*), die App übernimmt ihn auch, wenn sie gerade nicht lief; ihr Zustand steht in
+  `/data/pause.json`. Live-Ansicht: *Lernen pausiert*. Fehlermeldungen enthalten die Pausen, das
+  Nachspiel pausiert an denselben Stellen (bitgleich).
+- Werkzeuge: `tools/record.py` zeichnet den Schalter mit auf; `report_eval.py`, `entries.py`, `replay.py`,
+  `calibrate_offline.py`, `ghostmap.py` und `ld2410/phantom.py` folgen ihm und den Intervallen aus
+  `--pauses` (privat, für die Tage davor aus dem Verlauf des Saugroboters: `tools/vacuum_history.py`) und
+  bewerten dort nichts.
+
 ## 0.23.0
 
 Review des Algorithmus 1.3 (MODEL.md 5.5, 10 „Tote Winkel und Existenz“):

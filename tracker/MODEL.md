@@ -279,6 +279,9 @@ Eine Spur, die zu keiner Person gehört.
   offline auf gewählten Zeitfenstern.
 - Begründung: Wiederkehrende Reflexionen (Möbel, Ladestation des Saugroboters) stehen an festen
   Stellen. Mit gleichverteilter Dichte erklärt das Modell sie als Person.
+- Solange der Schalter *Lernen pausieren* an ist (Hintergrundaktivität, 10), lernt die Karte nichts:
+  keine Beobachtungszeit, und keine Spur, deren Leben in die Pause reicht. Ebenso der Hintergrund und
+  die Echorate des LD2410C (4.3), die Zielkarte (6) und die Kalibrierdaten (10); das Verfolgen bleibt.
 
 ### 4.3 LD2410C
 Gemessen wird seine **Energie je Entfernungsring** (0,75 m Schrägentfernung, `ld2410.py`): bewegt in Ring
@@ -821,6 +824,9 @@ Geister geschätzt (4.2).
   Start glaubt genau, was die App glaubte; mit dem Gelernten vom Moment der Meldung lag es am 6.10.
   um bis zu 1,0 daneben. Lag der Start früher, hat ein Nachspiel ohne Wissen nach 15 Minuten vergessen,
   was es nicht wusste (22:40, 22:42: |ΔP| < 0,01 am gemeldeten Moment, anfangs bis 0,11).
+- **Hintergrundaktivität** (10, „Lernen pausieren“): Fenster, die in eine Pause reichen (Schalter in den
+  Aufnahmen, für die Tage davor die Zeiten des Saugroboters, `--pauses`), werden nicht bewertet; die
+  Nachspiele lernen dort nichts, wie die App.
 - **Tests** (`tracker/tests`): bitgleiche Läufe, Unabhängigkeit von der Zeitzerlegung,
   Bewegungsstatistik, Szenen aus `sim.py`, Invarianten der Buchführung (`Tracker.check`).
 - **Geplant:** simulationsbasierte Kalibrierung (0_Talts2018 Alg. 1): Welten aus diesem Modell
@@ -1934,6 +1940,37 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Quadratur kostet es das auch bei 30 min. Mit 16 Hypothesen: bis 6.10. 0 / 1,68, −1121540; 7.10.
   0,11 / 0 (Flur 9:49 0,10), −449289. Meldungen 7.10. früh (Start 06:50): Esszimmer 8:29 1,00, Arbeitszimmer
   8:52 genau eine Person 1,00, Schreibtisch 8:07 1,00; leere Nacht (`phantom.py`) 0 min.
+- **Hintergrundaktivität: Lernen pausieren** (8.10., Leons Frage: „Kann man alle Zeiten, in denen der
+  Saugroboter aktiv war, automatisch aus den Trainingsdaten nehmen?“; `pause.py`). Der Saugroboter ist
+  nach 1.1 harmlos als Person, aber was die App dabei lernt, bleibt: Die LD2450 verfolgen ihn fast in
+  jedem Frame mit 0,05–0,3 m/s, Spuren von Minuten zählen als Person, kürzere als Geist. Nachgespielt mit
+  config10, ab nichts gelernt, einmal ohne und einmal mit Pause (Saugroboter unterwegs bis 2 min nach
+  dem Andocken, aus seinem Verlauf in Home Assistant):
+  - 7.10. 17:13–18:30 (unterwegs 17:40–17:57): 50,0 statt 32,2 Geistgeburten in der Karte (Schlafzimmer
+    11,1 statt 4,9, Wohnzimmer 3,6 statt 0,3); an Stellen auf seinem Weg die doppelte bis knapp dreifache
+    Prior-Rate. Zielkarte 233 statt 183 Gänge. LD2410C-Hintergrund je Sensor bis ±11 %.
+  - 8.10. 10:00–13:13 (unterwegs ab 11:30, sonst niemand unterwegs): 41,4 statt 1,0 Geistgeburten
+    (Esszimmer 15,3 aus 35 seiner Spuren, Wohnzimmer 9,1, Küche 6,3), an Zellen auf seinem Weg 1,9- bis
+    2,9-mal die Prior-Rate; 49 statt 0 Gänge in der Zielkarte, alle von ihm; Hintergrund Küche Ring 2
+    (bewegt) +55 %, Flur und Esszimmer Ring 5 +32 % / +28 %; Echorate kaum (0,23 statt 0,24 je h).
+
+  Mit 14 Tagen Vergessen und einem Lauf alle ein, zwei Tage würden das Geisterquellen entlang seines
+  Wegs. Deshalb ein Schalter, kein Wissen über den Saugroboter in der App (Leon: „dass die App quasi
+  einen Schalter hat, der ‚Lernen pausieren‘ oder ‚Hintergrundaktivität erwartet‘ heißt, und dass
+  dieser dann über Node-RED angesteuert wird“): Solange er an ist, lernen Geisterkarte (4.2),
+  LD2410C-Hintergrund und Echorate (4.3), Zielkarte (6) und Kalibrierdaten nichts; eine Spur, deren
+  Leben in eine Pause reicht, zählt nicht; laufende Gänge der Zielkarte werden verworfen. Das Verfolgen
+  ist dasselbe wie mit abgeschaltetem Lernen (Test bitgleich), der Saugroboter darf weiter Licht
+  einschalten. Die Nachlaufzeit nach dem Andocken gehört zur Automation. Der Schalter liegt *retained*
+  im Broker und hat keine Verfügbarkeit (auch schaltbar, während die App nicht läuft); die App hält ihn
+  in `pause.json`, Fehlermeldungen tragen die Pausen (das Nachspiel lernt bitgleich wie die App),
+  `tools/record.py` zeichnet ihn auf. Für die Tage davor schreibt `tools/vacuum_history.py` die Zeiten
+  aus dem Verlauf (privat), die Werkzeuge nehmen sie mit `--pauses` und bewerten Fenster in einer Pause
+  nicht. Wahrheitssätze 6.10. bis 7.10. früh: unverändert (0 / 1,00 von 41 / 15; 0 / 0 von 13 / 7; leere
+  Nacht 0 min), dort war er nicht unterwegs. Abend 7.10. (er lief 17:40–17:57, vor allen Fenstern):
+  fälschlich an 0 von 43, aus 0,01 → 0,06 von 11 (Bad 22:09 P 1,00 → 0,94, 4 % des Fensters; die zwei im
+  Schlafzimmer P(=1) 1,00 → 0,64 im selben Fenster): Was 17 Minuten Saugroboter mitgelernt hatten, kippt
+  vier Stunden später ein Fenster leicht, in beide Richtungen möglich; Evidenz −702 229 → −702 322.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

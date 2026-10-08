@@ -164,6 +164,9 @@ Gerät **Presence Tracker**, für jeden Raum und Bereich:
 | `binary_sensor.presence_<zone>_approaching` | *wird betreten*: Jemand, der gerade geht, kommt wahrscheinlich gleich herein (Vorhersage, siehe unten) |
 | `binary_sensor.presence_<raum>_ziel` | *Ziel* (nur Räume): Jemand, der gerade geht, geht als Nächstes in diesen Raum; aus der Bewegung und einer gelernten Karte (siehe unten) |
 
+Einmal für das Gerät: `switch.presence_lernen_pausieren`, *Lernen pausieren* bei Hintergrundaktivität
+(Saugroboter, Besuch, Putzen, Feier; siehe unten).
+
 Dazu `presence_haus_*` für das ganze Haus (ohne *außer Haus*). Ein Raum mit *Außer Haus* (Treppenhaus)
 bekommt keine Entitäten; hatte er von einer früheren Version welche, entfernt die App sie beim nächsten
 Verbinden mit dem Broker. Eine gelöschte Zone nimmt ihren Zustand im Broker mit.
@@ -282,6 +285,26 @@ Zustände aus, Verdacht, an, Nachlauf in einer Funktion, geschaltet mit `light.t
 (Helligkeit und Farbe kann dann Adaptive Lighting übernehmen). Schaltet jemand das Licht von Hand ein
 oder aus, sollte die Automatik für diesen Raum pausieren, bis er eine Weile leer war: erkennbar daran,
 dass der Wechsel nicht kurz nach einem eigenen Befehl mit genau diesem Ziel kam.
+
+**Lernen pausieren** (`switch.presence_lernen_pausieren`, ein Schalter am Gerät): Die App lernt laufend
+mit, wo ihre Sensoren Geister sehen (Geisterkarte), was jeder LD2410C ohne Personen misst und wie oft
+dort Echoquellen beginnen (Hintergrund), wohin Gänge führen (*Ziel*) und wie die Sensoren zueinander
+stehen (Kalibrierdaten). Bei **Hintergrundaktivität**, die anders ist als der Alltag, lernt sie damit das
+Falsche: Der Saugroboter wird minutenlang als langsam gehende Person verfolgt, und wo seine Spuren
+beginnen, würde für Wochen eine Geisterquelle; ähnlich Besuch, eine Putzkraft oder eine Feier. Solange der
+Schalter an ist, lernt die App nichts davon; das Verfolgen, die Räume und die Lichter laufen genau wie
+sonst (der Saugroboter darf also weiter das Licht einschalten). Die Live-Ansicht zeigt dann oben
+*Lernen pausiert*. Der Zustand übersteht einen Neustart (gespeichert in `/data/pause.json`); der Schalter
+hat keine Verfügbarkeit, er lässt sich auch schalten, während die App nicht läuft: Home Assistant legt
+den Befehl im Broker ab (*retained*), die App übernimmt ihn beim nächsten Verbinden. Eine Nachlaufzeit
+(etwa 2 min, nachdem der Saugroboter angedockt hat) gehört in die Automation, die App nimmt den
+Schalter, wie er ist. Fehlermeldungen enthalten die Pausen, `tools/record.py` zeichnet den Schalter mit
+auf; die Werkzeuge pausieren beim Nachspielen an denselben Stellen und bewerten dort nichts.
+
+Mit Node-RED: `server-state-changed` auf den Saugroboter (`vacuum.<name>`); jeder Zustand außer
+`docked`, `idle`, `charging` und `error` (also `cleaning`, `returning`, `paused`) → `switch.turn_on` auf
+`switch.presence_lernen_pausieren`; wieder angedockt (`docked`) und 2 min dort geblieben (*for*: 2 min) →
+`switch.turn_off`. `unavailable` und `unknown` (die Integration verbindet sich neu) ändern nichts.
 
 ## Optionen
 
