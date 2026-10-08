@@ -954,6 +954,31 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   k × 16 Logarithmen je Aufruf, und numpys vektorisierter Logarithmus ist schneller als der skalare.
   Was danach bleibt (Profil mit Kerneln): LD2410C 28 %, Ausgaben 11 %, `Hidden.move` 8 % (reine
   Arithmetik über die 15 Schichten), der Rest verteilt.
+- **Rechenzeit: zwei weitere Kernel, Schleife ohne Stillstände (8.10., Performance-Review von
+  0.18.0)**. In `Stats._mu_part` steckte der größte Teil nicht im Logarithmus, sondern in
+  `log_censored` (`np.unique`, Masken, `np.interp`: 242 von 278 µs bei 500 Zeilen). Jetzt interpoliert
+  `kernels.ld_censored` die zensierten Zellen auf dem gleichmäßigen Gitter genau wie `np.interp` und
+  nimmt den Logarithmus von numpy; die Summe über die Zellen bleibt ein numpy-Produkt.
+  `Tiling.gauss_points` rechnet die Exponenten über die 2410 Stützpunkte als Schleife
+  (`kernels.gauss_exponents`), `np.exp` bleibt bei numpy: Numbas skalares `exp` weicht bei etwa 5 %
+  der Werte im letzten Bit ab, und schon solche Rundungsunterschiede schaukelten sich im Review über
+  Stunden zu Evidenz ±6 auf. So sind die Ergebnisse bitgleich: `report_eval --trace` auf den Meldungen
+  bis 6.10. (config5, 15 815 Zeilen) und vom 7.10. früh (config7, 4765 Zeilen) zeichengleich mit
+  9c0f294, Log-Evidenz je Lauf gleich, Licht gleich (an 0 von 41 / aus 1,50 von 15, an 0 von 13 / aus 0
+  von 7), leere Nacht 0 min. CPU (App-Harness des Reviews: die echte `App` mit rohen MQTT-Frames, Takt,
+  HA-Zuständen, Live-Ansicht und Speichern; `config10`, vollste Stunde 7.10. 17 Uhr mit 107 210 Frames,
+  ein Kern, je dreimal abwechselnd, Mediane): 0.19.0 215,1 s, mit dem Amplitudengitter (4.3) 218,1 s,
+  mit den Kerneln 197,4 s (−9,5 %, 6,1 → 5,5 % eines Kerns; Takt 58,0 → 44,4 s, Frames 155,1 →
+  148,4 s). Ruhige Stunde (3 Uhr) 8,7 s vorher wie nachher.
+  Stillstände der Schleife, die Frames, Takt und Home Assistant warten lassen (gemessen mit einem
+  Herzschlag von 1 ms, ein Tag Kalibrierdaten mit 119 491 Zeilen, 15 min Meldepuffer mit 24 398
+  Nachrichten, hier; auf Home Assistant etwa ×8): Fehlerbericht 522 → 5–10 ms (Zeilen und gzip jetzt im
+  Thread, Stufe 6 statt 9: 523 → 248 ms bis zur Datei, 0,95 statt 0,86 MB); Kalibrierstatus der
+  Live-Ansicht (alle 30 s, solange ein Browser offen ist) 24 → 5 ms (gezählt im Thread an einer
+  Kopie); Speichern alle 10 min 14 → 5 ms (`calibration.npz` unkomprimiert: 6,0 statt 1,5 MB, 4 statt
+  80 ms; die Zielkarte wird in der Loop kopiert und im Thread komprimiert). Was bleibt, sind der
+  Personenzustand (4 ms, er wird aus dem Modell gebaut) und bis zu 5 ms, die ein rechnender Thread den
+  GIL hält (`sys.getswitchinterval`).
 - **Weniger Schichten je Kachel** (7.10., 11 h aus 3.1): 5 statt 7 Arten des Aufenthalts und 3 statt
   5 Stufen κ, also 15 statt 35 Schichten von `steht`: Evidenz −1 (bei 24 Hypothesen ab 10⁻⁹ −3,
   ab 10⁻⁷ +56), Lichtfehler gleich, Rechenzeit 3,0 statt 3,3 % (21 Uhr). Mehr spart das nicht,
