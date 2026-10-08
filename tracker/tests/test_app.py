@@ -45,7 +45,7 @@ def test_a_report_replays_to_what_the_app_showed(tmp_path):
     app = App(tmp_path, publish=False)
     bg = app.tracker.ld_background  # learned beyond the prior before the start,
     bg.num["a"], bg.den["a"] = 2 * bg.prior * 600.0, 600.0
-    bg.learn_echoes("a", 0.5)
+    bg.learn_echoes("a", 0.5, bg.echo_rate, 1.0, 600.0)
     app._model_started(None)  # as if loaded from ld2410.json
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), (4.5, 1.0), start=5, pauses={2: 20, 3: 60}))
     next_tick = 0.0

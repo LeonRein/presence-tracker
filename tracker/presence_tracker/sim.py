@@ -60,6 +60,7 @@ class SimSensor:
     blind_to: tuple = ()  # indices of people this sensor doesn't see from blind_after on (hidden behind someone)
     blind_after: float = 0.0
     blind_until: float = math.inf  # ... until then
+    ld_background: object = None  # (16,) what its LD2410C sees without anybody; None: the model's prior
     idle: float = 5.0  # s: without anything to report (no target, both LD2410C flags off) the firmware sends
                        # only a heartbeat this often, the first such frame at once (0: every frame)
     seq: int = 0
@@ -203,7 +204,8 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
     # the still energies follow with the time constant ld_memory, the moving ones at once
     k = math.exp(-dt / m.ld_memory)
     s._ld_lag = put if s._ld_lag is None else k * s._ld_lag + (1 - k) * put
-    mu = ld2410.prior(m) + np.concatenate([put[:9], s._ld_lag[9:]])
+    bg = ld2410.prior(m) if s.ld_background is None else np.asarray(s.ld_background, dtype=float)
+    mu = bg + np.concatenate([put[:9], s._ld_lag[9:]])
     # each second all cells of a kind share a gain: 1/u ~ Gamma(kappa, kappa), now and then a burst
     if t >= s._ld_block[0]:
         def gain(kappa):

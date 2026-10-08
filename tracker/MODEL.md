@@ -341,9 +341,23 @@ Das Modell, je Sensor:
 - **Hintergrund b je Sensor, Ring und Art: von der App gelernt** (wie die Geisterkarte): Online-EM der
   Überlagerung, der Anteil des Hintergrunds an einer Energie ist im Mittel `e · b/μ` (Richardson 1972;
   Shepp & Vardi 1982), μ aus dem Stand vor diesen Frames (die Energien lernen nicht ihr eigenes Urteil,
-  J_Park2020). Prior: bewegt Ring 0 13, Ring 1 9, sonst 4,5, ruhig 5 mit dem Gewicht 10 min (gemessen
-  6.10., 4,3 h; auf 19 h 16 / 9 / 4,3 / 4,9, gleiche Lichtfehler, 10 „Die Stille vor einem Frame“);
-  Vergessen 6 h (angenommen). Neu für einen Sensor, wenn er verschoben wird. Gespeichert mit der Geisterkarte.
+  J_Park2020). Eine gekappte Energie (100) zählt mit dem, was sie war: `b · Q(α+1, x) / Q(α, x)`,
+  `x = α · 100/μ`, der Anteil des Hintergrunds an `E[e | e ≥ 100]` (E-Schritt zensierter Daten,
+  Dempster, Laird & Rubin 1977; bis 0.20 zählte sie als 100, und neben einer Person, die mehr gibt,
+  lernte der Hintergrund zu wenig: Arbeitszimmer Ring 2 abends 2,0 statt leer 6,5, 10 „Lernschleifen“).
+  Gelernt wird nur aus der Zeit, in der der LD2450 im selben Gehäuse kein Ziel in Sicht hat (ein
+  unabhängiges Signal: wo er etwas sieht, ist es eine Person oder ihr Echo, und dort sagen die Energien
+  über b wenig, solange das Profil nicht genau stimmt), und nur, soweit keine Echoquelle an ist
+  (gewichtet mit P(keine Quelle) nach diesen Frames): Eine Quelle, die länger an ist, als Echos leben,
+  ist eine Person, die der Filter verloren hat, und ihr Profil passt nur ungefähr; was es nicht
+  erklärt, wurde Hintergrund. Ohne beides lernte der Hintergrund Sitzende und Schlafende (10
+  „Lernschleifen“). Nicht nach dem Urteil des Filters über Personen ohne Spur: Dort halten die Energien
+  selbst eine Person, wenn b zu klein ist, und das Lernen stünde still (gemessen: 4 h Licht im leeren
+  Schlafzimmer, 10). Prior: bewegt Ring 0
+  13, Ring 1 9, sonst 4,5, ruhig 5 mit dem Gewicht 10 min (gemessen 6.10., 4,3 h; auf 19 h 16 / 9 /
+  4,3 / 4,9, gleiche Lichtfehler, 10 „Die Stille vor einem Frame“); Vergessen 6 h (angenommen; leere
+  Nächte 24 h auseinander unterscheiden sich je Sensor um höchstens 7 %, aber mit 1 Tag Log-Evidenz
+  bis 6.10. −2530, 10). Neu für einen Sensor, wenn er verschoben wird. Gespeichert mit der Geisterkarte.
 - **Zeit:** Die Frames werden je Sekunde gesammelt (Gamma: die Summen von Δt, Δt·e, Δt·ln e und Δt der
   gekappten genügen), jeder mit Δt / τ, τ 4 s bewegt / 13 s ruhig (zusammengesetzte Likelihood mit der
   Korrelationszeit als effektiver Stichprobengröße; Varin, Reid & Firth 2011). Ein Frame steht für
@@ -368,8 +382,14 @@ Das Modell, je Sensor:
   0,3 / 1 / 3 –, Beginn mit der Rate ρ (gleich über die Quellen), Lebensdauer Erlang(2) mit Mittel 20 s.
   Gemessen in der leeren Nacht 22:56–02:15 (3,3 h, Ruhig-Energie über 3× ihrem Pegel ≥ 3 s, ohne
   LD2450-Ziel ±60 s): Küche 3,6 je Stunde (Dauer Median 10 s, Mittel 15 s, bis 59 s), die anderen vier
-  Sensoren keine. ρ lernt die App je Sensor mit dem Hintergrund (erwartete Zahl begonnener Quellen
-  je Beobachtungszeit; Prior 1 je 3 h mit dem Gewicht von 3 h, angenommen).
+  Sensoren keine. ρ lernt die App je Sensor mit dem Hintergrund (Gamma-Poisson: erwartete Zahl
+  begonnener Quellen je Beobachtungszeit; Prior 1 je 3 h mit dem Gewicht von 3 h, angenommen). Gezählt
+  wird nur, wo niemand im Blick ist (beides, Zahl und Zeit, gewichtet mit P(niemand im Blick) vor den
+  Frames: Echoquellen sind Energie von niemandem, und neben einer Person zählte, was ihr Profil nicht
+  erklärt, als Quelle), und jede Zählung wie bei der Geisterkarte ohne die gelernte Rate beurteilt: die
+  Odds „eine Quelle begann“ mit ρ_Prior/ρ statt ρ (J_Park2020 Gl. 37–41). Sonst wäre, was die Rate
+  sagt, Beleg für sie selbst (bis 0.20: Simulation, eine Sitzende 1,8 m vor dem Sensor, 0,33 → 0,73
+  je Stunde in einer Stunde; jetzt 0,34, 10 „Lernschleifen“).
   Verrechnung: Die Personen wie oben, die Echoquellen zuletzt (für die Gewichte der Hypothesen). Eine
   Person ohne Spur und eine Echoquelle sind Alternativen (beide selten): Die Dichte einer Person
   bekommt im Blick `P(keine Quelle) · ℓ(Person)`, außerhalb `P(keine Quelle) + Σ P(Quelle) ℓ(Quelle)`.
@@ -854,6 +874,12 @@ Näherungen, die man prüfen oder ersetzen kann:
   LD2410C-Hintergrund dieses Sensors neu beginnen, obwohl sich der Sensor selbst nicht bewegt hat (die
   App kann Drehen und Kalibrieren nicht unterscheiden). Für die Meldung 7.10. 08:07 war das nicht die
   Ursache (Hintergrund im Nachspiel unverändert).
+- **Wen der Filter verliert, lernt der LD2410C-Hintergrund** (10, „Lernschleifen“), soweit der LD2450 im
+  Gehäuse ihn nicht sieht und keine Echoquelle seine Energie hält. Die Schlafenden im Schlafzimmer
+  7./8.10. verlor der Filter um 00:25 an eine Echoquelle, die bis zum Morgen an blieb: Eine ungesehene
+  Person zählt im Blick nur mit P(keine Quelle), die Quelle selbst wird aber gegen sie gewogen, als
+  wäre sie da (4.3; oben und 10 „Energie aufteilen“). Ihre Spuren im Bett endeten als Geister und zählen in
+  die Geisterkarte (das Bett 3,5-mal die Prior-Rate nach einer Nacht).
 
 - **Kalibrierung (10, „Kalibrierung der App neu“):** Beim Flur widersprechen sich Grundriss (36–41°)
   und Paare (50° mit Ess- und Wohnzimmer durch die Tür, 29° beim Gang im Flur selbst); frei gefittet
@@ -1652,6 +1678,73 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
 
   Die Zahlen hinter Türen (6.10., Bad und Schlafzimmer ohne Sensor) verschieben sich in beide
   Richtungen; sie zählen nur für das Herauskommen.
+- **Lernschleifen** (8.10., Review des Algorithmus 3.2–3.5: „Hintergrund und Echorate lernen ungesichert
+  aus dem Urteil des Filters“). Vier Dinge lernt die App aus ihrem eigenen Urteil; je Schleife, ob sie in
+  den Daten wirkt und was sie schließt. Nachgespielt wie die App (Starts, Gelerntes weiter, 12
+  Hypothesen); `replay_bg.py` und die Simulationen im Arbeitsordner.
+  - *Der Hintergrund lernte Personen* (4.3), in beiden Richtungen:
+    - 6.10. abends, Arbeitszimmer: Ring 5–6 (3,75–5,25 m, der Platz der zweiten Person, deren Spuren der
+      Filter für Geister hält, 9) 7,5–8,6 statt leer 5,8; Ring 2 (Leon am Schreibtisch in 1,5 m, Energien
+      bei 100 gekappt) 2,0–2,3 statt leer 6,5. Der zweite Fall ist eine Verzerrung des E-Schritts: Eine
+      gekappte Energie zählte als 100, obwohl die Person mehr gibt; so lernte der Hintergrund nur 100/μ
+      seines Anteils. Ein zu kleiner Hintergrund lässt den leeren Platz nach dem Gehen wie eine Person
+      aussehen. Simulation (Person 1,8 m vor Sensor a, eine Stunde, der LD2450 sieht sie alle 15 min eine
+      Sekunde): Ring 2 5,0 → 2,2.
+    - 7./8.10. Schlafzimmer (neuer Sensor, zwei schlafen): bis 00:25 gehalten (P 0,95–1,00), dann nimmt
+      eine Echoquelle des Schlafzimmers die Energie und bleibt die ganze Nacht an (0,93–1,00; Echos
+      leben 20 s, 4.3), die Spuren im Bett (Leben 8–22 min) enden mit P(Geist) 1,000. Der Hintergrund
+      lernte die Schlafenden: Ring 2 7,7 → 29 (06:00), Ring 3 7,5 → 19, ruhig im Mittel 7,7 → 12,8; leer
+      gibt das Schlafzimmer 7,8–8,3 (17:20–21:40 und 06:20). Ihr LD2450 hatte in 67–100 % jeder
+      10 Minuten ein Ziel in Sicht.
+    - Der leere Raum ist stationär: leere Nächte 6./7. und 7./8. (ruhig, Mittel der Ringe) Arbeitszimmer
+      5,8 / 6,2, Esszimmer 6,2 / 6,2, Flur 3,4 / 3,4, Küche 2,7 / 2,5, Wohnzimmer 4,9 / 4,9; Schlafzimmer
+      abends 7,8, morgens 8,0–8,3. Zwischen Sensoren aber bis Faktor 2 (Küche 2,5, Schlafzimmer 7,8,
+      Prior 5).
+  - *Geprüft und verworfen:* (1) Lernen nur, wo nach dem Posterior niemand im Blick ist (EM mit der
+    Verantwortung „niemand im Blick“ über alle Hypothesen, mit diesen Frames; selektive Aktualisierung,
+    Koller et al. 1994, Toyama et al. 1999; Vorschlag des Reviews). In der Simulation richtig (Ring 2
+    4,9, Echorate gleich), aber der neue Schlafzimmersensor lernte seinen Pegel nie: 5,0 statt 7,8 von
+    17:13 bis 22:43, weil die um ein Drittel zu leise Annahme eine Person erscheinen ließ (P(Schlafzimmer)
+    1,00 von 18:23 bis 22:03, der Raum leer), die das Lernen anhielt – vier Stunden Licht im leeren Raum.
+    Dasselbe gilt für „nicht lernen, solange eine Hypothese jemanden im Raum hält“: Die Energien selbst
+    halten die Person, die ein zu kleiner Hintergrund erfindet. (2) Vergessen 1 Tag statt 6 h (die
+    Stationarität oben): Schlafzimmer Ring 2 06:43 26 statt 40, aber Log-Evidenz bis 6.10. −2530.
+  - *Jetzt* (4.3): gekappte Energien mit `E[e | e ≥ 100]` (E-Schritt zensierter Daten); gelernt nur aus
+    der Zeit ohne LD2450-Ziel im selben Gehäuse (ein Signal, das von den Energien unabhängig ist, also
+    kein Stillstand durch eine erfundene Person) und nur, soweit keine Echoquelle an ist. Ergebnisse:
+    - Arbeitszimmer 6.10. 21:00 / 23:00 ruhig 5,4 5,3 5,2 5,4 5,1 5,0 4,9 / 5,9 5,6 5,7 5,9 5,6 5,4 5,2
+      (vorher 2,0 3,1 3,6 7,8 7,5 5,6 3,9 / 2,3 3,1 4,0 7,9 7,9 6,4 5,5), am Morgen 6,5 6,0 5,8 5,8 5,8
+      5,8 5,8 (leer gemessen 6,54 6,04 5,84 5,83 5,83 5,84 5,79; vorher 5,8 5,5 5,5 6,2 6,2 5,9 5,8).
+    - Schlafzimmer 7./8.10.: Ring 2 höchstens 12,1 statt 29, ruhig im Mittel 06:00 8,4 statt 12,8. Nur
+      gekappte Energien richtig: 43,5 (der E-Schritt gibt den Schlafenden jetzt, was sie gaben); dazu
+      ohne Lernen bei Echoquelle: 24,5.
+    - Simulation wie oben: Ring 2 5,8 statt 2,2, alle Ringe beider Sensoren innerhalb 30 % (Test), die
+      Person bleibt, nach dem Gehen niemand.
+    - report_eval: bis 6.10. an 0 / aus 1,50 von 41 / 15 wie vorher, Log-Evidenz +2116; 7.10. früh 0 / 0
+      von 13 / 7, +1553; 7.10. abends 0 / 0,14 von 43 / 11, +616; leere Nacht (`phantom.py`) 0 min.
+    - *Offen:* Wen der Filter verliert und der LD2450 nicht sieht, lernt der Hintergrund weiter, soweit
+      nichts seine Energie erklärt (Simulation, Start ohne Wissen, eine Sitzende 1,8 m vor Sensor a: a
+      bleibt richtig, weil dort eine Echoquelle an ist, der 5 m entfernte Sensor b lernt 87 % ihrer
+      Energie in einer Stunde; ein schwach gehaltener Platz in 4,6 m 15 %). Aus den Energien allein ist
+      eine Person, die sich nicht bewegt, von einem anderen Hintergrund nicht zu trennen; schließen
+      muss das der Filter: dass er sie verliert (Abklingen 5.5; eine Echoquelle, die stundenlang an
+      bleibt, weil sie gegen ungesehene Personen anders gewogen wird als diese gegen sie, 9).
+  - *Die Echorate lernte aus Personen* (4.3): neben einer Person zählte, was ihr Profil nicht erklärt,
+    als begonnene Quelle (Simulation oben: 0,33 → 0,73 je Stunde am nahen, 0,47 am fernen Sensor). Jetzt
+    nur, wo niemand im Blick ist, und ohne ihre eigene Rate beurteilt (J_Park2020, wie die Karte): 0,34 /
+    0,33. Auf den Aufnahmen 0,17–0,53 je Stunde (vorher 0,15–0,37).
+  - *Die Geisterkarte* (4.2, Review 3.1: der Kartenfaktor herausgerechnet, aber durch das Abschneiden
+    harte Zählungen): Nach dem Abend 6.10. der Platz der zweiten Person 2,9-mal die Prior-Rate (der
+    Arbeitszimmersensor zählte 25 Geister in 10,4 h), nach der Nacht 7./8.10. das Bett 3,5-mal (der
+    Schlafzimmersensor 73 in 13,4 h, darunter die langen Spuren der Schlafenden mit P(Geist) 1,000), mit
+    und ohne die Änderungen oben. Bei 14 Tagen Vergessen stünde ein Bett, in dem jede Nacht so gezählt
+    wird, bei etwa 10-mal (überschlagen). Die Zählung hängt am Abschneiden und an der
+    Echoquelle, die die Schlafenden nimmt (beides im Filter); die Statistik, die vom Abschneiden
+    unabhängig ist (je Spur die Odds bei der Geburt ohne die Karte mal dem Überleben eines Geists über
+    ihr Leben, oben „Die Geisterkarte lernte einen Sitzplatz“), ist nach der Arbeit am Abschneiden neu zu
+    prüfen. Hier nicht geändert.
+  - *Die Zielkarte* (6) ist nur Ausgabe: Mit gelernter, mit leerer und ohne Lernen sind Zählverteilung
+    und Log-Evidenz bitgleich (`test_destination.py`). Keine Schleife.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

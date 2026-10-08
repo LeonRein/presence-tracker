@@ -136,21 +136,24 @@ def _lgamma(a: np.ndarray) -> np.ndarray:
 class Stats:
     """The frames of one sensor since the last evaluation, as the sufficient statistics of the
     Gamma likelihood per cell: time (s) of uncensored frames, time x energy, time x log energy, time
-    of censored ones (each frame for the time it stands for: Tracker._ld_frame)."""
+    of censored ones (each frame for the time it stands for: Tracker._ld_frame); and the time in which
+    the LD2450 in the same housing had a target in sight (for what the background learns)."""
 
-    __slots__ = ("time", "t_unc", "t_e", "t_le", "t_cens")
+    __slots__ = ("time", "t_unc", "t_e", "t_le", "t_cens", "t_target")
 
     def __init__(self):
         self.time = 0.0
+        self.t_target = 0.0
         self.t_unc = np.zeros(CELLS)
         self.t_e = np.zeros(CELLS)
         self.t_le = np.zeros(CELLS)
         self.t_cens = np.zeros(CELLS)
 
-    def add(self, e: np.ndarray, dt: float):
+    def add(self, e: np.ndarray, dt: float, target: bool = False):
         cens = e >= CAP
         ee = np.maximum(e, 0.5)  # integer energies: 0 as half a unit
         self.time += dt
+        self.t_target += dt * target
         self.t_unc += dt * ~cens
         self.t_e += dt * np.where(cens, 0.0, ee)
         self.t_le += dt * np.where(cens, 0.0, np.log(ee))
@@ -282,9 +285,10 @@ class Background:
     """The energy each sensor's LD2410C sees without anybody (MODEL.md 4.3), per cell, learned by the
     app: online EM of the superposition - the background's share of an energy is b / mu on average
     (Richardson 1972, Lucy 1974; Shepp & Vardi 1982), with mu from the people as the filter saw them
-    before these frames (the energies' own judgement is not learned back, Park et al. 2020). A prior
-    of prior_time s of the measured means; forgotten with forget s. Per sensor it holds only while
-    the sensor is where it was (pose_of): moved, it starts over."""
+    before these frames (the energies' own judgement is not learned back, Park et al. 2020), and
+    only as far as no echo source holds the energy (learn). A prior of prior_time s of the measured
+    means; forgotten with forget s. With it the rate at which echo sources begin (learn_echoes). Per
+    sensor it holds only while the sensor is where it was (pose_of): moved, it starts over."""
 
     def __init__(self, prior: np.ndarray, prior_time: float, forget: float, echo_rate: float = 1 / 10800,
                  echo_time: float = 10800.0):
@@ -293,7 +297,8 @@ class Background:
         self.forget = forget
         self.num = {}  # sensor id -> (16,) s x the background's share of the energy
         self.den = {}  # sensor id -> s watched
-        self.echoes = {}  # sensor id -> expected number of echo sources begun (forgotten like den)
+        self.echoes = {}  # sensor id -> expected number of echo sources begun (forgotten like den) ...
+        self.quiet = {}  # sensor id -> ... in this many s with nobody in view
         self.poses = {}
         self.echo_rate, self.echo_time = echo_rate, echo_time  # prior of the echo rate: per s, weight s
         self.held = {}  # sensor id -> s of its frames still not learned from (pause)
@@ -313,17 +318,40 @@ class Background:
 
     def rate(self, sid: str) -> float:
         """Echo sources begun per s at this sensor: the prior (Model) with what was counted."""
-        T = self.den.get(sid, 0.0)
+        T = self.quiet.get(sid, 0.0)
         n = self.echoes.get(sid, 0.0)
         return (self.echo_rate * self.echo_time + n) / (self.echo_time + T)
 
-    def learn_echoes(self, sid: str, began: float):
+    def learn_echoes(self, sid: str, began: float, rate: float, nobody: float = 1.0, seconds: float = 0.0):
+        """Online EM of the echo sources' rate (MODEL.md 4.3): the expected number of sources that
+        began in the frames just learned from (`seconds` long), judged with the rate `rate`, and the
+        probability that nobody was in view before them. Echo sources are energy from nobody (as
+        measured: the empty kitchen at night), and where somebody is, what the profile does not
+        explain of them would be counted as sources: counts and time only where nobody is. And a
+        count is judged without the learned rate, with the prior's in its place (Park et al. 2020,
+        eq. 37-41, as for the ghost map): the rate enters the odds of "a source began" as a factor,
+        else what the rate says would be evidence for itself."""
         if sid in self._skipped:
             self._skipped.discard(sid)
             return
-        self.echoes[sid] = self.echoes.get(sid, 0.0) + began
+        if 0.0 < began < 1.0:
+            c = self.echo_rate / rate
+            began = began * c / (began * c + 1.0 - began)
+        self.echoes[sid] = self.echoes.get(sid, 0.0) + nobody * began
+        self.quiet[sid] = self.quiet.get(sid, 0.0) + nobody * seconds
 
-    def learn(self, sid: str, share: np.ndarray, st: Stats):
+    def learn(self, sid: str, b: np.ndarray, mus: np.ndarray, w: np.ndarray, st: Stats, alpha: np.ndarray,
+              off: float = 1.0):
+        """One step of online EM (MODEL.md 4.3): the frames st, and per hypothesis (weight w) the
+        mean energy mus (H, 16) the people, the echo sources and the background b put in. The
+        background's share of an energy is b / mu (Richardson 1972; Shepp & Vardi 1982); of a capped
+        one, of what it was: E[e | e >= CAP] under Gamma(alpha, mu), b Q(alpha + 1, x) / Q(alpha, x)
+        with x = alpha CAP / mu (the E-step of censored data, Dempster, Laird & Rubin 1977). Until
+        0.20 a capped energy counted as 100: next to a person who puts in more than that, the
+        background learned too little. Weighed with off, the probability that no echo source is on
+        (judged with these frames): an echo source on for longer than echoes live is somebody the
+        filter lost (MODEL.md 10, "Lernschleifen"), and its profile, on the axis at a few levels,
+        fits them only roughly - what it does not explain was learned as background."""
         if self.held.get(sid, 0.0) > 0:
             self.held[sid] -= st.time
             self._skipped.add(sid)
@@ -332,9 +360,15 @@ class Background:
         k = math.exp(-st.time / self.forget)
         if sid in self.echoes:
             self.echoes[sid] *= k
-        energy = st.t_e + 100.0 * st.t_cens
-        self.num[sid] = self.num.get(sid, np.zeros(CELLS)) * k + share * energy
-        self.den[sid] = self.den.get(sid, 0.0) * k + st.time
+            self.quiet[sid] *= k
+        gained = w @ (b / mus) * st.t_e
+        if st.t_cens.any():
+            x = alpha * CAP / mus
+            tail = np.exp(log_gammaq(alpha + 1.0, x) - log_gammaq(alpha, x))
+            gained = gained + b * (w @ tail) * st.t_cens
+        w_bg = off * (1.0 - st.t_target / st.time) if st.time > 0 else 0.0
+        self.num[sid] = self.num.get(sid, np.zeros(CELLS)) * k + w_bg * gained
+        self.den[sid] = self.den.get(sid, 0.0) * k + w_bg * st.time
 
     def use(self, config):
         """Keep what was learned for the sensors that are where they were; the others start over."""
@@ -344,6 +378,7 @@ class Background:
                 self.num.pop(s.id, None)
                 self.den.pop(s.id, None)
                 self.echoes.pop(s.id, None)
+                self.quiet.pop(s.id, None)
                 self.poses[s.id] = pose
 
     def to_dict(self) -> dict:
@@ -352,13 +387,15 @@ class Background:
                 "num": {k: [round(float(x), 4) for x in v] for k, v in self.num.items()},
                 "den": {k: round(float(v), 3) for k, v in self.den.items()},
                 "echoes": {k: round(float(v), 4) for k, v in self.echoes.items()},
+                "quiet": {k: round(float(v), 3) for k, v in self.quiet.items()},
                 **({"held": held} if held else {})}
 
     def load_dict(self, d: dict):
         self.poses = {k: tuple(v) for k, v in d.get("poses", {}).items()}
         self.num = {k: np.array(v, dtype=float) for k, v in d.get("num", {}).items() if len(v) == CELLS}
         self.den = {k: float(v) for k, v in d.get("den", {}).items() if k in self.num}
-        self.echoes = {k: float(v) for k, v in d.get("echoes", {}).items() if k in self.num}
+        self.quiet = {k: float(v) for k, v in d.get("quiet", {}).items() if k in self.num}
+        self.echoes = {k: float(v) for k, v in d.get("echoes", {}).items() if k in self.quiet}
         self.held = {k: float(v) for k, v in d.get("held", {}).items()}
         self._skipped = set()
 

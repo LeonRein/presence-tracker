@@ -2,6 +2,20 @@
 
 ## Unveröffentlicht
 
+- **Lernschleifen abgesichert** (Review des Algorithmus 3.2/3.3, MODEL.md 4.3, 10 „Lernschleifen“): Der
+  LD2410C-Hintergrund lernte Personen, die der Filter nicht oder falsch hielt (Schlafzimmer 7./8.10.
+  nachts Ring 2 7,7 → 29 bei leer 7,8; Arbeitszimmer 6.10. abends Ring 5–6 am Platz der zweiten Person
+  +30 %, Ring 2 an Leons Schreibtisch 2,0 statt 6,5). Jetzt lernt er nur aus der Zeit, in der der LD2450
+  im selben Gehäuse nichts sieht, nicht während eine Echoquelle die Energie hält, und eine gekappte
+  Energie zählt mit dem, was sie war (E-Schritt zensierter Daten): Schlafzimmer höchstens 12,1,
+  Arbeitszimmer 6.10. abends höchstens 17 % neben dem leeren Raum (vorher −69 % / +34 %). Die Echorate lernt nur, wo niemand im Blick ist, und
+  ohne ihre eigene Rate (wie die Geisterkarte): in der Simulation einer Sitzenden 0,34 statt 0,73 je
+  Stunde. Licht auf allen Sätzen gleich (bis 6.10. aus 1,50 von 15; 7.10. früh 0; 7.10. abends 0,14 von
+  11; an überall 0), Log-Evidenz +2116 / +1553 / +616, leere Nacht 0 min. Lernen nur, wo der Filter
+  niemanden sieht, wurde verworfen: Der neue Schlafzimmersensor lernte so seinen Pegel nie, und eine
+  erfundene Person hielt das leere Schlafzimmer vier Stunden „besetzt“. Offen: Wen der Filter verliert
+  und der LD2450 nicht sieht, lernt der Hintergrund weiter (MODEL.md 9).
+
 ## 0.20.1
 
 - **Rechenzeit** (Performance-Review von 0.18.0, MODEL.md 10): zwei weitere kompilierte Kernel, für

@@ -82,7 +82,8 @@ def test_the_background_is_learned_per_sensor_and_starts_over_when_moved(tmp_pat
     bg = ld2410.Background(ld2410.prior(m), m.ld_prior_time, m.ld_forget)
     bg.use(cfg)
     st = _stats(2 * ld2410.prior(m), n=1, dt=3600.0)
-    bg.learn("a", np.ones(ld2410.CELLS), st)
+    b = ld2410.prior(m)
+    bg.learn("a", b, b[None, :], np.ones(1), st, ld2410.cell_values(m, *m.ld_shape))
     assert np.allclose(bg.b("a"), 2 * ld2410.prior(m), rtol=0.2)
     bg.save(tmp_path / "ld.json")
     other = ld2410.Background(ld2410.prior(m), m.ld_prior_time, m.ld_forget)
@@ -106,8 +107,7 @@ def test_echo_sources_begin_live_end_and_are_counted():
         e.predict(1.0, m, 0.0)
     assert e.on() < 0.01  # and it ends
     bg = ld2410.Background(ld2410.prior(m), m.ld_prior_time, m.ld_forget, 1e-4, 3600.0)
-    bg.learn("a", np.ones(ld2410.CELLS), _stats(ld2410.prior(m), n=1, dt=3600.0))
-    bg.learn_echoes("a", 10.0)
+    bg.learn_echoes("a", 10.0, 1e-4, 1.0, 3600.0)
     assert abs(bg.rate("a") - (0.36 + 10) / 7200) < 1e-9
 
 

@@ -1414,13 +1414,15 @@ class Tracker:
         if st is None:
             st = self._ld_stats[si] = ld2410.Stats()
         frame = self.m.ld_frame
+        # the LD2450 of the housing has something in sight (in a silence it had nothing)
+        target = any(not d.hidden for d in rt.detections)
         if dt > IDLE:
-            st.add(e, frame)
+            st.add(e, frame, target)
         elif dt > 2 * frame and prev is not None:
             st.add(prev, dt - frame)
-            st.add(e, frame)
+            st.add(e, frame, target)
         else:
-            st.add(e, dt)  # the next frame (or one lost on the way)
+            st.add(e, dt, target)  # the next frame (or one lost on the way)
 
     def _ld_tiles(self, si: int) -> tuple:
         """The tiles sensor si's LD2410C sees and what a person there puts into its 16 cells:
@@ -1516,17 +1518,24 @@ class Tracker:
         echo = self._ld_echo.get(si)
         if echo is None:
             echo = self._ld_echo[si] = ld2410.Echoes(m)
-        echo.predict(st.time, m, self.ld_background.rate(sid))
+        rate = self.ld_background.rate(sid)
+        echo.predict(st.time, m, rate)
         e_pts = echo.points(now)
-        # the background learns from the people (and echoes) as the filter saw them before these frames
-        share = np.zeros(ld2410.CELLS)
-        prior_people = []
-        for h, hy in enumerate(self.hyps):
-            P = sum((pts[id(o)][0] @ pts[id(o)][1] for o in hy.objects() if id(o) in seen), np.zeros(ld2410.CELLS))
-            prior_people.append(P)
-            share += prior_w[h] * b / (b0 + P + e_pts[0] @ e_pts[1])
+        # what the background learns (below, MODEL.md 4.3): the people as the filter saw them before
+        # these frames, per hypothesis the mean they and the background put in, and the probability
+        # that nobody was in view
         if self.learn_ghosts:
-            self.ld_background.learn(sid, share, st)
+            mus, nobody = [], 0.0
+            for h, hy in enumerate(self.hyps):
+                mu, none = b0.copy(), 1.0
+                for o in hy.objects():
+                    if id(o) in seen:
+                        mm, S = pts[id(o)]
+                        mu = mu + mm @ S
+                        mass = float(mm.sum())
+                        none *= 1.0 / (1.0 + mass) if isinstance(o, Undetected) else max(1.0 - mass, 0.0)
+                mus.append(mu)
+                nobody += prior_w[h] * none
         # per hypothesis the people one after the other, the echo sources last
         memo = {}
         cache = {}  # (object, what the others put in) -> its ratio and normalizer
@@ -1624,7 +1633,10 @@ class Tracker:
         top = parts.max(axis=0)
         echo.weigh(np.clip(top + np.log(np.exp(parts - top).sum(axis=0)) - _logsumexp(outs), -700.0, ld2410.LOG_CAP))
         if self.learn_ghosts:
-            self.ld_background.learn_echoes(sid, echo.began())
+            # the background where no echo source is on (as judged with these frames), and the
+            # echo sources' rate where nobody is in view
+            self.ld_background.learn(sid, b, np.array(mus), prior_w, st, lik.alpha, float(echo.p[0]))
+            self.ld_background.learn_echoes(sid, echo.began(), rate, nobody, st.time)
         self._normalize()
 
     def _ld_apply(self, si: int, obj, logf: np.ndarray):
