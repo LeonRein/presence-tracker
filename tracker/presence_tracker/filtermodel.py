@@ -30,9 +30,6 @@ class Model:
     kappa_shape = 1.0  # assumed until estimated over the evidence (MODEL.md 7)
     kappa_levels = 5  # within 25 % of the Gamma for any time unseen; 3 / 7: light the same (MODEL.md 10)
     kappa_switch = 1 / 600  # 1/s (assumed, as in the 0.7.0 draft)
-    # how the Gamma prior of kappa becomes levels: "grid" (gamma_log_grid); for comparison
-    # "quadrature" (generalised Gauss-Laguerre, until 0.21) or "bins" (equally probable, until 0.7)
-    gamma_levels = "grid"
     # 3.2 walking: a velocity-jump process (measured 6.10. on 8.7 h of LD2450 tracks, walks of >= 2 s)
     speed = 0.85  # m/s
     speed_spread = 0.36  # m/s: spread of the speed between walks (10-90 % 0.44-1.37 m/s)
@@ -149,8 +146,6 @@ class Model:
     # (MODEL.md 5.1): compare model variants at more than one setting
     max_hyps = 12
     hyp_mass = 1e-7
-    hyp_cut = "mass"  # (comparison: "relative", until 0.21 each hypothesis below hyp_mass of the strongest)
-    hyp_merge_first = True  # (comparison: False, until 0.21 the children of a branch cut before merging)
     # 6 "Ziel": the learned map of where walks go (destination.py) weighs, in each cell, against the
     # walkers' own motion ("wird betreten") as a Dirichlet prior with the weight of this many walks
     # (as the ghost map's prior weighs one ghost per cell, MODEL.md 4.2, 10): one walk can't make a
@@ -187,13 +182,11 @@ class Shapes:
         # getting up weighted by its mean duration
         w = self.go_w / self.go
         self.go_w_ongoing = w / w.sum()
-        levels = {"grid": gamma_log_grid, "quadrature": gamma_quadrature, "bins": gamma_levels}[m.gamma_levels]
-        self.kappa, self.kappa_w = levels(m.kappa_shape, m.kappa_levels)
+        self.kappa, self.kappa_w = gamma_log_grid(m.kappa_shape, m.kappa_levels)
         # 4.3 the amplitude of a standing person on the LD2410C's profile, its own grid; (K, A) the
         # joint prior of a stay's detectability and amplitude, and the amplitude's given the former
         self.amp, self.amp_w = gamma_log_grid(m.ld_amp_shape, m.ld_amp_levels)
-        corr = m.kappa_amp_corr if m.gamma_levels == "grid" else 0.0  # the copula needs cells, not nodes
-        self.ka_w = copula_cells(self.kappa_w, self.amp_w, corr)
+        self.ka_w = copula_cells(self.kappa_w, self.amp_w, m.kappa_amp_corr)
         self.amp_given_kappa = self.ka_w / self.ka_w.sum(axis=1, keepdims=True)
 
     def stay_prior(self, ongoing: bool = False) -> np.ndarray:
@@ -229,18 +222,6 @@ def copula_cells(wa: np.ndarray, wb: np.ndarray, rho: float) -> np.ndarray:
         P *= (wa / P.sum(axis=1))[:, None]
         P *= (wb / P.sum(axis=0))[None, :]
     return P / P.sum()
-
-
-def gamma_quadrature(shape: float, k: int) -> tuple:
-    """Gamma(shape, rate shape) (mean 1) as k points with weights: generalised Gauss-Laguerre
-    quadrature (Golub & Welsch 1969), exact for the moments up to degree 2k - 1, as the sigma points
-    are for the position (MODEL.md 5.2). (nodes, weights)."""
-    a = shape - 1.0
-    i = np.arange(k)
-    J = np.diag(2 * i + a + 1) + np.diag(np.sqrt((i[1:]) * (i[1:] + a)), 1) + np.diag(np.sqrt((i[1:]) * (i[1:] + a)), -1)
-    x, v = np.linalg.eigh(J)
-    w = v[0] ** 2
-    return x / shape, w / w.sum()
 
 
 def gamma_log_grid(shape: float, k: int, tail: float = 1e-3) -> tuple:

@@ -1242,10 +1242,7 @@ class Tracker:
         stayed (until 0.21). The cut is decided on the merged weights before the mixtures are made:
         what is dropped is never mixed."""
         self.hyps = children
-        if self.m.hyp_merge_first:
-            self._cut(cap=True, merged=True)
-        else:  # (comparison) each child cut alone, before those alike are merged
-            self._cut(cap=False)
+        self._cut()
         self._merge()
         self._prune()
 
@@ -1338,50 +1335,40 @@ class Tracker:
         return out
 
     def _prune(self):
-        """Keep the strongest hypotheses (after merging those alike, _merge): see _cut."""
-        self._cut(cap=True)
+        """Keep the strongest hypotheses (after merging those alike, _merge): see _cut; strongest first."""
+        self._cut()
+        self.hyps.sort(key=lambda h: -h.logw)
 
-    def _cut(self, cap: bool, merged: bool = False):
+    def _cut(self):
         """Keep the strongest hypotheses until what is dropped weighs at most hyp_mass of the whole,
-        and (cap) at most max_hyps of them: cutting by weight minimizes the L1 error, which is then
-        at most twice the mass dropped (B_Vo2017 Abschn. II, III-A; MODEL.md 5.1). merged: weighed
-        as those alike will be after merging (_merge follows), each by the sum of its group. What is
-        dropped counts in the evidence (_normalize): the step's normalizer is the prior predictive
-        of the data, whatever the filter keeps of the posterior afterwards; loglik_cut says how much
-        of the evidence is mass the filter dropped."""
+        and at most max_hyps of them: cutting by weight minimizes the L1 error, which is then at most
+        twice the mass dropped (B_Vo2017 Abschn. II, III-A; MODEL.md 5.1). Each is weighed as it
+        will be after merging (_merge), by the sum of those alike; the kept ones stay in their order
+        (merging takes the first as base). What is dropped counts in the evidence (_normalize): the
+        step's normalizer is the prior predictive of the data, whatever the filter keeps of the
+        posterior afterwards; loglik_cut says how much of the evidence is mass the filter dropped."""
         self._version += 1
         m = self.m
-        if merged:
-            by = {}
-            for hy in self.hyps:
-                by.setdefault(hy.key(), []).append(hy)
-            groups = list(by.values())
-        else:
-            groups = [[hy] for hy in self.hyps]
+        by = {}
+        for hy in self.hyps:
+            by.setdefault(hy.key(), []).append(hy)
+        groups = list(by.values())
         glw = np.array([_logsumexp([h.logw for h in g]) for g in groups])
         order = np.argsort(-glw, kind="stable")
-        if cap and not merged:
-            self.hyps = [groups[i][0] for i in order]
         lw = glw[order]
         total = _logsumexp(lw)
         if total == -math.inf:  # nothing explains the data (should not happen): keep them, see _normalize
-            if cap:
-                keep = {id(h) for i in order[:m.max_hyps] for h in groups[i]}
-                self.hyps = [h for h in self.hyps if id(h) in keep]
+            keep = {id(h) for i in order[:m.max_hyps] for h in groups[i]}
+            self.hyps = [h for h in self.hyps if id(h) in keep]
             return
         w = np.exp(lw - total)
-        if m.hyp_cut == "mass":
-            # from the weakest up, as long as the dropped ones together stay within hyp_mass
-            n = len(w) - int(np.searchsorted(np.cumsum(w[::-1]), m.hyp_mass, side="right"))
-        else:  # (comparison, until 0.21) each below hyp_mass of the strongest
-            n = int(np.count_nonzero(lw > lw[0] + math.log(m.hyp_mass)))
-        n = max(n, 1)
-        if cap:
-            n = min(n, m.max_hyps)
+        # from the weakest up, as long as the dropped ones together stay within hyp_mass
+        n = len(w) - int(np.searchsorted(np.cumsum(w[::-1]), m.hyp_mass, side="right"))
+        n = min(max(n, 1), m.max_hyps)
         if n == len(w):
             return
         keep = {id(h) for i in order[:n] for h in groups[i]}
-        self.hyps = [h for h in self.hyps if id(h) in keep]  # in their order (merging takes the first as base)
+        self.hyps = [h for h in self.hyps if id(h) in keep]
         self._normalize(float(w[n:].sum()))
 
     def _normalize(self, dropped: float = 0.0):

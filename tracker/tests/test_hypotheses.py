@@ -7,8 +7,8 @@ import math
 
 import numpy as np
 
-from presence_tracker.filter import Hyp, Tracker
-from presence_tracker.filtermodel import Model, Shapes, copula_cells, gamma_log_grid, gamma_quadrature
+from presence_tracker.filter import Tracker
+from presence_tracker.filtermodel import Model, Shapes, copula_cells, gamma_log_grid
 from presence_tracker.hidden import Hidden
 from presence_tracker.sim import Person, simulate
 
@@ -39,11 +39,6 @@ def test_alternatives_alike_are_merged_before_the_cut():
     assert len(crowd.hyps) == 1
     (u,) = crowd.hyps[0].hidden
     assert abs(u.r - n * 5e-8 / (1 + n * 5e-8)) < 1e-12, u.r
-    # as until 0.21: each child cut alone first, the person is gone
-    crowd = Tracker(flat_config(), start=0.0)
-    crowd.m.hyp_merge_first, crowd.m.hyp_cut = False, "relative"
-    crowd._take(_children(crowd, [0.0] + [math.log(5e-8)] * n, [False] + [True] * n))
-    assert crowd.hyps[0].hidden == []
 
 
 def test_the_cut_drops_at_most_its_mass_and_the_evidence_counts_it():
@@ -67,15 +62,12 @@ def test_the_cut_drops_at_most_its_mass_and_the_evidence_counts_it():
 
 def test_the_detectability_grid_keeps_long_unseen_sitting_as_the_prior_says():
     # E[exp(-kappa s)] of the grid against the Gamma(1) prior's 1 / (1 + s), s = rate x time unseen up
-    # to 300 (a still person near one sensor, 0.034 /s, for 2.5 h): within 25 % everywhere. The
-    # quadrature (until 0.21) was 0.40 at s = 20 (10 min) and 1e-7 at s = 70
+    # to 300 (a still person near one sensor, 0.034 /s, for 2.5 h): within 25 % everywhere (the
+    # three Gauss-Laguerre nodes until 0.21: 0.40 at s = 20, 10 min, and 1e-7 at s = 70)
     s = np.exp(np.linspace(math.log(0.1), math.log(300.0), 40))
     sh = Shapes(Model())
     ratio = (sh.kappa_w[None, :] * np.exp(-np.outer(s, sh.kappa))).sum(axis=1) * (1 + s)
     assert ratio.min() > 0.75 and ratio.max() < 1.01, ratio
-    k, w = gamma_quadrature(1.0, 3)
-    old = (w[None, :] * np.exp(-np.outer(s, k))).sum(axis=1) * (1 + s)
-    assert old.min() < 1e-6
 
 
 def test_detectability_and_amplitude_are_drawn_together():

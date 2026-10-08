@@ -1812,7 +1812,9 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
      messbaren (5 × 9 Zahlen je Gauß-Mischung, die Kacheln tragen g nicht).
 
   Nachgespielt wie die App (report_eval, 0.21.0 als Basis; Licht fälschlich an / aus, Log-Evidenz
-  gegen 0.21.0; Spalten: Abend 7.10. (43 / 11 Fenster), bis 6.10. (41 / 15), 7.10. früh (13 / 7)):
+  gegen 0.21.0; Spalten: Abend 7.10. (43 / 11 Fenster), bis 6.10. (41 / 15), 7.10. früh (13 / 7)).
+  Die Varianten „nur 1“, „nur 2“ usw. waren Vergleiche auf dem Entwicklungsstand; im Code gibt es nur
+  noch alle drei (ρ ist ein Parameter, `kappa_amp_corr`):
 
   | 12 Hypothesen | Abend | bis 6.10. | 7.10. früh |
   |---|---|---|---|
