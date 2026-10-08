@@ -1551,7 +1551,14 @@ class Tracker:
         # the standing component per level of its amplitude (4.3), then the walking one
         sh = self.shapes
         aw = obj.amw
-        masses = [(1 - obj.a) * np.concatenate([w[STILL] * aw, [w[WALK]]])]
+        # a component out of its view (as a tile: expected energy below FLOOR) is not in view: mass 0
+        # here, so it is weighed by 1 like the rest out of view (_ld_weigh). Until 0.24 it counted as
+        # in view with nothing put in, and got P(no echo source) where its part gone through a door
+        # got 1: every LD2410C with a likely echo source pushed every tracked person in the house
+        # through a door (MODEL.md 10, "Durch die Wand nach draußen", 8.10. 18:47)
+        vs = float(s_still[STILL].max()) > ld2410.FLOOR
+        vw = float(s_walk[WALK].max()) > ld2410.FLOOR
+        masses = [(1 - obj.a) * np.concatenate([w[STILL] * aw * vs, [w[WALK] * vw]])]
         S = [np.vstack([sh.amp[:, None] * s_still[STILL][None, :], s_walk[WALK][None, :]])]
         if obj.away is not None and obj.a > 0:
             m_, S_ = tiles(obj.away, obj.a)
@@ -1708,6 +1715,8 @@ class Tracker:
             logf_pts = top + np.log(np.exp(parts - top).sum(axis=0))
             if not isinstance(obj, Undetected):
                 logf_pts -= _logsumexp(outs)  # a person: only the shape changes (outside: 1)
+                # what is out of its view (a Gaussian's component there, _ld_points) stays as it is
+                logf_pts = np.where(pts[id(obj)][0] > 0, logf_pts, 0.0)
             self._ld_apply(si, obj, np.clip(logf_pts, -700.0, ld2410.LOG_CAP))
         # the echo sources given the people with tracks and the unseen ones as they were, mixed over
         # the hypotheses
