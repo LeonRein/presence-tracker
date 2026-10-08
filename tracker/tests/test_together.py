@@ -30,6 +30,23 @@ def test_two_standing_together_stay_two():
     assert abs(in_house(crowd) - 2) < 0.1, in_house(crowd)
 
 
+def test_two_lying_together_stay_two_for_long():
+    # two come in one after the other and lie 0.3 m apart for half an hour (two in bed); both LD2450
+    # merge them into one target. Nothing supports the second one on their own, nothing contradicts
+    # them (MODEL.md 9, "Zwei in einer Spur"): still two, and nobody else is invented. Until 0.22 the
+    # existence of who had no track of their own faded (2 min) and the second one was lost
+    config = flat_config(entry=True)
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3.0, 2.5), (3.0, 2.5), start=5, pauses={3: 2000}))
+    b = Person(walk((-1.0, 4.2), FLUR_DOOR, (3.3, 2.5), (3.3, 2.5), start=15, pauses={3: 2000}))
+    crowd = Tracker(config, start=0.0, people=["outside", "outside"])
+    end = b.waypoints[3][0] + 1800
+    for t, sid, frame in simulate([a, b], sim_sensors(config, resolution=0.6), end, rate=4.0, walls=config.wall_segments):
+        crowd.process_frame(sid, t, frame)
+    d = crowd.count_distribution()["wohn"]
+    assert d[2] > 0.9, d
+    assert abs(in_house(crowd) - 2) < 0.1, in_house(crowd)
+
+
 def test_a_copy_beside_a_walker_does_not_walk_along():
     # one walks in and around the room for three minutes; sensor a's LD2450 reports a copy 0.8 m
     # beside them for 6 s early on (multipath): a minute later one person, not a second one walking along

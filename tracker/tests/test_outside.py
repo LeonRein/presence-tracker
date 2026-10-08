@@ -34,7 +34,8 @@ def test_who_walks_out_through_the_stairwell_door_is_outside():
     assert out["_house"][0] > 0.9, out["_house"]  # left it: nobody at home
     assert out["observed"][0] > 0.95 and out["balkon"][0] > 0.95
     assert crowd.zone_states()["_total"].count == 0
-    # who left fades out there like anywhere (MODEL.md 5.5); they do not become an unknown person
+    # who left: their record expires out there, where no sensor can test it (MODEL.md 5.5); they do
+    # not become an unknown person
     # out of the house who comes back at the rate of coming home for a day
     ppp_out = max(hy.ppp.out for hy in crowd.hyps)
     assert ppp_out < 0.05, ppp_out

@@ -63,8 +63,9 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   beginnen* lässt auch die Spuren der Sensoren neu anfangen (wer gerade verfolgt wird, zählt sofort
   wieder), und der LD2410C-Hintergrund lernt danach 5 Minuten lang nichts.
 - **Ausfall eines Sensors**: Kommt von einem Sensor 6 s lang kein Frame (Board ohne Strom, abgestürzt,
-  WLAN weg), enden seine Spuren. Wen er verfolgt hat, der gilt dann als ungesehen und verblasst wie jeder,
-  den kein Sensor sieht; der Raum bleibt nicht stundenlang besetzt.
+  WLAN weg), enden seine Spuren. Wen er verfolgt hat, der gilt dann als ungesehen; wo ihn kein anderer Sensor
+  sieht, läuft sein Eintrag nach wenigen Minuten ab, wie an jedem Ort, den kein Sensor sieht; der Raum
+  bleibt nicht stundenlang besetzt.
 - **Fehler melden** (Tab *Live*): Wenn etwas nicht stimmt (Licht fälschlich an oder aus, Licht zu spät,
   Person verloren, Geist, Person am falschen Ort, ungenaues Tracking, hohe Latenz), den Raum (keine
   Vorauswahl) und die Art des Fehlers wählen. Die App

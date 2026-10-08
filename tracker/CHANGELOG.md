@@ -2,6 +2,30 @@
 
 ## Unveröffentlicht
 
+Review des Algorithmus 1.3 (MODEL.md 5.5, 10 „Tote Winkel und Existenz“):
+
+- **Kein Abklingen der Existenz mehr in Sicht.** Bis 0.22 verlor jede bekannte Person ohne Spur ihre
+  Existenz mit `e^(−t/2 min)`, wo sie auch war, auch mit r = 1 und in voller Sicht (ein Sterbeprozess
+  gegen Vorgabe 1.3). Jetzt entscheiden dort die Messungen allein: Eine Sitzende, die keine Messung stützt
+  und keine widerlegt, bleibt; zwei, die der LD2450 als ein Ziel sieht, bleiben zwei.
+- **Was keine Messung prüfen kann, läuft ab** (`unseen_life` = 2 min, `Tracker._expire`): der Teil eines
+  Eintrags in toten Winkeln, in Bereichen ohne Sensor und außer Haus, in einer Kachel nach dem Anteil,
+  den der beste lebende Sensor nicht sieht (`Tiling.observed`: LD2450-Sicht oder LD2410C-Strahl ×
+  Sichtlinie). Eine ehrlich gekennzeichnete Annahme über Einträge ohne Beleg (Existenz-Kette nach
+  Musicki & Evans 2005, nur wo die Erkennbarkeit nichts ausrichten kann), kein Teil der Bewegung. Fällt
+  ein Sensor aus, prüft er nichts mehr; über eine Datenlücke zählen die Sensoren, die da sind.
+- Geprüft und verworfen: tote Winkel als Pseudo-Bereiche mit eigenem Aufenthalt (Empfehlung des
+  Reviews). Ein Aufenthalt senkt r nur bei r < 1; Einträge mit r ≈ 1 (aus Identitätsteilungen beim
+  Zusammenlegen) hielt er beliebig lange, und Gehende an der Grenze blieben einen ganzen Aufenthalt
+  darin: Küche 7.10. 11:39–12:55 0,98 / 0,97 / 0,82, Licht fälschlich an 3,14 von 13. Ohne Abklingen und
+  ohne Ablauf 0,80 / 0,55 / 0,29 (1,16 von 13).
+- Zusammen gegen 0.22.0 (12 Hypothesen; fälschlich an / aus): Abend 0 / 0,13 → 0 / 0,01 von 43 / 11, bis
+  6.10. 0 / 1,50 → 0 / 1,00 von 41 / 15 (Arbeitszimmer 21:36 richtig), 7.10. früh 0 / 0 → 0 / 0 von 13 / 7,
+  Küche 0,05 / 0,02 / 0,01 wie bisher; mit 16 Hypothesen 0 / 0,01, 0 / 1,00, 0,11 / 0 (wie 0.22.0). Zwei im
+  Bett P(=2) 1,00 / 0,32 / 0,87 → 1,00 / 0,94 / 1,00. Leere Nacht 0 min. Im Haus je Stunde gegen die Telefone (6.10. 19:28 – 8.10. 06:00) im Mittel 1,00 → 0,98
+  daneben, keine Anhäufung. Rechenzeit vollste Stunde 51,3 → 52,7 s (+2,7 %).
+- Gespeicherte Personen (`people.json`) passen weiter zu den Kacheln.
+
 ## 0.22.0
 
 Review des Algorithmus, P0 (MODEL.md 10, „Review 8.10.“):

@@ -142,6 +142,7 @@ class Tiling:
         self.widths = np.diff(np.concatenate([AGE_EDGES, [AGE_EDGES[-1] * 2]]))
         self.A = len(AGE_EDGES)
         self._region_rates = None
+        self._observed = {}
         self.g = {}
         self.dist = {}
 
@@ -167,6 +168,26 @@ class Tiling:
             self.g[si] = self.average(self.tr._g(si, self.points)) if self.n else np.zeros(0)
             self.dist[si] = self.tr._polar(si, self.centers)[0] if self.n else np.zeros(0)
         return self.g[si], self.dist[si]
+
+    def observed(self, sensors) -> np.ndarray:
+        """(n,) how well the best of these sensors (indices) can see a person in each tile, 0..1
+        (MODEL.md 5.5): its LD2450's sight of them (seen) or its LD2410C's - the beam times the line
+        of sight, within its last gate (ld2410.expected). 0: a blind spot, where no measurement can
+        say anything about somebody there. Cached until a sensor changes (Tracker._recalibrated)."""
+        key = tuple(sensors)
+        hit = self._observed.get(key)
+        if hit is None:
+            from . import ld2410
+            tr = self.tr
+            full, none = tr.m.ld_beam
+            hit = np.zeros(self.n)
+            for si in key:
+                if self.n:
+                    angle, slant, sight = tr._ld_geometry(si, self.points)
+                    beam = np.clip((none - angle) / (none - full), 0.0, 1.0) * sight * (slant <= 9 * ld2410.GATE)
+                    hit = np.maximum(hit, np.maximum(self.seen(si)[0], self.average(beam)))
+            hit = self._observed[key] = np.clip(hit, 0.0, 1.0)
+        return hit
 
     def gauss_mass(self, mean, var) -> np.ndarray:
         """(n,) share of a Gaussian N(mean, diag var) in each tile (by the sample points, summing

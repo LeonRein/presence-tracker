@@ -3,6 +3,7 @@ the next start, moved on over the time between (filter.Tracker.people_state / re
 without it nothing is known, and nobody is invented in view."""
 
 import json
+import math
 
 import numpy as np
 
@@ -97,7 +98,7 @@ def test_a_gap_moves_everybody_on():
         from presence_tracker import filter as F
         from presence_tracker.filtermodel import Model
         m = Model()
-        m.record_life = None  # the motion alone (the existence fades over a gap as well, MODEL.md 5.5)
+        m.unseen_life = math.inf  # the motion alone (records nothing tests expire over a gap too, MODEL.md 5.5)
         tr = Tracker(config, model=m)
         tr.restore_people(state)
         old = F.GAP_EXACT

@@ -41,8 +41,8 @@ __all__ = ["Model", "Tracker"]
 
 MAX_STEP = 0.2  # s: motion is cut into parts no longer than this
 MOUNT_RADIUS = 0.3  # m: targets this close to a sensor come from its mount
-GIVE_UP = 0.01  # a known person who exists with less probability (wherever they are, out of the house
-                # too: there the existence fades as anywhere) joins the unknown ones with r x their density:
+GIVE_UP = 0.01  # a known person who exists with less probability (wherever they are: refuted, or where
+                # nothing could test them, Tracker._expire) joins the unknown ones with r x their density:
                 # only P(several of them come back) changes, by <= GIVE_UP^2 / 2 (0.05: 14 % less
                 # computing time, light wrongly off 1.67 instead of 1.17)
 RECYCLE_EVERY = 1.0  # s
@@ -214,6 +214,7 @@ class Tracker:
         self._flushed = self.now
         self._gap_from = None  # time of a restored state: the gap to the first frame is still to predict
         self._out_cache = {}
+        self._expiry = None  # (dt, live sensors) and the factors per tile of _expire for them
         self._ld_stats = {}  # sensor index -> the LD2410C's frames since they were last weighed (ld2410.Stats)
         self._ld_memory = {}  # sensor index -> what the people put into its cells lately (the still ones lag)
         self._ld_echo = {}  # sensor index -> its echo sources (ld2410.Echoes)
@@ -290,21 +291,48 @@ class Tracker:
         lead = max(gap - GAP_EXACT, 0.0)
         leaps = min(int(math.ceil(lead / LEAP - 1e-9)), MAX_LEAPS)
         parts = int(math.ceil((gap - lead) / MAX_STEP - 1e-9))
+        # the sensors were there, only the app was not watching: what they could have tested lasts
+        placed = [si for si, s in enumerate(self.config.sensors) if s.enabled and s.placed]
         for obj, _ in self._objects():
             for _ in range(leaps):
                 obj.leap(lead / leaps)
+                self._expire(obj, lead / leaps, placed)
             for _ in range(parts):
                 obj.move((gap - lead) / parts)
-            self._fade(obj, gap)
+                self._expire(obj, (gap - lead) / parts, placed)
         self._version += 1
 
-    def _fade(self, obj, dt: float):
-        """A known person without a track exists on with exp(-dt / record_life), wherever they are
-        (Musicki & Evans 2005: the existence of a track as a Markov chain, p11 < 1); measurements
-        that support them lift r again (MODEL.md 5.5). None: always."""
-        life = self.m.record_life
-        if life and type(obj) is Hidden and obj.r > 0:
-            obj.r *= math.exp(-dt / life)
+    def _expire(self, obj, dt: float, live):
+        """The record of a known person without a track lasts only as far as a measurement could
+        test it (MODEL.md 5.5): where a sensor sees them, the measurements alone decide (nothing ends
+        there, 1.3); the share of them that no sensor can see expires at 1/unseen_life - in a tile
+        by 1 - how well the live sensors see it (Tiling.observed; 0 in a blind spot, and where a
+        sensor saw whose frames stopped coming, MODEL.md 4.4), in the regions without a sensor and
+        out of the house whole - so the existence r falls by r x that share x (1 - e^(-dt/unseen_life)).
+        An assumption about records nothing supports, not a part of how people move (Musicki & Evans
+        2005: the existence chain of a track, here only where no detectability can act)."""
+        if type(obj) is not Hidden or not obj.r > 0:
+            return
+        m, tl = self.m, self.tiles
+        q = -math.expm1(-dt / m.unseen_life)
+        lost = obj.out * q
+        obj.out -= lost
+        reg = float(obj.region.sum())
+        if reg > 0:
+            obj.region *= 1.0 - q
+            lost += reg * q
+        if tl.n:
+            key = (dt, tuple(live))
+            if self._expiry is None or self._expiry[0] != key:  # the same for everybody in a step
+                self._expiry = (key, np.exp(-dt / m.unseen_life * (1.0 - tl.observed(live))))
+            f = self._expiry[1]
+            before = float(obj.walk.sum() + obj.still.sum())
+            obj.walk *= f
+            obj.still *= f
+            lost += before - float(obj.walk.sum() + obj.still.sum())
+        if lost > 0:
+            obj.r *= 1.0 - lost
+            obj._normalize()
 
     def reconfigure(self, config):
         """A new configuration. If only sensors changed (turned, moved, recalibrated, switched on
@@ -377,7 +405,8 @@ class Tracker:
             self._normalize()
         self.world.config = self.config
         self._gcache, self._area, self._ghost_total, self._out_cache = {}, {}, {}, {}
-        self.tiles.g, self.tiles.dist = {}, {}
+        self.tiles.g, self.tiles.dist, self.tiles._observed = {}, {}, {}
+        self._expiry = None
         for si in range(len(self.sensors)):
             self._g(si, np.zeros((1, 2)))
         self._version += 1
@@ -656,7 +685,7 @@ class Tracker:
             for obj, refs in objs:
                 if isinstance(obj, Hidden):
                     obj.move((t - t0) / parts)
-                    self._fade(obj, (t - t0) / parts)
+                    self._expire(obj, (t - t0) / parts, live)
                     d = obj.weigh(*lat_f) if lat_f is not None else 0.0
                     for h in refs:
                         self.hyps[h].logw += d
@@ -718,13 +747,12 @@ class Tracker:
                 and self.config.sensors[si].enabled and self.config.sensors[si].placed]
 
     def _recycle(self):
-        """Known people who almost surely do not exist join the unknown ones (MODEL.md 5.5): otherwise
-        every guest who ever came would be followed forever. Who left the house fades there like
-        anywhere (_fade) and is given back only then: given back at once with all of r, they were
-        unknown people out of the house who come back at the rate of coming home and are forgotten
-        only after a day, while the existence of everybody else without support fades in minutes
-        (7.10. 09:01: r 0.99 given back, the unknown ones out of the house 0.27 -> 1.25; at 09:48 a
-        ghost in the hallway became a person, MODEL.md 10). The unknown ones are one
+        """Known people who almost surely do not exist join the unknown ones (MODEL.md 5.5): those the
+        measurements refuted, and those whose record expired where nothing could test it, out of the
+        house too (_expire). Until 7.10. who left was given back at once with all of r: unknown people
+        out of the house who came back at the rate of coming home (7.10. 09:01: r 0.99 given back, the
+        unknown ones out of the house 0.27 -> 1.25; at 09:48 a ghost in the hallway became a person,
+        MODEL.md 10). The unknown ones are one
         Poisson process for all hypotheses, as in the PMBM (B_GarciaFernandez2018 eq. 7-10): what the
         hypotheses give back is added to it weighted by their probability (otherwise every hypothesis
         would carry its own copy of the density, a third of the computing time at a start with

@@ -299,8 +299,8 @@ def test_the_silence_before_a_frame_belongs_to_the_frame_before_it():
 def test_the_tracks_of_a_sensor_that_died_end():
     """A board dies while it tracks somebody (MODEL.md 4.1, 4.4: more than 6 s without a frame is
     lost data, its tracks are over). Its tracks end without waiting for its next frame; the person
-    goes to the tiles and fades as anybody unseen does, instead of holding the room occupied for
-    hours after they left (until 0.18)."""
+    goes to the tiles, and where no live sensor sees them their record expires (MODEL.md 5.5),
+    instead of holding the room occupied for hours after they left (until 0.18)."""
     config = flat_config(entry=True)
     c = config.params.light_cost / (config.params.light_cost + 1.0)
     # walks in, sits at (4.5, 1) until about 130 s, then walks out through the flat's door

@@ -133,13 +133,12 @@ class Model:
     # with this correlation of the normal scores (2 sin(pi rho_S / 6) of the mean rho_S 0.42); 0:
     # independent (until 0.21)
     kappa_amp_corr = 0.44
-    # 3.4/5.5 a known person without a track exists on with exp(-t / record_life), wherever they are
-    # (existence as a Markov chain, Musicki & Evans 2005); measurements that support them lift it again.
-    # The scale: a real sitter in view went at most 18.2 s without any supporting measurement
-    # (measured 6./7.10., 5.6 h of known stays at the desk and the dining table), so a sitter keeps
-    # r >= exp(-18.2 / 120) = 0.86 in their longest gap; 2 min is the shortest of 45 s, 2, 5, 10,
-    # 30 min with no light wrongly on in the reports (MODEL.md 5.5). None: until evidence says otherwise
-    record_life = 120.0
+    # 5.5 a known person's record expires only where no sensor could test it (in a blind spot, in a
+    # region without a sensor, out of the house), at this rate times the share of them there
+    # (Tracker._expire); in view the measurements decide alone. The scale of the stays in places
+    # without a sensor (3.3: median 2 min; assumed). Until 0.22 it was everywhere, in view too
+    # (MODEL.md 10)
+    unseen_life = 120.0
     # 5 inference: hypotheses over the tracks' owners, those alike merged, then cut by weight: the
     # weakest dropped as long as together they weigh at most hyp_mass, at most max_hyps kept (Vo et
     # al. 2017: the L1 error is then at most 2 hyp_mass). The evidence is not converged in max_hyps
