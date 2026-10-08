@@ -2160,6 +2160,33 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Wahrheiten fälschlich an 1,65 → 1,69 von 113, fälschlich aus 2,49 → 1,77 von 39 (bis 6.10. 1,07 / 0,
   7.10. früh 0,39 / 0 mit dem Flur-Fenster oben, 7.10. Abend 0,19 / 0,02). Was die Regel
   nicht abdeckt, sind die Lücken ohne gemessene Spur (9).
+  *Zusammen mit 0.25.1* (Schnitt auf die Sicht, 4.1; dieselben Läufe, `report_eval` 12 Hypothesen, fälschlich
+  an / aus; Filter allein und veröffentlicht):
+
+  | | bis 6.10. | 7.10. früh | 7.10. Abend | 8.10. abends | Summe Filter | Summe veröffentlicht |
+  |---|---|---|---|---|---|---|
+  | 0.25.1 | 0 / 0,50; 1,07 / 0 | 0 / 0; 0,36 / 0 | 0 / 0,01; 0,19 / 0,01 | 0,01 / 3,80; 0,03 / 2,50 | 0,01 / 4,31 | 1,65 / 2,51 |
+  | 0.25.1 + beide | 0 / 0,50; 1,07 / 0 | 0,39 / 0; 0,39 / 0 | 0,45 / 0,01; 0,64 / 0,01 | 0,01 / 2,29; 0,03 / 1,72 | 0,85 / 2,80 | 2,13 / 1,73 |
+
+  Log-Evidenz gegen 0.25.1: 6.10. −25, 7.10. früh +1 711, 7.10. Abend +20, 8.10. +5 670. `baseline_eval` (Zeile `app`):
+  Licht im leeren Raum 6,3 → 8,8 min, dunkel mit Person 0,6 → 0,4 min (Filter allein 4,3 / 26,3 → 7,3 /
+  5,0). Verloren in Sicht (26 h) 0.25.1 297,4 → 129,6 min (0.25.0 350,6, beide ohne 0.25.1 139,8), an ohne
+  Stütze 1,2 → 1,5 min; leere Nacht 0 min; 8.10. 21:30–21:40 das Arbeitszimmer nie besetzt (P höchstens 0,07
+  wie 0.25.1); Rechenzeit der vollsten Stunde gleich (60,3 / 59,8 s). Das Mehr an „Licht im leeren Raum“
+  ist ganz ein Fenster, 7.10. 22:22:00–22:24:30, Esszimmer (beide im Schlafzimmer): Eine Spur des
+  Esszimmer-LD2450 an der Ostwand neben der Balkontür (3,6; 4,2), 22:19:55–22:23:40, wird mit P bis 0,92
+  eine Person, die vom Balkon kam. Ihre Alternative „Person“ hält erst der zweite Punkt oben am Leben (in
+  0.25.1 fällt sie bei der Geburt weg); ohne 0.25.1 erreicht sie 22:20:07 auch 0,53, ist aber, als die Spur
+  22:20:27 wieder misst, schon zu 0,95 durch die Balkontür hinaus und wird Geist, mit 0.25.1 erst zu 0,59
+  und bleibt. Nicht der Schnitt in diesen Minuten entscheidet das (ohne ihn 22:19–22:21 dasselbe), sondern
+  der Zustand von 22:12: Mit den Personen von 22:12 ohne 0.25.1 gibt es den Geist auch mit 0.25.1 nicht,
+  mit denen mit 0.25.1 auch ohne 0.25.1; gelernte Karten tauschen ändert nichts, ebenso 1–2 cm an den
+  Personen. Es sind die Unbekannten (PPP; nur sie getauscht, kommt der Geist): Als 21:59–22:00 zwei durch
+  Esszimmer und Küche gingen (mit 0.25.1 hielten die Hypothesen dabei noch eine unwahrscheinliche dritte
+  Person, r 0,04), wuchsen sie mit 0.25.1 im beobachteten Teil von 0,003 auf 0,04 erwartete Personen, ohne
+  nicht, und liefen danach auf den Balkon (22:02 0,019 statt 0,008; 22:12 dort 0,0128 statt 0,0080, im
+  Esszimmer 7,4·10⁻⁶ statt 1,2·10⁻⁶). Ein Fall an der Schwelle aus der Vorgeschichte, keine Wechselwirkung
+  der beiden Korrekturen im selben Augenblick.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

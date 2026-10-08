@@ -17,6 +17,11 @@ Meldungen 8.10. abends (Licht im Bad und im Wohnzimmer aus, während dort jemand
   immer ein Geist, wie lange sie auch gemessen wurde (Schlafzimmer 8.10. 00:29–06:14, Schreibtisch 7.10.
   08:59–09:49): Sagten alle Hypothesen „Geist“, kürzte sich die Lebensdauer der Geister heraus. Jetzt
   bleibt die stärkste verworfene Hypothese, die das andere sagt; die Messungen entscheiden.
+- Beide zusammen mit 0.25.1 nachgespielt (vier Wahrheiten, `report_eval` veröffentlicht, fälschlich an / aus):
+  1,65 / 2,51 → 2,13 / 1,73; Licht im leeren Raum 6,3 → 8,8 min, dunkel mit Person 0,6 → 0,4 min; verloren
+  in Sicht (26 h) 297,4 → 129,6 min; leere Nacht 0 min; 8.10. 21:30–21:40 Arbeitszimmer nie besetzt;
+  Rechenzeit gleich. Das Mehr an „an“ ist ein Fenster (7.10. 22:22, Geist an der Balkontür als Person;
+  MODEL.md 10 „Meldungen 8.10. abends“).
 
 ## 0.25.1
 
