@@ -32,6 +32,7 @@ from .gauss import Gauss
 from .hidden import Hidden, Undetected
 from . import destination
 from .pause import Pauses
+from .roomseen import RoomSeen
 from .sensormodel import PD_MAX, SensorModel
 from .sensortracks import LOST, SensorTracks
 from .tiling import Tiling
@@ -50,7 +51,8 @@ RECYCLE_EVERY = 1.0  # s
 ENTER_MIN_WALK = 0.02  # "wird betreten" (MODEL.md 6): a person walking with less probability can raise no
                        # zone's p_enter by more than this; not moved on
 # what only the outputs (MODEL.md 6) or the display read: a change restarts nothing
-OUTPUT_PARAMS = ("target_threshold", "target_thresholds", "light_cost", "approach_cost", "lead_time", "ld2410_hold")
+OUTPUT_PARAMS = ("target_threshold", "target_thresholds", "light_cost", "seen_hold", "approach_cost", "lead_time",
+                 "ld2410_hold")
 GAP_EXACT = 120.0  # s: the end of a gap in the data is moved as always, what lies before in leaps
 LEAP = 15.0  # s   (_predict_gap; 7.10. 08:06, 8 people, 3 h: rooms within 0.022 of moving all as always)
 MAX_LEAPS = 2000  # longer gaps in longer leaps (8 h of 8 people: 1.7 s CPU; a week in leaps of 5 min,
@@ -156,6 +158,7 @@ class Tracker:
         self.learn_dest = True
         # Lernen pausieren (pause.py): in these intervals nothing of the above learns; the tracking goes on
         self.pauses = Pauses()
+        self.seen = RoomSeen(config)  # the rooms' own LD2450 (output only, MODEL.md 6 "Belegt")
         self._build()
         self.use_ghost_map(None)
         self.use_dest_map(None)
@@ -350,6 +353,7 @@ class Tracker:
         state = self.people_state() if changed is None else None
         self.config = config
         self.p = config.params
+        self.seen.use(config)
         self.sensor_model.config = config
         self.sensor_model.rebuild()
         if changed is not None:
@@ -620,6 +624,7 @@ class Tracker:
         measured = {id(d) for _, d in ev.born + ev.measured} if ev else set()
         for d in dets:
             d.stale = not d.hidden and id(d) not in measured
+        self.seen.frame(sensor, t, dets)
         for listener in self.listeners:
             listener("frame", (sensor, t, dets))
         if ev is None or not sensor.enabled or not sensor.placed:
@@ -2144,13 +2149,31 @@ class Tracker:
             out[z] = e
         return out
 
+    def occupancy(self) -> dict:
+        """Observed room id -> (occupied, source), MODEL.md 6 "Belegt": P(somebody there) above the
+        threshold c = light_cost / (light_cost + 1), or the room's own LD2450 measured somebody in it
+        within the last seen_hold s (roomseen.py). source: "filter", "ld2450", "beide" (both), None
+        if not occupied. Only an output: reads the filter, changes nothing in it."""
+        p = self.p
+        c = p.light_cost / (p.light_cost + 1.0)
+        counts = self.count_distribution()
+        seen = self.seen.seen(self.now, p.seen_hold)
+        out = {}
+        for z in self.rooms:
+            if z not in counts:
+                continue
+            f, s = 1 - float(counts[z][0]) > c, z in seen
+            out[z] = (f or s, "beide" if f and s else "filter" if f else "ld2450" if s else None)
+        return out
+
     def zone_states(self) -> dict:
         """Per zone: the most probable number of people (observed rooms: from all hypotheses),
         moving / still from the most probable hypothesis' people, "about to be entered" from all
         (entering()). Occupied, where the probability is known: P(somebody there) above the
         threshold that minimizes the expected cost of the light; about to be entered likewise,
         with the cost of a light switched on in vain against that of entering in the dark
-        (MODEL.md 6)."""
+        (MODEL.md 6). An observed room is also occupied while its own LD2450 measures somebody in it
+        (occupancy()); its count is then at least 1, and the house's too."""
         from .zones import ZoneState
         p = self.p
         c = p.light_cost / (p.light_cost + 1.0)
@@ -2158,6 +2181,8 @@ class Tracker:
         region_of = {room: rid for rid, r in self.config.regions.items() for room in r["rooms"]}
         counts = self.count_distribution()
         places = self.place_distribution()
+        occupancy = self.occupancy()
+        raised = False  # a count raised to 1 by the room's own LD2450
         for z in self.config.home_zones("room"):  # the stairwell is outside: no state (MODEL.md 6)
             st = ZoneState()
             rid = region_of.get(z.id)
@@ -2165,19 +2190,22 @@ class Tracker:
                 if z.id in counts:
                     st.count = int(np.argmax(counts[z.id]))
                     st.probability = 1 - float(counts[z.id][0])
-                    st.decided = st.probability > c
+                    st.decided, st.source = occupancy[z.id]
+                    if st.source in ("ld2450", "beide") and st.count == 0:
+                        st.count, raised = 1, True
             else:
                 dist = places.get(rid, [1.0])
                 st.probability = 1 - float(dist[0])
                 if len(self.config.regions[rid]["rooms"]) == 1:
                     st.count = int(np.argmax(dist))
                     st.decided = st.probability > c
+                    st.source = "filter" if st.decided else None
             states[z.id] = st
         total = ZoneState()
         zones = self.config.home_zones("room", "area")
         for z in zones:
             states.setdefault(z.id, ZoneState())
-        total.count = int(np.argmax(places["_house"]))
+        total.count = max(int(np.argmax(places["_house"])), int(raised))
         for d in self.persons():
             if d["x"] is None:
                 continue

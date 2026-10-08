@@ -30,8 +30,12 @@ def _entities(zone_id: str, name: str, room: bool = False) -> list:
                                    "json_attributes_template": "{{ {'probability': value_json.p_target | default(none), 'from': value_json.target_from | default(none), 'distance': value_json.target_distance | default(none), 'eta': value_json.target_eta | default(none), 'person': value_json.target_person | default(none), 'walks': value_json.target_walks | default(none), 'source': value_json.target_source | default(none), 'weight': value_json.target_weight | default(none)} | tojson }}"}),
     ] if room else []
     return [
+        # MODEL.md 6 "Belegt": the filter's probability, or the room's own LD2450 measuring somebody; the
+        # attribute quelle says which: filter / ld2450 / beide (none while free)
         ("binary_sensor", "occupancy", {**base, "name": f"{name} besetzt", "device_class": "occupancy",
-                                         "value_template": "{{ 'ON' if value_json.occupied else 'OFF' }}"}),
+                                         "value_template": "{{ 'ON' if value_json.occupied else 'OFF' }}",
+                                         "json_attributes_topic": state,
+                                         "json_attributes_template": "{{ {'quelle': value_json.source | default(none)} | tojson }}"}),
         ("sensor", "count", {**base, "name": f"{name} Personen", "icon": "mdi:account-multiple",
                               "state_class": "measurement", "value_template": "{{ value_json.count }}",
                               "json_attributes_topic": state,
@@ -66,6 +70,8 @@ PAUSE_SWITCH = ("switch", "lernen_pausieren", {
 # are one steady payload (probability 0, the rest empty).
 GROUPS = {
     # entity state -> (its attributes {key: tolerance (None: any change)}, GAP s, quiet while off)
+    # "quelle" of "besetzt" changes between filter and beide whenever the room's LD2450 measures somebody
+    "occupied": ({"source": None}, 10.0, True),
     "count": ({"probability": 0.1, "count_moving": None, "count_still": None}, 60.0, False),
     "approaching": ({"p_enter": 0.1, "eta": 1.0, "distance": 1.0, "person": None}, 10.0, True),
     "target": ({"p_target": 0.1, "target_from": None, "target_distance": 1.0, "target_eta": 1.0, "target_person": None,

@@ -35,7 +35,8 @@ class ZoneState:
     target_eta: float | None = None  # s at their speed
     target_person: int | None = None  # their id in the display
     probability: float | None = None  # P(somebody is in there), where the filter knows it
-    decided: bool | None = None  # occupied by the decision on the probability (MODEL.md 6)
+    decided: bool | None = None  # occupied by the decision (MODEL.md 6): the probability, or the room's own LD2450
+    source: str | None = None  # what decided "occupied": "filter", "ld2450" (roomseen.py) or "beide"
 
     def finite(self) -> bool:
         """Its probabilities are numbers (a NaN shows as "nobody there": NaN > c is false)."""
@@ -54,7 +55,8 @@ class ZoneState:
                                                and self.p_enter >= 0.01)
         tgt = self.p_target is not None and (self.target or self.p_target >= 0.5 * (self.c_target or 0.0)
                                               and self.p_target >= 0.01)
-        return {"count": self.count, "occupied": self.occupied, "moving": self.moving,
+        return {"count": self.count, "occupied": self.occupied,
+                "source": self.source if self.occupied else None, "moving": self.moving,
                 "still": self.still, "approaching": self.approaching,
                 "p_enter": None if self.p_enter is None else _p(self.p_enter) if enter else 0.0,
                 "eta": _q(self.eta, 0.5) if enter else None,

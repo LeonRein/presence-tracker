@@ -128,6 +128,9 @@ class TrackerParams:
     # outputs
     light_cost: float = 2.0  # a second of light without anybody costs as much as this many seconds dark
                              # with somebody there (assumed; Leon: light without a person is the worst)
+    # "Belegt" (MODEL.md 6): occupied also while the room's own LD2450 measured somebody in it within
+    # this many s (roomseen.py); 0: the filter alone. 10 s: measured on the truth of 6.-8.10.
+    seen_hold: float = 10.0  # s
     # "wird betreten" (MODEL.md 6): P(a walker enters within lead_time) above approach_cost / (approach_cost
     # + 1); approach_cost: a light switched on in vain costs as much as this many entries into a dark room.
     # 2 s and 0.05 (measured 6./7.10., MODEL.md 6): light >= 1 s / 1 m before 60 / 62 % of the entries, 4.0
@@ -156,6 +159,7 @@ PARAM_LIMITS = {
     "dwell_spread": ("Streuung des Aufenthalts", 0.0, 10.0, True, False),  # divides
     "ld2410_hold": ("Haltezeit LD2410C", 0.0, 60.0, False, False),
     "light_cost": ("Kosten: Licht ohne Person", 0.0, 1000.0, True, False),  # threshold c / (c + 1) > 0
+    "seen_hold": ("Haltezeit eigener LD2450", 0.0, 120.0, False, False),  # 0: the filter alone
     "lead_time": ("Vorausschau „wird betreten“", 0.0, 5.0, True, False),
     "approach_cost": ("Kosten: Einschalten auf Verdacht", 0.0, 1000.0, True, False),
     "target_threshold": ("Schwelle „Ziel“", 0.0, 1.0, True, True),

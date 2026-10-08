@@ -78,6 +78,12 @@ function occupiedAbove() {
   return k / (k + 1);
 }
 const people = n => `${n}\u00a0${n === 1 ? 'Person' : 'Personen'}`;
+// what decided "besetzt" (the attribute quelle in Home Assistant): [badge, explanation]
+const SOURCE = {
+  filter: ['Filter', 'Besetzt, weil die Wahrscheinlichkeit des Filters \u00fcber der Schwelle liegt.'],
+  ld2450: ['LD2450', 'Besetzt, weil der LD2450 dieses Raums gerade jemanden im Raum misst (Haltezeit in den Einstellungen). Der Filter allein sagt \u201eleer\u201c.'],
+  beide: ['beide', 'Besetzt nach dem Filter und nach dem LD2450 dieses Raums.'],
+};
 
 // where a person of the model is: the room they are drawn in, or the most probable places
 function whereText(t) {
@@ -126,6 +132,7 @@ const LIVE = {
       return [z.id, `<div class="item room-row${occ ? ' occupied' : ''}"><span class="swatch" style="background:${color}"></span>
         <span class="grow">${esc(z.name)}</span>
         ${st ? `<span class="badge ${occ ? 'on' : ''}">${occ ? 'besetzt' : 'leer'}</span>` : ''}
+        ${occ && SOURCE[st.source] ? `<span class="badge" title="${SOURCE[st.source][1]}">${SOURCE[st.source][0]}</span>` : ''}
         ${st?.probability != null ? `<span class="badge num" title="Wahrscheinlichkeit, dass jemand im Raum ist; besetzt ab ${pct(c)}">${pct(st.probability)}</span>` : ''}
         ${extra ? `<div class="meta sub">${extra}</div>` : ''}</div>`];
     });
@@ -258,7 +265,7 @@ function livePanel(panel, view) {
       <div class="list" id="rep-list"></div>
     </details>
     <h3>Räume mit Sensor</h3>
-    <p class="note">% = Wahrscheinlichkeit, dass jemand im Raum ist. Besetzt (Licht an) ab ${pct(occupiedAbove())}, aus den Kosten in den Einstellungen.</p>
+    <p class="note">% = Wahrscheinlichkeit, dass jemand im Raum ist. Besetzt (Licht an) ab ${pct(occupiedAbove())}, aus den Kosten in den Einstellungen, oder solange der LD2450 des Raums dort jemanden misst (Filter / LD2450 / beide: was entschied).</p>
     <div class="list" data-live="zones"></div>
     <h3>Räume ohne Sensor</h3><div class="list" data-live="unobserved"></div>
     <p class="note">Aus dem Grundriss: Räume, die kein Sensor überwiegend sieht, über Türen zu Gruppen verbunden. Wer hineingeht, ist dort. Die Wahrscheinlichkeit, dass jemand noch drin ist, sinkt mit der Zeit, je nachdem, wie lange Besuche dort üblicherweise dauern. % = Wahrscheinlichkeit, dass diese Person dort ist, je Person.</p>
@@ -861,6 +868,7 @@ const PARAMS = [
   ]],
   ['Ausgabe', [
     ['light_cost', 'Kosten: Licht ohne Person', '×', 'Eine Sekunde Licht ohne Person ist so schlimm wie so viele Sekunden Dunkel mit Person. Ein Raum gilt als besetzt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.5],
+    ['seen_hold', 'Haltezeit eigener LD2450', 's', 'Ein Raum gilt auch als besetzt, solange der LD2450 dieses Raums in den letzten so vielen Sekunden ein gemessenes Ziel im Raum hatte (nicht gehalten, nicht hinter einer Wand), auch wenn der Filter „leer“ sagt. Nur der Sensor des Raums zählt: Andere messen Personen an Raumgrenzen im Nachbarraum. 0 = nur der Filter. Gemessen mit 10 s: dunkel mit Person 25,6 → 0,6 min, Licht im leeren Raum 4,3 → 5,7 min.', 1],
     ['lead_time', 'Vorausschau „wird betreten“', 's', 'So weit rechnet das Modell jeden Gehenden mit seinem eigenen Bewegungsmodell voraus (Wände halten auf, Türen nicht). Weil es Richtung und Tempo mit der Zeit vergisst, kommt das Signal später als diese Zeit vor dem Eintritt: gemessen mit 2 s: bei 60 % der Eintritte mindestens 1 s (1 m) vorher.', 0.1],
     ['approach_cost', 'Kosten: Einschalten auf Verdacht', '×', 'Ein Einschalten auf Verdacht, nach dem niemand hereinkommt, ist so schlimm wie so viele Eintritte in einen dunklen Raum. „Wird betreten“ gilt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.01],
     ['target_threshold', 'Schwelle „Ziel“', '', '„Ziel“ ist an, wenn die Wahrscheinlichkeit, dass ein Gehender als Nächstes in den Raum geht, mindestens so hoch ist. Sie entsteht aus der Bewegung (wie „wird betreten“) und der gelernten Karte, wohin die Gänge von dort bisher gingen; wo die Karte noch nichts weiß, ist „Ziel“ genau „wird betreten“. Schwelle = K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein vergebliches Licht ist so schlimm wie 4 späte. Je Raum unten anders einstellbar.', 0.05],

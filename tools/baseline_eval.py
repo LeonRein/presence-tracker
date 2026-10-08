@@ -19,6 +19,8 @@ Baselines (no model, per observed room, on a grid of 1 s):
   F   the filter: P(occupied) > light_cost / (light_cost + 1) (MODEL.md 6), replayed the way the app
       ran it (as tools/report_eval.py: a fresh model at each app start, the learned maps carried on,
       the people's state restored), cached in --filter-cache; "F.5": P(occupied) > 0.5 (equal costs).
+  app the app's published "besetzt" from the same replay (Tracker.occupancy, MODEL.md 6 "Belegt": F or
+      the room's own LD2450, in the app; F|B1mo10 is its offline counterpart), where the tracker has it.
   Hybrids: F or a baseline ("F|B1m5": the filter, never off while the LD2450 measured somebody in
       the room in the last 5 s).
 
@@ -164,6 +166,7 @@ def filter_series(a, config_of, configs, truth, rooms, g0, T, pauses):
     starts = sorted(parse_time(s) for s in truth["app_starts"])
     fresh = {parse_time(s) for s in truth.get("fresh_starts", [])}
     P = np.full((T, len(rooms)), np.nan, dtype=np.float32)
+    O = np.zeros((T, len(rooms)), dtype=bool) if hasattr(Tracker, "occupancy") else None
     tracker = None
     gm = ldb = dm = None
     clocks = collections.defaultdict(SensorClock)
@@ -205,10 +208,13 @@ def filter_series(a, config_of, configs, truth, rooms, g0, T, pauses):
             continue
         counts = tracker.count_distribution()
         P[last_k + 1 if last_k >= 0 else k:k + 1] = [1 - counts[r][0] if r in counts else np.nan for r in rooms]
+        if O is not None:  # what the app publishes as occupied (MODEL.md 6 "Belegt")
+            occ = tracker.occupancy()
+            O[last_k + 1 if last_k >= 0 else k:k + 1] = [occ.get(r, (False,))[0] for r in rooms]
         last_k = k
         if k % 3600 == 0:
             print(f"filter {hms(m['t'])} CPU {time.process_time() - t_cpu:.0f} s", file=sys.stderr, flush=True)
-    return P
+    return P, O
 
 
 # ------------------------------------------------------------------ the baselines
@@ -419,10 +425,12 @@ def main():
         z = np.load(a.filter_cache)  # also from a longer replay with the same first start
         assert int(z["g0"]) == g0 and list(z["rooms"]) == rooms and len(z["P"]) >= T, "the filter cache does not fit"
         P = z["P"][:T]
+        O = z["O"][:T] if "O" in z else None
     else:
-        P = filter_series(a, config_of, configs, truth, rooms, g0, T, pause.load(a.pauses))
+        P, O = filter_series(a, config_of, configs, truth, rooms, g0, T, pause.load(a.pauses))
         if a.filter_cache:
-            np.savez_compressed(a.filter_cache, P=P, rooms=np.array(rooms), g0=g0)
+            np.savez_compressed(a.filter_cache, P=P, rooms=np.array(rooms), g0=g0,
+                                **({} if O is None else {"O": O}))
     pauses = pause.load(a.pauses)
     for m in messages(a.recordings, g0, g0 + T):  # the switch's pauses, for skipping windows
         pause.follow(pauses, m)
@@ -434,6 +442,8 @@ def main():
                         lambda: entries.crossings(plan, rows_pts, config.sensors))
     F = np.nan_to_num(P, nan=0.0) > c
     dec["F"] = F
+    if O is not None:  # the app's own "besetzt" (filter or the room's own LD2450), replayed
+        dec["app"] = O
     F5 = np.nan_to_num(P, nan=0.0) > 0.5  # equal costs (light_cost 1)
     dec["F.5"] = F5
     dec["F.5|B1mo10"] = F5 | dec["B1mo10"]
