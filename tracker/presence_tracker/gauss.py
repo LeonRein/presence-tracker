@@ -39,6 +39,12 @@ X, V = 0, 1  # state indices; a track's c and o follow at slots[seg], slots[seg]
 UNIT = math.sqrt(3.0) * np.array([[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]])
 UNIT_W = np.array([1 / 3, 1 / 6, 1 / 6, 1 / 6, 1 / 6])
 UNIT_REACH = math.sqrt(3.0)  # the farthest unit point from the centre
+# a position cut to a sensor's sight (Gauss.in_sight): Gauss-Hermite points of N(0, 1) per axis, their
+# product grid; a cut keeps at least 5 cm of spread per axis (or what it had)
+_GH, _GW = np.polynomial.hermite_e.hermegauss(5)
+SIGHT_GRID = np.array([(a, b) for a in _GH for b in _GH])
+SIGHT_W = np.array([wa * wb for wa in _GW for wb in _GW]) / (_GW.sum() ** 2)
+SIGHT_MIN_VAR = 0.05 ** 2
 
 
 def _collapse(parts):
@@ -253,6 +259,48 @@ class Gauss:
                                             world.walls, world.wall_box)
         if hit:
             self.mean[WALK], self.cov[WALK] = mean, cov
+
+    def in_sight(self, world, at) -> None:
+        """A sensor measured this person: they are in its sight - the radar can't see through the
+        walls (MODEL.md 4.1). at: where its sight lines start (SensorConfig.sight_origin). The Kalman
+        update does not know walls: a track at a wall pulls the mean across it (8.10. 21:35, a target
+        in the bathroom 2 cm before the wall to the study, the person 0.3 m behind it in the study).
+        So the position per mode is cut to what the sensor sees: N(mean, diag var) on a grid of
+        Gauss-Hermite points (5 per axis), the points it doesn't see (their sight line crosses a
+        wall) dropped, matched again (cross-axis covariances dropped); the rest of the state
+        (velocity, the tracks' offsets) follows by its regression on position. If it sees none of
+        them, they are mirrored at the wall instead, as walls reflect motion (3.2). The weights stay."""
+        if self.phantom:
+            return
+        pos, var = self.pos, np.maximum(self.pos_var(), 0.0)
+        sd = np.sqrt(var)
+        K = len(pos)
+        pts = pos[:, None, :] + SIGHT_GRID[None, :, :] * sd[:, None, :]  # (modes, points, 2)
+        flat = pts.reshape(-1, 2)
+        p0 = np.repeat(np.asarray(at, dtype=float)[None, :], len(flat), axis=0)
+        hidden = world.crosses_wall(p0, flat).reshape(K, -1)
+        if not hidden.any():
+            return
+        mirrored = world.reflect(p0, flat)[0].reshape(pts.shape)
+        self.mean, self.cov = self.mean.copy(), self.cov.copy()
+        for k in range(K):
+            if not hidden[k].any():
+                continue
+            if hidden[k].all():
+                q, w = mirrored[k], SIGHT_W
+            else:
+                q, w = pts[k][~hidden[k]], SIGHT_W[~hidden[k]]
+            w = w / w.sum()
+            mx = w @ q
+            Px = np.maximum(w @ (q - mx) ** 2, np.minimum(var[k], SIGHT_MIN_VAR))
+            for ax in range(self.mean.shape[1]):
+                C = self.cov[k, ax]
+                pxx = C[X, X]
+                if not pxx > 0:
+                    continue
+                g = C[:, X] / pxx
+                self.mean[k, ax] = self.mean[k, ax] + g * (mx[ax] - self.mean[k, ax, X])
+                self.cov[k, ax] = C + np.outer(g, g) * (Px[ax] - pxx)
 
     def _through_doors(self, dt, tiles):
         """The walkers' share that walking takes through a door in dt (tiling.py: the rates of the

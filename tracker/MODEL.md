@@ -151,6 +151,18 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   geprüft zurück entlang der Sichtlinie und am Fußpunkt auf jeder Wand im Umkreis). Bis 0.18.0 nur
   entlang der Sichtlinie: Ein Sensor an einer Wand blickt an ihr entlang, und ein Ziel 5 cm jenseits
   dieser Wand lag entlang der Sichtlinie 0,4 m dahinter (10, „Meldungen 7.10. abends“).
+  **Wer gemessen wird, ist in Sicht** (seit 0.25.1): Der Sensor sieht nicht durch Wände; ein bis 0,4 m
+  jenseits einer Wand angenommenes Ziel kommt von einer Person, die er sieht. Das Kalman-Update (5.2)
+  kennt keine Wände: Eine Spur an der Wand zog das Mittel hinüber, die Person stand im Nachbarraum (10,
+  „Durch die Wand ins Arbeitszimmer“). Nach jedem Update mit einer Spur wird die Position je Komponente
+  auf die Sicht des Sensors beschnitten (`Gauss.in_sight`): N(Mittel, diag Varianz) auf einem Gitter von
+  5 × 5 Gauß-Hermite-Punkten, die Punkte, deren Sichtlinie (ab 20 cm vor dem Sensor) eine Wand kreuzt,
+  entfallen, Momentenabgleich (mindestens 5 cm Streuung je Achse), Geschwindigkeit und Versätze folgen
+  über ihre Regression. Sieht er keinen der Punkte, werden sie an der Wand
+  gespiegelt wie die Bewegung (3.2). Das ist die Likelihood mal „in Sicht“ als 0/1 (nur Wände, nicht
+  das Blickfeld); die Gewichte der Hypothesen ändert der Schnitt nicht.
+  Die Regel „LD2450 des Raums“ (6, `roomseen.py`) bleibt beim Ziel: Ein Ziel jenseits der Wand liegt im
+  Nachbarraum und zählt dort nicht, weil nur der eigene Sensor eines Raums zählt.
 - Die drei Plätze rücken auf; Ziele werden über die Nähe verknüpft (≤ 0,6 m je Frame).
 - Gehaltene Frames sind keine Messung: ≥ 3 Frames mit derselben Geschwindigkeit ≠ 0 (der Sensor lässt
   ein verlorenes Ziel weiterlaufen) oder bitgleiche Koordinaten (eingefroren).
@@ -507,7 +519,8 @@ Zwei Komponenten *steht* / *geht*, je ein Kalman-Filter über Position, Geschwin
 Schritt (Buch_SarkkaSvensson2023 S. 352; B_Li2019 Gl. 26–33):
 1. Übergänge *steht → geht* (`Σ p_l (1 − e^(−λ_l Δt))`) und *geht → steht* (`1 − e^(−μΔt)`), je
    Ziel-Betriebsart per Momentenabgleich zu einer Komponente zusammengefasst.
-2. Lineare Vorhersage je Komponente (3.1 bzw. OU-Näherung 3.2), Kalman-Update mit der Spur.
+2. Lineare Vorhersage je Komponente (3.1 bzw. OU-Näherung 3.2), Kalman-Update mit der Spur, danach
+   die Position auf die Sicht des messenden Sensors beschnitten (4.1).
 3. Nicht-Erfassung durch andere Sensoren: Faktor je Komponente, als Erwartung über ihre Position
    (`E[e^(−r(x)Δt)]`), ebenso die Rate einer neuen Spur, die Sicht beim Wiederfinden (unter dem Kern
    gewichtet) und „geht in Sicht“: Unscented-Transformation der Position je Achse (diagonale
@@ -2036,6 +2049,27 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   98,5–99,2 % der besetzten Sekunden sind gleich, die übrigen um eine Sekunde verschoben, in beide
   Richtungen; eine Sekunde am Anfang eines leeren Fensters zählt mit dem Nachlauf bis zu 2 min. Rechenzeit:
   13 µs je Frame mit drei Zielen, bei sieben Sensoren mit 10 Hz unter 0,1 % eines Kerns.
+- **Durch die Wand ins Arbeitszimmer** (8.10. 21:35, live 0.25.0; Leon: der Bad-LD2450 meldete kurz ein
+  Ziel hinter der Wand zum Arbeitszimmer). `binary_sensor.presence_arbeitszimmer_occupancy` ging mit
+  `quelle: filter` an, das Licht auch, kurze Wiederholungen bis 21:36:48. Die Person saß im Bad bei
+  y ≈ 4,4; ihre Spur sprang in 0,6 s an die Wand (y 5,30, 1,5 cm vor ihr) und zurück, später bis 0,37 m
+  dahinter. Nicht der Wandtest von 0.20.0 war die Ursache (das Ziel um 21:35:00 lag noch im Bad), sondern
+  das Kalman-Update: Mit der Geschwindigkeit des Sprungs und den Versätzen der Spur lag das Mittel danach
+  bei y 5,6, und für Ausgaben zählt die Masse auf der Seite des Mittels (5.2). Nachgespielt mit der
+  Live-Konfiguration ab 21:20 genau die Sekunden der App (21:35:00, 21:35:27, 21:36:09–12, 21:36:46–47).
+  Jetzt wird die Position nach jeder Messung auf die Sicht des messenden Sensors beschnitten (4.1):
+  Arbeitszimmer 21:30–21:40 nie besetzt, P höchstens 0,07 (21:38, jemand ging aus dem Bad in den Flur).
+  Zuerst geprüft und verworfen: die Person auf die Seite des gemessenen Ziels zu spiegeln (bzw. für
+  Ziele jenseits der Wand des nächsten Punkts in Sicht) und die Regel „LD2450 des Raums“ mit diesem Punkt
+  zu zählen. Diese Regel ließ das Licht im Arbeitszimmer 7.10. 22:19–22:26 brennen (zwei im Schlafzimmer,
+  der Arbeitszimmer-LD2450 sah Echos knapp hinter der Wand zum Bad: fälschlich an 0,19 → 1,96 von 43); die
+  Spiegelung zur Seite des Ziels ist strenger als das Modell (dort muss die Person nur in Sicht sein, das
+  Ziel liegt bis zu 0,3 m neben ihr) und kostete den Filter 6.10. aus 1,00 → 2,93 von 15 (Esszimmer 21:03
+  P 0,73 → 0,53), die leere Nacht 0 → 1,4 min (Wohnzimmer 19:21). Mit dem Schnitt auf die Sicht (`report_eval --published` und
+  `baseline_eval`, vier Wahrheiten, Zeile `app`): fälschlich an 1,65 von 108, aus 2,52 → 2,54 von 39 (ein
+  Wohnzimmer-Fenster 8.10. P 0,42 → 0,32); Licht im leeren Raum 6,3 min, dunkel mit Person 0,6 min wie
+  0.25.0; Filter allein aus 4,82 → 4,39 (6.10. 1,00 → 0,57, 7.10. abends 0,05 → 0,01); leere Nacht 0 min.
+  Log-Evidenz 6.10. +191, 7.10. früh +401, 7.10. abends +415, 8.10. +3 435.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

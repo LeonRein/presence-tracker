@@ -932,6 +932,7 @@ class Tracker:
             if isinstance(obj, Gauss) and seg in obj.slots:
                 self._sync(obj, refs, t)
                 dl = obj.update(seg, d.pos, m.white)
+                obj.in_sight(self.world, self.config.sensors[info["si"]].sight_origin())
                 for h in refs:
                     self.hyps[h].logw += dl
         info["t"] = info["zt"] = t
@@ -1089,6 +1090,7 @@ class Tracker:
         info = self.segs.get(seg)
         var = info["var"] if refind else self._offset_var(si, d.pos)
         z = d.pos
+        sight = self.config.sensors[si].sight_origin()  # measured: the person is in its sight (MODEL.md 4.1)
         ghost_rates = np.array([rate for rate, _ in self._ghost_types()])
         ghost_life = np.array([life for _, life in self._ghost_types()])
         kappa = self.shapes.kappa
@@ -1146,11 +1148,18 @@ class Tracker:
                     if seg not in new.slots:
                         new.add_track(seg, var, m.const_share)
                     L = new.update(seg, z, m.white)
+                    new.in_sight(self.world, sight)
                     return new, L + new.reweigh(logf(new)) if L > -math.inf else L
                 return derived(("gauss", id(obj)), make)
             if not tl.n:
                 return None, -math.inf
-            return derived(("tiles", id(obj)), lambda: Gauss.from_tiles(obj, tl, f_lat[0], f_lat[1], seg, z, var, m))
+
+            def from_tiles():
+                new, L = Gauss.from_tiles(obj, tl, f_lat[0], f_lat[1], seg, z, var, m)
+                if new is not None:
+                    new.in_sight(self.world, sight)
+                return new, L
+            return derived(("tiles", id(obj)), from_tiles)
 
         children, cats = [], []  # cats: what each child says the track is (for listeners)
 

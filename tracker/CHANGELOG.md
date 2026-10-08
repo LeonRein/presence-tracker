@@ -2,6 +2,15 @@
 
 ## Unveröffentlicht
 
+- **Nicht durch die Wand** (MODEL.md 4.1, 10 „Durch die Wand ins Arbeitszimmer“): Eine Messung an einer Wand
+  setzte die Person auf die andere Seite. 8.10. 21:35: Die Spur des Bad-LD2450 sprang zur Wand des
+  Arbeitszimmers (2 cm davor, danach bis 0,37 m dahinter), das Kalman-Update zog die Person 0,3 m hinter die
+  Wand, das Licht im Arbeitszimmer ging an (`quelle: filter`), bis 21:36:48 noch dreimal kurz. Jetzt wird die
+  Position einer Person nach jeder Messung auf das beschnitten, was der messende Sensor sieht (nichts hinter
+  einer Wand). Nachgespielt 21:30–21:40: Arbeitszimmer nie besetzt (vorher 8 s), P höchstens 0,07. Ziele an
+  der Wand, an der der Sensor hängt, bleiben Messungen (0.20.0); die Wahrheiten unverändert, die leere Nacht
+  0 min.
+
 ## 0.25.0
 
 - **Besetzt: Filter oder der LD2450 des Raums** (MODEL.md 6 „Belegt“, `roomseen.py`, `Tracker.occupancy`): Ein
