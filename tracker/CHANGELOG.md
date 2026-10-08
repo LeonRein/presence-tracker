@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.23.0
+
 Review des Algorithmus 1.3 (MODEL.md 5.5, 10 „Tote Winkel und Existenz“):
 
 - **Kein Abklingen der Existenz mehr in Sicht.** Bis 0.22 verlor jede bekannte Person ohne Spur ihre
