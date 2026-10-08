@@ -1417,9 +1417,23 @@ class Tracker:
         n = min(max(n, 1), m.max_hyps)
         if n == len(w):
             return
-        keep = {id(h) for i in order[:n] for h in groups[i]}
+        # no live track loses an alternative altogether (MODEL.md 5.1): whether it is a ghost or a
+        # person's is each track's own question (its Bernoulli in a track-oriented PMBM), and what
+        # its future measurements say about it (a ghost lives 3 / 39 s, a person stays) can only act
+        # on an alternative that is still there. Of the dropped ones, the strongest that holds an
+        # alternative the kept ones lack stays. Until 0.24 a track born where the filter knew nobody
+        # stayed a ghost for good: the bed 8.10. 00:29-06:14, the desk 7.10. 08:59-09:49.
+        chosen = list(order[:n])
+        held = {(s, hy.kind[s] == "g") for i in chosen for hy in groups[i] for s in hy.kind}
+        for i in order[n:]:
+            new = {(s, hy.kind[s] == "g") for hy in groups[i] for s in hy.kind} - held
+            if any((s, not g) in held for s, g in new):
+                chosen.append(i)
+                held |= new
+        kept = set(chosen)
+        keep = {id(h) for i in chosen for h in groups[i]}
         self.hyps = [h for h in self.hyps if id(h) in keep]
-        self._normalize(float(w[n:].sum()))
+        self._normalize(float(sum(w[k] for k in range(len(w)) if order[k] not in kept)))
 
     def _normalize(self, dropped: float = 0.0):
         """The hypotheses' weights to sum 1; their sum (and the share dropped just before, _cut) is
