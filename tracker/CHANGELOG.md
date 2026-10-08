@@ -2,6 +2,23 @@
 
 ## Unveröffentlicht
 
+- **Besetzt: Filter oder der LD2450 des Raums** (MODEL.md 6 „Belegt“, `roomseen.py`, `Tracker.occupancy`): Ein
+  Raum ist auch besetzt, solange sein eigener LD2450 in den letzten 10 s ein gemessenes Ziel im Raum hatte
+  (nicht gehalten, nicht hinter einer Wand, nicht am Sensor; nur der Sensor, der wie der Raum heißt). Live
+  gingen Lichter aus, während Personen in Räumen saßen, die der LD2450 klar sah: Der Filter verliert solche
+  Personen (MODEL.md 9). Auf den vier Wahrheiten mit 2 min Nachlauf, in der App nachgespielt: dunkel mit Person 25,6 → 0,6 min,
+  Licht im leeren Raum 4,3 → 6,3 min; leere Nacht 0 min. Nur eine Ausgaberegel: Zustand, Gewichte und
+  Lernen des Filters bleiben gleich, ebenso `probability`, *wird betreten* und *Ziel*.
+  - Attribut `quelle` an `binary_sensor.presence_<raum>_occupancy`: `filter`, `ld2450` oder `beide`
+    (leer, solange frei); in der Live-Ansicht neben *besetzt*.
+  - Personenzahl mindestens 1 (Raum und Haus), solange die Regel allein einen Raum besetzt.
+  - Einstellung *Haltezeit eigener LD2450* (`seen_hold`, 0–120 s, Vorgabe 10 s; 0 = nur der Filter), eine
+    Ausgabe-Einstellung: Ändern startet das Modell nicht neu.
+  - Das Schlafzimmer ist damit nachts besetzt, wenn Schlafende gemessen werden: Das Licht dort braucht eine
+    Nacht-Regel in Node-RED.
+- Werkzeuge: `tools/baseline_eval.py` (einfache Raumbelegung gegen den Filter; zeichnet das veröffentlichte
+  *besetzt* als `app` auf), `report_eval.py --published` bewertet das veröffentlichte *besetzt* statt P > c.
+
 ## 0.24.0
 
 - **Schalter „Lernen pausieren“** (`switch.presence_lernen_pausieren`, MODEL.md 10 „Hintergrundaktivität“):

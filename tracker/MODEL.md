@@ -690,6 +690,35 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
   `light_cost` = K_an / K_dunkel = 2 (angenommen: Licht ohne Person ist der schlimmste Fehler), also
   c = 2/3. Das verzögerte Ausschalten bleibt in Home Assistant (bzw. Node-RED): Die App schaltet keine
   Lichter, sie liefert je Raum *besetzt*, *wird betreten* (unten) und die Wahrscheinlichkeiten dazu.
+  **Oder der LD2450 des Raums misst jemanden** (`Tracker.occupancy`, `roomseen.py`): Ein beobachteter
+  Raum ist auch belegt, solange der LD2450 dieses Raums in den letzten `T_seen` = `seen_hold` = 10 s ein
+  *gemessenes* Ziel im Raum hatte. Gemessen heißt, was der Filter selbst als Messung nimmt (4.1): nicht
+  gehalten (eingefroren oder fortgeschrieben), nicht hinter einer Wand oder außerhalb aller Räume, nicht am
+  Sensor (0,3 m); im Raum heißt, der erste beobachtete Raum, dessen Umriss den Punkt enthält, ist dieser.
+  Der Sensor des Raums ist der, dessen Name die ID des Raums ist (`kueche` für die Küche), sonst der
+  Anzeigename des Raums, sonst der Raum, in dem er hängt (0,3 m um den Umriss, nur wenn eindeutig).
+  - *Warum:* Hatte der Sensor des Raums in den letzten 10 s ein gemessenes Ziel im Raum, war der Raum in
+    99,2 % der bewerteten Sekunden belegt (9721 zu 74), auch in den Sekunden, in denen der Filter „frei“
+    sagte, in 94 % (1046 zu 65). Das liegt weit über c = 2/3: Der Posterior des Filters ist dort nicht
+    kalibriert, die Entscheidung mit der gemessenen bedingten Wahrscheinlichkeit ist die
+    Bayes-Entscheidung. Auf den vier Wahrheiten (6.10., 7.10. vormittags, 7.10. und 8.10. abends; Licht
+    mit 2 min Nachlauf wie in Node-RED, ohne die Nacht): Filter allein 4,3 min Licht im leeren Raum /
+    25,6 min dunkel mit Person, Filter oder LD2450 des Raums 5,7 / 0,6 min (`report_eval`: fälschlich an
+    0,01 → 1,51 von 108, fälschlich aus 4,82 → 2,53 von 39), so in der App nachgespielt 6,3 / 0,6 min
+    (10); die leere Nacht 6./7.10. 0 min wie zuvor. Bei gleichen Kosten beider Fehler (Leon 8.10.)
+    rund 7 statt 29,9 Fehlerminuten. Der Filter verliert
+    Personen, die sein eigener LD2450 weiter misst (9), die Regel ist die Untergrenze dafür (10, „Filter
+    oder LD2450 des Raums“).
+  - *Nur der Sensor des Raums:* Andere Sensoren messen Personen an Raumgrenzen aus 6–7 m im Nachbarraum
+    (8.10. die Person am Esstisch im Flur: „jeder Sensor“ 21,6 statt 5,7 min Licht im leeren Raum).
+    *Nur gemessene Ziele:* Der LD2450 hält ein eingefrorenes Ziel bis 35 s, nachdem die Person gegangen
+    ist (mit gehaltenen 10,9 statt 5,7 min).
+  - *Nur Ausgabe:* Die Regel ändert keinen Zustand, kein Gewicht und nichts, was der Filter lernt.
+    `probability` bleibt P(belegt) des Filters. Die Personenzahl des Raums ist mindestens 1, solange
+    die Regel ihn belegt, die des Hauses dann ebenso (sonst wäre *besetzt* ohne Person); *bewegt / ruhig*,
+    *wird betreten* und *Ziel* bleiben, wie sie sind. Das Attribut `quelle` an *besetzt* sagt, was
+    entschied: `filter`, `ld2450` oder `beide`. Räume ohne eigenen LD2450 und Bereiche ohne Sensor:
+    unverändert. `seen_hold` = 0 schaltet die Regel ab.
 - **Bereiche ohne Sensor:** P(jemand dort); belegt wie oben, wenn der Bereich nur ein Raum ist.
 - **Außer Haus** (auch das Treppenhaus): keine Zahl, kein Zustand, keine Entität in Home Assistant und
   in der Anzeige. Die Zahl im Haus (`presence_haus_count`) zählt alles außer *außer Haus*. Entitäten, die
@@ -854,6 +883,16 @@ Schwach Gesehenes (Sicht 0,1–0,5, etwa der Rand der Vorratsecke bei x 3,4) pr�
 langsam; dort läuft der Eintrag mit dem ungesehenen Anteil ab. Ob ein schwacher, aber beständiger
 Überschuss der LD2410C-Energie eine Person dort hält (7.10. 11:22–11:37: r 0,09 → 0,99 ohne Ablauf), hängt
 an der Kalibrierung seiner Likelihood (4.3, Review 1.8).
+
+Offen: **Der Filter verliert Personen, die sein eigener LD2450 weiter misst**, und findet sie nicht wieder
+(10, „Filter oder LD2450 des Raums“). 8.10. abends war er 38,9 von 64 belegten Minuten „frei“, der LD2450
+des Raums nur 2,4 min (Bad: sitzt an der Wand, 98 % „frei“); 7.10. 08:59–09:49 im Arbeitszimmer 50 min
+P = 0,00 bei einer gemessenen Spur am Schreibtisch, 8.10. 00:29–06:14 im Schlafzimmer 5,8 h bei Spuren am
+Bett bis 45 min. Vermuteter Mechanismus: Die Spur wird bei ihrer Geburt in jeder überlebenden Hypothese
+ein Geist (neue Person nur bei harter Evidenz, danach H = 1–2), und mit nur einer Hypothese normiert sich
+jede Evidenz gegen „Geist“ weg (e^−71 für 46 min Geist). Bis das im Filter (5.1, Abschneiden, Geister)
+behoben ist, hält die Ausgaberegel *besetzt* (6) die Lichter an; die Personenzahl, *wird betreten* und
+*Ziel* hängen weiter an den verlorenen Personen.
 
 Näherungen, die man prüfen oder ersetzen kann:
 - Auf den Kacheln ist Gehen eine Diffusion: Kurzzeitig gerades Gehen und die Richtung gehen verloren,
@@ -1971,6 +2010,32 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   fälschlich an 0 von 43, aus 0,01 → 0,06 von 11 (Bad 22:09 P 1,00 → 0,94, 4 % des Fensters; die zwei im
   Schlafzimmer P(=1) 1,00 → 0,64 im selben Fenster): Was 17 Minuten Saugroboter mitgelernt hatten, kippt
   vier Stunden später ein Fenster leicht, in beide Richtungen möglich; Evidenz −702 229 → −702 322.
+- **Filter oder LD2450 des Raums** (8.10., nach 0.24.0; Leon: „Lichter gehen aus, während wir in Räumen sitzen,
+  die der LD2450 klar sieht“; 6 „Belegt“, 9). Einfache Raumbelegungen gegen den Filter (`tools/baseline_eval.py`,
+  bewertet wie `report_eval` und als Licht mit 2 min Nachlauf wie in Node-RED, vier Wahrheiten ohne die Nacht):
+
+  | Licht in min | im leeren Raum | dunkel mit Person |
+  |---|---:|---:|
+  | Filter 0.24.0 (c = 2/3) | 4,3 | 25,6 |
+  | Filter, c = ½ | 4,8 | 25,3 |
+  | LD2450 des Raums allein (gemessen, 10 s) | 5,7 | 2,5 |
+  | Filter oder LD2450 des Raums (gemessen, 10 s) | 5,7 | 0,6 |
+  | … auch gehaltene Ziele | 10,9 | 0,2 |
+  | Filter oder jeder LD2450 (gemessen, 5 s) | 21,6 | 0,7 |
+  | Filter oder LD2410C-Energie ≥ 3× Hintergrund (10 s) | 93 | 0 |
+  | Raum-Latch bis zum Hinausgehen (höchstens 5 min) | 104 | 0,1 |
+
+  Die LD2410C-Flags waren in der leeren Nacht 74 % der Zeit an; ein Latch scheitert an Übergaben zwischen
+  Sensoren (Ausgänge nicht erkannt). Gewählt: Filter oder LD2450 des Raums, gemessen, 10 s. Bei gleichen
+  Kosten beider Fehler 6,3 statt 29,9 Fehlerminuten. Die Wahl „nur der Sensor des Raums“ fiel nach dem
+  Flur-Fehler vom 8.10. (die Person am Esstisch aus 6–7 m im Flur gemessen), eine strukturelle Wahl, keine
+  Abstimmung. In der App nachgespielt (`baseline_eval` Zeile `app`, `report_eval --published`): Licht im leeren Raum 6,3 min, dunkel mit Person 0,6 min (offline 5,7 / 0,6);
+  fälschlich an 1,65 von 113 Raum-Fenstern, fälschlich aus 2,49 von 39 (Filter allein 0,01 / 4,82, unverändert:
+  P(belegt) ist Sekunde für Sekunde dieselbe). Die leere Nacht 6./7.10.: 0 min. Die 0,6 min mehr Licht als
+  offline kommen aus der Haltezeit: Die App hält genau 10 s, `baseline_eval` auf seinem 1-s-Raster 9–10 s.
+  98,5–99,2 % der besetzten Sekunden sind gleich, die übrigen um eine Sekunde verschoben, in beide
+  Richtungen; eine Sekunde am Anfang eines leeren Fensters zählt mit dem Nachlauf bis zu 2 min. Rechenzeit:
+  13 µs je Frame mit drei Zielen, bei sieben Sensoren mit 10 Hz unter 0,1 % eines Kerns.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

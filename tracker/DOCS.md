@@ -22,7 +22,8 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   standardmäßig aus; der Schalter steht unter *Anzeige* und wird im Browser gemerkt.
 - **Tab *Live*:** Ganz oben steht, welche Räume besetzt sind (Licht an), darunter die Personenzahl. In der
   Raumliste stehen die besetzten Räume zuerst. Die Prozentzahl am Raum ist die Wahrscheinlichkeit, dass
-  *jemand* im Raum ist (besetzt ab der Schwelle aus *Kosten: Licht ohne Person*); die an einer Person ist die
+  *jemand* im Raum ist (besetzt ab der Schwelle aus *Kosten: Licht ohne Person*, oder solange der LD2450 des
+  Raums dort jemanden misst; neben *besetzt* steht, was entschied: *Filter*, *LD2450* oder *beide*); die an einer Person ist die
   Wahrscheinlichkeit, dass *diese Person* dort ist. *wird betreten* und *Ziel* (mit Wahrscheinlichkeit und
   Quelle *Bewegung* oder *Karte*) stehen nur an Räumen, die noch nicht besetzt sind, und bleiben 2 s
   sichtbar, auch wenn sie nur kurz an waren.
@@ -135,7 +136,7 @@ nebenbei; das Tracking nutzt es in dieser Version noch nicht.
 Alles wird sofort gespeichert (`/data/tracker.json`); eine kurze Meldung sagt *Gespeichert* und, wenn
 das Modell dabei neu startet, *Modell neu gestartet* (bei fast jeder Änderung an Grundriss, Zonen und
 Einstellungen; nicht, wenn nur Sensoren kalibriert oder verschoben wurden, nicht bei Einstellungen, die nur
-die Ausgaben betreffen: *Kosten: Licht ohne Person*, *Kosten: Einschalten auf Verdacht*, *Vorausschau*,
+die Ausgaben betreffen: *Kosten: Licht ohne Person*, *Haltezeit eigener LD2450*, *Kosten: Einschalten auf Verdacht*, *Vorausschau*,
 *Haltezeit LD2410C*, die Schwellen „Ziel“, und nicht beim Umbenennen). Rückgängig und Wiederholen mit den Knöpfen ↶ ↷ unten
 rechts auf der Karte oder mit Strg+Z / Strg+Y. Sie wirken nur auf Änderungen im aktuellen Tab; liegt die
 letzte Änderung in einem anderen Tab, sagt die App, in welchem, statt sie unsichtbar zurückzunehmen.
@@ -158,7 +159,7 @@ Gerät **Presence Tracker**, für jeden Raum und Bereich:
 
 | Entität | Bedeutung |
 |---|---|
-| `binary_sensor.presence_<zone>_occupancy` | Jemand ist in der Zone |
+| `binary_sensor.presence_<zone>_occupancy` | Jemand ist in der Zone (Filter oder der LD2450 des Raums, Attribut `quelle`, siehe unten) |
 | `sensor.presence_<zone>_count` | Anzahl Personen, Attribute `moving` / `still` |
 | `binary_sensor.presence_<zone>_moving` | Mindestens eine Person bewegt sich |
 | `binary_sensor.presence_<zone>_approaching` | *wird betreten*: Jemand, der gerade geht, kommt wahrscheinlich gleich herein (Vorhersage, siehe unten) |
@@ -182,8 +183,20 @@ Speichern oder eine leere bzw. kaputte Datei in `/data` (nach einem Stromausfall
 Sie werden protokolliert, eine kaputte Datei gilt als „nichts gelernt“ für ihren Teil.
 
 **Besetzt** ist an, solange die Wahrscheinlichkeit, dass jemand im Raum ist, über der Schwelle aus
-*Kosten: Licht ohne Person* liegt (bei 2: 67 %, Attribut `probability` am Personenzähler). Es geht im
-Median etwa 0,3 s nach dem Betreten an und nach dem Verlassen meist binnen einer halben Sekunde aus.
+*Kosten: Licht ohne Person* liegt (bei 2: 67 %, Attribut `probability` am Personenzähler), **oder** der
+LD2450 dieses Raums in den letzten *Haltezeit eigener LD2450* Sekunden (10 s) jemanden im Raum gemessen
+hat. Gemessen heißt: kein Ziel, das der Sensor nur noch hält, nachdem die Person gegangen ist (bis 35 s),
+keines hinter einer Wand, keines am Sensor. Nur der Sensor, der im Raum hängt (sein Name ist die ID des
+Raums, etwa `kueche`), zählt: Andere messen Personen an Raumgrenzen oft im Nachbarraum. Der Filter
+verliert sonst Personen, die still sitzen und die der LD2450 des Raums weiter sieht (MODEL.md 6 und 9);
+gemessen auf den Wahrheiten bis 8.10. (in der App nachgespielt): dunkel mit Person 25,6 → 0,6 min, Licht im leeren Raum
+4,3 → 6,3 min. Ist ein Raum nur durch den LD2450 besetzt, zeigt er mindestens 1 Person (das Haus ebenso).
+Das Attribut `quelle` an *besetzt* sagt, was entschied: `filter`, `ld2450` oder `beide` (leer, solange
+nicht besetzt; ein Wechsel zwischen `filter` und `beide` geht höchstens alle 10 s an Home Assistant,
+siehe *Recorder*; der Zustand selbst sofort). *Besetzt* geht im Median etwa 0,3 s nach dem Betreten an
+und nach dem Verlassen meist binnen einer halben Sekunde aus, wo der LD2450 des Raums die Person zuletzt
+gemessen hat, nach der Haltezeit. Für das Schlafzimmer heißt das: Wer schläft und gemessen wird, macht es
+besetzt; das Licht dort braucht eine eigene Nacht-Regel in Node-RED.
 
 **Wird betreten** ist eine Vorhersage: Das Modell rechnet jede Person, die gerade geht, mit seinem
 eigenen Bewegungsmodell voraus (sie kann umdrehen, anhalten, abbiegen; Wände halten sie auf, Türen
@@ -261,7 +274,7 @@ vergebliche Lichter je Stunde, für beide).
 Entität eine Zeile in seine Datenbank. Die App rundet deshalb grob (Wahrscheinlichkeiten auf 5 %, Zeiten
 auf 0,5 s, Wege auf 0,5 m) und schickt die Attribute einer Entität nur neu, wenn ihr Zustand umschaltet
 oder sich eines um mindestens zwei Stufen geändert hat und die letzte Änderung mindestens 10 s her ist
-(Personenzähler: 60 s). Solange *wird betreten* oder *Ziel* aus ist, sind ihre Attribute fest
+(Personenzähler: 60 s; `quelle` an *besetzt*: 10 s). Solange *besetzt*, *wird betreten* oder *Ziel* aus ist, sind ihre Attribute fest
 (Wahrscheinlichkeit 0, der Rest leer). Die Zustände selbst schalten genau wie vorher, im selben Moment.
 Nachgespielt auf 26 h (6./7.10., alle Zonen zusammen): 0.16.0 31 500 Zeilen am Tag, jetzt 14 600, mit
 *Ziel*; in der vollsten Stunde 4 950 → 2 640 (Personenzähler 2 970 → 980, *wird betreten* 840 → 270,
