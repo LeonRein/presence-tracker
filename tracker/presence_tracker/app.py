@@ -114,6 +114,7 @@ class App:
         self.shown = collections.deque()  # (model time, what the app showed) per second, as long back
         self.throttled = Throttled(log)  # log lines about bad input: at most one a minute per kind and sensor
         self._saving = None  # the task saving what was learned (every 10 min)
+        self._counting = None  # the task counting the calibration data for the live view (every 30 s)
         self.failures: list[float] = []  # when the model failed (monotonic), until it ran RETRY s without
         self.paused_until = -math.inf  # while down: the model rests until then (monotonic)
         self.available = None  # what this connection last said on the availability topic (None: nothing yet)
@@ -395,7 +396,7 @@ class App:
         files = []
         parts = [("ghostmap.json", lambda: json.dumps(self.tracker.ghost_map.to_dict()).encode()),
                  ("ld2410.json", lambda: json.dumps(self.tracker.ld_background.to_dict()).encode()),
-                 ("destinations.json", lambda: json.dumps(self.tracker.dest_map.to_dict()).encode()),
+                 ("destinations.json", self._destinations_packer),
                  ("people.json", self._people_bytes),
                  ("calibration.npz", self.calibrator.snapshot)]
         for name, make in parts:
@@ -409,6 +410,11 @@ class App:
             if data is not None:
                 files.append((self.data_dir / name, data))
         return files
+
+    def _destinations_packer(self):
+        """The destination map copied now, compressed in the thread that writes it."""
+        pack = self.tracker.dest_map.snapshot()
+        return lambda: json.dumps(pack()).encode()
 
     @staticmethod
     def _write_files(files: list):
@@ -456,13 +462,28 @@ class App:
         snap = self.tracker.snapshot()
         snap["zones"] = {k: v.to_dict() for k, v in self.zone_states.items()}
         snap["status"] = self.sensor_status
-        snap["calibration"] = self.calibrator.status()
+        snap["calibration"] = self._calibration_status()
         elapsed = time.monotonic() - self.stats["since"]
         snap["load"] = {"cpu": round(100 * self.stats["cpu"] / max(elapsed, 1e-3), 2),
                         "fps": round(self.stats["frames"] / max(elapsed, 1e-3), 1)}
         if elapsed > 30:
             self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
         return json.dumps({"type": "live", **snap})
+
+    def _calibration_status(self) -> dict | None:
+        """The calibration data's last count (None: none yet); when it is 30 s old, a new one is
+        counted in a thread (Calibrator.status_job), the live view gets it with a later message."""
+        cal = self.calibrator
+        if cal.status_due() and (self._counting is None or self._counting.done()):
+            self._counting = asyncio.ensure_future(self._count_calibration())
+        return cal.last_status()
+
+    async def _count_calibration(self):
+        cal = self.calibrator
+        try:
+            cal.use_status(await asyncio.to_thread(cal.status_job()))
+        except Exception:  # noqa: BLE001 - the live view goes on with the last count
+            self.throttled("calibration", logging.ERROR, "calibration data not counted", exc_info=True)
 
     def _broadcast(self, text: str):
         """To every browser on the live view, without waiting for any (LiveClient)."""
@@ -648,7 +669,10 @@ class App:
                 calibration.solve, self.config, data, bool(body.get("mirror"))))
         elif action != "status":
             raise web.HTTPNotFound()
-        return web.json_response(self.calibrator.status())
+        cal = self.calibrator
+        if cal.status_due():
+            cal.use_status(await asyncio.to_thread(cal.status_job()))
+        return web.json_response(cal.last_status())
 
     async def h_sensormodel(self, request):
         """What one sensor sees (from the geometry) and where it starts ghost tracks (learned)."""
@@ -715,9 +739,22 @@ class App:
                 "people": self.start_state if covered else None}
         self.reports.mkdir(parents=True, exist_ok=True)
         name = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{re.sub(r'[^a-z0-9_]', '', room.lower()) or 'haus'}-{kind}"
-        lines = [json.dumps(meta)]
-        shown = collections.deque(self.shown)
-        for recv, topic, payload in list(self.recent):
+        # in the loop: the header (the learned parts may be the model's own, still changing) and copies of
+        # the buffers the frames go on into; lines and gzip in a thread (15 min of frames: 0.2 s and
+        # 0.6 s here, many times that on Home Assistant, MODEL.md 10)
+        head = json.dumps(meta)
+        path = self.reports / f"{name}.jsonl.gz"
+        n = await asyncio.to_thread(self._write_report, path, head, list(self.recent), list(self.shown))
+        log.info("error report %s: %d messages", path.name, n)
+        return web.json_response({"name": path.name, "messages": n})
+
+    @staticmethod
+    def _write_report(path, head: str, recent: list, shown: list) -> int:
+        """The report's file: the header, then the messages in the recordings' format with what the app
+        showed in between; the number of messages."""
+        lines = [head]
+        shown = collections.deque(shown)
+        for recv, topic, payload in recent:
             while shown and shown[0][0] <= recv:
                 t, data = shown.popleft()
                 lines.append(json.dumps({"t": t, "topic": "app/shown", "payload": data}))
@@ -727,10 +764,8 @@ class App:
                 data = payload.decode(errors="replace")
             lines.append(json.dumps({"t": recv, "topic": topic, "payload": data}))
         lines += [json.dumps({"t": t, "topic": "app/shown", "payload": data}) for t, data in shown]
-        path = self.reports / f"{name}.jsonl.gz"
-        await asyncio.to_thread(path.write_bytes, gzip.compress("\n".join(lines).encode()))
-        log.info("error report %s: %d messages", path.name, len(lines) - 1)
-        return web.json_response({"name": path.name, "messages": len(lines) - 1})
+        path.write_bytes(gzip.compress("\n".join(lines).encode(), compresslevel=6))
+        return len(lines) - 1
 
     async def h_reports(self, request):
         out = []

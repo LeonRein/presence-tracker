@@ -243,3 +243,23 @@ def test_a_report_after_a_live_recalibration_replays_to_what_the_app_showed(tmp_
             k += 1
     assert not changes and k >= len(shown) - 1
     assert diff < 0.002, diff  # what the app showed is rounded to 0.001
+
+
+def test_the_live_view_counts_the_calibration_data_in_a_thread(tmp_path):
+    """The calibration's status (a day of data: 30 ms here, about 0.25 s on Home Assistant) is counted
+    in a thread; the live view sends the last count and the new one once it is there."""
+    config = flat_config(entry=True)
+    config.save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), (4.5, 1.0), start=1))
+    for t, sid, frame in simulate([a], sim_sensors(config), 20.0, walls=config.wall_segments):
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
+        assert app.tick(1000.0 + t)
+
+    async def live():
+        first = json.loads(app.live_message())["calibration"]
+        await app._counting
+        return first, json.loads(app.live_message())["calibration"]
+
+    first, then = asyncio.run(live())
+    assert first is None and then == app.calibrator.status() and then["frames"]

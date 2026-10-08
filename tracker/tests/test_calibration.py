@@ -218,3 +218,30 @@ def test_reset_forgets_and_only_walking_is_kept():
     assert sum(len(a) for a in calibrator.data().values()) > 5 * max(walking, 1)
     calibrator.reset()
     assert calibrator.data() == {} and calibrator.status()["since"] is None
+
+
+def test_the_status_counts_a_copy_and_a_reset_drops_a_count_under_way(tmp_path):
+    """The app counts in a thread (Calibrator.status_job) what was collected when the count began;
+    frames that come meanwhile don't change it, and a count begun before a reset is not taken over."""
+    truth, guess, person = _three_sensors()
+    calibrator = _collect(truth, guess, [person], 30.0, hours=1)
+    counted = calibrator.status()
+    calibrator._status = None  # due
+    job = calibrator.status_job()
+    sensors = [SimSensor(s, noise=0.05) for s in truth.sensors]
+    for t, sid, frame in simulate([person], sensors, 30.0, seed=7):
+        calibrator.on_frame(sid, t + 100.0, frame)  # while the thread counts
+    result = job()
+    assert result[2] == counted
+    calibrator.use_status(result)
+    assert calibrator.last_status() == counted and not calibrator.status_due()
+    job = calibrator.status_job()
+    calibrator.reset()
+    calibrator.use_status(job())
+    assert calibrator.last_status() is None and calibrator.status()["frames"] == {}
+    # the file: uncompressed, read back as it was
+    calibrator = _collect(truth, guess, [person], 30.0, hours=1)
+    calibrator.save(tmp_path / "calibration.npz")
+    again = Calibrator(guess)
+    again.load(tmp_path / "calibration.npz")
+    assert again.status()["frames"] == calibrator.status()["frames"]

@@ -256,9 +256,16 @@ class DestinationMap:
         return np.einsum("c,v,cvk->k", cw, vw, self.count[cells[:, None], vc[None, :]].astype(float))
 
     def to_dict(self) -> dict:
-        raw = np.ascontiguousarray(self.count, dtype=np.float32).tobytes()
-        return {"fingerprint": self.fingerprint, "shape": list(self.count.shape), "walks": self.walks,
-                "forget": self.forget, "count": base64.b64encode(zlib.compress(raw, 6)).decode()}
+        return self.snapshot()()
+
+    def snapshot(self):
+        """A copy of the counts as they are now, and a function making to_dict of it: the compression
+        (6 ms here for 2.2 MB, more as the walks fill the map) may run in a thread while the walks go
+        on (app: the save every 10 min)."""
+        raw = np.ascontiguousarray(self.count, dtype=np.float32).tobytes()  # a copy
+        head = {"fingerprint": self.fingerprint, "shape": list(self.count.shape), "walks": self.walks,
+                "forget": self.forget}
+        return lambda: {**head, "count": base64.b64encode(zlib.compress(raw, 6)).decode()}
 
     @classmethod
     def from_dict(cls, d: dict) -> "DestinationMap":

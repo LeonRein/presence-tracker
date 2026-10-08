@@ -886,6 +886,7 @@ class Calibrator:
         self._chunks: dict[str, list] = collections.defaultdict(list)
         self._tracks, self._ids = {}, itertools.count()
         self._status, self._status_t = None, -math.inf
+        self._gen = getattr(self, "_gen", 0) + 1  # a count started before a reset is not taken over
         self.since = None
 
     def on_frame(self, sensor_id: str, t: float, frame: dict):
@@ -908,13 +909,14 @@ class Calibrator:
 
     def snapshot(self):
         """The collected data as they are now (copied), and a function that packs them for the file:
-        the packing (seconds for a day of data) may run in a thread while the frames go on."""
-        data = self.data()
+        it may run in a thread while the frames go on. Not compressed: np.savez_compressed took 98 ms
+        for a day of data (1.6 MB instead of 6.7 MB), np.savez 2 ms (MODEL.md 10)."""
+        parts = self._parts()
         since = np.array([self.since if self.since is not None else np.nan])
 
         def pack() -> bytes:
             buf = io.BytesIO()
-            np.savez_compressed(buf, since=since, **{"s_" + sid: a for sid, a in data.items()})
+            np.savez(buf, since=since, **{"s_" + sid: a for sid, a in self._join(parts).items()})
             return buf.getvalue()
         return pack
 
@@ -931,28 +933,54 @@ class Calibrator:
                     last = max(last, int(f[key][:, SEG].max()))
         self._ids = itertools.count(last + 1)
 
-    def data(self) -> dict:
+    def _parts(self) -> dict:
+        """Per sensor the packed arrays (never changed afterwards) and a copy of the rows gathered
+        since: quick, in the loop; _join may then run in a thread while on_frame goes on."""
+        return {sid: (list(self._chunks.get(sid, [])), list(self._rows.get(sid, [])))
+                for sid in sorted(set(self._rows) | set(self._chunks))}
+
+    @staticmethod
+    def _join(parts: dict) -> dict:
         out = {}
-        for sid in sorted(set(self._rows) | set(self._chunks)):
-            parts = self._chunks.get(sid, []) + [np.array(self._rows[sid], float).reshape(-1, 6)]
-            a = np.concatenate(parts)
+        for sid, (chunks, rows) in parts.items():
+            a = np.concatenate(chunks + [np.array(rows, float).reshape(-1, 6)])
             if len(a):
                 out[sid] = a
         return out
 
+    def data(self) -> dict:
+        return self._join(self._parts())
+
     def status(self) -> dict:
         """Since when, walking measurements per sensor ("frames"), the walking points of each as solve
         counts them ("points") and its hours with walking data ("hours", a proposal needs "min_hours"),
-        and seconds in which two sensors each had exactly one moving target (recounted every 30 s)."""
-        now = time.monotonic()
-        if self._status is None or now - self._status_t > 30:
-            data = {sid: a for sid, a in self.data().items() if sid in self.config.sensor_by_id}
+        and seconds in which two sensors each had exactly one moving target (recounted every 30 s,
+        here in the caller's thread: the app counts in a thread, status_job)."""
+        if self.status_due():
+            self.use_status(self.status_job()())
+        return self._status
+
+    def status_due(self) -> bool:
+        return self._status is None or time.monotonic() - self._status_t > 30
+
+    def last_status(self) -> dict | None:
+        """The last count (None: none yet)."""
+        return self._status
+
+    def status_job(self):
+        """A copy of the data as they are now (in the loop), and a function counting them that may run
+        in a thread: with a day of data 30 ms here, about 0.25 s on Home Assistant, every 30 s while a
+        browser is open (MODEL.md 10). Its result goes to use_status, in the loop."""
+        parts, since, config, gen, t = self._parts(), self.since, self.config, self._gen, time.monotonic()
+
+        def count():
+            data = {sid: a for sid, a in self._join(parts).items() if sid in config.sensor_by_id}
             frames = {sid: len(a) for sid, a in data.items()}
             points, hours = {}, {}
             for sid, a in data.items():
-                t = walking_times(self.config, sid, a)
-                points[sid] = len(t)
-                per_hour = collections.Counter((t // STRETCH).astype(int).tolist())
+                times = walking_times(config, sid, a)
+                points[sid] = len(times)
+                per_hour = collections.Counter((times // STRETCH).astype(int).tolist())
                 hours[sid] = sum(n >= MIN_POINTS for n in per_hour.values())
             bins = {sid: np.unique(np.floor(a[a[:, SINGLE] > 0, T] / EVERY)) for sid, a in data.items()}
             pairs = {}
@@ -960,9 +988,15 @@ class Calibrator:
                 n = len(np.intersect1d(bins[a], bins[b], assume_unique=True))
                 if n:
                     pairs[f"{a}|{b}"] = n
-            self._status, self._status_t = {"since": self.since, "frames": frames, "points": points, "hours": hours,
-                                            "min_hours": MIN_STRETCHES, "pairs": pairs}, now
-        return self._status
+            return gen, t, {"since": since, "frames": frames, "points": points, "hours": hours,
+                            "min_hours": MIN_STRETCHES, "pairs": pairs}
+        return count
+
+    def use_status(self, counted: tuple):
+        """Take over what a status_job counted, unless the data were reset meanwhile."""
+        gen, t, status = counted
+        if gen == self._gen:
+            self._status, self._status_t = status, t
 
     def solve(self, check_mirror: bool = False) -> dict:
         return solve(self.config, self.data(), check_mirror)
