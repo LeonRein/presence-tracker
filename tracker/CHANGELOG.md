@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.21.0
+
 - **Lernschleifen abgesichert** (Review des Algorithmus 3.2/3.3, MODEL.md 4.3, 10 „Lernschleifen“): Der
   LD2410C-Hintergrund lernte Personen, die der Filter nicht oder falsch hielt (Schlafzimmer 7./8.10.
   nachts Ring 2 7,7 → 29 bei leer 7,8; Arbeitszimmer 6.10. abends Ring 5–6 am Platz der zweiten Person
