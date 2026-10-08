@@ -1,6 +1,7 @@
 # Das Wahrscheinlichkeitsmodell des Presence Trackers
 
-Stand: Code 0.10.0 (Entwicklung, 7.10.2026). Beschreibt, was der Code rechnet; was fehlt oder nur genähert ist,
+Stand: Code 0.21.0 mit den unveröffentlichten Änderungen aus dem Review vom 8.10.2026 (5.1, 4.1, 4.3, 7).
+Beschreibt, was der Code rechnet; was fehlt oder nur genähert ist,
 steht in 9. Zahlen sind **gemessen** (auf Aufnahmen), **geschätzt** (EM auf Aufnahmen ohne Wahrheit)
 oder **angenommen**. Literaturkürzel wie im Literaturordner (`~/Documents/presence-tracker-literatur`).
 Die Abschnittsnummern werden im Code zitiert (`MODEL.md 4.1`); beim Umbau beibehalten.
@@ -177,16 +178,35 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   `1 − exp(−ln 2 ((Δr/0,6 m)² + (Δquer/0,9 m)²))` (Form A_Svensson2012 Gl. 18–20); neben einem
   gehaltenen Ziel stattdessen `1 − exp(−d²/(2·0,7²))` (dort würde es wiedergefunden).
 - **Erkennbarkeit κ** einer stehenden Person in diesem Aufenthalt (Haltung, Platz): dieselbe Person
-  wird am Tisch alle halbe Minute erfasst, auf dem Sofa minutenlang nicht. κ ~ Gamma(α, α), Mittel 1,
-  als 3 Punkte der verallgemeinerten Gauß-Laguerre-Quadratur (Golub & Welsch 1969; exakt bis zum
-  5. Moment, wie die Sigma-Punkte der Position, 5.2): 0,42 / 2,29 / 6,29 mit 0,71 / 0,28 / 0,01 (bis
-  7.10. gleich wahrscheinliche Stufen an ihren Mitteln, 0,19 / 0,71 / 2,10: Ein Drittel der Masse lag
-  nahe 0, „ungesehen sitzen“ war billig; Log-Evidenz mit der Quadratur +466 / +513 auf den Meldungen
-  bis 6.10. / vom 7.10., Lichtfehler gleich, 5.5); neu bei jedem Stehenbleiben,
-  innerhalb eines Aufenthalts mit 1/(600 s) neu gezogen (D_Mahler2011 Gl. 49–52; D_Wilthil2019 Gl. 2).
-  5 Stufen (bis 0.10.0) −2, 4 Stufen −0,3 gegenüber 3 (dieselben 11 h wie 3.1), Lichtfehler gleich.
-  α = 1 (angenommen). Über die Evidenz dieser 11 h nicht zu bestimmen: α = 0,5 −5, α = 2 +17, mit 24
-  Hypothesen ab 10⁻⁹ aber −82 (5.1). Aus den bekannten Aufenthalten (5.5) auch nicht: Der LD2450 im
+  wird am Tisch alle halbe Minute erfasst, auf dem Sofa minutenlang nicht. κ ~ Gamma(α, α), Mittel 1;
+  neu bei jedem Stehenbleiben, innerhalb eines Aufenthalts mit 1/(600 s) neu gezogen (D_Mahler2011
+  Gl. 49–52; D_Wilthil2019 Gl. 2). **Der Filter führt den Posterior von κ, nicht seine Momente** (seit
+  8.10.): ein Gitter von 5 Zellen gleichen Abstands in log κ zwischen dem 0,1-%- und dem 99,9-%-Quantil
+  (die äußeren Zellen reichen bis 0 und ∞), je am bedingten Mittel mit der Masse des Priors in der
+  Zelle, wie die Amplitude des LD2410C (4.3; ein Punktmassenfilter über κ, 0_Arulampalam2002 Abschn.
+  II-B): 0,003 / 0,020 / 0,12 / 0,61 / 2,18 mit 0,006 / 0,028 / 0,15 / 0,51 / 0,31. Warum ein Gitter
+  in log κ: Was die Stufen tragen müssen, ist `E[e^(−κ·a·T)]` für eine Sitzende, die die Zeit T mit
+  der Erfassungsrate a nicht erfasst wird, also die Laplace-Transformierte des Priors an s = aT; sie
+  hängt nur von log κ + log s ab, ein gleichmäßiges Gitter in log κ ist deshalb über alle Zeitskalen
+  gleich genau. Gerechnet (nicht gemessen) für α = 1, a = 0,034 /s (`acquire`, nah, ein Sensor) mit dem
+  Neuziehen, gegen ein feines Gitter (4000 Zellen): nach 1 / 5 / 10 / 20 / 60 min ungesehen 0,91 / 0,83
+  / 0,79 / 0,75 / 0,74 des Richtigen (7 Zellen 0,94–0,85, 9 Zellen 0,97–0,90; bei a = 0,1 /s ebenso).
+  **Bis 0.21** 3 Punkte der verallgemeinerten Gauß-Laguerre-Quadratur (Golub & Welsch 1969), 0,42 /
+  2,29 / 6,29 mit 0,71 / 0,28 / 0,01: exakt für die Momente bis zum 5., aber nicht für `e^(−κaT)`,
+  das kein Polynom niedrigen Grades ist; die unterste Stufe entschied allein, wie lange eine Sitzende
+  ungesehen bleiben konnte: 0,94 / 0,13 / 5·10⁻³ / 4·10⁻⁶ / 3·10⁻¹⁹ des Richtigen (Review 8.10., 1.7).
+  Die konjugierte Form (Gamma(α, β) mal `e^(−κR)` ist Gamma(α, β + R), je Komponente und Kachel ein
+  (α, β)) ist nur ohne Neuziehen exakt: Das Neuziehen, neue Aufenthalte und die zensierte Erfassung
+  beim Start (`1/(1 + κc)`, 4.1 unten) machen Mischungen, die je Schritt wieder auf eine
+  Gamma-Verteilung projiziert werden müssen (Mittel und Mittel des Logarithmus); so gerechnet 1,00 /
+  0,88 / 0,74 / 0,65 / 0,83, nicht genauer als 4–5 Gitterzellen, aber mit einer Newton-Iteration über
+  Digamma je Kachel und Takt statt einer Multiplikation. Vergleiche in 10, „Review 8.10.“ (bis 7.10.
+  gleich wahrscheinliche Stufen an ihren Mitteln, 0,19 / 0,71 / 2,10: Log-Evidenz mit der Quadratur
+  +466 / +513 auf den Meldungen bis 6.10. / vom 7.10., Lichtfehler gleich; 5 Stufen −2, 4 Stufen −0,3
+  gegenüber 3 Quadraturpunkten, dieselben 11 h wie 3.1; das waren Vergleiche verschiedener diskreter
+  Verteilungen, nicht verschiedener α).
+  α = 1 (angenommen). Mit der Quadratur über die Evidenz dieser 11 h nicht zu bestimmen: α = 0,5 −5,
+  α = 2 +17, mit 24 Hypothesen ab 10⁻⁹ aber −82 (5.1). Aus den bekannten Aufenthalten (5.5) auch nicht: Der LD2450 im
   Arbeitszimmer hatte Leon am Schreibtisch fast immer in einer Spur (6.10. abends 233 s ohne Spur in
   79 min, 7.10. 0–14 s je 10 min), und ohne Spur fand er ihn mit 0,01–0,27 /s wieder (κ ≈ 0,3–8, keine
   Masse nahe 0, aber zu wenige Fälle für eine Form). Gehende: κ = 1.
@@ -326,16 +346,25 @@ Das Modell, je Sensor:
   99,9-%-Quantil, je am bedingten Mittel mit der Masse des Priors in der Zelle (0,21 / 0,30 / 0,40 /
   0,54 / 0,72 / 0,97 / 1,28 / 1,70 / 2,28 mit 0,004 / 0,013 / 0,041 / 0,108 / 0,211 / 0,282 / 0,228 /
   0,096 / 0,018; ein Punktmassenfilter über g wie die Kacheln über den Ort, 0_Arulampalam2002 Abschn.
-  II-B). Bis 0.18.0 3 Quadraturpunkte wie κ (0,58 / 1,22 / 2,20): Eine Person, die ein Drittel des
+  II-B). Bis 0.19.0 3 Quadraturpunkte wie κ (0,58 / 1,22 / 2,20): Eine Person, die ein Drittel des
   Profils zurückgab, erklärte die Energie schlechter als eine Echoquelle mit ihrer Stufe 0,3 (10,
-  „Meldungen 7.10. abends“). Neu
-  bei jedem Stehenbleiben, innerhalb mit 1/(600 s) neu gezogen wie κ, aber unabhängig von κ (a priori
-  unabhängig und von verschiedenen Sensoren gemessen: als eigener Vektor neben κ an der
-  Gauß-Mischung exakt). Gehende und Personen ohne Spur: g = 1 (auf den Kacheln geht g verloren wie die
-  Geschwindigkeit).
+  „Meldungen 7.10. abends“). Neu bei jedem Stehenbleiben, innerhalb mit 1/(600 s) neu gezogen,
+  **zusammen mit κ** (seit 8.10.): Eine Haltung, die wenig zurückwirft, sieht auch der LD2450 seltener
+  (oben: Spearman 0,37 bewegt / 0,47 ruhig zwischen g und seiner Wiederfinderate). Unabhängig
+  gerechnet zählten beide Hinweise gegen eine solche Sitzende doppelt (Review 8.10., 1.8.5). Der
+  gemeinsame Prior von κ und g ist eine Gauß-Copula (Nelsen 2006) mit der Korrelation der
+  Normal-Scores ρ = 2 sin(π ρ_S / 6) = 0,44 aus dem Mittel ρ_S = 0,42 (Kruskal 1958), auf den Zellen
+  beider Gitter (5 × 9, die Ränder exakt Gamma(1) und Gamma(6, 6)); E[g | κ] 0,59 / 0,68 / 0,79 /
+  0,96 / 1,20. Die Gauß-Mischung führt die gemeinsame Verteilung (5 × 9 Zahlen); bis 0.21 zwei
+  Vektoren, und ein Teil ohne Messung des LD2410C zählte beim Mischen mit gleich wahrscheinlichen
+  Zellen statt mit dem Prior. Vorbehalt: Gemessen ist die Kopplung an die Wiederfinderate, nicht an κ
+  selbst. Gehende und Personen ohne Spur: g = 1 (auf den Kacheln geht g verloren wie die
+  Geschwindigkeit); wer von den Kacheln eine Spur bekommt, erhält g aus dem Prior gegeben sein κ.
 - **Gemeinsamer Pegel u** je Block (1 s) und Art: 1/u ~ Gamma(κ, κ), κ = 16 bewegt, 50 ruhig (gemessen,
   s. o.), gemischt mit 2 % Schüben, 1/u ~ Gamma(4) mit u um 2,5 (angenommen; nur nach oben: ein
-  niedriger Pegel darf eine fehlende Person nicht entschuldigen). Konjugiert: exakt herausintegriert.
+  niedriger Pegel darf eine fehlende Person nicht entschuldigen). Konjugiert: für die nicht gekappten
+  Energien exakt herausintegriert; die gekappten (100, `P(e ≥ 99,5)`) rechnen mit dem Mittel μ ohne
+  den Pegel (`Stats._mu_part`), eine kleine Abweichung vom Modell.
   Ohne ihn erklärte eine gleichmäßig erhöhte Energie aller Ringe (nachts im Arbeitszimmer ruhig
   doppelt so hoch wie gelernt, Schübe) eine Person am Rand des Strahls.
 - **Hintergrund b je Sensor, Ring und Art: von der App gelernt** (wie die Geisterkarte): Online-EM der
@@ -427,8 +456,18 @@ Frame jedes Sensors alles vorgerückt: etwa 23-mal je Sekunde, ein Hauptteil der
 - Eine neue Spur verzweigt jede Hypothese: Geist; eine Person, die schon Spuren anderer Sensoren hat;
   eine bekannte Person ohne Spur (mit ihrem r, 5.5); eine unbekannte (5.5). Eine wiedergefundene: ihr Eigentümer; eine
   andere Person nahe der Stelle; Geist/Reflexion.
-- Behalten werden höchstens 12, solange über 10⁻⁷ des stärksten (Abschneiden nach Gewicht,
-  B_Vo2017). Auf den 11 h aus 3.1 greift die Grenze von 12 bei 8 % der Schnitte (461 von 5588), im
+- **Erst zusammenlegen, dann abschneiden** (seit 8.10.): Die Kinder einer Verzweigung, die über die
+  laufenden Spuren dasselbe sagen, werden zuerst eine Hypothese (5.6). Der Schlüssel sagt nicht,
+  *welcher* Person eine Spur gehört: „sie gehört u₁“, „u₂“, „einer neuen Person“ desselben
+  Elternteils sind eine Hypothese mit der Summe ihrer Gewichte. Dann wird abgeschnitten: von der
+  schwächsten an, solange die verworfenen zusammen höchstens 10⁻⁷ der Masse wiegen, und höchstens 12
+  bleiben. Abschneiden nach Gewicht minimiert den L1-Fehler, und der ist dann höchstens das Doppelte
+  der verworfenen Masse (B_Vo2017 Abschn. II, III-A; dort auf die Masse bezogen, nicht auf das
+  stärkste Kind). Die verworfene Masse zählt in der Evidenz mit (7). Bis 0.21 wurde jedes Kind
+  einzeln abgeschnitten, unter 10⁻⁷ des *stärksten*, bevor gleiche zusammengelegt wurden: viele kleine
+  Alternativen gingen verloren, deren Summe geblieben wäre (Zahlen: 10, „Review 8.10.“).
+- Bis 0.21 (Zahlen dieses Absatzes): höchstens 12, solange über 10⁻⁷ des stärksten (Abschneiden nach
+  Gewicht, B_Vo2017). Auf den 11 h aus 3.1 greift die Grenze von 12 bei 8 % der Schnitte (461 von 5588), im
   Mittel bleiben 4,7 Hypothesen. Log-Evidenz gegenüber 12 ab 10⁻⁷ / Lichtfehler (fälschlich an von
   41, aus von 15) / Rechenzeit (21 Uhr, 5 Sensoren, Anteil eines Kerns):
 
@@ -711,7 +750,8 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
     jenseits des Teilers 0.
   - *Gelernt in der App aus den eigenen Gehenden* (wie die Geisterkarte 4.2): je Hypothese und Person mit
     Spur, gewichtet mit dem Gewicht der Hypothese und P(geht) (weiche Zählungen über alle behaltenen
-    Hypothesen, 10 „Geisterkarte“). Eine Person ist ihre früheste laufende Spur; endet sie, übernimmt den
+    Hypothesen, 10 „Geisterkarte“). Weich sind nur die Schritte: Der Ausgang eines Gangs (wo die Person
+    nach der Tür ist) kommt aus der schwersten Hypothese, die sie hält (`destination.py`, `observe`). Eine Person ist ihre früheste laufende Spur; endet sie, übernimmt den
     Gang, wer binnen 1,5 s höchstens 1 m daneben auftaucht (Übergabe an einer Tür). Der Ausgang: der Raum
     oder Bereich, in dem die Person zwei Takte nach einer Tür ist, oder „bleibt“ nach 2 s mit P(geht) <
     ½. Ein Gang, dessen Spuren enden, ohne dass jemand ihn übernimmt, zählt nicht. Vergessen mit 14 Tagen.
@@ -770,10 +810,20 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
 
 ## 7. Evidenz
 Die Summe der Normierungen ist die Log-Evidenz der Aufnahmen (`Tracker.loglik`; Summe der
-prequentiellen Log-Scores, I_GneitingRaftery2007 S. 372). Weil der Filter deterministisch ist, ist
-sie glatt in den Parametern und Vergleiche brauchen keine Seeds (I_Kantas2015 S. 8–9). Damit sollen
-Parameter und Modellvarianten auf Aufnahmen ohne Wahrheit verglichen werden. Bisher ist damit nur die
-Lebensdauer der Geister geschätzt (4.2).
+prequentiellen Log-Scores, I_GneitingRaftery2007 S. 372): je Schritt die Vorhersagedichte der neuen
+Daten unter dem Posterior, den der Filter davor behalten hat. Was beim Abschneiden (5.1) wegfällt,
+zählt in seinem Schritt mit (die Masse aller Kinder ist die Vorhersage); `Tracker.loglik_cut` weist
+aus, wie viel davon auf weggefallene Hypothesen kommt (`report_eval.py`: „dropped hypotheses“). Weil
+der Filter deterministisch ist, brauchen Vergleiche keine Seeds (I_Kantas2015 S. 8–9). **Glatt in den
+Parametern ist sie nicht** (bis 8.10. stand das hier): Das Abschneiden, die Obergrenze der Hypothesen,
+die Paarung beim Zusammenlegen (5.6, ein argmin), die Rückgabe bei r < 0,01 (5.5) und die Grenze,
+ab der eine Kachel im Blick des LD2410C liegt (`ld2410.FLOOR`), springen; deshalb hängt sie nicht monoton von den
+Grenzen ab (5.1), und Gradienten oder EM-Schritte über sie sind unzuverlässig. Vergleichbar ist sie
+außerdem nur bei derselben Vorverarbeitung (welche Messungen verworfen werden, hängt von Kalibrierung
+und Grundriss ab) und derselben Temperierung der LD2410C-Terme (4.3: Potenzen von Dichten, keine
+Dichten). Gedacht ist sie für grobe Vergleiche von Parametern und Varianten auf Aufnahmen ohne
+Wahrheit, bei mehr als einer Einstellung der Grenzen (5.1). Bisher ist damit nur die Lebensdauer der
+Geister geschätzt (4.2).
 
 ## 8. Prüfung
 - **Wahrheitsdaten:** am 6.10.2026 gelöscht, die Bewertung wird neu aufgebaut. Maßstab sind die
@@ -1745,6 +1795,62 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
     prüfen. Hier nicht geändert.
   - *Die Zielkarte* (6) ist nur Ausgabe: Mit gelernter, mit leerer und ohne Lernen sind Zählverteilung
     und Log-Evidenz bitgleich (`test_destination.py`). Keine Schleife.
+- **Review 8.10.: Abschneiden, κ als Gitter, κ und g gemeinsam** (Review des Algorithmus, P0; 5.1,
+  4.1, 4.3, 7). Drei Näherungen, die in der Theorie falsch waren:
+  1. *Abschneiden vor dem Zusammenlegen* (5.1): Jetzt werden die Kinder einer Verzweigung nach ihrem
+     Schlüssel gewogen (die Summe der gleichen), dann wird abgeschnitten (höchstens 10⁻⁷ der Masse
+     verworfen statt jedes unter 10⁻⁷ des stärksten, höchstens 12), dann zusammengelegt; was verworfen
+     wird, wird nicht mehr gemischt. Die verworfene Masse zählt in der Evidenz (7): auf allen Sätzen
+     unter 1 (bei 12 und 16 Hypothesen); die Grenzen schneiden also fast nur die Zahl, kaum Masse ab.
+     Allein die Masse-Schwelle ohne das Zusammenlegen davor kostete auf dem Abend −476 (auf 0.20.1,
+     Licht gleich); mit dem Zusammenlegen davor sind Masse- und relative Schwelle fast gleich (−2).
+  2. *κ als Posterior-Gitter* (4.1): 5 Zellen in log κ statt 3 Quadraturpunkten. 3 / 5 / 7 Zellen (auf
+     0.20.1, 12 Hypothesen, Abend / bis 6.10. / 7.10. früh, gegen 0.20.1): Licht gleich (aus 0,16 /
+     0,15 / 0,16 von 11 statt 0,14, sonst gleich), Log-Evidenz −34 / −16 / −16, −13 / −9 / −9, 0 / +83
+     / +6. 5 genügt (gerechnet höchstens 25 % neben der Gamma-Verteilung, 4.1).
+  3. *κ und g gemeinsam* (4.3): Gauß-Copula, ρ = 0,44 aus der gemessenen Rangkorrelation. Kosten keine
+     messbaren (5 × 9 Zahlen je Gauß-Mischung, die Kacheln tragen g nicht).
+
+  Nachgespielt wie die App (report_eval, 0.21.0 als Basis; Licht fälschlich an / aus, Log-Evidenz
+  gegen 0.21.0; Spalten: Abend 7.10. (43 / 11 Fenster), bis 6.10. (41 / 15), 7.10. früh (13 / 7)):
+
+  | 12 Hypothesen | Abend | bis 6.10. | 7.10. früh |
+  |---|---|---|---|
+  | 0.21.0 | 0 / 0,14; −702 139 | 0 / 1,50; −1 118 928 | 0 / 0; −447 006 |
+  | nur 1 (Zusammenlegen, Masse-Schwelle) | 0 / 0,14; +105 | 0 / 1,50; −139 | 0 / 0; −29 |
+  | nur 2 (κ-Gitter) | 0 / 0,13; −67 | 0 / 1,50; −11 | 0 / 0; −291 |
+  | 2 und 3 | 0 / 0,13; −66 | 0 / 1,50; −135 | 0 / 0; −423 |
+  | **1, 2 und 3** | **0 / 0,13; +100** | **0 / 1,50; −144** | **0 / 0; −50** |
+  | 1 und 2, ρ = 0 | 0 / 0,14; +105 | 0 / 1,50; −144 | 0 / 0; −104 |
+  | 1, 2, 3 mit α = 2 | 0 / 0,13; +98 | 0 / 1,50; −162 | 0 / 0; −240 |
+
+  | 16 Hypothesen | Abend | bis 6.10. | 7.10. früh |
+  |---|---|---|---|
+  | 0.21.0 | 0 / 0,14; −702 103 | 0 / 1,50; −1 118 945 | 0,14 / 0; −447 072 |
+  | nur 1 | 0 / 0,14; +62 | 0 / 1,50; −114 | 0,07 / 0; +122 |
+  | nur 2 | 0 / 0,12; −4 | 0 / 1,50; −7 | 0,14 / 0; −267 |
+  | **1, 2 und 3** | **0 / 0,14; +42** | **0 / 1,50; −117** | **0,11 / 0; −62** |
+  | 1 und 2, ρ = 0 | 0 / 0,14; +63 | 0 / 1,50; −106 | 0,11 / 0; −69 |
+  | 1, 2, 3 mit α = 2 | 0 / 0,14; +35 | 0 / 1,50; −117 | 0,11 / 0; −226 |
+
+  Leere Nacht (`phantom.py`) 0 min wie 0.21.0. Das Licht bleibt, wo es war; fälschlich an (16
+  Hypothesen, Flur 7.10. 09:49, 9) 0,14 → 0,11. Wo jemand war, steigt P(belegt) etwas (bis 6.10.:
+  Wohnzimmer 0,93 → 0,96, Küche 21:57 0,75 → 0,87; hinter Türen Schlafzimmer 22:15 0,32 → 0,57, Bad
+  0,76 → 0,81), Bad 7.10. 22:09–22:20 0,95 / 0,95 / 0,97 → 0,96 / 0,94 / 0,97, zwei im Bett
+  (22:22–22:24) P(=2) 0,29 → 0,32. Die Evidenz bewegt sich in beide Richtungen und je Satz um bis zu
+  einige Hundert, mit wechselndem Vorzeichen zwischen 12 und 16 Hypothesen (5.1: nicht sicher); einzig
+  das κ-Gitter allein kostet auf 7.10. früh bei beiden Grenzen (−291 / −267, fast ganz im Lauf ab
+  07:44, Start ohne Wissen), mit dem Zusammenlegen davor nur −50 / −62. α = 2 ist nicht besser.
+  *Die Schlafzimmernacht 7./8.10.* (10, „Lernschleifen“: die Geisterkarte zählte das Bett, weil die
+  Spuren der Schlafenden mit P(Geist) 1,000 endeten; nachgespielt ab 17:13 bis 05:30): unverändert. Das
+  Schlafzimmer 00:30–05:30 P = 0,00 in beiden, von 40 Geisterspuren des Schlafzimmersensors 00:00–06:30
+  38 bzw. 37 mit P(Geist) über 0,999, die Karte danach 3,58- bzw. 3,66-mal die Prior-Rate. Die harten
+  Zählungen kommen also nicht vom Abschneiden, sondern von der Echoquelle, die die Schlafenden nimmt (9).
+  Rechenzeit: die vollste Stunde (7.10. 17:00–17:20, config10, wie die App, ein Kern, je dreimal
+  abwechselnd) 0.21.0 51,9 s, nur 1 50,1 s, 1 und 2 50,6 s, alle drei 50,6 s (−2,5 %; mit 3 / 7
+  Zellen 50,3 / 52,2 s): Was verworfen wird, wird nicht mehr gemischt, das wiegt die 25 statt 15
+  Schichten von `steht` auf. Über die ganzen Nachspiele (report_eval, je drei gleichzeitig) +6 %
+  (887 → 938 s), mit 16 Hypothesen +10 % (921 → 1016 s; nicht weiter zerlegt).
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

@@ -2,6 +2,34 @@
 
 ## Unveröffentlicht
 
+Review des Algorithmus, P0 (MODEL.md 10, „Review 8.10.“):
+
+- **Erst zusammenlegen, dann abschneiden** (MODEL.md 5.1): Die Alternativen einer neuen Spur, die
+  über die laufenden Spuren dasselbe sagen („sie gehört u₁“, „u₂“, „einer neuen Person“), werden nach
+  ihrer Summe gewogen, nicht einzeln unter 10⁻⁷ des stärksten verworfen. Abgeschnitten wird nach der
+  Masse (die verworfenen zusammen höchstens 10⁻⁷, Vo et al. 2017), höchstens 12 bleiben; die
+  verworfene Masse zählt in der Log-Evidenz und wird ausgewiesen (`Tracker.loglik_cut`,
+  `report_eval.py`: „dropped hypotheses“).
+- **Erkennbarkeit κ als Posterior-Gitter** (MODEL.md 4.1): 5 Zellen in log κ mit der Masse von
+  Gamma(1) statt 3 Gauß-Laguerre-Punkten, deren unterste Stufe (0,42) langes ungesehenes Sitzen um
+  Größenordnungen zu unwahrscheinlich machte (nach 10 min 200-mal, nach 20 min 3·10⁵-mal; jetzt
+  höchstens 25 % neben der Gamma-Verteilung, gerechnet).
+- **κ und LD2410C-Amplitude g gemeinsam** (MODEL.md 4.3): Gauß-Copula mit ρ = 0,44 aus der gemessenen
+  Rangkorrelation; eine schlecht zurückwerfende Haltung zählt nicht mehr doppelt gegen eine Sitzende.
+  Die Gauß-Mischung führt die gemeinsame Verteilung; ein Teil ohne LD2410C-Messung mischte bisher mit
+  gleich wahrscheinlichen Amplitudenzellen statt mit dem Prior.
+- MODEL.md richtiggestellt: Kopfzeile (Code 0.10.0), Evidenz „glatt in den Parametern“ (7), gekappte
+  Energien nicht über den Pegel integriert (4.3), der Ausgang der Zielkarte aus der schwersten
+  Hypothese (6).
+- Zusammen gegen 0.21.0 (12 Hypothesen): Licht fälschlich an überall 0, aus Abend 0,14 → 0,13 von 11,
+  bis 6.10. 1,50 von 15, 7.10. früh 0; mit 16 Hypothesen fälschlich an 7.10. früh 0,14 → 0,11 von 13.
+  Leere Nacht 0 min. Log-Evidenz +100 / −144 / −50 (16 Hypothesen +42 / −117 / −62): nicht sicher
+  (MODEL.md 5.1). Die Schlafzimmernacht 7./8.10. bleibt (die harten Zählungen der Geisterkarte kommen
+  von der Echoquelle, nicht vom Abschneiden). Rechenzeit: vollste Stunde 51,9 → 50,6 s (−2,5 %), über die
+  ganzen Nachspiele +6 % (16 Hypothesen +10 %).
+- Gespeicherte Personen (`people.json`) passen nach dem Update nicht mehr zu den Kacheln (andere
+  Stufen von κ): Die App beginnt einmal ohne Wissen über die Personen.
+
 ## 0.21.0
 
 - **Lernschleifen abgesichert** (Review des Algorithmus 3.2/3.3, MODEL.md 4.3, 10 „Lernschleifen“): Der
