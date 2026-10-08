@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.22.0
+
 Review des Algorithmus, P0 (MODEL.md 10, „Review 8.10.“):
 
 - **Erst zusammenlegen, dann abschneiden** (MODEL.md 5.1): Die Alternativen einer neuen Spur, die
