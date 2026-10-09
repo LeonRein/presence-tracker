@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.26.0
+
 Kandidat 0.26 (9.10.; MODEL.md 10 „Kandidat 0.26“):
 
 - **Kein Absturz mehr am Ende einer Spur.** `Tracker._end` nahm die Geisterkarte aus den Odds von P(Geist) mit
