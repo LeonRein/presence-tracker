@@ -7,7 +7,7 @@ import math
 
 import numpy as np
 
-from presence_tracker.filter import Tracker
+from presence_tracker.filter import Tracker, _odds_shifted
 from presence_tracker.filtermodel import Model, Shapes, copula_cells, gamma_log_grid
 from presence_tracker.hidden import Hidden
 from presence_tracker.sim import Person, simulate
@@ -100,3 +100,42 @@ def test_a_sitter_no_ld2450_sees_for_a_quarter_of_an_hour_stays():
             on.append(1 - crowd.count_distribution()["wohn"][0] > c)
     assert sum(on) / len(on) > 0.85 and on[-1], sum(on) / len(on)
     assert known(crowd) < 1.1, known(crowd)
+
+
+def test_a_track_whose_ghost_alternative_is_all_but_gone_ends():
+    # no live track loses an alternative (Tracker._cut), so "ghost" can weigh 1e-310 next to
+    # "person" when the track ends; taking the map's factor out of those odds (_end) overflowed
+    # (OverflowError in the ablation's replay of 8.10.)
+    config = flat_config(entry=True)
+    crowd = Tracker(config, start=0.0, people=["outside"])
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3.0, 2.5), (3.05, 2.5), start=1, pauses={2: 20}))
+    for t, sid, frame in simulate([a], sim_sensors(config), 12.0, walls=config.wall_segments):
+        crowd.process_frame(sid, t, frame)
+    both = [s for s in crowd.segs if {hy.kind[s] == "g" for hy in crowd.hyps} == {True, False}]
+    assert both, "a live track with both alternatives"
+    seg = both[0]
+    top = max(hy.logw for hy in crowd.hyps)
+    for hy in crowd.hyps:
+        if hy.kind[seg] == "g":
+            hy.logw = top - 712.0  # P(ghost) ~ 1e-309 (subnormal)
+    crowd._normalize()
+    p = sum(w for w, hy in zip(crowd.hyp_weights(), crowd.hyps) if hy.kind[seg] == "g")
+    assert 0 < p < 1e-300
+    crowd.segs[seg]["map_odds"] = 5.0
+    learned = []
+    crowd.listeners.append(lambda kind, d: learned.append(d[2]) if kind == "track_end" else None)
+    crowd._end(crowd.segs[seg]["si"], seg, crowd.now, False)
+    assert seg not in crowd.segs and all(seg not in hy.kind for hy in crowd.hyps)
+    assert len(learned) == 1 and 0 <= learned[0] < 1e-300
+
+
+def test_shifting_odds_stays_finite():
+    assert _odds_shifted(0.5, 0.0) == 0.5
+    assert abs(_odds_shifted(0.2, math.log(4.0)) - 0.5) < 1e-12
+    assert 0 < _odds_shifted(1e-310, -5.0) < 1e-310
+    assert _odds_shifted(1 - 1e-16, 800.0) == 1.0 and _odds_shifted(0.0, 3.0) == 0.0
+    # a known person's existence weighed by a factor beyond e^709 (Hidden.weigh): r = 1 - tiny, no overflow
+    u = Hidden.anywhere(Tracker(flat_config(), start=0.0).tiles)
+    u.r = 0.5
+    n = u.tiles.n
+    assert u.weigh(np.full(n, math.exp(700.0)), np.full(n, math.exp(700.0))) > 690 and u.r == 1.0

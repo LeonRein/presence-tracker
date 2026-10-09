@@ -85,6 +85,19 @@ def _log(x):
         return np.log(x)
 
 
+def _odds_shifted(p: float, log_factor: float) -> float:
+    """p with its odds multiplied by e^log_factor, without overflow: 1 / (1 + e^x) for the log odds
+    against, x = log(1 - p) - log(p) - log_factor. Since no live track loses an alternative (_cut),
+    p can be ~1e-300 and e^x beyond the floating point range (OverflowError, ablation 9.10.)."""
+    if not 0.0 < p < 1.0:
+        return p
+    x = math.log1p(-p) - math.log(p) - log_factor
+    if x > 0:
+        e = math.exp(-x)
+        return e / (1.0 + e)
+    return 1.0 / (1.0 + math.exp(x))
+
+
 class Hyp:
     """One hypothesis: its weight; per live track whose it is (a group id, or "g" for a ghost); per
     ghost track the log likelihood of its life per kind of ghost and its source (a Gauss); the
@@ -1003,8 +1016,8 @@ class Tracker:
         w = self.hyp_weights()
         p_ghost = float(sum(wi for wi, hy in zip(w, self.hyps) if hy.kind.get(seg) == "g"))
         info = self.segs.pop(seg)
-        if 0 < p_ghost < 1:  # the map entered the odds once, as a factor at the birth: taken out
-            p_ghost = 1 / (1 + math.exp(math.log1p(-p_ghost) - math.log(p_ghost) + info["map_odds"]))
+        # the map entered the odds once, as a factor at the birth: taken out
+        p_ghost = _odds_shifted(p_ghost, -info["map_odds"])
         life = (info["lost"]["t"] if info["lost"] else info.get("gt", info["born"])) - info["born"]
         learn = not self.pauses.paused(info["born"], t)  # a track of a paused time teaches nothing
         if self.learn_ghosts and learn and p_ghost > 0:

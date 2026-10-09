@@ -266,6 +266,10 @@ class Hidden:
         if q == -math.inf:  # nothing left where the person could be: they do not exist
             r, self.r = self.r, 0.0
             return math.log1p(-r)
+        if q > 0:  # in the form that cannot overflow (q is at most ld2410.LOG_CAP + log n today)
+            z = self.r + (1.0 - self.r) * math.exp(-q)
+            self.r = self.r / z
+            return q + math.log(z)
         z = 1.0 - self.r + self.r * math.exp(q)
         self.r = self.r * math.exp(q) / z
         return math.log(z)
