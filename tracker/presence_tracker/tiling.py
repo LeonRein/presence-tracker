@@ -132,6 +132,7 @@ class Tiling:
                     self.doors[place - 1].append(c)
         self.entries = [c for c in (self.cell_near(watch) for watch, _ in w.portals_of(w.outside)) if c >= 0]
         self.exits = np.array(w.exits, dtype=np.int64)  # per region its ways out of the house
+        self.open_regions = self.exits > 0  # (a closed one: only doors into view, MODEL.md 2)
         self.ways = int(self.exits.sum()) + len(self.entries)  # all ways into the house
         # the same as arrays (kernels.hidden_regions)
         self.door_ptr = np.cumsum([0] + [len(self.doors[r]) for r in range(self.R)]).astype(np.int64)

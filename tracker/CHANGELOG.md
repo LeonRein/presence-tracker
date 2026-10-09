@@ -2,6 +2,28 @@
 
 ## Unveröffentlicht
 
+Kandidat 0.26 (9.10.; MODEL.md 10 „Kandidat 0.26“):
+
+- **Kein Absturz mehr am Ende einer Spur.** `Tracker._end` nahm die Geisterkarte aus den Odds von P(Geist) mit
+  `exp(…)`; seit keine laufende Spur eine Alternative verliert, kann P(Geist) bei 10⁻³⁰⁰ liegen, und das lief
+  über (`OverflowError`; in der App startet das Modell danach neu). Jetzt in einer Form ohne Überlauf, ebenso
+  die Existenz einer Person ohne Spur (`Hidden.weigh`).
+- **In geschlossenen Bereichen ohne Sensor läuft ein Eintrag nicht mehr ab** (der Balkon; MODEL.md 5.5): Wer
+  dort ist, kommt nur durch dessen Tür zurück. Bis 0.25 lief er nach Minuten ab; der Gast, der 8.10. nach 15
+  min vom Balkon zurückkam, war „niemand“, und seine Spur bekam die Person auf dem Sofa. Über die vier
+  Wahrheiten (veröffentlicht, Licht mit 2 min Nachlauf): dunkel mit Person 0,4 → 0,1 min, Licht im leeren Raum
+  8,8 min wie vorher; Filter allein dunkel 5,0 → 0,1 min; `report_eval` veröffentlicht fälschlich an / aus
+  2,13 / 1,73 → 2,15 / 1,02; leere Nacht 0 min; Rechenzeit gleich. Hinter der Balkontür bleiben dafür
+  morgens Einträge länger (8.10. 7 Uhr 0,8 erwartete Personen im Haus bei null Telefonen); Licht hat das keins.
+- Gegen 0.25.1 (6,3 / 0,6 = 6,9 min) ist das 8,8 / 0,1 = 8,9 min: dunkel besser, Licht im leeren Raum um das
+  eine Fenster 7.10. 22:22 im Esszimmer schlechter (2,5 min; die Sensoren sehen dort etwas an und hinter der
+  Balkontür, MODEL.md 9 Punkt 3). Geprüft und nicht übernommen: eine kleine Geburtsrate an neuen Spuren (eine
+  zweite Person im Arbeitszimmer, 12,4 min), die Amplitude je Aufenthalt auf den Kacheln (Bad und Bett gehalten,
+  aber stundenlang jemand im leeren Schlafzimmer, 17,5 min), ein strengeres Tor für Ziele im Balkon (ohne
+  Wirkung).
+- Werkzeuge: `tools/baseline_eval.py --patch`, `tools/report_eval.py --json` (Filter allein und veröffentlicht
+  aus einem Nachspiel).
+
 Meldungen 8.10. abends (Licht im Bad und im Wohnzimmer aus, während dort jemand saß; MODEL.md 10
 „Meldungen 8.10. abends“):
 
