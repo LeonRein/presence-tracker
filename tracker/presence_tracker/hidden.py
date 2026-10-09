@@ -22,6 +22,10 @@ State of an unseen person, as masses that sum to 1:
                    tiling.py)
   still[l, k, c]   standing or sitting in tile c, with the stay's rate of getting up go_l and its
                    detectability kappa_k (filtermodel.Shapes, MODEL.md 3.1, 4.1)
+  amp[k, a, c]     the LD2410C amplitude of the stay (MODEL.md 4.3): P(level a of g | still, kappa_k,
+                   tile c) on the levels of the grid of a person with a track and g = 1 (the last): a
+                   stay measured with a track keeps its posterior (Swerling III), one that nothing
+                   measured has g = 1; a conditional, not a mass (sums to 1 over a)
   region[r, a]     behind a door in region r, for a time in age bin a (the stay ends by its hazard)
   out              out of the house
 
@@ -41,17 +45,34 @@ SAVE_CUT = 1e-6  # shares of a density below this are saved as 0 (Hidden.to_dict
 AGE_EDGES = np.concatenate([[0.0], 2.0 ** np.arange(1, 18)])  # s, region stay ages: 2 s ... 36 h
 
 
+def amp_prior(tiles) -> np.ndarray:
+    """(K, A + 1, n) the amplitude of a stay nothing measured, in every tile: g = 1, the last level
+    (filtermodel.Shapes.tile_fresh). Shared: copy before changing it."""
+    hit = getattr(tiles, "_amp_prior", None)
+    if hit is None or hit.shape[2] != tiles.n:
+        hit = tiles._amp_prior = np.ascontiguousarray(
+            np.repeat(tiles.sh.tile_fresh[:, :, None], tiles.n, axis=2))
+        hit.setflags(write=False)
+    return hit
+
+
+_NO_KEEP = np.ones((1, 1))  # hidden_stays without a measured amplitude (not used)
+MEASURED_CUT = 1e-6  # a share of measured amplitude below this everywhere: nothing measured (Hidden.amp)
+
+
 class Hidden:
     """The density of one person without a track (module doc). Objects are shared between
     hypotheses and changed only by what applies to all of them (motion, no track started); what
     differs between hypotheses makes a new object."""
 
-    __slots__ = ("tiles", "walk", "still", "region", "out", "clock", "r")
+    __slots__ = ("tiles", "walk", "still", "_amp", "_keep", "region", "out", "clock", "r")
 
     def __init__(self, tiles):
         self.tiles = tiles
         self.walk = np.zeros(tiles.n)
         self.still = np.zeros((len(tiles.sh.go), len(tiles.sh.kappa), tiles.n))
+        self._amp = None  # nothing measured: g = 1 everywhere (amp_prior)
+        self._keep = None
         self.region = np.zeros((tiles.R, tiles.A))
         self.out = 0.0
         self.clock = 0.0
@@ -89,6 +110,8 @@ class Hidden:
         h = type(self).__new__(type(self))
         h.tiles = self.tiles
         h.walk, h.still, h.region = self.walk.copy(), self.still.copy(), self.region.copy()
+        h._amp = None if self._amp is None else self._amp.copy()
+        h._keep = None if self._keep is None else self._keep.copy()
         h.out, h.clock, h.r = self.out, self.clock, self.r
         return h
 
@@ -107,7 +130,8 @@ class Hidden:
             a = a / scale
             a = np.where(a < SAVE_CUT, 0.0, a).astype("<f2")
             return base64.b64encode(zlib.compress(a.tobytes(), 9)).decode()
-        return {"walk": pack(self.walk), "still": pack(self.still), "region": pack(self.region),
+        amp = {} if not self.measured else {"amp": base64.b64encode(zlib.compress(self.amp.astype("<f2").tobytes(), 9)).decode()}
+        return {"walk": pack(self.walk), "still": pack(self.still), "region": pack(self.region), **amp,
                 "out": float(self.out), "scale": float(scale), "r": float(self.r)}
 
     @classmethod
@@ -124,6 +148,13 @@ class Hidden:
                 raise ValueError("saved density does not fit the tiles")
             return a.reshape(like.shape)
         h.walk, h.still, h.region = unpack(d["walk"], h.walk), unpack(d["still"], h.still), unpack(d["region"], h.region)
+        if "amp" in d:  # the amplitudes of the stays (without: nothing measured, g = 1)
+            a = np.frombuffer(zlib.decompress(base64.b64decode(d["amp"])), dtype="<f2").astype(float)
+            if a.size != h.amp.size or not np.all(np.isfinite(a)) or (a < 0).any():
+                raise ValueError("saved amplitudes do not fit the tiles")
+            a = a.reshape(h.amp.shape)
+            tot = a.sum(axis=1, keepdims=True)
+            h.amp = np.where(tot > 0, a / np.where(tot > 0, tot, 1.0), amp_prior(tiles))
         h.out = float(d["out"])
         h.r = float(d.get("r", 1.0)) if cls is Hidden else 1.0
         if (not (math.isfinite(h.out) and h.out >= 0) or not 0.0 <= h.r <= 1.0
@@ -131,6 +162,36 @@ class Hidden:
             raise ValueError("saved density is empty or broken")  # a person is somewhere; nobody unknown may be
         h._normalize()  # a person's masses sum to 1
         return h
+
+    @property
+    def amp(self) -> np.ndarray:
+        """(K, A + 1, n) P(level of the amplitude | still, detectability, tile): the levels of the
+        grid (a stay measured with a track) and g = 1 (nothing measured). Moving on only mixes it with
+        g = 1 (fresh stays, the detectability drawn anew): kept as
+        the share that is no fresh draw (_keep, kernels.hidden_stays) and applied when it is read -
+        exact, as every step mixes towards the same prior."""
+        if self._amp is None:
+            return amp_prior(self.tiles)
+        if self._keep is not None:
+            w = self._keep[:, None, :]
+            self._amp = w * self._amp + (1.0 - w) * self.tiles.sh.tile_fresh[:, :, None]
+            self._keep = None
+            if 1.0 - float(self._amp[:, -1, :].min()) < MEASURED_CUT:
+                self._amp = None
+                return amp_prior(self.tiles)
+        return self._amp
+
+    @amp.setter
+    def amp(self, value: np.ndarray):
+        self._amp = value
+        self._keep = None
+
+    @property
+    def measured(self) -> bool:
+        """Whether any stay of this person carries an amplitude measured with a track (else g = 1)."""
+        if self._keep is not None:
+            self.amp  # what moving on mixed in (it may leave nothing measured)
+        return self._amp is not None
 
     @staticmethod
     def mixture(parts) -> "Hidden":
@@ -143,10 +204,15 @@ class Hidden:
             h.r = 0.0
             return h
         h = None
+        num = None
+        measured = any(o.measured for w, o in parts if w * o.r > 0)
         for w, o in parts:
             k = w * o.r / r
             if k <= 0:
                 continue
+            if measured:  # the amplitudes mix with the still mass they belong to
+                part = k * o.still.sum(axis=0)[:, None, :] * o.amp
+                num = part if num is None else num + part
             if h is None:
                 h = o.copy()
                 h.scale(k)
@@ -155,8 +221,17 @@ class Hidden:
             h.still += k * o.still
             h.region += k * o.region
             h.out += k * o.out
+        h._amp, h._keep = None, None
+        if measured:
+            h._set_amp(num)
         h.r = min(r, 1.0)
         return h
+
+    def _set_amp(self, num):
+        """amp from sum_i (still mass_i (K, n)) x amp_i, divided by the still mass now (where there is
+        none: the prior)."""
+        S = self.still.sum(axis=0)[:, None, :]
+        self.amp = np.where(S > 0, num / np.where(S > 0, S, 1.0), amp_prior(self.tiles))
 
     @classmethod
     def nobody(cls, tiles) -> "Hidden":
@@ -194,8 +269,12 @@ class Hidden:
             # who stays: the detectability changes now and then within a stay (MODEL.md 4.1), drawn
             # anew from kappa_w; who stops begins a fresh stay (its kind from go_w, its
             # detectability from kappa_w: Shapes.stay_prior)
-            kernels.hidden_stays(self.walk, self.still, -math.expm1(-m.speed / m.walk_length * dt), -np.expm1(-sh.go * dt),
-                                 -math.expm1(-m.kappa_switch * dt), sh.kappa_w, sh.go_w)
+            measured = self._amp is not None
+            if measured and self._keep is None:
+                self._keep = np.ones((len(sh.kappa), tl.n))
+            kernels.hidden_stays(self.walk, self.still, self._keep if measured else _NO_KEEP, -math.expm1(-m.speed / m.walk_length * dt),
+                                 -np.expm1(-sh.go * dt), -math.expm1(-m.kappa_switch * dt), sh.kappa_w, sh.go_w,
+                                 measured)
             self.clock += dt
             while self.clock >= tl.tick:
                 self.clock -= tl.tick
@@ -222,6 +301,7 @@ class Hidden:
             rise = up[:, None] * s
             q = -math.expm1(-m.kappa_switch * dt)
             self.still *= ((1 - up) * (1 - q))[:, None, None]
+            kept = self.still.sum(axis=0)  # (K, n): with their own amplitude
             self.still += sh.kappa_w[None, :, None] * (q * (s - rise))[:, None, :]
             self.walk += rise.sum(axis=0)
         if tl.R or tl.ways:
@@ -231,6 +311,10 @@ class Hidden:
             end = tl.walk_end() @ self.walk
             self.walk = np.zeros(tl.n)
             self.still += sh.stay_prior()[:, :, None] * end[None, None, :tl.n]
+            # the stays begun in the step (the detectability anew, walks ended): nothing measured
+            if self.measured:
+                self._set_amp(kept[:, None, :] * self.amp + (self.still.sum(axis=0) - kept)[:, None, :]
+                              * sh.tile_fresh[:, :, None])
             self.region[:, 0] += end[tl.n:tl.n + tl.R]
             self.out += end[tl.n + tl.R]
 
@@ -328,8 +412,13 @@ class Undetected(Hidden):
     def add_scaled(self, other: Hidden, k: float):
         """+ k x r x the density of other (a person, or another intensity: r = 1)."""
         k = k * other.r
+        measured = self.measured or (other.measured and k > 0)
+        if measured:
+            num = self.still.sum(axis=0)[:, None, :] * self.amp + k * other.still.sum(axis=0)[:, None, :] * other.amp
         self.walk += k * other.walk
         self.still += k * other.still
+        if measured:
+            self._set_amp(num)
         self.region += k * other.region
         self.out += k * other.out
 

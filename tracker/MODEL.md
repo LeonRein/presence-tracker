@@ -377,8 +377,23 @@ Das Modell, je Sensor:
   0,96 / 1,20. Die Gauß-Mischung führt die gemeinsame Verteilung (5 × 9 Zahlen); bis 0.21 zwei
   Vektoren, und ein Teil ohne Messung des LD2410C zählte beim Mischen mit gleich wahrscheinlichen
   Zellen statt mit dem Prior. Vorbehalt: Gemessen ist die Kopplung an die Wiederfinderate, nicht an κ
-  selbst. Gehende und Personen ohne Spur: g = 1 (auf den Kacheln geht g verloren wie die
-  Geschwindigkeit); wer von den Kacheln eine Spur bekommt, erhält g aus dem Prior gegeben sein κ.
+  selbst. Gehende: g = 1.
+  **Personen ohne Spur** (seit 9.10., `hidden.Hidden.amp`): *Das Ende einer Spur ist nicht das Ende des
+  Aufenthalts.* Die Kacheln führen je Stufe von κ und Kachel die bedingte Verteilung von g auf den neun
+  Stufen des Gitters und einer zehnten, g = 1. Ein Aufenthalt, dessen Amplitude eine Spur gemessen hat, behält
+  ihren Posterior dort, wo er steht (Swerling III: g fest über einen Aufenthalt; im PMBM ist die Dichte
+  einer Bernoulli der ganze Zustand der Person, der Wechsel Gauß → Kacheln, 5.4, ändert nur die Darstellung,
+  B_GarciaFernandez2018 Gl. 31). Neu gezogen wird g nur mit κ (1/(600 s)) oder mit einem neuen Aufenthalt,
+  und was so ohne Messung beginnt, hat wie bisher g = 1 (das Mittel des Priors; der volle Prior auch für nie
+  gemessene Aufenthalte erfindet Personen, 10 „Sitzende im Bad und auf dem Sofa“). Gewogen wird eine Kachel
+  Stufe für Stufe nur, wo mehr als 10⁻⁴ Personen mit gemessener Amplitude stehen (`LD_TILE_MASS`), sonst an
+  ihrem Mittel (ohne Gemessenes: g = 1, die Rechnung bis 0.26). Bekommt die Person wieder eine Spur,
+  bringt sie ihr g mit (der Teil g = 1: der Prior gegeben κ). Gemessen (9.10., Profil einer Stehenden am Ort,
+  Maximum-Likelihood je 30 s, ruhige Ringe 3–8): Sitzende im Bad an der Westwand g 0,35 (10–90 % 0,21–0,61,
+  ohne LD2450-Ziel 0,27), auf dem Sofa 0,58 (0,40–1,14; ohne Ziel 0,46), am Esstisch 0,42; je Platz streut
+  log g um 0,3–0,6 (Gamma(6, 6): 0,43), zwischen den Plätzen liegen die Mediane bei 0,3–2,9 (alle Stillen in
+  Bad, Wohn- und Esszimmer, 881 Blöcke: Median 0,76, 10–90 % 0,24–2,4). Mit g = 1 widerlegte das LD2410C
+  eine Sitzende im Bad in Sekunden, sobald ihre Spur endete (9 Punkt 1).
 - **Gemeinsamer Pegel u** je Block (1 s) und Art: 1/u ~ Gamma(κ, κ), κ = 16 bewegt, 50 ruhig (gemessen,
   s. o.), gemischt mit 2 % Schüben, 1/u ~ Gamma(4) mit u um 2,5 (angenommen; nur nach oben: ein
   niedriger Pegel darf eine fehlende Person nicht entschuldigen). Konjugiert: für die nicht gekappten
@@ -403,9 +418,16 @@ Das Modell, je Sensor:
   selbst eine Person, wenn b zu klein ist, und das Lernen stünde still (gemessen: 4 h Licht im leeren
   Schlafzimmer, 10). Prior: bewegt Ring 0
   13, Ring 1 9, sonst 4,5, ruhig 5 mit dem Gewicht 10 min (gemessen 6.10., 4,3 h; auf 19 h 16 / 9 /
-  4,3 / 4,9, gleiche Lichtfehler, 10 „Die Stille vor einem Frame“); Vergessen 6 h (angenommen; leere
-  Nächte 24 h auseinander unterscheiden sich je Sensor um höchstens 7 %, aber mit 1 Tag Log-Evidenz
-  bis 6.10. −2530, 10). Neu für einen Sensor, wenn er verschoben wird. Gespeichert mit der Geisterkarte.
+  4,3 / 4,9, gleiche Lichtfehler, 10 „Die Stille vor einem Frame“). **Vergessen 0,7 h** (seit 9.10.,
+  gemessen): Der Hintergrund wandert; im Flur springt bewegt Ring 4 morgens von 1,7 auf 5,1 und Ring 5 von
+  3,6 auf 1,5 (Stundenmittel ohne LD2450-Ziel im Blick ±60 s) und bleibt so stundenlang. Als lokales
+  Niveau-Modell (Irrfahrt von log b plus das Rauschen eines Stundenmittels, aus den zwei Hälften jeder Stunde;
+  Harvey 1989) ist das beste exponentielle Vergessen 0,7 h, bewegt und ruhig gleich, über alle sieben Sensoren
+  6.–9.10. (je Sensor 0,4–2,5 h). Bis 0.26 6 h (angenommen; leere Nächte 24 h
+  auseinander unterscheiden sich je Sensor um höchstens 7 %, aber mit 1 Tag Log-Evidenz bis 6.10. −2530, 10):
+  Der Hintergrund des Flurs hing morgens stundenlang beim Nachtwert, und eine Person mit kleinem g erklärte
+  den Überschuss (10 „Sitzende im Bad und auf dem Sofa“). Neu für einen Sensor, wenn er verschoben wird.
+  Gespeichert mit der Geisterkarte.
 - **Zeit:** Die Frames werden je Sekunde gesammelt (Gamma: die Summen von Δt, Δt·e, Δt·ln e und Δt der
   gekappten genügen), jeder mit Δt / τ, τ 4 s bewegt / 13 s ruhig (zusammengesetzte Likelihood mit der
   Korrelationszeit als effektiver Stichprobengröße; Varin, Reid & Firth 2011). Ein Frame steht für
@@ -630,7 +652,8 @@ Datenlücke (4.1).
   auf c und o folgt aus ihren Varianzen (eigene Herleitung).
 - **Gauß → Kacheln**, erst wenn die letzte laufende Spur endet, nicht schon beim Verlieren (gehaltene
   Spuren behalten so ihren Versatz). Komponenten werden mit ihrer Dichte auf die Kacheln verteilt;
-  verloren gehen Geschwindigkeit und Versätze.
+  verloren gehen Geschwindigkeit und Versätze. Die Amplitude des Aufenthalts (je κ) geht mit, wo die
+  Komponente *steht* steht (4.3; bis 0.26 ging sie verloren, die Kacheln rechneten mit g = 1).
 
 ### 5.5 Die unbekannten Personen
 `hidden.Undetected`: der unentdeckte Teil des PMBM (B_GarciaFernandez2018 Gl. 7–10, 18–24) über den
@@ -1070,6 +1093,12 @@ Näherungen, die man prüfen oder ersetzen kann:
      war 7.10. abends stundenlang besetzt (P > 2/3 ohne eigenen LD2450 690 statt 18 min in den 26 h bis 8.10. 19:10; Licht im leeren Raum
      auf den vier Wahrheiten 8,8 → 17,1 min). Offen: was eine wenig zurückwerfende Person von einer
      Echoquelle trennt (wie sie kam: durch eine Tür; Echoquellen nicht), ohne die Amplitude zu verlieren.
+     **Teilweise erledigt** (9.10., 4.3, 10 „Sitzende im Bad und auf dem Sofa“): Die Kacheln tragen die
+     Amplitude weiter, die eine Spur gemessen hat (je κ und Kachel, nicht als Mittelfeld); was ohne Messung
+     beginnt, hat weiter g = 1, und der Hintergrund vergisst mit 0,7 h statt 6 h. Das Bad 8.10. bleibt ganz
+     (veröffentlicht „frei“ 350 s → 0 s), das Sofa bis 19:04. Der volle Prior auf den Kacheln erfand Personen:
+     Eine Person mit kleinem g erklärt jeden kleinen Fehler des Hintergrunds (Flur 8.10. 06:55, 12 min in der
+     leeren Wohnung: bewegt Ring 4 morgens 5 statt der gelernten 1,9), und nichts widerlegt sie.
   2. *Wer aus einem Bereich ohne Sensor zurückkommt, nachdem sein Eintrag dort abgelaufen ist* (5.5, 2 min),
      hat keinen Eintrag mehr; seine neue Spur bekommt die Person, die ungesehen am nächsten sitzt. 8.10.
      19:04:19: Ein Gast kam nach etwa 15 min vom Balkon zurück an den Esstisch, die Spur bekam die Person auf
@@ -2292,6 +2321,87 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   **Ergebnis:** (a) ist die beste Kombination (8,8 / 0,1 / 8,9 min; dunkel besser als 0.25.1, 0,6 → 0,1), erfüllt
   die Schwelle aber nicht: 2,5 min des „Licht im leeren Raum“ sind das eine Fenster im Esszimmer 7.10. 22:22
   (ohne es 6,4 min). Verloren in Sicht 310 → 130 min, leere Nacht 0, Rechenzeit gleich.
+- **Sitzende im Bad und auf dem Sofa** (9.10.; Leon: „Das Modell sollte nicht darauf optimiert werden, jemand
+  Schlafenden zu erkennen. Schlafende Personen wollen eh das Licht aus haben. Es ist viel wichtiger, dass Leute im
+  Badezimmer oder auf dem Sofa im Wohnzimmer nicht verloren werden.“; anschließend an „Schläft der Hintergrund
+  mit?“). Maß wie „Kandidat 0.26“ mit dem berichtigten Bad-Fenster (8.10. ab 18:48:00), alle Wahrheiten ohne
+  Ausnahme (auch 7.10. abends das neue Schlafzimmer), dazu verloren in Sicht über alle Nachspiele mit Wahrheit
+  (6.10. 19:28 – 7.10. 06:15, 7.10. 07:44–12:55, 7.10. 17:13 – 8.10. 19:10) und je Raum „frei“ in den belegten
+  Fenstern (Entscheidung ohne Nachlauf).
+  *Das Problem mit 0.26.1* (der Filter ist der von 0.26.0): Bad veröffentlicht „frei“ mit Person 350 s (Filter
+  allein 391 s; alles 8.10. 18:50–19:05 bis auf 5 s am 7.10. 22:15), Wohnzimmer 228 s (8.10. 19:00–19:06),
+  Esszimmer 5 s (Filter allein 17 s); Licht dunkel 0 / 0 / 0,08 min (die längste Lücke, 112 s, überbrückt der
+  Nachlauf von 2 min noch). Verloren in Sicht: Bad 9,1, Wohnzimmer 12,5, Esszimmer 27,5 min (ohne das Fenster des
+  Saugroboters 8,6 / 9,2 / 22,1; Schlafzimmer 60,7). Nach Zustand (Sonde „Geister selten“, in den drei Räumen
+  47,7 min): Spur verließ den Raum 14,5 (vor allem die Grenze Wohn-/Esszimmer), Spur gilt als Geist 11,4 und 3,7
+  junge (bei ihrer Geburt fast alle Person, P(Geist) im Median 0,016: sie wurden es später), Spur endete als
+  Person und 6 s später liegt von der Person ohne Spur nichts mehr im Raum 10,1, Masse im Nachbarraum 5,3, Spur
+  endete als Geist 2,5; davon 8,7 min, während der Saugroboter fuhr. Die Minuten im Bad 18:50–19:05 zählt die
+  Sonde kaum (ohne gemessenes Ziel in den letzten 10 s): Dort widerlegte das LD2410C die Sitzende, sobald ihre
+  Spur endete, weil Personen ohne Spur g = 1 hatten (9 Punkt 1).
+  *g der Sitzenden* (4.3): Bad an der Westwand 0,35 (ohne LD2450-Ziel 0,27), Sofa 0,58 (0,46), Esstisch 0,42;
+  je Platz Streuung von log g 0,3–0,6 wie Gamma(6, 6), zwischen den Plätzen Mediane 0,3–2,9.
+  *Kandidaten* (je eine Änderung gegen 0.26.1, sonst gleich; „frei“ = veröffentlicht frei mit Person in den
+  belegten Fenstern, Minuten, Bad / Wohnzimmer / Esszimmer):
+
+  | | Licht leer / dunkel (veröffentlicht) | Filter allein | leere Nacht | report_eval Filter an / aus | veröffentlicht an / aus | „frei“ Bad / Wohn / Ess | verloren 26 h |
+  |---|---|---|---|---|---|---|---|
+  | 0.26.1 | 4,1 / 0,1 | 3,0 / 0,1 | 0 | 0,86 / 1,09 | 2,12 / 1,02 | 5,8 / 3,8 / 0,1 | 130 |
+  | (g) voller Prior auf den Kacheln | 31,8 / 0,4 | 30,7 / 4,9 | 0 | 4,27 / 2,57 | 5,56 / 1,04 | 0 / 4,9 / 1,1 | 73 |
+  | (g) + Hintergrund-Prior der Sensoren (e) | 8,0 / 0,4 | 6,9 / 4,1 | 0 | 2,05 / 2,02 | 3,30 / 1,04 | 0 / 4,9 / 1,1 | 92 |
+  | (t) gemessene Amplitude weitertragen | 4,1 / 0,4 | 3,0 / 4,9 | 0 | 0,98 / 2,01 | 2,34 / 0,98 | 0 / 4,8 / 1,1 | 95 |
+  | (t) + (e) | 8,6 / 0,4 | 7,5 / 4,1 | 0 | 2,12 / 1,96 | 3,37 / 0,98 | 0 / 4,8 / 1,1 | 96 |
+  | (t) + Ablauf nach Prüfbarkeit (p) | 9,4 / 0,4 | 8,3 / 4,9 | 0 | 2,60 / 2,02 | 3,89 / 0,98 | 0 / 4,8 / 1,1 | 97 |
+  | Vergessen 1 h allein | 4,1 / 0,1 | 3,0 / 0,1 | 0 | 0,84 / 1,03 | 2,12 / 1,00 | 5,7 / 4,1 / 0,1 | 114 |
+  | (t) + Vergessen 1 h | 4,1 / 0,4 | 3,0 / 4,9 | 0 | 1,07 / 2,40 | 2,36 / 0,94 | 0 / 4,7 / 1,1 | 97 |
+  | **(t) + Vergessen 0,7 h (gemessen)** | **4,1 / 0,4** | 3,0 / 4,9 | **0** | 1,11 / 1,73 | 2,36 / 0,94 | **0 / 4,7 / 1,1** | 96 |
+
+  Rechenzeit der vollsten Stunde (7.10. 17:00–17:20, ein Kern, Median aus 4): 0.26.1 60,2 s, Kandidat 65,4 s
+  (+9 %); (g) in der ersten Fassung, jede Kachel Stufe für Stufe, +14 % und im Nachspiel bis zum Doppelten.
+  *(g) Voller Prior* (wie „Kandidat 0.26“ (g), neu gebaut: die bedingte Verteilung von g je κ und Kachel, nicht
+  als Mittelfeld): hält das Bad, erfindet aber, wo nichts widerspricht. 7.10. abends wieder das Schlafzimmer
+  (24,6 min Licht im leeren Raum), und 8.10. 06:55–07:14 jemand im Flur der leeren Wohnung (nach 06:53 keine Ziele
+  mehr, alle Energien beim Leer-Pegel; die Telefone melden 07:15): Die bekannte Person, die zur Tür ging, wurde dort eine
+  Stehende mit g 0,21 und κ 0,03, für die der LD2450 blind ist und die das LD2410C nicht widerlegt, weil sein
+  Hintergrund im bewegten Ring 4 beim Nachtwert stand (gelernt 1,9, gemessen morgens 5,1; 4.3) – der Überschuss
+  dort sprach sogar für sie (log-Verhältnis +0,2 bis +0,5 je Gewichtung, obwohl die ruhigen Ringe 3,5-mal mehr
+  erwarteten, als kam). Der Hintergrund-Prior nach der Streuung zwischen den Sensoren (empirischer Bayes:
+  log-Streuung bewegt 0,13, ruhig 0,32 → Gewicht 96 s / 62 s statt 600 s) beseitigt das Schlafzimmer, erfindet
+  aber 7.10. abends 3,9 min in der Küche: Fünf Minuten Lernen reichen, dass eine Person mit kleinem g den
+  Rest erklärt. Nicht übernommen (beides).
+  *(t) Gemessene Amplitude weitertragen* (4.3, 5.4): Nur was eine Spur gemessen hat, bleibt nach ihrem Ende; was
+  ohne Messung beginnt, hat g = 1 wie bisher. Kein Licht im leeren Raum mehr dazu, das Bad ganz gehalten, das Sofa
+  18:49–19:04 (veröffentlicht frei 164 → 5 s). Die Person im Flur 06:55 blieb (12 min): Ihre Amplitude war auf
+  dem kurzen Weg zur Tür gemessen, und der Hintergrund war der Fehler.
+  *(p) Ablauf nach Prüfbarkeit* (5.5 verallgemeinert: Die Existenz läuft ab, soweit LD2450 und LD2410C eine
+  Stehende mit diesem κ und g in 2 min ungeprüft ließen, e^(−κ a T) · e^(−T KL), Chernoff-Stein): ändert die Person
+  im Flur nicht (das LD2410C „prüfte“ sie, nur mit dem falschen Hintergrund) und lässt 7.10. abends 5,3 min in der
+  Küche. Nicht übernommen.
+  *Vergessen des Hintergrunds* (4.3): 1 h und 0,7 h (gemessen) beseitigen die Person im Flur (Flur ohne eigenen
+  LD2450 besetzt 20,4 → 7,8 min, wie 0.26.1 8,3); allein ändert es fast nichts (verloren 130 → 114, Licht gleich).
+  *Was schlechter wird: 8.10. 19:04–19:10* (Wohnzimmer veröffentlicht frei 64 → 279 s, Licht dunkel 0 → 0,32
+  min; Esszimmer 5 → 66 s). Nachgespielt (Sonde ab 18:40): Der Gast war ab 18:40 als bekannte Person ohne Spur auf
+  dem Balkon; um 18:44 bekam die neue Spur im Bad (die zweite Person, seit 18:36 zu Hause) seinen Eintrag,
+  weil eine neue Person nur aus der Intensität kommt (im Blick 0,002) und der Gast der einzige bekannte ohne Spur
+  war. 19:04:20 bekommt dann die Spur des Gasts am Esstisch die Person auf dem Sofa (h 0,87), und die nächste Spur
+  auf dem Sofa (19:05:10) beginnt als Geist. Mit 0.26.1 war die Person im Bad zu der Zeit schon fast widerlegt
+  (r 0,3–0,6), und die Spur auf dem Sofa nahm *ihren* Eintrag: richtig im Ergebnis, falsch im Grund. Jetzt hält
+  der Filter die Sitzende im Bad, und der Fehler von 18:44 zeigt sich. Derselbe Fall an der Schwelle wie in
+  „Kandidat 0.26“; nicht abgestimmt.
+  report_eval je Meldung (veröffentlicht, Anteil falsch): Bad 8.10. 0,25 → 0, Wohnzimmer 18:49 / 19:02 0,13 / 0,45 →
+  0 / 0, Wohnzimmer 19:04 0,18 → 0,76, Esszimmer 19:04 0,01 → 0,17; Esszimmer 7.10. 22:22 (leer) 0,51 → 0,75 (der
+  Fall an der Balkontür, 9 Punkt 3); bis 6.10. Bad (ohne Sensor) 21:28 0,93 → 0,50, 22:18 0,14 → 0,29; 7.10. 08:52
+  Schlafzimmer (damals ohne Sensor) 0 → 0,65.
+  Verloren in Sicht je Raum (alle drei Nachspiele): Bad 9,1 → 8,0, Wohnzimmer 12,5 → 12,5, Esszimmer 27,5 → 29,8,
+  Schlafzimmer 60,7 → 27,2 (die Schlafenden; kein Ziel, aber kein Licht im leeren Schlafzimmer). Nach Zustand in
+  den drei Räumen 47,7 → 48,8 min, die Anteile fast gleich (Spur verließ den Raum 14,1, Geist 13,1 und 3,8, Person
+  ohne Spur weg 10,1): Die kurzen Verluste, während der eigene LD2450 noch misst, sind keine Frage der Amplitude.
+  *Ergebnis:* Der Kandidat hält Sitzende im Bad und auf dem Sofa, solange nichts anderes schiefgeht, ohne Licht
+  im leeren Raum (4,1 min wie 0.26.1, leere Nacht 0, Schlafzimmer 7.10. abends 0), Rechenzeit +9 %. Die
+  Schwelle „dunkel mit Person in Bad und Wohn-/Esszimmer niedriger“ erfüllt er zusammen (veröffentlicht frei
+  9,7 → 5,8 min), je Raum nicht: Wohn- und Esszimmer verlieren im Fenster 19:04 (oben). Gelernt: Eine
+  Amplitude, die keine Messung stützt, macht das LD2410C stumm gegen jeden Fehler seines Hintergrunds; und der
+  Hintergrund wandert schneller, als 6 h Vergessen ihm folgen.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

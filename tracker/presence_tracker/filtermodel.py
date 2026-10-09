@@ -117,7 +117,11 @@ class Model:
     ld_echo_amps = (0.3, 1.0, 3.0)
     ld_background = (13.0, 9.0, 4.5, 5.0)
     ld_prior_time = 600.0  # s
-    ld_forget = 6 * 3600.0  # s
+    # forgetting: the background drifts (a cell's level jumps by a factor 3 within an hour and stays for
+    # hours, the Flur at dawn); as a local-level model (random walk of log b plus the noise of hourly
+    # means, Harvey 1989) the optimal exponential forgetting has 0.7 h (moving and still alike, all seven
+    # sensors 6.-9.10., 0.4-2.5 h per sensor; MODEL.md 4.3). Until 0.26 6 h (assumed)
+    ld_forget = 0.7 * 3600.0  # s
     # the amplitude of a standing person with a track on the profile, per stay (Swerling III: slow, as
     # kappa: new at each stop, now and then within a stay, together with kappa): Gamma(shape, shape).
     # Measured 6./7.10. within a sensor: shape 5-16 (MODEL.md 4.3). The filter carries its posterior,
@@ -187,6 +191,12 @@ class Shapes:
         self.amp, self.amp_w = gamma_log_grid(m.ld_amp_shape, m.ld_amp_levels)
         self.ka_w = copula_cells(self.kappa_w, self.amp_w, m.kappa_amp_corr)
         self.amp_given_kappa = self.ka_w / self.ka_w.sum(axis=1, keepdims=True)
+        # on the tiles (people without a track) the levels of the grid and the reference amplitude 1:
+        # a stay measured while it had a track keeps its posterior on the grid (MODEL.md 4.3); a stay
+        # nothing measured (begun or drawn anew without a track) has g = 1
+        self.tile_amp = np.append(self.amp, 1.0)
+        self.tile_fresh = np.zeros((len(self.kappa), len(self.tile_amp)))
+        self.tile_fresh[:, -1] = 1.0
 
     def stay_prior(self, ongoing: bool = False) -> np.ndarray:
         """(L, K) prior of a stay's kind and detectability (independent a priori)."""

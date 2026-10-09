@@ -128,3 +128,43 @@ def test_all_energies_0_are_no_measurement():
             low = min(low, 1 - tr.count_distribution()["wohn"][0])
     assert low > c, low
     assert tr.runtime["a"].ld_e is None  # nothing taken as its energies
+
+
+def test_the_end_of_a_track_is_not_the_end_of_the_stay():
+    # MODEL.md 4.3, 5.4: a stay whose amplitude a track measured keeps it on the tiles (Swerling III:
+    # fixed over a stay), drawn anew only with the detectability or with a new stay; what nothing
+    # measured has g = 1, and back on a track the measured amplitude comes along
+    from presence_tracker.gauss import Gauss
+    from presence_tracker.hidden import Hidden
+    crowd = Tracker(flat_config(), start=0.0)
+    m, sh, tl = crowd.m, crowd.shapes, crowd.tiles
+    g = Gauss.source(1, np.array([3.0, 3.0]), 0.01, m, sh)
+    g.logw = np.log(np.array([1.0 - 1e-9, 1e-9]))  # standing
+    a = int(np.argmin(abs(sh.amp - 0.3)))
+    ka = np.zeros_like(g.ka)
+    ka[:, a] = g.kw
+    g.ka = ka
+    h = g.to_tiles(tl)
+    assert h.measured
+    S = h.still.sum(axis=(0, 1))
+    c = int(np.argmax(S))
+    assert np.allclose(h.amp[:, a, c], 1.0)
+    fresh = Hidden.at_place(tl, 0)
+    assert not fresh.measured and np.allclose(fresh.amp[:, -1, :], 1.0)
+    # a minute on: the stay goes on, a few draw anew (detectability, getting up and sitting down)
+    for _ in range(60):
+        h.move(1.0)
+    kept = float(h.still.sum(axis=0)[:, c] @ h.amp[:, a, c] / h.still.sum(axis=0)[:, c].sum())
+    assert 0.8 < kept < 1.0
+    # mixed with somebody nothing measured: by their standing mass
+    mix = Hidden.mixture([(0.5, h), (0.5, fresh)])
+    assert mix.measured
+    Sh, Sf = h.still.sum(axis=0)[:, c], fresh.still.sum(axis=0)[:, c]
+    want = (Sh * h.amp[:, a, c]) / (Sh + Sf)
+    assert np.allclose(mix.amp[:, a, c], want)
+    # a track starts on them again: its amplitude is the measured one
+    new, _ = Gauss.from_tiles(h, tl, np.ones(tl.n), np.ones(tl.n), 2, tl.centers[c], 0.01, m)
+    assert float(new.amw @ sh.amp) < 0.5
+    # hours on: what was measured is gone (nothing left measured at all: g = 1 again)
+    h.leap(6 * 3600.0)
+    assert float(h.amp[:, -1, c].min()) > 0.99

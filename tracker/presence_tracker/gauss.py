@@ -526,10 +526,14 @@ class Gauss:
         sh = tiles.sh
         gow = qs.sum(axis=(1, 2))
         gow = gow / gow.sum() if gow.sum() > 0 else sh.go_w_ongoing.copy()
-        kw = qs.sum(axis=(0, 2))
-        kw = kw / kw.sum() if kw.sum() > 0 else sh.kappa_w.copy()
-        # the tiles carry no amplitude (4.3): its prior given the detectability
-        ka = kw[:, None] * sh.amp_given_kappa
+        qk = qs.sum(axis=0)  # (K, n)
+        if qk.sum() > 0:
+            # the amplitude of the stay as the tiles carry it (4.3), where the measurement puts them
+            amp = hidden.amp
+            ka = np.einsum("kc,kac->ka", qk, amp[:, :-1]) + np.einsum("kc,kc->k", qk, amp[:, -1])[:, None] * sh.amp_given_kappa
+            ka = ka / ka.sum()  # g = 1 on the tiles (nothing measured): the prior given the detectability
+        else:
+            ka = sh.ka_w.copy()
         # times the probability that the person exists (a known person without a track is a
         # Bernoulli, hidden.py; the track says they do)
         return cls._make(seg, var, w, mx, Px, mv, Pv, gow, ka, z, m.const_share, m.white), math.log(mass) + math.log(hidden.r)
@@ -545,7 +549,16 @@ class Gauss:
             return h
         w = self.weights()
         if w[STILL] > 0:
-            h.still += w[STILL] * np.outer(self.gow, self.kw)[:, :, None] * tiles.gauss_mass(self.pos[STILL], self.pos_var()[STILL])[None, None, :]
+            mass = tiles.gauss_mass(self.pos[STILL], self.pos_var()[STILL])
+            h.still += w[STILL] * np.outer(self.gow, self.kw)[:, :, None] * mass[None, None, :]
+            # the amplitude of the stay goes with it where it stands (4.3; per detectability): the end of
+            # a track is not the end of the stay (Swerling III). Elsewhere nothing measured (g = 1)
+            kw = self.kw
+            agk = np.where(kw[:, None] > 0, self.ka / np.where(kw > 0, kw, 1.0)[:, None], tiles.sh.amp_given_kappa)
+            agk = np.concatenate([agk, np.zeros((len(kw), 1))], axis=1)
+            amp = np.array(h.amp)
+            amp[:, :, mass > 0] = agk[:, :, None]
+            h.amp = amp
         if w[WALK] > 0:
             h.walk += w[WALK] * tiles.gauss_mass(self.pos[WALK], self.pos_var()[WALK])
         h._normalize()

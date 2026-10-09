@@ -358,15 +358,18 @@ def wall_moves(m0, P0, F, Q, mean, cov, walls, box):
 
 
 @njit(cache=True)
-def hidden_stays(walk, still, stop_p, up, q, kappa_w, go_w):
+def hidden_stays(walk, still, keep, stop_p, up, q, kappa_w, go_w, measured):
     """hidden.Hidden.move, in place: walkers stop with probability stop_p, still people get up
     with up (L,), the detectability is drawn anew with q, who stops begins a fresh stay
-    (still (L, K, n): kind of stay, detectability, tile)."""
+    (still (L, K, n): kind of stay, detectability, tile). keep (K, n) is multiplied by the share of
+    the still mass after the step that is no fresh draw (it keeps the amplitude of its stay; the
+    rest draws it from the prior given the detectability, hidden.Hidden.amp); only if measured."""
     L, K, n = still.shape
     s = np.empty(L)
     for c in range(n):
         stop = walk[c] * stop_p
         rise = 0.0
+        fresh_all = 0.0
         for l in range(L):
             t = 0.0
             for k in range(K):
@@ -374,12 +377,40 @@ def hidden_stays(walk, still, stop_p, up, q, kappa_w, go_w):
             s[l] = t
         for l in range(L):
             rise += up[l] * s[l]
+            fresh_all += q * (s[l] - up[l] * s[l]) + go_w[l] * stop
         walk[c] = walk[c] - stop + rise
+        if measured:
+            for k in range(K):
+                kept = 0.0
+                for l in range(L):
+                    kept += still[l, k, c] * (1 - up[l]) * (1 - q)
+                tot = kept + kappa_w[k] * fresh_all
+                if tot > 0:
+                    keep[k, c] *= kept / tot
         for l in range(L):
             f = (1 - up[l]) * (1 - q)
             fresh = q * (s[l] - up[l] * s[l]) + go_w[l] * stop
             for k in range(K):
                 still[l, k, c] = still[l, k, c] * f + kappa_w[k] * fresh
+
+
+@njit(cache=True)
+def amp_mass(still, amp, idx):
+    """(A, len(idx)): the still mass of the tiles idx per level of the amplitude, sum over the kinds
+    of stay and the detectability of still[l, k, c] amp[k, a, c] (filter.Tracker._ld_split)."""
+    L, K, n = still.shape
+    A = amp.shape[1]
+    out = np.zeros((A, len(idx)))
+    for j in range(len(idx)):
+        c = idx[j]
+        for k in range(K):
+            t = 0.0
+            for l in range(L):
+                t += still[l, k, c]
+            if t > 0:
+                for a in range(A):
+                    out[a, j] += t * amp[k, a, c]
+    return out
 
 
 @njit(cache=True)
@@ -493,7 +524,8 @@ def warm():
     reflect(f((1, 2)), np.ones((1, 2)), walls, walls)
     crosses_wall(f((1, 2)), np.ones((1, 2)), walls, walls)
     sensor_rates(f((1, 2)), f((2, 0)), 0.0, 0.0, f((2, 2)), 0.0, 0.0, 0.1, f(4), 1e-6, 1.0, f((1, 3)), np.ones(2), 0.7)
-    hidden_stays(f(3), f((2, 2, 3)), 0.1, f(2), 0.1, f(2), f(2))
+    hidden_stays(f(3), f((2, 2, 3)), f((2, 3)), 0.1, f(2), 0.1, f(2), f(2), True)
+    amp_mass(f((2, 2, 3)), f((2, 2, 3)), i(1))
     hidden_regions(f((1, 3)), f(3), 0.0, f((1, 3)), i(2), i(0), i(1), i(0), 0.1, f(2))
     ld_censored(np.ones((1, 16)), f((1, 16)), i(1), i(1), f((1, 5)), np.arange(5.0))
     gauss_exponents(f((1, 2)), 0.0, 0.0, 1.0, 1.0)

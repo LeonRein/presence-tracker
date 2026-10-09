@@ -48,6 +48,8 @@ GIVE_UP = 0.01  # a known person who exists with less probability (wherever they
                 # only P(several of them come back) changes, by <= GIVE_UP^2 / 2 (0.05: 14 % less
                 # computing time, light wrongly off 1.67 instead of 1.17)
 RECYCLE_EVERY = 1.0  # s
+LD_TILE_MASS = 1e-4  # persons: a tile holding less of a person (or of the unknown ones) standing is weighed
+                     # by the LD2410C at its mean amplitude, not level by level (_ld_split; MODEL.md 4.3)
 ENTER_MIN_WALK = 0.02  # "wird betreten" (MODEL.md 6): a person walking with less probability can raise no
                        # zone's p_enter by more than this; not moved on
 # what only the outputs (MODEL.md 6) or the display read: a change restarts nothing
@@ -1566,16 +1568,39 @@ class Tracker:
             self._gcache[key] = hit
         return hit
 
+    def _ld_split(self, si: int, h, share: float) -> tuple:
+        """The standing mass of the tiles sensor si's LD2410C sees (h a person or the unknown ones,
+        times share): per level of the amplitude (A + 1, k), per tile (k,), and which tiles hold enough
+        of a measured stay (not g = 1) to be weighed level by level (LD_TILE_MASS; the others at their
+        mean amplitude, 1 where nothing was measured)."""
+        key = (si, id(h))
+        hit = self._ld_split_cache.get(key)
+        if hit is None:
+            idx = self._ld_tiles(si)[0]
+            still = kernels.amp_mass(h.still, h.amp, idx)
+            ms = still.sum(axis=0)
+            hit = self._ld_split_cache[key] = (still, ms, share * (ms - still[-1]) > LD_TILE_MASS)
+        return hit
+
     def _ld_points(self, si: int, obj) -> tuple:
         """Where sensor si's LD2410C sees a person (or the unknown ones): (masses (k,), what each puts
-        into its cells (k, 16)): the tiles, or a Gaussian's components at their means. The rest of
-        the mass (out of its view, behind a door, out of the house) puts nothing in."""
+        into its cells (k, 16)): the tiles - walking, and standing at each level of the amplitude of
+        their stay (4.3) -, or a Gaussian's components at their means. The rest of the mass (out of
+        its view, behind a door, out of the house) puts nothing in."""
         idx, ss, sw = self._ld_tiles(si)
 
         def tiles(h, share):
             if not len(idx):
                 return np.zeros(0), np.zeros((0, ld2410.CELLS))
-            return share * np.concatenate([h.walk[idx], h.still.sum(axis=(0, 1))[idx]]), np.concatenate([sw, ss])
+            if not h.measured:  # g = 1 everywhere
+                return share * np.concatenate([h.walk[idx], h.still.sum(axis=(0, 1))[idx]]), np.concatenate([sw, ss])
+            still, ms, big = self._ld_split(si, h, share)
+            amp = self.shapes.tile_amp
+            small = ~big
+            gm = np.divide(amp @ still[:, small], ms[small], out=np.ones(int(small.sum())), where=ms[small] > 0)
+            S = np.concatenate([sw, (amp[:, None, None] * ss[big][None, :, :]).reshape(-1, ld2410.CELLS),
+                                gm[:, None] * ss[small]])
+            return share * np.concatenate([h.walk[idx], still[:, big].ravel(), ms[small]]), S
 
         if isinstance(obj, Hidden):
             return tiles(obj, obj.r)
@@ -1630,6 +1655,7 @@ class Tracker:
         m = self.m
         sid = self.sensors[si]
         lik = ld2410.Likelihood(m)
+        self._ld_split_cache = {}  # per person: what of them stands where this LD2410C sees (_ld_split)
         b = self.ld_background.b(sid)
         # the still energies lag (the firmware smooths them; time constant ld_memory): over these
         # frames they are what the people put in before (the memory M) and only by 1 - wm what they
@@ -1778,17 +1804,37 @@ class Tracker:
         (elsewhere by 1); logf is capped (ld2410.LOG_CAP), so the factors stay finite."""
         idx, _, _ = self._ld_tiles(si)
         n = len(idx)
+        AT = len(self.shapes.tile_amp)
 
-        def tiles(h, g):
-            fw, fs = np.ones(self.tiles.n), np.ones(self.tiles.n)
-            fw[idx], fs[idx] = np.exp(g[:n]), np.exp(g[n:])
+        def tiles(h, g, share):
+            # standing: per level of the amplitude; the factor per detectability is the sum over the
+            # levels given it, and the amplitude's levels given it are reweighed (Swerling III, 4.3).
+            # A tile with little of the person: one factor at its mean amplitude (_ld_points)
+            fw = np.ones(self.tiles.n)
+            fw[idx] = np.exp(g[:n])
+            if not h.measured:  # g = 1 everywhere (_ld_points)
+                fs = np.ones(self.tiles.n)
+                fs[idx] = np.exp(g[n:])
+                return h.weigh(fw, fs)
+            fs = np.ones((len(self.shapes.kappa), self.tiles.n))
+            big = self._ld_split(si, h, share)[2]
+            nb = int(big.sum())
+            ib = idx[big]
+            gs = g[n:n + AT * nb].reshape(AT, nb)
+            top = gs.max(axis=0) if nb else np.zeros(0)
+            E = np.exp(gs - top[None, :])  # (A, nb)
+            amp = h.amp[:, :, ib] * E[None, :, :]  # (K, A, nb)
+            tot = amp.sum(axis=1)  # (K, nb)
+            h.amp[:, :, ib] = np.where(tot[:, None, :] > 0, amp / np.where(tot > 0, tot, 1.0)[:, None, :], h.amp[:, :, ib])
+            fs[:, ib] = tot * np.exp(top)[None, :]
+            fs[:, idx[~big]] = np.exp(g[n + AT * nb:])[None, :]
             return h.weigh(fw, fs)
 
         if isinstance(obj, Hidden):
-            tiles(obj, logf)
+            tiles(obj, logf, obj.r)
             return
         A = len(self.shapes.amp)
-        d_away = tiles(obj.away, logf[A + 1:]) if obj.away is not None and obj.a > 0 and n else 0.0
+        d_away = tiles(obj.away, logf[A + 1:], obj.a) if obj.away is not None and obj.a > 0 and n else 0.0
         # the amplitude's levels: their probabilities, and the factor of the standing component
         top = float(logf[:A].max())
         f = np.exp(logf[:A] - top)

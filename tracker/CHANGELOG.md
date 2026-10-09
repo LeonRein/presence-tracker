@@ -2,6 +2,25 @@
 
 ## Unveröffentlicht
 
+- **Wer sitzt, bleibt, wenn seine Spur endet** (MODEL.md 4.3, 5.4, 10 „Sitzende im Bad und auf dem Sofa“). Endete
+  die Spur einer Sitzenden, rechneten die Kacheln mit der Amplitude g = 1 einer Stehenden; wer weniger zurückwirft
+  (im Bad an der Westwand g 0,35, auf dem Sofa 0,58, gemessen), wurde vom LD2410C in Sekunden widerlegt. Jetzt
+  trägt die Person ohne Spur die Amplitude weiter, die ihre Spur gemessen hat (je Erkennbarkeit und Kachel; neu
+  gezogen nur mit der Erkennbarkeit oder einem neuen Aufenthalt); was ohne Messung beginnt, hat weiter g = 1. Auf
+  allen Wahrheiten: Bad veröffentlicht „frei“ mit Person 5,8 → 0 min, Sofa 8.10. 18:49–19:04 164 → 5 s, Licht im
+  leeren Raum 4,1 min wie 0.26.1, leere Nacht 0, verloren in Sicht 130 → 96 min, Rechenzeit +9 %. Schlechter:
+  8.10. 19:04–19:10 Wohn- und Esszimmer (frei 69 → 345 s, Licht dunkel 0 → 0,3 min): Der Gast vom Balkon hatte
+  seinen Eintrag schon um 18:44 an die Person im Bad verloren; 0.26.1 glich das aus, weil es die Person im Bad
+  verlor.
+- **Der LD2410C-Hintergrund vergisst mit 0,7 h statt 6 h** (MODEL.md 4.3): gemessen, wie schnell er wandert (im
+  Flur springt bewegt Ring 4 morgens von 1,7 auf 5,1; lokales Niveau-Modell über alle Sensoren). Mit 6 h hing er
+  stundenlang beim Nachtwert, und eine Person mit gemessener kleiner Amplitude blieb 8.10. 06:55 zwölf Minuten im
+  Flur der leeren Wohnung. Allein ändert es Licht und Meldungen nicht (verloren 130 → 114 min).
+- Geprüft, nicht übernommen: **der volle Amplituden-Prior auf den Kacheln** (Licht im leeren Raum 4,1 → 31,8 min:
+  eine Person mit kleinem g erklärt jeden kleinen Fehler des Hintergrunds), dazu **ein Hintergrund-Prior nach der
+  Streuung zwischen den Sensoren** (8,0 min) und **ein Ablauf nach Prüfbarkeit** (Existenz läuft ab, soweit LD2450
+  und LD2410C eine Stehende mit ihrer Erkennbarkeit und Amplitude ungeprüft lassen; 9,4 min).
+
 ## 0.26.1
 
 Hotfix nach dem Ausfall zweier Sensor-Boards (9.10. 15:04, Wohn- und Esszimmer ohne Frames):
