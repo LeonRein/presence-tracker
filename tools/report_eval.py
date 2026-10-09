@@ -8,10 +8,11 @@ says.
 usage: python tools/report_eval.py --config FILE --truth FILE [--recordings DIR] [--patch FILE.py]...
                                    [--only NAME] [--every S] [--trace] [--downtime S] [--forget]
                                    [--config-at "YYYY-mm-dd HH:MM:SS=FILE"]... [--pauses FILE] [--no-pauses]
-                                   [--published]
+                                   [--published] [--json OUT]
 
 --published: the light of the observed rooms as the app publishes it (MODEL.md 6 "Belegt": P(somebody there)
 > c or the room's own LD2450 measuring somebody, Tracker.occupancy); without it P > c alone, the filter.
+--json: both scores (the filter alone and published) per report and room, and their sums, into OUT.
 
 --downtime: the app did not run for this long before each start (the recorder did: those frames are
 skipped). --forget: every start with nothing known about the people (as before people.json); the truth
@@ -67,6 +68,7 @@ def main():
     ap.add_argument("--published", action="store_true",
                     help="score the observed rooms by what the app publishes as occupied (Tracker.occupancy: the "
                          "filter or the room's own LD2450, MODEL.md 6) instead of P(somebody there) > c")
+    ap.add_argument("--json", help="write both scores (filter, published) per report and room to this file")
     ap.add_argument("--trace", action="store_true", help="print the rooms' P(somebody there) and the people of the "
                                                         "most probable hypothesis in the windows")
     a = ap.parse_args()
@@ -175,7 +177,7 @@ def main():
             p = {z: counts[z] for z in rooms}
             p.update({rid: places[rid] for rid in config.regions})
             # what the app publishes as "besetzt" in the observed rooms (MODEL.md 6 "Belegt"); else P > c
-            pub = {z: v[0] for z, v in tracker.occupancy().items()} if a.published else {}
+            pub = {z: v[0] for z, v in tracker.occupancy().items()} if a.published or a.json else {}
             for r in inside:
                 q = p
                 if r.get("walks"):  # nobody stays: where an LD2450 measures somebody, they walk through
@@ -193,6 +195,7 @@ def main():
 
     # per report and room: mean P(somebody there), share of the time the light would be wrong
     wrong_on = wrong_off = n_on = n_off = 0.0
+    per = []  # --json
     for t0, t1, r in windows:
         ss = samples.get(r["name"], [])
         print(f"{r['name']}: {r['text'][:110]}")
@@ -215,9 +218,13 @@ def main():
             right = sum(d[n] if n < len(d) else 0.0 for d in dists) / len(dists)
             observed = room in rooms
 
-            def on(p_, pub_):
-                return pub_[room] if room in pub_ else 1 - p_[room][0] > c
+            def on(p_, pub_, published=a.published):
+                return pub_[room] if published and room in pub_ else 1 - p_[room][0] > c
             bad = sum(on(p_, pub_) != (n > 0) for _, p_, pub_ in ss if room in p_) / len(ps)
+            if a.json:
+                both = [sum(on(p_, pub_, k) != (n > 0) for _, p_, pub_ in ss if room in p_) / len(ps) for k in (False, True)]
+                per.append({"name": r["name"], "room": room, "n": n, "observed": observed, "P": mean,
+                            "filter": both[0], "published": both[1]})
             if observed:
                 if n > 0:
                     wrong_off += bad
@@ -248,6 +255,12 @@ def main():
     print(f"observed rooms: light wrongly on {wrong_on:.2f} of {n_off:.0f} empty room-windows, "
           f"wrongly off {wrong_off:.2f} of {n_on:.0f} occupied ones; log evidence {loglik:.1f} "
           f"(dropped hypotheses {cut:.1f}); CPU {time.process_time() - t_cpu:.0f} s")
+    if a.json:
+        sums = {k: {"on": sum(x[k] for x in per if x["observed"] and x["n"] == 0),
+                    "off": sum(x[k] for x in per if x["observed"] and x["n"] > 0)} for k in ("filter", "published")}
+        json.dump({"per": per, "sums": sums, "empty": sum(1 for x in per if x["observed"] and x["n"] == 0),
+                   "occupied": sum(1 for x in per if x["observed"] and x["n"] > 0), "loglik": loglik, "cut": cut,
+                   "cpu": time.process_time() - t_cpu}, open(a.json, "w"), indent=1)
 
 
 if __name__ == "__main__":

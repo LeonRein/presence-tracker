@@ -33,11 +33,12 @@ window only the light from a decision within it counts: what was on before may h
 
 usage: python tools/baseline_eval.py --config FILE --truth FILE [--config-at "YYYY-mm-dd HH:MM:SS=FILE"]...
            [--recordings DIR] [--pauses FILE] [--filter-cache FILE.npz] [--data-cache FILE.npz]
-           [--json OUT] [--episodes]
+           [--json OUT] [--episodes] [--patch FILE.py]...
 --filter-cache: the filter's P(occupied) per room and second; replayed (minutes of CPU) if the file
 does not exist. --data-cache: the extracted LD2450 targets and LD2410C seconds. --episodes: list the
 stretches in which the filter and B1 disagree within the scored windows. --json: the numbers per window,
-and every decision per second in OUT_dec.npz (for further analysis).
+and every decision per second in OUT_dec.npz (for further analysis). --patch: a Python file run before the
+replay that changes the model, as in report_eval.py (tools/ablation/ladder.py: the ablation ladder).
 """
 
 import argparse
@@ -214,6 +215,7 @@ def filter_series(a, config_of, configs, truth, rooms, g0, T, pauses):
         last_k = k
         if k % 3600 == 0:
             print(f"filter {hms(m['t'])} CPU {time.process_time() - t_cpu:.0f} s", file=sys.stderr, flush=True)
+    print(f"filter done: CPU {time.process_time() - t_cpu:.1f} s", file=sys.stderr, flush=True)
     return P, O
 
 
@@ -388,9 +390,14 @@ def main():
     ap.add_argument("--data-cache")
     ap.add_argument("--json")
     ap.add_argument("--episodes", action="store_true")
+    ap.add_argument("--patch", action="append", default=[],
+                    help="a Python file run before the replay that changes the model (as in report_eval.py)")
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(a.tracker))
     sys.path.insert(0, TOOLS)
+    import runpy
+    for p in a.patch:
+        runpy.run_path(p)
     from presence_tracker.model import Config
     from presence_tracker import pause
 
