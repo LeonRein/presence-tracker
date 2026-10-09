@@ -2,6 +2,32 @@
 
 ## Unveröffentlicht
 
+## 0.26.1
+
+Hotfix nach dem Ausfall zweier Sensor-Boards (9.10. 15:04, Wohn- und Esszimmer ohne Frames):
+
+- **Ein Raum, dessen eigener Sensor schweigt, ist in Home Assistant *nicht verfügbar*, nicht frei**
+  (MODEL.md 6 „Belegt“). Der Filter nimmt die Sicht eines stummen Sensors als unbeobachtet (4.4, 5.5); der
+  Eintrag der Person auf dem Sofa lief nach etwa 2 min ab, das Wohnzimmer war 1,5 h „besetzt: aus“, und
+  Node-RED schaltete das Licht aus, während dort jemand saß. Jetzt sind alle Entitäten eines Raums
+  (*besetzt*, *Personen*, *Bewegung*, *wird betreten*, *Ziel*) nicht verfügbar, sobald jeder eingeschaltete,
+  platzierte Sensor des Raums mehr als 6 s (`LOST`, wann der Filter seine Spuren beendet) keinen Frame
+  gesendet hat; mit dem nächsten Frame wieder verfügbar, mit dem aktuellen Zustand. Ohne Daten sagt die App
+  „weiß ich nicht“; der Präsenzlicht-Flow schaltet bei unbekanntem *besetzt* nichts, das Licht bleibt, wie es
+  ist. Umgesetzt mit zwei Verfügbarkeits-Topics je Entität (`presence-tracker/status` und
+  `presence-tracker/zone/<raum>/availability`, `availability_mode: all`); das Topic des Raums geht beibehalten
+  nur bei einer Änderung und beim (Wieder-)Verbinden hinaus und wird gelöscht, wenn der Raum keinen eigenen
+  Sensor mehr hat oder gelöscht ist. Ein Sensor, der seit dem Start nichts gesendet hat, zählt erst 6 s nach
+  dem Start des Modells als stumm (kein Flackern beim Start). Räume ohne eigenen Sensor, Bereiche und das
+  Haus: unverändert. Der Filter selbst: unverändert. In der Raumliste steht *nicht verfügbar*.
+- **Kopfzeile: alle Sensoren in Gebrauch.** *n/m Sensoren* zählte nur Sensoren, von denen seit dem Start des
+  Modells Daten kamen: Mit zwei ausgefallenen Boards stand dort 5/5. Jetzt ist m die Zahl der
+  eingeschalteten und platzierten Sensoren (hier 5/7), n die mit frischen Frames; der Punkt ist nur grün, wenn
+  alle online sind.
+- **Meldungen löschen:** In der Liste unter *Fehler melden* hat jede Meldung *Löschen* (mit Rückfrage), etwa
+  für Meldungen, die nur kamen, weil Sensoren ausgefallen waren (`DELETE /api/reports/<name>`; nur
+  vorhandene Meldungen unter `/data/reports`, kein Pfad).
+
 ## 0.26.0
 
 Kandidat 0.26 (9.10.; MODEL.md 10 „Kandidat 0.26“):

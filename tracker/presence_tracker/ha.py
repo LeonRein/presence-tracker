@@ -1,6 +1,11 @@
 """Home Assistant entities via MQTT discovery: one device, four entities per room/area zone of the home
 and a fifth ("Ziel") per room (not for an entry room: the stairwell is outside, MODEL.md 6), and the
-switch "Lernen pausieren" (pause.py)."""
+switch "Lernen pausieren" (pause.py).
+
+Availability: every entity is available while the app is (AVAILABILITY). The entities of a room with an
+own sensor in use (roomseen.py) have a second topic, the room's own (zone_availability): "offline" while
+its own sensors are all silent, so Home Assistant shows "unavailable" - "I don't know" - instead of
+"empty" (MODEL.md 6 "Belegt"). Both must say "online" (availability_mode "all")."""
 
 import json
 import re
@@ -17,10 +22,21 @@ def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text).strip("_") or "zone"
 
 
-def _entities(zone_id: str, name: str, room: bool = False) -> list:
-    """(component, object_id suffix, config) for one zone; "Ziel" only for a room."""
+def zone_availability(zone_id: str) -> str:
+    """The room's own availability topic ("online" / "offline", retained)."""
+    return f"{PREFIX}/zone/{zone_id}/availability"
+
+
+def _entities(zone_id: str, name: str, room: bool = False, own: bool = False) -> list:
+    """(component, object_id suffix, config) for one zone; "Ziel" only for a room; own: the room has an
+    own sensor in use, its entities are also unavailable while it is silent."""
     state = f"{PREFIX}/zone/{zone_id}/state"
-    base = {"state_topic": state, "availability_topic": AVAILABILITY, "device": DEVICE}
+    if own:
+        avail = {"availability": [{"topic": AVAILABILITY}, {"topic": zone_availability(zone_id)}],
+                 "availability_mode": "all"}
+    else:
+        avail = {"availability_topic": AVAILABILITY}
+    base = {"state_topic": state, **avail, "device": DEVICE}
     target = [
         # MODEL.md 6: somebody walking goes into the room next (their motion, and the learned map where
         # it knows enough); the probability that decides, from where, how far, and which part decided
@@ -86,7 +102,8 @@ class Discovery:
     What the broker retains from earlier runs (DISCOVERY, subscribed at connect) and is no longer
     wanted - a zone deleted, or a room that became an entry room (the stairwell is outside), while
     the app was not running - is cleared with its state topic: empty retained payloads, so Home
-    Assistant removes the entities."""
+    Assistant removes the entities. So is a room's own availability topic no wanted config refers to
+    any more (the zone deleted, or its own sensor gone, renamed, switched off)."""
 
     def __init__(self, publish):
         self.publish = publish  # async (topic, payload: str, retain: bool)
@@ -97,6 +114,14 @@ class Discovery:
         self.sent: dict[str, dict] = {}  # zone id -> the last payload (steady)
         self.stamps: dict[str, dict] = {}  # zone id -> entity state -> when its attributes last changed
         self.state_zones: set[str] = set()  # zones whose state this run published (retained)
+        self.referenced: set[str] = set()  # the zone topics the wanted configs refer to (state, availability)
+        self.watched: set[str] = set()  # zone ids with their own availability (an own sensor in use), as of the last sync
+        self.avail_sent: dict[str, str] = {}  # zone id -> what its availability topic last got on this connection
+
+    def reconnected(self):
+        """A new connection: every state and availability goes out again with the next states()."""
+        self.last_state.clear()
+        self.avail_sent.clear()
 
     def steady(self, zone_id: str, d: dict, t: float | None = None) -> dict:
         """The payload to publish for Home Assistant (GROUPS): the states as they are, each entity's
@@ -139,24 +164,32 @@ class Discovery:
         parts = topic.split("/")
         if len(parts) != 5 or parts[0] != "homeassistant" or parts[2] != "presence_tracker" or parts[4] != "config":
             return False
-        if payload and topic not in self.wanted:
+        if not payload:
+            return True
+        try:
+            cfg = json.loads(payload)
+            refs = [cfg.get("state_topic")] + [a.get("topic") for a in cfg.get("availability") or []]
+        except (ValueError, AttributeError, TypeError):
+            refs = []
+        if topic not in self.wanted:
             self.stale.add(topic)
-            try:
-                state = json.loads(payload).get("state_topic")
-            except (ValueError, AttributeError):
-                state = None
-            if isinstance(state, str) and state.startswith(f"{PREFIX}/zone/"):
-                self.stale.add(state)
+        # its state topic if the entity goes; a room's own availability topic also when only that went
+        # (the entity stays, its own sensor is gone)
+        self.stale.update(r for r in refs if isinstance(r, str) and r.startswith(f"{PREFIX}/zone/")
+                          and (topic not in self.wanted or r not in self.referenced))
         return True
 
-    async def sync(self, zones: list):
+    async def sync(self, zones: list, watched=()):
+        """The wanted discovery configs for the zones; watched: the rooms with an own sensor in use
+        (roomseen.RoomSeen.watched), their entities get the room's own availability too."""
+        watched = set(watched)
         wanted = {}
         # the rooms and areas of the home; an entry room (the stairwell) is outside, it gets none
         items = [(z.id, z.name, z.kind == "room") for z in zones if z.kind in ("room", "area") and not (z.kind == "room" and z.entry)]
         items += [("_total", "Haus", False)]
         for zone_id, name, room in items:
             zid = "total" if zone_id == "_total" else slug(zone_id)
-            for component, suffix, cfg in _entities(zone_id, name, room):
+            for component, suffix, cfg in _entities(zone_id, name, room, own=room and zone_id in watched):
                 uid = f"presence_tracker_{zid}_{suffix}"
                 cfg = {**cfg, "unique_id": uid,
                        "default_entity_id": f"{component}.presence_{slug(name)}_{suffix}"}
@@ -166,6 +199,9 @@ class Discovery:
         cfg = {**cfg, "unique_id": uid, "default_entity_id": f"{component}.presence_{suffix}"}
         wanted[f"homeassistant/{component}/presence_tracker/{uid}/config"] = json.dumps(cfg)
         self.wanted = wanted
+        self.watched = {zone_id for zone_id, _, room in items if room and zone_id in watched}
+        self.referenced = {f"{PREFIX}/zone/{zone_id}/state" for zone_id, _, _ in items}
+        self.referenced |= {zone_availability(z) for z in self.watched}
         for topic in set(self.published) - set(wanted):
             await self.publish(topic, "", True)
             del self.published[topic]
@@ -175,13 +211,30 @@ class Discovery:
                 self.published[topic] = payload
         self.last_state.clear()
 
+    async def _availability(self, zone_id: str, value: str):
+        """A room's own availability, retained, when it changed (or a new connection)."""
+        if self.avail_sent.get(zone_id) != value:
+            await self.publish(zone_availability(zone_id), value, True)
+            self.avail_sent[zone_id] = value
+
     async def states(self, states: dict, force: bool = False, t: float | None = None):
-        """Publish the zones' states (held, steady); t: the model's time (default: the clock)."""
+        """Publish the zones' states (held, steady); t: the model's time (default: the clock). A room's
+        own availability (ZoneState.available) goes "offline" before its state, "online" after it: back
+        online, Home Assistant shows the fresh state at once."""
         wanted_states = {f"{PREFIX}/zone/{zone_id}/state" for zone_id in states}
         for topic in sorted(self.stale):
             self.stale.discard(topic)
-            if topic not in self.wanted and topic not in wanted_states:
+            if topic not in self.wanted and topic not in wanted_states and topic not in self.referenced:
                 await self.publish(topic, "", True)
+        # a room deleted, or without an own sensor in use now: its availability topic goes
+        for zone_id in sorted(set(self.avail_sent) - self.watched):
+            await self.publish(zone_availability(zone_id), "", True)
+            del self.avail_sent[zone_id]
+        avail = {z: "online" if getattr(states[z], "available", True) else "offline"
+                 for z in sorted(self.watched) if z in states}
+        for zone_id, value in avail.items():
+            if value == "offline":
+                await self._availability(zone_id, value)
         # a zone deleted (or made the stairwell) while the app runs: its retained state goes too
         for zone_id in sorted(self.state_zones - set(states)):
             await self.publish(f"{PREFIX}/zone/{zone_id}/state", "", True)
@@ -194,3 +247,6 @@ class Discovery:
                 await self.publish(f"{PREFIX}/zone/{zone_id}/state", payload, True)
                 self.last_state[zone_id] = payload
                 self.state_zones.add(zone_id)
+        for zone_id, value in avail.items():
+            if value == "online":
+                await self._availability(zone_id, value)

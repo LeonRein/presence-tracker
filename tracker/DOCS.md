@@ -27,7 +27,10 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   Wahrscheinlichkeit, dass *diese Person* dort ist. *wird betreten* und *Ziel* (mit Wahrscheinlichkeit und
   Quelle *Bewegung* oder *Karte*) stehen nur an Räumen, die noch nicht besetzt sind, und bleiben 2 s
   sichtbar, auch wenn sie nur kurz an waren.
-- **Verbindung:** Oben rechts stehen Sensoren und Personen, auch am Handy. Kommen 3 s lang keine Daten
+- **Verbindung:** Oben rechts stehen Sensoren und Personen, auch am Handy. *Sensoren* zählt alle
+  eingeschalteten und platzierten Sensoren, auch einen, der seit dem Start nichts gesendet hat (bis 0.26.0
+  nur die, von denen Daten kamen: zwei ausgefallene Boards zeigten 5/5); der Punkt ist nur grün, wenn
+  alle online sind. Die Sensorliste im Tab *Live* zeigt einen ausgefallenen als *offline*. Kommen 3 s lang keine Daten
   oder ist die Verbindung getrennt, wird die Karte grau, die Listen blass, und ein roter Balken sagt, seit
   wann der Stand alt ist.
 - **Niemand taucht aus dem Nichts auf und niemand verschwindet einfach.** Personen kommen und gehen nur
@@ -66,13 +69,17 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
 - **Ausfall eines Sensors**: Kommt von einem Sensor 6 s lang kein Frame (Board ohne Strom, abgestürzt,
   WLAN weg), enden seine Spuren. Wen er verfolgt hat, der gilt dann als ungesehen; wo ihn kein anderer Sensor
   sieht, läuft sein Eintrag nach wenigen Minuten ab, wie an jedem Ort, den kein Sensor sieht; der Raum
-  bleibt nicht stundenlang besetzt.
+  bleibt nicht stundenlang besetzt. Ist es der Sensor des Raums selbst, sind die Entitäten dieses Raums
+  in Home Assistant *nicht verfügbar*, bis er wieder sendet (siehe *Verfügbarkeit*): Ohne Daten sagt die
+  App „weiß ich nicht“ statt „leer“, das Licht bleibt, wie es ist. In der Raumliste steht dann *nicht
+  verfügbar*.
 - **Fehler melden** (Tab *Live*): Wenn etwas nicht stimmt (Licht fälschlich an oder aus, Licht zu spät,
   Person verloren, Geist, Person am falschen Ort, ungenaues Tracking, hohe Latenz), den Raum (keine
   Vorauswahl) und die Art des Fehlers wählen. Die App
   speichert dazu die Sensordaten der letzten 15 Minuten mit der Konfiguration, dem Gelernten
   (Geisterkarte, LD2410C-Hintergrund), dem Stand des Codes und dem, was sie in dieser Zeit sekündlich
-  angezeigt hat (unter `/data/reports`, je Meldung etwa 0,2–0,7 MB, in der Liste herunterladbar). Daraus
+  angezeigt hat (unter `/data/reports`, je Meldung etwa 0,2–0,7 MB, in der Liste herunterladbar und
+  löschbar, etwa eine Meldung, die nur kam, weil Sensoren ausgefallen waren). Daraus
   entsteht die Wahrheitstabelle für die Bewertung; `tools/replay.py --report DATEI` spielt eine Meldung
   nach und zeigt, wie weit das Nachspiel von der Anzeige der App abweicht. Begann das Modell innerhalb der
   15 Minuten (Start der App, *Neu beginnen*, neuer Grundriss), beginnt das Nachspiel dort mit dem
@@ -177,8 +184,16 @@ Verbinden mit dem Broker. Eine gelöschte Zone nimmt ihren Zustand im Broker mit
 vom letzten Lauf als aktuell). Scheitert das Modell dreimal, ohne dazwischen eine Minute zu laufen (etwa
 an einer Konfiguration, mit der es nicht rechnen kann), sind sie ebenfalls *nicht verfügbar*, bis es
 wieder eine Minute ohne Fehler läuft; im Protokoll steht dann ein Fehler in Großbuchstaben, und das Modell
-wird nur noch einmal je Minute neu versucht. Der Node-RED-Flow behält bei *nicht verfügbar* den letzten
-Zustand. Kaputte MQTT-Nachrichten, ein Browser, der die Live-Ansicht nicht mehr abholt, ein Fehler beim
+wird nur noch einmal je Minute neu versucht. Die Entitäten eines Raums mit eigenem Sensor (der Sensor,
+der im Raum hängt, siehe *Besetzt*; eingeschaltet und platziert) sind außerdem *nicht verfügbar*, solange
+dieser Sensor seit mehr als 6 s keinen Frame gesendet hat (Board ohne Strom, abgestürzt, WLAN weg): alle
+fünf, *besetzt*, *Personen*, *Bewegung*, *wird betreten* und *Ziel*. Mit seinem nächsten Frame sind sie
+wieder verfügbar, mit dem aktuellen Zustand. Hat ein Raum mehrere eigene Sensoren, erst wenn alle schweigen.
+Ein Sensor, der seit dem Start der App noch nichts gesendet hat, zählt erst 6 s nach dem ersten Frame
+irgendeines Sensors als stumm. Dafür hat jede dieser Entitäten zwei Verfügbarkeits-Topics,
+`presence-tracker/status` und `presence-tracker/zone/<raum>/availability` (beide `online`/`offline`,
+beibehalten; verfügbar nur, wenn beide `online` sagen). Räume ohne eigenen Sensor, Bereiche und das Haus
+haben nur das erste. Der Node-RED-Flow behält bei *nicht verfügbar* den letzten Zustand. Kaputte MQTT-Nachrichten, ein Browser, der die Live-Ansicht nicht mehr abholt, ein Fehler beim
 Speichern oder eine leere bzw. kaputte Datei in `/data` (nach einem Stromausfall) halten die App nicht an:
 Sie werden protokolliert, eine kaputte Datei gilt als „nichts gelernt“ für ihren Teil.
 

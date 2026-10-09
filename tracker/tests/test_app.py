@@ -263,3 +263,48 @@ def test_the_live_view_counts_the_calibration_data_in_a_thread(tmp_path):
 
     first, then = asyncio.run(live())
     assert first is None and then == app.calibrator.status() and then["frames"]
+
+
+def test_a_report_can_be_deleted_and_nothing_else(tmp_path):
+    """DELETE /api/reports/{name}: a report made while sensors were offline is no truth. Only an existing
+    report file by its plain name; no path, no other file, no link out of the reports."""
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    for k, sid in enumerate(("a", "b")):
+        frame = {"uptime_ms": 1000, "targets": [], "ld2410": {}}
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + k)
+    app.tick(1001.0)
+    (tmp_path / "secret.jsonl.gz").write_bytes(gzip.compress(b'{"report": {}}'))
+    outside = tmp_path / "outside.jsonl.gz"
+    outside.write_bytes(b"x")
+
+    async def main():
+        async with TestClient(TestServer(app.web_app())) as client:
+            names = []
+            for room in ("wohn", ""):
+                r = await client.post("/api/reports", json={"kind": "other", "room": room})
+                names.append((await r.json())["name"])
+            if names[0] == names[1]:  # (the same second and room: one file)
+                names = names[:1]
+            (app.reports / "link.jsonl.gz").symlink_to(outside)
+            listed = [r["name"] for r in (await (await client.get("/api/reports")).json())["reports"]]
+            assert set(names) <= set(listed)
+            status = {}
+            for bad in ("..%2Fsecret.jsonl.gz", "%2E%2E%2Fsecret.jsonl.gz", "..%5Csecret.jsonl.gz", "tracker.json",
+                        "nope.jsonl.gz", "link.jsonl.gz", ".jsonl.gz", "a.b.jsonl.gz"):
+                status[bad] = (await client.delete(f"/api/reports/{bad}")).status
+            for bad in ("../secret.jsonl.gz", "..%2F..%2Ftracker.json"):
+                status[bad] = (await client.delete(f"/api/reports/{bad}")).status
+            r = await client.delete(f"/api/reports/{names[0]}")
+            ok = r.status, await r.json()
+            again = (await client.delete(f"/api/reports/{names[0]}")).status
+            listed = [r["name"] for r in (await (await client.get("/api/reports")).json())["reports"]]
+            return status, ok, again, listed, names
+
+    status, ok, again, listed, names = asyncio.run(main())
+    assert all(s == 404 for s in status.values()), status
+    assert ok == (200, {"ok": True, "name": names[0]}) and again == 404
+    assert names[0] not in listed and set(names[1:]) <= set(listed)
+    assert not (app.reports / names[0]).exists()
+    assert (tmp_path / "secret.jsonl.gz").exists() and (tmp_path / "tracker.json").exists() and outside.exists()
+    assert (app.reports / "link.jsonl.gz").is_symlink()

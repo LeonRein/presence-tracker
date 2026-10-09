@@ -11,14 +11,25 @@ The room's own sensor: the one named like the room's id (the convention of the f
 room (0.3 m around its outline, it hangs on a wall). Other sensors don't count: from 6-7 m a person at a
 room's edge is measured in the next room (MODEL.md 6).
 
+Silent (MODEL.md 6, "Belegt"): a room whose own sensors in use (enabled and placed) all sent no frame
+for more than SILENT_AFTER = sensortracks.LOST s has no data. Home Assistant gets its entities as unavailable, not as
+empty (ha.py): with no data the app says "I don't know". LOST, not filtermodel.IDLE (both 6 s): LOST is
+the filter's "this sensor has lost its data" now, without waiting for its next frame (Tracker._end_silent
+ends its tracks then); IDLE judges a gap between two frames. A sensor that sent nothing since the model
+started counts from the start: at the app's start, before the first frames, nothing is silent.
+
 Only output: nothing here changes the filter's state, weights or what it learns."""
 
+from .sensortracks import LOST
+
 MOUNT_MARGIN = 0.3  # m: a sensor hangs on a wall, its point lies at the room's outline
+SILENT_AFTER = LOST  # s without any frame: the sensor has lost its data, its room is silent
 
 
 class RoomSeen:
     def __init__(self, config):
         self.last: dict[str, float] = {}  # room id -> the last time its own LD2450 measured somebody in it
+        self.heard: dict[str, float] = {}  # sensor id -> the time of its last frame (any)
         self.use(config)
 
     def use(self, config):
@@ -31,6 +42,29 @@ class RoomSeen:
                 self.own[s.id] = room
         rooms = set(self.own.values())
         self.last = {r: t for r, t in self.last.items() if r in rooms}
+        self.in_use = {s.id for s in config.sensors if s.enabled and s.placed}
+
+    def watched(self) -> set:
+        """The rooms with an own sensor in use: these may be silent (Home Assistant: their own availability)."""
+        return {r for sid, r in self.own.items() if sid in self.in_use}
+
+    def heard_from(self, sensor_id: str, t: float):
+        """A frame of the sensor at t, whatever is in it (Tracker.process_frame, first thing)."""
+        if t > self.heard.get(sensor_id, -float("inf")):
+            self.heard[sensor_id] = t
+
+    def silent(self, now: float, start: float | None, limit: float | None = None) -> set:
+        """The rooms whose own sensors in use all sent no frame for more than limit s (default
+        SILENT_AFTER); one that sent nothing since start (the model's start, None: not started, nothing
+        silent) counts from start."""
+        if start is None:
+            return set()
+        limit = SILENT_AFTER if limit is None else limit
+        quiet: dict[str, bool] = {}
+        for sid, room in self.own.items():
+            if sid in self.in_use:
+                quiet[room] = quiet.get(room, True) and now - self.heard.get(sid, start) > limit
+        return {r for r, q in quiet.items() if q}
 
     @staticmethod
     def own_room(s, zones) -> str | None:

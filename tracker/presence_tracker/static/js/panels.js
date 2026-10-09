@@ -121,6 +121,7 @@ const LIVE = {
     return rows.map(({ z, st }) => {
       const color = ZONE_KINDS[z.kind].color;
       const occ = !!st?.occupied;
+      const gone = (live?.unavailable || []).includes(z.id);
       // "wird betreten" / "Ziel" (held 2 s) matter for a dark room only: where somebody already is,
       // the light is on anyway
       const held = occ ? {} : heldBadges(z.id);
@@ -131,7 +132,8 @@ const LIVE = {
       ].filter(Boolean).join('') : '';
       return [z.id, `<div class="item room-row${occ ? ' occupied' : ''}"><span class="swatch" style="background:${color}"></span>
         <span class="grow">${esc(z.name)}</span>
-        ${st ? `<span class="badge ${occ ? 'on' : ''}">${occ ? 'besetzt' : 'leer'}</span>` : ''}
+        ${gone ? '<span class="badge bad" title="Der Sensor des Raums sendet nichts: In Home Assistant ist der Raum nicht verfügbar (weder besetzt noch leer), das Licht bleibt, wie es ist.">nicht verfügbar</span>' : ''}
+        ${st && !gone ? `<span class="badge ${occ ? 'on' : ''}">${occ ? 'besetzt' : 'leer'}</span>` : ''}
         ${occ && SOURCE[st.source] ? `<span class="badge" title="${SOURCE[st.source][1]}">${SOURCE[st.source][0]}</span>` : ''}
         ${st?.probability != null ? `<span class="badge num" title="Wahrscheinlichkeit, dass jemand im Raum ist; besetzt ab ${pct(c)}">${pct(st.probability)}</span>` : ''}
         ${extra ? `<div class="meta sub">${extra}</div>` : ''}</div>`];
@@ -317,8 +319,20 @@ async function reportForm(el) {
     list.innerHTML = '';
     for (const r of data.reports.slice(0, 20)) {
       const when = new Date(r.t_event * 1000).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-      list.append(h(`<div class="item"><span class="grow">${when} · ${esc(names[r.room] || 'Haus')} · ${esc(r.kind_text)}${r.text ? ` · <i>${esc(r.text)}</i>` : ''}</span>
-        <a class="meta" href="api/reports/${encodeURIComponent(r.name)}" download>${r.size < 1e6 ? `${Math.max(1, Math.round(r.size / 1e3))} kB` : `${fmt(r.size / 1e6, 1)} MB`}</a></div>`));
+      const what = `${when} · ${names[r.room] || 'Haus'} · ${r.kind_text}`;
+      const row = h(`<div class="item"><span class="grow">${esc(what)}${r.text ? ` · <i>${esc(r.text)}</i>` : ''}</span>
+        <a class="meta" href="api/reports/${encodeURIComponent(r.name)}" download>${r.size < 1e6 ? `${Math.max(1, Math.round(r.size / 1e3))} kB` : `${fmt(r.size / 1e6, 1)} MB`}</a>
+        <button class="btn danger small rep-del" title="Meldung löschen" aria-label="Meldung löschen">Löschen</button></div>`);
+      // a report made by mistake, or while sensors were offline, is no truth: deleted for good
+      row.querySelector('.rep-del').onclick = async () => {
+        if (!confirm(`Meldung „${what}“ löschen? Die gespeicherten Sensordaten dieser Meldung gehen verloren, das lässt sich nicht rückgängig machen.`)) return;
+        try {
+          await api(`api/reports/${encodeURIComponent(r.name)}`, { method: 'DELETE' });
+          toast('Meldung gelöscht');
+          await load();
+        } catch (err) { toast(err.message, 5000); }
+      };
+      list.append(row);
     }
     if (!data.reports.length) list.append(h('<p class="note">Noch keine Meldungen.</p>'));
   };

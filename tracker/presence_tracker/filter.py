@@ -624,6 +624,7 @@ class Tracker:
             if self._gap_from is not None:  # restored: from the saved state's time to now
                 self._predict_gap(t - self._gap_from)
                 self._gap_from = None
+        self.seen.heard_from(sensor_id, t)  # its room is not silent (output only, roomseen.py)
         sensor = self.config.sensor_by_id.get(sensor_id)
         rt = self.runtime.setdefault(sensor_id, SensorRuntime())
         prev = rt.last_frame
@@ -2224,7 +2225,9 @@ class Tracker:
         threshold that minimizes the expected cost of the light; about to be entered likewise,
         with the cost of a light switched on in vain against that of entering in the dark
         (MODEL.md 6). An observed room is also occupied while its own LD2450 measures somebody in it
-        (occupancy()); its count is then at least 1, and the house's too."""
+        (occupancy()); its count is then at least 1, and the house's too. A room whose own sensors in
+        use all went silent (roomseen.RoomSeen.silent) is not available: no data, Home Assistant gets
+        "unavailable" instead of its state (ha.py); the state itself is computed as always."""
         from .zones import ZoneState
         p = self.p
         c = p.light_cost / (p.light_cost + 1.0)
@@ -2291,6 +2294,9 @@ class Tracker:
         for st in (*states.values(), total):
             st.moving = min(st.moving, st.count)
             st.still = min(st.still, st.count - st.moving)
+        for zid in self.seen.silent(self.now, self.start):
+            if zid in states:
+                states[zid].available = False
         states["_total"] = total
         return states
 

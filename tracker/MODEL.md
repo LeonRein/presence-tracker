@@ -756,6 +756,15 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
     *wird betreten* und *Ziel* bleiben, wie sie sind. Das Attribut `quelle` an *besetzt* sagt, was
     entschied: `filter`, `ld2450` oder `beide`. Räume ohne eigenen LD2450 und Bereiche ohne Sensor:
     unverändert. `seen_hold` = 0 schaltet die Regel ab.
+  - *Sensor des Raums stumm:* Hat jeder eingeschaltete, platzierte Sensor des Raums (wie oben bestimmt)
+    seit mehr als `LOST` = 6 s keinen Frame gesendet (der Filter beendet dann seine Spuren, 4.4,
+    `Tracker._end_silent`), sind alle Entitäten des Raums in Home Assistant *nicht verfügbar* statt
+    belegt oder frei (`roomseen.RoomSeen.silent`; eigenes Verfügbarkeits-Topic des Raums neben dem der
+    App, `ha.py`). Ohne Daten sagt die Ausgabe „weiß ich nicht“; Node-RED schaltet dann nichts. Ein
+    Sensor, der seit dem Start des Modells nichts gesendet hat, zählt ab diesem Start. Nur Ausgabe: Der
+    Filter rechnet unverändert weiter, auch sein P(belegt) dieses Raums (9.10. 15:04 fielen die Boards
+    von Wohn- und Esszimmer aus; der Raum war 1,5 h „frei“ und das Licht ging aus, während jemand auf
+    dem Sofa saß). Räume ohne eigenen Sensor, Bereiche und das Haus: unverändert.
 - **Bereiche ohne Sensor:** P(jemand dort); belegt wie oben, wenn der Bereich nur ein Raum ist.
 - **Außer Haus** (auch das Treppenhaus): keine Zahl, kein Zustand, keine Entität in Home Assistant und
   in der Anzeige. Die Zahl im Haus (`presence_haus_count`) zählt alles außer *außer Haus*. Entitäten, die

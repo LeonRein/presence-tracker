@@ -37,6 +37,9 @@ class ZoneState:
     probability: float | None = None  # P(somebody is in there), where the filter knows it
     decided: bool | None = None  # occupied by the decision (MODEL.md 6): the probability, or the room's own LD2450
     source: str | None = None  # what decided "occupied": "filter", "ld2450" (roomseen.py) or "beide"
+    # False: the room's own sensors all went silent (roomseen.py), Home Assistant gets "unavailable"
+    # (ha.py); not in to_dict, the state goes out as always
+    available: bool = True
 
     def finite(self) -> bool:
         """Its probabilities are numbers (a NaN shows as "nobody there": NaN > c is false)."""

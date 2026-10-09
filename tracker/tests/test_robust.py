@@ -334,6 +334,43 @@ def test_online_only_with_fresh_states(tmp_path):
     assert topics.index(AVAILABILITY, 1) > first_state
 
 
+def test_a_room_whose_sensors_go_silent_is_unavailable_in_home_assistant(tmp_path, monkeypatch):
+    """The app as it runs (MQTT, housekeeping): wohn's own sensors (a and b, mounted in it) stop
+    sending; after the limit its own availability topic says "offline" (Home Assistant: unavailable),
+    the app's stays "online"; with their next frames "online" again. At the connect the room's topic
+    goes out before the app says "online"."""
+    from presence_tracker import roomseen
+    monkeypatch.setattr(roomseen, "SILENT_AFTER", 0.5)
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=True)
+    mqtt = FakeMqtt()
+    uptime = [1000]
+    room = "presence-tracker/zone/wohn/availability"
+
+    def room_availability():
+        return [p for t, p in mqtt.sent if t == room]
+
+    async def main():
+        await app._on_client(mqtt)
+        cfg = json.loads(next(p for t, p in mqtt.sent if t.endswith("presence_tracker_wohn_occupancy/config")))
+        assert cfg["availability"][1] == {"topic": room} and cfg["availability_mode"] == "all"
+        task = asyncio.create_task(app.housekeeping())
+        await feed(app, 0.5, uptime)
+        assert room_availability() == ["online"]
+        topics = [t for t, _ in mqtt.sent]
+        assert topics.index(room) < topics.index(AVAILABILITY, 1)
+        await asyncio.sleep(1.0)  # the boards are gone (their uptime goes on)
+        uptime[0] += 1000
+        assert room_availability() == ["online", "offline"]
+        assert "wohn" in json.loads(app.live_message())["unavailable"]
+        await feed(app, 0.3, uptime)
+        task.cancel()
+
+    asyncio.run(main())
+    assert room_availability() == ["online", "offline", "online"]
+    assert mqtt.availability() == ["offline", "online"]
+
+
 def test_a_model_that_fails_again_and_again_is_unavailable(tmp_path, monkeypatch, caplog):
     """A failure that comes back after every rebuild (here: every tick): until 0.18 the model was
     rebuilt at every one, and Home Assistant kept the last states as "online". Now after DOWN_AFTER

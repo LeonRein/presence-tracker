@@ -19,6 +19,14 @@ export function roomsWithSensor(config, live) {
   return config.zones.filter(z => z.kind === 'room' && !z.entry && !unseen.has(z.id));
 }
 
+// the header's "online/in use Sensoren": every sensor in use (enabled and placed) counts, also one the
+// live message does not have (it has only those heard from since the model started: two boards
+// offline showed as 5/5); online: with recent frames
+export function sensorsOnline(config, live) {
+  const used = (config?.sensors || []).filter(s => s.enabled && s.placed);
+  return { online: used.filter(s => live?.sensors?.[s.id]?.online).length, total: used.length };
+}
+
 // the group without a sensor a room belongs to, or null
 export function regionOfRoom(live, id) {
   return Object.values(live?.regions || {}).find(r => (r.rooms || []).includes(id)) || null;

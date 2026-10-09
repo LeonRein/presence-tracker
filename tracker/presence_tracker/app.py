@@ -47,6 +47,7 @@ REPORT_KINDS = {  # new kinds only add keys: old reports keep theirs
     "latency": "Hohe Latenz",
     "other": "Sonstiges",
 }
+REPORT_NAME = re.compile(r"[A-Za-z0-9_-]+\.jsonl\.gz")  # a report's file (h_report: time-room-kind)
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}
 SEND_TIMEOUT = 5.0  # s a browser may take for one live message; a slower one is cut off
 DOWN_AFTER = 3  # model failures without RETRY s of running between: the model is down
@@ -344,7 +345,7 @@ class App:
         self.client = client
         self.available = None
         self._pause_sent = None
-        self.discovery.last_state.clear()  # every state goes out again with the next tick
+        self.discovery.reconnected()  # every state and room availability goes out again with the next tick
         if client is not None:
             # Lernen pausieren: the broker holds Home Assistant's last command (retained), also one sent
             # while the app was down; read only, so also without publishing
@@ -357,7 +358,7 @@ class App:
             # states of a run that ended without its last will, and Home Assistant would show them as now
             await self._set_available(False)
             self.discovery.published.clear()
-            await self.discovery.sync(self.config.zones)
+            await self.discovery.sync(self.config.zones, self.tracker.seen.watched())
             # what the broker retains of earlier runs: entities no longer wanted are removed (ha.py)
             try:
                 await client.subscribe(ha.DISCOVERY)
@@ -512,6 +513,8 @@ class App:
     def live_message(self) -> str:
         snap = self.tracker.snapshot()
         snap["zones"] = {k: v.to_dict() for k, v in self.zone_states.items()}
+        # rooms whose own sensors went silent: unavailable in Home Assistant (roomseen.py)
+        snap["unavailable"] = sorted(k for k, v in self.zone_states.items() if not v.available)
         snap["status"] = self.sensor_status
         snap["calibration"] = self._calibration_status()
         snap["learning_paused"] = {"on": self.pauses.on, "since": self.pauses.since}
@@ -593,6 +596,7 @@ class App:
         app.router.add_get("/api/reports", self.h_reports)
         app.router.add_post("/api/reports", self.h_report)
         app.router.add_get("/api/reports/{name}", self.h_report_file)
+        app.router.add_delete("/api/reports/{name}", self.h_delete_report)
         return app
 
     async def h_index(self, request):
@@ -658,7 +662,7 @@ class App:
             self._config_changed()
         self.calibrator.config = config
         if self.client is not None:
-            await self.discovery.sync(config.zones)
+            await self.discovery.sync(config.zones, self.tracker.seen.watched())
         try:
             config.save(self.config_path)
         except OSError as e:
@@ -833,12 +837,27 @@ class App:
                         "kind_text": REPORT_KINDS.get(rep.get("kind"), rep.get("kind"))})
         return web.json_response({"reports": out, "kinds": REPORT_KINDS, "window_min": REPORT_WINDOW / 60})
 
+    def _report_path(self, name: str) -> pathlib.Path:
+        """The file of an existing report, by its name as listed (h_reports); anything else is 404: a
+        plain name (letters, digits, - and _, as h_report makes them), no path, no link, no other file."""
+        if not REPORT_NAME.fullmatch(name):
+            raise web.HTTPNotFound()
+        path = self.reports / name
+        if path.is_symlink() or not path.is_file() or path.resolve().parent != self.reports.resolve():
+            raise web.HTTPNotFound()
+        return path
+
     async def h_report_file(self, request):
         name = request.match_info["name"]
-        path = self.reports / name
-        if "/" in name or not name.endswith(".jsonl.gz") or not path.is_file():
-            raise web.HTTPNotFound()
+        path = self._report_path(name)
         return web.FileResponse(path, headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    async def h_delete_report(self, request):
+        """A report deleted (made by mistake, or while sensors were offline: it is no truth)."""
+        path = self._report_path(request.match_info["name"])
+        path.unlink()
+        log.info("error report %s deleted", path.name)
+        return web.json_response({"ok": True, "name": path.name})
 
     async def h_reset_tracks(self, request):
         """"Tracks zurücksetzen": nothing known about where anybody is, the data decide again. The

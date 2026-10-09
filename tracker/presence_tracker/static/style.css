@@ -166,6 +166,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .btn.danger { color: var(--bad); }
 .btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
 .btn:disabled { opacity: .5; cursor: default; }
+.btn.small { padding: 2px 8px; font-size: 12px; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 .seg button { border: 0; background: var(--surface); padding: 6px 10px; cursor: pointer; border-right: 1px solid var(--line); }
 .seg button:last-child { border-right: 0; }
