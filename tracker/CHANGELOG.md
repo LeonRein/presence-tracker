@@ -11,13 +11,13 @@ Hotfix nach dem Ausfall zweier Sensor-Boards (9.10. 15:04, Wohn- und Esszimmer o
   Eintrag der Person auf dem Sofa lief nach etwa 2 min ab, das Wohnzimmer war 1,5 h „besetzt: aus“, und
   Node-RED schaltete das Licht aus, während dort jemand saß. Jetzt sind alle Entitäten eines Raums
   (*besetzt*, *Personen*, *Bewegung*, *wird betreten*, *Ziel*) nicht verfügbar, sobald jeder eingeschaltete,
-  platzierte Sensor des Raums mehr als 6 s (`LOST`, wann der Filter seine Spuren beendet) keinen Frame
-  gesendet hat; mit dem nächsten Frame wieder verfügbar, mit dem aktuellen Zustand. Ohne Daten sagt die App
+  platzierte Sensor des Raums mehr als 30 s keinen Frame gesendet hat (kurze WLAN-Lücken von
+  6–20 s kamen in 64 h Aufnahmen 88-mal vor und lassen den Raum verfügbar); mit dem nächsten Frame wieder verfügbar, mit dem aktuellen Zustand. Ohne Daten sagt die App
   „weiß ich nicht“; der Präsenzlicht-Flow schaltet bei unbekanntem *besetzt* nichts, das Licht bleibt, wie es
   ist. Umgesetzt mit zwei Verfügbarkeits-Topics je Entität (`presence-tracker/status` und
   `presence-tracker/zone/<raum>/availability`, `availability_mode: all`); das Topic des Raums geht beibehalten
   nur bei einer Änderung und beim (Wieder-)Verbinden hinaus und wird gelöscht, wenn der Raum keinen eigenen
-  Sensor mehr hat oder gelöscht ist. Ein Sensor, der seit dem Start nichts gesendet hat, zählt erst 6 s nach
+  Sensor mehr hat oder gelöscht ist. Ein Sensor, der seit dem Start nichts gesendet hat, zählt erst 30 s nach
   dem Start des Modells als stumm (kein Flackern beim Start). Räume ohne eigenen Sensor, Bereiche und das
   Haus: unverändert. Der Filter selbst: unverändert. In der Raumliste steht *nicht verfügbar*.
 - **Kopfzeile: alle Sensoren in Gebrauch.** *n/m Sensoren* zählte nur Sensoren, von denen seit dem Start des

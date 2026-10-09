@@ -186,10 +186,10 @@ an einer Konfiguration, mit der es nicht rechnen kann), sind sie ebenfalls *nich
 wieder eine Minute ohne Fehler läuft; im Protokoll steht dann ein Fehler in Großbuchstaben, und das Modell
 wird nur noch einmal je Minute neu versucht. Die Entitäten eines Raums mit eigenem Sensor (der Sensor,
 der im Raum hängt, siehe *Besetzt*; eingeschaltet und platziert) sind außerdem *nicht verfügbar*, solange
-dieser Sensor seit mehr als 6 s keinen Frame gesendet hat (Board ohne Strom, abgestürzt, WLAN weg): alle
+dieser Sensor seit mehr als 30 s keinen Frame gesendet hat (Board ohne Strom, abgestürzt, WLAN weg): alle
 fünf, *besetzt*, *Personen*, *Bewegung*, *wird betreten* und *Ziel*. Mit seinem nächsten Frame sind sie
 wieder verfügbar, mit dem aktuellen Zustand. Hat ein Raum mehrere eigene Sensoren, erst wenn alle schweigen.
-Ein Sensor, der seit dem Start der App noch nichts gesendet hat, zählt erst 6 s nach dem ersten Frame
+Ein Sensor, der seit dem Start der App noch nichts gesendet hat, zählt erst 30 s nach dem ersten Frame
 irgendeines Sensors als stumm. Dafür hat jede dieser Entitäten zwei Verfügbarkeits-Topics,
 `presence-tracker/status` und `presence-tracker/zone/<raum>/availability` (beide `online`/`offline`,
 beibehalten; verfügbar nur, wenn beide `online` sagen). Räume ohne eigenen Sensor, Bereiche und das Haus

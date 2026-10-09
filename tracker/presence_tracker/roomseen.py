@@ -12,18 +12,16 @@ room (0.3 m around its outline, it hangs on a wall). Other sensors don't count: 
 room's edge is measured in the next room (MODEL.md 6).
 
 Silent (MODEL.md 6, "Belegt"): a room whose own sensors in use (enabled and placed) all sent no frame
-for more than SILENT_AFTER = sensortracks.LOST s has no data. Home Assistant gets its entities as unavailable, not as
-empty (ha.py): with no data the app says "I don't know". LOST, not filtermodel.IDLE (both 6 s): LOST is
-the filter's "this sensor has lost its data" now, without waiting for its next frame (Tracker._end_silent
-ends its tracks then); IDLE judges a gap between two frames. A sensor that sent nothing since the model
+for more than SILENT_AFTER = 30 s has no data. Home Assistant gets its entities as unavailable, not as
+empty (ha.py): with no data the app says "I don't know". 30 s, not LOST (6 s, when the filter ends its
+tracks): in 64 h of recordings 6-20 s gaps of one board while the others sent came 88 times (the WLAN),
+each would have made its room unavailable for seconds; a board that is gone stays silent for minutes. A sensor that sent nothing since the model
 started counts from the start: at the app's start, before the first frames, nothing is silent.
 
 Only output: nothing here changes the filter's state, weights or what it learns."""
 
-from .sensortracks import LOST
-
 MOUNT_MARGIN = 0.3  # m: a sensor hangs on a wall, its point lies at the room's outline
-SILENT_AFTER = LOST  # s without any frame: the sensor has lost its data, its room is silent
+SILENT_AFTER = 30.0  # s without any frame: the board is gone, its room is silent (not the WLAN's short gaps)
 
 
 class RoomSeen:

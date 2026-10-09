@@ -9,7 +9,26 @@ import pytest
 from presence_tracker import ha
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
-from presence_tracker.sensortracks import LOST
+from presence_tracker import roomseen
+
+LOST = 6.0  # the timing tests below run with a short silence limit (the app's: roomseen.SILENT_AFTER)
+
+
+@pytest.fixture(autouse=True)
+def short_silence(monkeypatch):
+    monkeypatch.setattr(roomseen, "SILENT_AFTER", LOST)
+
+
+def test_the_silence_limit_outlasts_the_wlan_gaps(monkeypatch):
+    """The app's limit (30 s): a board's 6-20 s WLAN gap leaves its room available, a board gone not."""
+    monkeypatch.undo()
+    assert roomseen.SILENT_AFTER == 30.0
+    tr = Tracker(open_plan())
+    k = feed_both(tr, 0.0, 10.0)
+    k = feed_both(tr, 10.0, 30.0, wohn=False, k0=k)
+    assert available(tr, 30.0)["wohn"]  # 20 s without a frame
+    feed_both(tr, 30.0, 41.0, wohn=False, k0=k)
+    assert not available(tr, 41.0)["wohn"]
 
 
 def open_plan() -> Config:

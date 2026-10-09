@@ -757,8 +757,8 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
     entschied: `filter`, `ld2450` oder `beide`. Räume ohne eigenen LD2450 und Bereiche ohne Sensor:
     unverändert. `seen_hold` = 0 schaltet die Regel ab.
   - *Sensor des Raums stumm:* Hat jeder eingeschaltete, platzierte Sensor des Raums (wie oben bestimmt)
-    seit mehr als `LOST` = 6 s keinen Frame gesendet (der Filter beendet dann seine Spuren, 4.4,
-    `Tracker._end_silent`), sind alle Entitäten des Raums in Home Assistant *nicht verfügbar* statt
+    seit mehr als `SILENT_AFTER` = 30 s keinen Frame gesendet (länger als die WLAN-Lücken von 6–20 s,
+    nach denen der Filter schon seine Spuren beendet, 4.4), sind alle Entitäten des Raums in Home Assistant *nicht verfügbar* statt
     belegt oder frei (`roomseen.RoomSeen.silent`; eigenes Verfügbarkeits-Topic des Raums neben dem der
     App, `ha.py`). Ohne Daten sagt die Ausgabe „weiß ich nicht“; Node-RED schaltet dann nichts. Ein
     Sensor, der seit dem Start des Modells nichts gesendet hat, zählt ab diesem Start. Nur Ausgabe: Der
