@@ -58,25 +58,6 @@ def test_somebody_back_from_the_balcony_is_who_went_there():
     assert known(crowd) < 1.1, known(crowd)
 
 
-def test_who_is_on_the_balcony_for_a_quarter_of_an_hour_is_still_there():
-    # one person known to be out comes in and spends 15 min on the balcony, a closed region without
-    # a sensor (its only door leads into the room): their record does not expire there (MODEL.md
-    # 5.5), they come back through that door as who they are. Until 0.25 it expired after minutes
-    # (the guest of 8.10. 19:04 came back as "nobody")
-    config = flat_config(entry=True)
-    w = walk((-1.0, 4.0), FLUR_DOOR, (3.0, 2.0), BALCONY_DOOR, (7.0, 2.0), start=2, pauses={4: 900})
-    a = Person(w + walk((7.0, 2.0), BALCONY_DOOR, (3.0, 3.0), (3.05, 3.0), start=w[-1][0] + 0.5, pauses={3: 120}))
-    crowd = Tracker(config, start=0.0, people=["outside"])
-    out_there = None
-    for t, sid, frame in simulate([a], sim_sensors(config), w[-1][0] + 60, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
-        if out_there is None and t > w[-1][0] - 5:
-            out_there = 1 - crowd.place_distribution()["balkon"][0]
-    assert out_there > 0.95, out_there
-    assert 1 - crowd.count_distribution()["wohn"][0] > 0.95
-    assert known(crowd) < 1.1, known(crowd)
-
-
 def test_a_sitter_no_ld2450_sees_for_a_while_stays():
     # nothing known; somebody comes in and sits; ten seconds later neither LD2450 sees them for 90 s
     # (longer than any gap of the LD2450 alone on real sitters, 85 s; with the LD2410C at most 18 s,

@@ -328,26 +328,22 @@ class Tracker:
         test it (MODEL.md 5.5): where a sensor sees them, the measurements alone decide (nothing ends
         there, 1.3); the share of them that no sensor can see expires at 1/unseen_life - in a tile
         by 1 - how well the live sensors see it (Tiling.observed; 0 in a blind spot, and where a
-        sensor saw whose frames stopped coming, MODEL.md 4.4), in the open regions without a sensor and
+        sensor saw whose frames stopped coming, MODEL.md 4.4), in the regions without a sensor and
         out of the house whole - so the existence r falls by r x that share x (1 - e^(-dt/unseen_life)).
         An assumption about records nothing supports, not a part of how people move (Musicki & Evans
-        2005: the existence chain of a track, here only where no detectability can act). Not in a
-        closed region (no way out of the house, its doors lead only into view: the balcony): who is
-        there comes back through its door (1.3), and not coming out is what tests the record there
-        (the stay, 3.3). Until 0.25 it expired there too: the guest of 8.10. 19:04 came back from 15
-        min on the balcony as nobody, and the person on the sofa got his track."""
+        2005: the existence chain of a track, here only where no detectability can act). Also in a
+        closed region (the balcony): 0.26 kept records there, but what it kept came from the ghosts at
+        the balcony door and later "came back" as people (MODEL.md 10, "0.27")."""
         if type(obj) is not Hidden or not obj.r > 0:
             return
         m, tl = self.m, self.tiles
         q = -math.expm1(-dt / m.unseen_life)
         lost = obj.out * q
         obj.out -= lost
-        if tl.R:
-            part = obj.region[tl.open_regions]
-            reg = float(part.sum())
-            if reg > 0:
-                obj.region[tl.open_regions] = part * (1.0 - q)
-                lost += reg * q
+        reg = float(obj.region.sum())
+        if reg > 0:
+            obj.region *= 1.0 - q
+            lost += reg * q
         if tl.n:
             key = (dt, tuple(live))
             if self._expiry is None or self._expiry[0] != key:  # the same for everybody in a step
