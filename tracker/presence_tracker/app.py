@@ -180,18 +180,18 @@ class App:
         at all."""
         self.tracker = Tracker(self.config)
         self.tracker.pauses = self.pauses  # Lernen pausieren: the app's switch (pause.py)
-        # where the sensors start ghost tracks (learned online, MODEL.md 4.2): it holds only while the
-        # sensors are where they were when it was learned, else it starts over
+        # where the sensors start ghost tracks (learned online, MODEL.md 4.2), each sensor's part in its
+        # own frame: it follows a recalibrated sensor, a sensor mounted elsewhere starts its part over
         gm_path = self.data_dir / "ghostmap.json"
         if gm_path.exists():
             try:
                 if not self.tracker.use_ghost_map(GhostMap.load(gm_path)):
-                    log.info("ghost map learned with other sensors or poses: starting a new one")
+                    log.info("ghost map learned with another prior: starting a new one")
             except Exception as e:  # noqa: BLE001 - the map from the prior (Tracker) holds
                 log.warning("ghostmap.json unreadable (%r), starting a new ghost map", e)
                 self.tracker.use_ghost_map(None)
-        # what each LD2410C sees without anybody (learned online, MODEL.md 4.3), per sensor only
-        # while it is where it was
+        # what each LD2410C sees without anybody (learned online, MODEL.md 4.3), per sensor while it
+        # hangs where it hung (a recalibration keeps it)
         ld_path = self.data_dir / "ld2410.json"
         if ld_path.exists():
             try:
@@ -743,7 +743,7 @@ class App:
             gm = GhostMap.from_dict(data["ghost_map"])
             gm.save(self.data_dir / "ghostmap.json")
             used = self.tracker.use_ghost_map(gm)
-            log.info("ghost map imported, %s", "in use" if used else "not used: learned with other sensor poses")
+            log.info("ghost map imported, %s", "in use" if used else "not used: learned with another prior")
         return web.json_response({"ghost_map": self.tracker.ghost_map is not None})
 
     async def h_tiles(self, request):

@@ -48,7 +48,7 @@ def run(args):
     sys.path.insert(0, os.path.abspath(TRACKER))
     from presence_tracker.filter import Tracker
     from presence_tracker.frames import SensorClock
-    from presence_tracker.ghostmap import GhostMap, pose_of
+    from presence_tracker.ghostmap import GhostMap
     from presence_tracker.model import Config
     from presence_tracker import pause
 
@@ -122,7 +122,7 @@ def main():
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(TRACKER))
     from presence_tracker.filter import Tracker
-    from presence_tracker.ghostmap import GhostMap, pose_of
+    from presence_tracker.ghostmap import GhostMap
     from presence_tracker.model import Config
 
     config = Config.from_dict(json.load(open(a.config)))
@@ -130,13 +130,13 @@ def main():
     work = pieces([(parse_time(x), parse_time(y)) for x, y in a.window])
     print(f"{len(work)} pieces, {sum(y - x for x, y in work) / 3600:.1f} h", flush=True)
     m = tr.m
-    gm = GhostMap.for_world(tr.world, sum(rate for rate, _ in m.ghost_types), m.ghost_prior_ghosts)
-    gm.poses = {s.id: pose_of(s) for s in config.sensors}
+    gm = GhostMap.from_prior(sum(rate for rate, _ in m.ghost_types), m.ghost_prior_ghosts)
+    gm.use(config)
     kinds = m.ghost_types  # how long ghosts live: printed for the model (filtermodel.ghost_types), not in the map
     for it in range(a.iterations):
         with ProcessPoolExecutor(a.jobs) as ex:
             results = list(ex.map(run, [(a.recordings, a.config, gm.to_dict(), p, a.pauses) for p in work]))
-        new = GhostMap(gm.x0, gm.y0, gm.nx, gm.ny, gm.prior_rate, gm.prior_time)
+        new = GhostMap(gm.prior_rate, gm.prior_time)
         new.poses = gm.poses
         loglik = 0.0
         lives = []

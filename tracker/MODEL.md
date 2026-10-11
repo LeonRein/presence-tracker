@@ -286,11 +286,29 @@ Eine Spur, die zu keiner Person gehört.
   Zählung ist dann ein hartes Urteil. Deshalb wiegt der Prior einen Geist je Zelle: Wenige solche
   Urteile machen eine Stelle nicht zur Quelle (Test: drei Geister in 2,5 h 1,8-mal statt 13-mal die
   Prior-Rate; eine Reflexion mit 30 Spuren an einem Tag 7,6-mal statt 29-mal). Vergessen mit
-  Zeitkonstante 14 Tage. Wird ein Sensor
-  verschoben, gedreht, anders kalibriert (Höhe, Spiegelung, Maßstab), hinzugefügt oder entfernt,
-  beginnt die Karte neu, ebenso eine mit einem anderen Prior gelernte. Die Oberfläche zeigt sie je
+  Zeitkonstante 14 Tage. Die Oberfläche zeigt sie je
   Sensor. `tools/ghostmap.py` rechnet dasselbe
   offline auf gewählten Zeitfenstern.
+- **Im Rahmen des Sensors** (`ghostmap.py`, nach 0.27): Jeder Sensor hat seinen Teil der Karte in seinem
+  eigenen Rahmen, auf dem Boden, Maßstab herausgerechnet, x-Achse wie der LD2450 sie meldet
+  (`SensorConfig.to_local`; Zellen 0,4 m, bis 8 m seitlich und nach vorn). Wo ein Sensor Geister sieht,
+  ist eine Eigenschaft seines Blicks: Reflexionen an Wänden und Möbeln, wie er sie sieht, Mehrwege am
+  eigenen Gehäuse. Eine neue Kalibrierung (Richtung, Maßstab, Spiegelung, eine berichtigte Zeichnung)
+  ändert, wie seine Meldungen gelesen werden, nicht, was er meldet. Im Hausrahmen folgt die Karte der
+  Lage, die der Sensor jetzt hat; eine Zelle seines Rahmens deckt (0,4 m · Maßstab)² Boden. Nur ein
+  **anders montierter** Sensor beginnt seinen Teil neu, die übrigen behalten ihren, ebenso ein neuer;
+  der Teil eines entfernten geht. Anders montiert heißt: Ort oder Höhe um mehr als 0,5 m oder die Richtung
+  um mehr als 30° geändert (`model.remounted`, angenommen). Die Kalibrierung ändert nur Richtung, Maßstab
+  und Spiegelung, die Richtung mit ihrem Prior von ±20° um die gezeichnete (hier bisher 320° → 324°,
+  324,4° → 321,6°; die alte App-Rechnung schlug −15° vor); eine berichtigte Zeichnung bleibt in ihrem Fehler
+  (4.1: 0,2–0,3 m). Wer einen Sensor an eine andere Wand oder Ecke hängt, verschiebt ihn weiter; wer ihn
+  woanders hinsehen lässt, dreht ihn um mehr als ein Viertel seines Blickfelds. Die Oberfläche bietet keine
+  eigene Unterscheidung („Neu sammeln“ der Kalibrierung gilt für alle Sensoren zugleich). Eine mit einem
+  anderen Prior gelernte Karte beginnt ganz neu. Bis 0.27 lag die Karte im Hausrahmen, und jede Änderung
+  der Lage irgendeines Sensors um mehr als 5 cm, 2° oder 2 % Maßstab ließ die ganze Karte neu beginnen (10,
+  „Gelerntes bleibt bei neuer Kalibrierung“). Eine gespeicherte Karte von 0.27 wird beim Laden einmal
+  umgerechnet (jede Zelle des Hausrahmens in die Zelle des Sensorrahmens, in der ihre Mitte liegt, mit der
+  Lage, mit der sie gelernt wurde); der Umrechner fällt im Release danach weg.
 - Begründung: Wiederkehrende Reflexionen (Möbel, Ladestation des Saugroboters) stehen an festen
   Stellen. Mit gleichverteilter Dichte erklärt das Modell sie als Person.
 - Solange der Schalter *Lernen pausieren* an ist (Hintergrundaktivität, 10), lernt die Karte nichts:
@@ -427,7 +445,9 @@ Das Modell, je Sensor:
   6.–9.10. (je Sensor 0,4–2,5 h). Bis 0.26 6 h (angenommen; leere Nächte 24 h
   auseinander unterscheiden sich je Sensor um höchstens 7 %, aber mit 1 Tag Log-Evidenz bis 6.10. −2530, 10):
   Der Hintergrund des Flurs hing morgens stundenlang beim Nachtwert, und eine Person mit kleinem g erklärte
-  den Überschuss (10 „Sitzende im Bad und auf dem Sofa“). Neu für einen Sensor, wenn er verschoben wird.
+  den Überschuss (10 „Sitzende im Bad und auf dem Sofa“). Seine Zellen sind Entfernungen vom Sensor: Eine
+  neue Kalibrierung (Richtung, Maßstab, Spiegelung, berichtigte Zeichnung) ändert an ihm nichts, er bleibt;
+  neu nur für einen anders montierten Sensor (4.2, `model.remounted`; bis 0.27 bei jeder Änderung der Lage).
   Gespeichert mit der Geisterkarte.
 - **Zeit:** Die Frames werden je Sekunde gesammelt (Gamma: die Summen von Δt, Δt·e, Δt·ln e und Δt der
   gekappten genügen), jeder mit Δt / τ, τ 4 s bewegt / 13 s ruhig (zusammengesetzte Likelihood mit der
@@ -1033,10 +1053,14 @@ Näherungen, die man prüfen oder ersetzen kann:
   kleine Alternative „neue Person“, und daraus werden nach dem Zusammenlegen viele Bernoullis mit
   r von wenigen %, je eine Dichte (latency.py 21 Uhr: 30 s statt 18,5 s mit einer bekannten Person
   „irgendwo“ statt der Intensität; 5 % statt 1 % beim Zurückgeben 26 s, 5.5).
-- Eine neue Kalibrierung (Richtung, Maßstab) lässt weiterhin die Geisterkarte aller Sensoren und den
-  LD2410C-Hintergrund dieses Sensors neu beginnen, obwohl sich der Sensor selbst nicht bewegt hat (die
-  App kann Drehen und Kalibrieren nicht unterscheiden). Für die Meldung 7.10. 08:07 war das nicht die
-  Ursache (Hintergrund im Nachspiel unverändert).
+- Ob ein Sensor nur neu kalibriert oder anders montiert wurde, entscheidet die App an der Größe der Änderung
+  (4.2, `model.remounted`: mehr als 0,5 m oder 30°), nicht an einer Angabe: Die Oberfläche hat keine je
+  Sensor. Ein Sensor, der an derselben Stelle um weniger als 30° gedreht wird, behält seine Geisterkarte
+  (im eigenen Rahmen; die Reflexionen an den Wänden liegen danach anders) und seinen LD2410C-Hintergrund;
+  die Karte vergisst mit 14 Tagen, der Hintergrund mit 0,7 h. Ob ein anders montierter Sensor die Geister
+  der anderen ändert (gegenseitige Störung der LD2450), ist nicht gemessen; ihre Teile bleiben. Bis 0.27
+  ließ jede neue Kalibrierung die Geisterkarte aller Sensoren und den LD2410C-Hintergrund des Sensors neu
+  beginnen (10, „Gelerntes bleibt bei neuer Kalibrierung“).
 - **Wen der Filter verliert, lernt der LD2410C-Hintergrund** (10, „Lernschleifen“), soweit der LD2450 im
   Gehäuse ihn nicht sieht und keine Echoquelle seine Energie hält. Die Schlafenden im Schlafzimmer
   7./8.10. verlor der Filter um 00:25 an eine Echoquelle, die bis zum Morgen an blieb: Eine ungesehene
@@ -1136,9 +1160,9 @@ Näherungen, die man prüfen oder ersetzen kann:
      2,0–2,3) ist ein Geist des Esszimmer-LD2450, der wiederkommt (8.10. 18:50–18:52 und 19:02–19:03; 7.10.
      22:08, 22:16 und 22:22–22:25). Er liegt so weit vom Sensor wie die Person auf dem Sofa: ein Spiegel- oder
      Winkelgeist. Wird er zur Person, „kommt“ sie vom Balkon.
-  3. *Die Geisterkarte beginnt bei jeder Änderung der Lage neu* (oben, „Eine neue Kalibrierung …“): 8.10.
-     10:07 setzte die neue Kalibrierung des Arbeitszimmers die Karte aller Sensoren zurück; um 18:20 wusste sie
-     nichts von den Geistern an der Balkontür. Eine Lageänderung eines Sensors sollte nur dessen Teil betreffen.
+  3. *Die Geisterkarte begann bei jeder Änderung der Lage neu*: 8.10. 10:07 setzte die neue Kalibrierung des
+     Arbeitszimmers die Karte aller Sensoren zurück; um 18:20 wusste sie nichts von den Geistern an der
+     Balkontür. Jetzt bleibt sie (4.2, 10 „Gelerntes bleibt bei neuer Kalibrierung“).
   4. *Lang anhaltende Energie ohne Person.* Für beständige LD2410C-Energie kennt das Modell nur Personen und
      Echoquellen mit 20 s Lebensdauer (4.3); was minutenlang Energie gibt, ohne dass jemand da ist (Esstisch
      8.10. 19:04, Balkontür 7.10. 22:19–22:25), erklärt eine Person besser. Zu modellieren, ohne wache Sitzende

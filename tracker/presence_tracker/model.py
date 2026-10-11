@@ -14,6 +14,24 @@ from .util import atomic_write
 
 
 SIGHT_OFFSET = 0.2  # m, see SensorConfig.sight_origin
+# A sensor counts as mounted elsewhere (remounted), not only estimated anew (recalibrated), when its
+# drawn place or height moves by more than REMOUNT_SHIFT or its heading by more than REMOUNT_TURN.
+# The calibration (calibration.py) changes heading, scale and mirror only, the heading within its
+# prior of +-20 deg around the drawn one (here 320 -> 324 deg, 324.4 -> 321.6 deg; the old app
+# proposed -15 deg); a drawing put right lies within its error (MODEL.md 4.1: 0.2-0.3 m). Mounted on
+# another wall or in another corner, a sensor is further off; turned to look elsewhere, more than a
+# quarter of its 120 deg view. Assumed, not measured (MODEL.md 4.2).
+REMOUNT_SHIFT = 0.5  # m
+REMOUNT_TURN = 30.0  # deg
+
+
+def remounted(old: tuple, s: "SensorConfig") -> bool:
+    """Is sensor s, with the pose old = (x, y, heading, height, ...) it had, mounted elsewhere now?
+    Scale and mirror are how its measurements are read, not where it hangs: never a remount."""
+    x, y, heading, height = old[:4]
+    return (math.sqrt((x - s.x) ** 2 + (y - s.y) ** 2 + (height - s.height) ** 2) > REMOUNT_SHIFT
+            or abs((heading - s.heading + 180) % 360 - 180) > REMOUNT_TURN)
+
 
 @dataclass
 class SensorConfig:

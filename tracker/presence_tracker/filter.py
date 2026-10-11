@@ -379,7 +379,7 @@ class Tracker:
         else:
             self.dwell = Dwell(self.p)
             self._build()
-        self.use_ghost_map(self.ghost_map)  # it holds only while the sensors are where they were
+        self.use_ghost_map(self.ghost_map)  # it follows recalibrated sensors, a remounted one starts over
         self.use_dest_map(self.dest_map)  # it holds while the rooms and doors are the same
         self.ld_background.use(config)
         if changed is None:
@@ -437,19 +437,16 @@ class Tracker:
         self._version += 1
 
     def use_ghost_map(self, gm) -> bool:
-        """Use a learned ghost map (MODEL.md 4.2) if it was learned with the sensors where they are
-        now; else start a new one from the prior (a moved, added or removed sensor changes where
-        all of them see ghosts)."""
-        from .ghostmap import GhostMap, pose_of
-        new = GhostMap.for_world(self.world, sum(rate for rate, _ in self.m.ghost_types), self.m.ghost_prior_ghosts)
-        # ... and with the prior it has now (a map learned with another one starts over too)
-        ok = (gm is not None and gm.matches(self.config) and math.isclose(gm.prior_rate, new.prior_rate)
+        """Use a learned ghost map (MODEL.md 4.2) if it was learned with the prior the model has now;
+        else start a new one from the prior. Each sensor's part is in its own frame: it follows a
+        recalibrated sensor, and only a sensor mounted elsewhere starts its part over (GhostMap.use).
+        Returns whether the learned map is used."""
+        from .ghostmap import GhostMap
+        new = GhostMap.from_prior(sum(rate for rate, _ in self.m.ghost_types), self.m.ghost_prior_ghosts)
+        ok = (gm is not None and math.isclose(gm.prior_rate, new.prior_rate)
               and math.isclose(gm.prior_time, new.prior_time))
-        if ok:
-            self.ghost_map = gm
-        else:
-            self.ghost_map = new
-            self.ghost_map.poses = {s.id: pose_of(s) for s in self.config.sensors}
+        self.ghost_map = gm if ok else new
+        self.ghost_map.use(self.config)
         self._ghost_total = {}
         return ok
 
@@ -2392,7 +2389,7 @@ class Tracker:
         bg.use(self.config)
 
     def load_learned(self, data: dict):
-        if data.get("ghost_map"):  # learned offline (tools/ghostmap.py), used if the sensors are where they were
+        if data.get("ghost_map"):  # learned offline (tools/ghostmap.py), per sensor unless mounted elsewhere since
             from .ghostmap import GhostMap
             self.use_ghost_map(GhostMap.from_dict(data["ghost_map"]))
         if data.get("ld_background"):

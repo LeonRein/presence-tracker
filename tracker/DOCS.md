@@ -43,8 +43,9 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   nicht mehr, ist wahrscheinlich gegangen; wer auf dem Sofa selten erfasst wird, nicht.
 - **Geister**: Eine Spur, die zu keiner Person gehört. Wo jeder Sensor Geister sieht, **lernt die App
   selbst** (Geisterkarte); wie lange Geister leben, ist fest (daran unterscheidet das Modell sie von
-  Sitzenden). Wird ein Sensor verschoben, hinzugefügt oder entfernt, beginnt die Karte neu, weil sich die
-  Sensoren gegenseitig stören können. Eine Stelle wird erst nach vielen Geistern zur Geisterquelle (ein
+  Sitzenden). Die Karte liegt für jeden Sensor in seinem eigenen Blick: Eine neue Kalibrierung (Richtung,
+  Maßstab) behält sie, sie wandert mit. Wird ein Sensor anders montiert (um mehr als 0,5 m versetzt oder um
+  mehr als 30° gedreht), beginnt sein Teil neu, die der anderen bleiben. Eine Stelle wird erst nach vielen Geistern zur Geisterquelle (ein
   Platz, an dem jemand sitzt, soll nicht durch ein paar Fehlurteile dazu werden); bis die Karte einige
   Tage gelernt hat, werden Geister an festen Stellen (Möbel, Ladestation) leichter für Personen gehalten.
 - **Sensor drehen oder neu kalibrieren** (gleicher Grundriss): Was über die Personen bekannt ist, bleibt.
@@ -54,8 +55,8 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
 - Der **LD2410C** zählt mit seinen Energien je 0,75-m-Entfernungsring (bewegt und ruhig): Wo eine Person
   Energie machen müsste und keine ist, ist niemand; Energie, die niemand erklärt, spricht für jemanden in
   diesem Ring, auch wenn der LD2450 ihn verloren hat. Was eine andere Person schon erklärt, sagt über die
-  übrigen nichts. Was jeder LD2410C ohne Personen sieht (Hintergrund), **lernt die App selbst**; wird ein
-  Sensor verschoben, beginnt das für ihn neu. Seine Flags und die gemeldete Entfernung zählen nicht mehr.
+  übrigen nichts. Was jeder LD2410C ohne Personen sieht (Hintergrund), **lernt die App selbst**; eine neue
+  Kalibrierung behält es, wird ein Sensor anders montiert, beginnt es für ihn neu. Seine Flags und die gemeldete Entfernung zählen nicht mehr.
 - **Wände**: Die Radare sehen nicht durch die Betonwände. Ein Messpunkt hinter einer Wand oder außerhalb aller
   Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*).
 - **Personen**: Wie viele es sind, wird nirgends eingestellt. Nach einem Neustart der App macht das Modell

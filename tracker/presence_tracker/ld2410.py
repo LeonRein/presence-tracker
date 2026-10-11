@@ -18,6 +18,7 @@ import numpy as np
 
 from . import kernels
 from .filtermodel import STILL, WALK
+from .model import remounted
 
 GATE = 0.75  # m
 CELLS = 16  # moving 0..8, still 2..8
@@ -290,8 +291,11 @@ class Background:
     of prior_time s: the sensor's own long-run level (the same online EM, forgotten with anchor_forget
     s, from the measured means of the prior with prior_time s, and only from frames after anchor_quiet
     s without anything in sight of the housing's LD2450) - a level that wanders around its sensor's
-    mean (a stationary AR(1) level, Harvey 1989; the anchor learned like an empirical Bayes prior). With it the rate at which echo sources begin (learn_echoes). Per sensor it holds only
-    while the sensor is where it was (pose_of): moved, it starts over."""
+    mean (a stationary AR(1) level, Harvey 1989; the anchor learned like an empirical Bayes prior). With
+    it the rate at which echo sources begin (learn_echoes). Per sensor it holds while the sensor hangs
+    where it hung: its cells are distances from the sensor, which a new calibration (heading, scale,
+    mirror, a drawing put right) does not change; mounted elsewhere (model.remounted), it starts over.
+    Until 0.27 any change of its pose started it over."""
 
     def __init__(self, prior: np.ndarray, prior_time: float, forget: float, echo_rate: float = 1 / 10800,
                  echo_time: float = 10800.0, anchor_forget: float = 86400.0, anchor_quiet: float = 600.0):
@@ -397,17 +401,19 @@ class Background:
         self.den_a[sid] = self.den_a.get(sid, 0.0) * ka + w_a * st.time
 
     def use(self, config):
-        """Keep what was learned for the sensors that are where they were; the others start over."""
+        """Keep what was learned for the sensors that hang where they hung (recalibrated or not); the
+        ones mounted elsewhere and new ones start over."""
         for s in config.sensors:
             pose = pose_of(s)
-            if self.poses.get(s.id) != pose:
+            old = self.poses.get(s.id)
+            if old is None or remounted(old, s):
                 self.num.pop(s.id, None)
                 self.den.pop(s.id, None)
                 self.num_a.pop(s.id, None)
                 self.den_a.pop(s.id, None)
                 self.echoes.pop(s.id, None)
                 self.quiet.pop(s.id, None)
-                self.poses[s.id] = pose
+            self.poses[s.id] = pose
 
     def to_dict(self) -> dict:
         held = {k: round(float(v), 3) for k, v in self.held.items() if v > 0}

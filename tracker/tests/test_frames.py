@@ -1,5 +1,6 @@
 """From LD2450 frames to detections (frames.py), plus helpers for the scene tests."""
 
+import json
 import math
 
 import numpy as np
@@ -117,18 +118,108 @@ def test_a_map_learned_with_another_prior_starts_over():
     assert not tr.use_ghost_map(gm) and not tr.ghost_map.count
 
 
-def test_a_moved_sensor_starts_the_ghost_map_over():
+def _changed(**change) -> Config:
     config = room_config()
-    tr = Tracker(config)
-    gm = tr.ghost_map
-    gm.add_birth("a", (2.0, 2.0), 1.0)
-    assert tr.use_ghost_map(gm)  # the same poses: kept
-    for change in ({"x": 0.3}, {"heading": 50}, {"height": 1.8}, {"mirror": True}, {"scale": 1.05}):
-        moved = room_config()
-        for k, v in change.items():
-            setattr(moved.sensors[0], k, v)
-        moved.rebuild()
-        tr.reconfigure(moved)
-        assert tr.ghost_map is not gm and not tr.ghost_map.count, change
-        tr.reconfigure(room_config())
-        assert tr.use_ghost_map(gm)
+    for k, v in change.items():
+        setattr(config.sensors[0], k, v)
+    config.sensors[0]._update()
+    config.rebuild()
+    return config
+
+
+def _ghost_source(tr, raw=(0.6, 4.0), n=30):
+    """A reflection the LD2450 a reports at raw (m, its frame) n times in a day."""
+    s = tr.config.sensors[0]
+    spot = np.array([s.to_world(*raw, tr.p.target_height)[:2]])
+    for _ in range(n):
+        tr.ghost_map.add_birth("a", spot[0], 1.0)
+    tr.ghost_map.add_watch("a", 86400.0)
+    tr.ghost_map.add_watch("b", 86400.0)
+    tr.ghost_map.add_birth("b", (3.0, 2.5), 5.0)
+    return spot
+
+
+def test_a_recalibrated_sensor_keeps_its_ghost_map_in_its_frame():
+    # MODEL.md 4.2: a new calibration changes how the sensor's reports are read, not what it reports:
+    # its ghosts stay where it reports them, and in the house frame they go with the new pose
+    raw = (0.6, 4.0)
+    for change in ({"heading": 48}, {"heading": 42}, {"scale": 1.05}, {"scale": 0.95},
+                   {"heading": 48, "scale": 1.05}, {"heading": 55}, {"x": 0.35}, {"mirror": True}):
+        tr = Tracker(room_config())
+        gm = tr.ghost_map
+        spot = _ghost_source(tr, raw)
+        before = gm.rate("a", spot)[0]
+        b_before = gm.rate("b", np.array([[3.0, 2.5]]))[0]
+        assert before > 5 * gm.prior_rate
+        new = _changed(**change)
+        tr.reconfigure(new)
+        assert tr.ghost_map is gm and gm.time["a"] == 86400.0, change
+        s = new.sensors[0]
+        moved = np.array([s.to_world(*raw, tr.p.target_height)[:2]])
+        # the same cell of its frame; per m^2 of the floor as much less as a cell covers more of it
+        k0 = gm.prior_rate * 0.16 * gm.prior_time
+        area = lambda scale: k0 / gm.prior_rate + (0.4 * scale) ** 2 * 86400.0  # noqa: E731
+        assert gm.rate("a", moved)[0] == pytest.approx(before * area(1.0) / area(s.scale), rel=1e-9), change
+        assert gm.rate("b", np.array([[3.0, 2.5]]))[0] == b_before  # the other sensor: untouched
+    # turned by 10 deg the reflection 4 m away lands 0.7 m off: the map goes along
+    tr = Tracker(room_config())
+    spot = _ghost_source(tr, raw)
+    tr.reconfigure(_changed(heading=55))
+    s = tr.config.sensors[0]
+    moved = np.array([s.to_world(*raw, tr.p.target_height)[:2]])
+    assert np.hypot(*(moved - spot)[0]) > 0.6
+    assert tr.ghost_map.rate("a", moved)[0] > 3 * tr.ghost_map.rate("a", spot)[0]
+
+
+def test_a_remounted_sensor_starts_its_part_of_the_ghost_map_over():
+    for change in ({"x": 1.0}, {"x": 0.45, "y": 0.45}, {"heading": 80}, {"heading": 10}, {"height": 2.2}):
+        tr = Tracker(room_config())
+        gm = tr.ghost_map
+        _ghost_source(tr)
+        b_before = gm.rate("b", np.array([[3.0, 2.5]]))[0]
+        tr.reconfigure(_changed(**change))
+        assert "a" not in gm.count and "a" not in gm.time, change
+        assert gm.rate("a", np.array([[2.0, 2.0]]))[0] == pytest.approx(gm.prior_rate)
+        assert gm.rate("b", np.array([[3.0, 2.5]]))[0] == b_before, change  # the other one keeps its part
+    # a sensor removed takes its part along; a new one starts from the prior
+    tr = Tracker(room_config())
+    _ghost_source(tr)
+    config = room_config()
+    config.sensors = [config.sensors[1], SensorConfig("c", x=3.0, y=4.95, heading=270, placed=True)]
+    config.rebuild()
+    tr.reconfigure(config)
+    assert set(tr.ghost_map.poses) == {"b", "c"} and set(tr.ghost_map.count) == {"b"}
+
+
+def test_a_ghost_map_of_0_27_is_converted_to_the_sensors_frames():
+    from presence_tracker.ghostmap import CELL, GhostMap
+    tr = Tracker(room_config())
+    s = tr.config.sensors[0]
+    nx, ny = 16, 14
+    count = np.zeros((nx, ny))
+    count[5, 6] = 12.0  # the cell (2.0-2.4, 2.4-2.8) of the house frame from (0, 0)
+    old = {"x0": 0.0, "y0": 0.0, "nx": nx, "ny": ny, "prior_rate": tr.ghost_map.prior_rate,
+           "prior_time": tr.ghost_map.prior_time, "time": {"a": 86400.0},
+           "poses": {"a": [s.x, s.y, s.heading, s.height, s.mirror, s.scale]}, "count": {"a": count.tolist()}}
+    gm = GhostMap.from_dict(json.loads(json.dumps(old)))
+    assert tr.use_ghost_map(gm) and gm.count["a"].sum() == pytest.approx(12.0)
+    centre = np.array([[2.0 + CELL / 2, 2.4 + CELL / 2]])
+    assert gm.rate("a", centre)[0] > 3 * gm.prior_rate  # as the map in the house frame: 3.5 times
+    again = GhostMap.from_dict(json.loads(json.dumps(gm.to_dict())))
+    assert again.rate("a", centre)[0] == pytest.approx(gm.rate("a", centre)[0])
+
+
+def test_the_ld2410c_background_stays_with_a_recalibration_not_with_a_remount():
+    # its cells are distances from the sensor (MODEL.md 4.3): a new heading or scale changes nothing
+    for change, kept in (({"heading": 48, "scale": 1.05}, True), ({"x": 0.3, "mirror": True}, True),
+                         ({"x": 1.0}, False), ({"heading": 90}, False)):
+        tr = Tracker(room_config())
+        bg = tr.ld_background
+        bg.num["a"] = bg.prior * 3600.0 * 2
+        bg.den["a"] = 3600.0
+        bg.num["b"] = bg.prior * 3600.0 * 3
+        bg.den["b"] = 3600.0
+        learned_a, learned_b = bg.b("a").copy(), bg.b("b").copy()
+        tr.reconfigure(_changed(**change))
+        assert np.array_equal(bg.b("a"), learned_a if kept else bg.prior), change
+        assert np.array_equal(bg.b("b"), learned_b)
