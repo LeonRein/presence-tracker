@@ -8,6 +8,11 @@
   und mit anderem Zeitpunkt für `MEASURED_CUT`: Der Live-Lauf ging nach jedem Speichern anders weiter als ein
   Nachspiel derselben Frames. Jetzt rechnet `people_state` auf Kopien; das gespeicherte `people.json` ist
   dasselbe. Nachspiele ändern sich nicht (sie speichern nicht).
+- **Fehler: Ein dauernd scheiterndes Modell war kurz wieder „online“** (DOCS.md *Verfügbarkeit*). Nach drei
+  Fehlern ruht das Modell eine Minute und soll erst nach einer Minute fehlerfreien Laufens wieder verfügbar
+  sein. Die Ruhe zählte aber als Laufen: Brach jeder Frame eines Sensors das Modell, während die Takte
+  dazwischen liefen, bekam Home Assistant nach jeder Ruhe für einen Moment „online“ mit frischen Zuständen,
+  und das Modell wurde dreimal neu gebaut. Jetzt zählt die Minute ab dem Ende der Ruhe.
 
 ## 0.28.0
 

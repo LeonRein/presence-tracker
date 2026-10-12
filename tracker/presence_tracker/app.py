@@ -167,8 +167,10 @@ class App:
         return len(self.failures) >= DOWN_AFTER
 
     def _model_ran(self):
-        """A good tick: once the model has run RETRY s since it last failed, it runs (again)."""
-        if self.failures and time.monotonic() - self.failures[-1] >= RETRY:
+        """A good tick: once the model has run RETRY s since it last failed, it runs (again). The rest
+        while down (paused_until) is no running: until 0.28 it counted, and a model that one sensor's
+        frames break was "online" for a moment after every rest."""
+        if self.failures and time.monotonic() - max(self.failures[-1], self.paused_until) >= RETRY:
             if self.down:
                 log.warning("the model runs again (%.0f s without failing, after %d failures)", RETRY, len(self.failures))
             self.failures.clear()

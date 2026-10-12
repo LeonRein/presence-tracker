@@ -417,6 +417,41 @@ def test_a_model_that_fails_again_and_again_is_unavailable(tmp_path, monkeypatch
     assert caplog.text.count("FAILS AGAIN AND AGAIN") == 1 and "runs again" in caplog.text
 
 
+def test_a_model_that_one_sensor_breaks_stays_unavailable(tmp_path, monkeypatch):
+    """Every frame of sensor b breaks the model, the ticks between run (app.down): after the rest of
+    RETRY s the model must run RETRY s before it is "online" again. Until 0.28 the rest counted as
+    running: every RETRY s Home Assistant got "online" for a moment, with DOWN_AFTER rebuilds."""
+    monkeypatch.setattr(app_module, "RETRY", 0.6)
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=True)
+    mqtt = FakeMqtt()
+    real_frame = Tracker.process_frame
+
+    def process_frame(self, sensor_id, t, frame):
+        real_frame(self, sensor_id, t, frame)
+        if sensor_id == "b":
+            raise TypeError("'NoneType' object is not subscriptable")
+
+    uptime = [1000]
+
+    async def main():
+        await app._on_client(mqtt)
+        task = asyncio.create_task(app.housekeeping())
+        end = time.monotonic() + 3.0
+        while time.monotonic() < end:
+            for sid, pause in (("a", 0.15), ("b", 0.05)):
+                uptime[0] += 100
+                frame = {"uptime_ms": uptime[0], "targets": [], "ld2410": {}}
+                app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), time.time())
+                await asyncio.sleep(pause)
+        task.cancel()
+
+    monkeypatch.setattr(Tracker, "process_frame", process_frame)
+    asyncio.run(main())
+    # online with the first fresh states (nothing known to be wrong yet), offline at the DOWN_AFTER-th failure
+    assert app.down and mqtt.availability() == ["offline", "online", "offline"]
+
+
 def test_reset_tracks_sees_whoever_sits_there_again(tmp_path):
     """"Tracks zurücksetzen" while somebody sits in view with an unbroken LD2450 track: until 0.18 the
     sensors' running tracks fed a track the model no longer had, the person was gone for good (P 0.004
