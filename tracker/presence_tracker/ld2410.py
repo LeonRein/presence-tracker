@@ -428,8 +428,11 @@ class Background:
 
     def load_dict(self, d: dict):
         self.poses = {k: tuple(v) for k, v in d.get("poses", {}).items()}
-        self.num = {k: np.array(v, dtype=float) for k, v in d.get("num", {}).items() if len(v) == CELLS}
-        self.den = {k: float(v) for k, v in d.get("den", {}).items() if k in self.num}
+        # a part without its other half (num without den, a file broken by hand) is dropped: kept, b()
+        # failed at every frame of the sensor until 0.28
+        self.den = {k: float(v) for k, v in d.get("den", {}).items()}
+        self.num = {k: np.array(v, dtype=float) for k, v in d.get("num", {}).items() if len(v) == CELLS and k in self.den}
+        self.den = {k: v for k, v in self.den.items() if k in self.num}
         self.den_a = {k: float(v) for k, v in d.get("den_a", {}).items()}
         self.num_a = {k: np.array(v, dtype=float) for k, v in d.get("num_a", {}).items()
                       if len(v) == CELLS and k in self.den_a}

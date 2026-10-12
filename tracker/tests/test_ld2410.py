@@ -95,6 +95,18 @@ def test_the_background_is_learned_per_sensor_and_starts_over_when_moved(tmp_pat
     assert np.allclose(other.b("a"), ld2410.prior(m))
 
 
+def test_a_learned_part_without_its_time_is_dropped_on_load():
+    # a sensor's num without its den (a file broken by hand): until 0.28 kept, and b() failed at every
+    # LD2410C frame of it (KeyError: a model failure each time); now that sensor starts from the prior
+    m = Model()
+    cells = [1.0] * len(ld2410.prior(m))
+    bg = ld2410.Background(ld2410.prior(m), m.ld_prior_time, m.ld_forget)
+    bg.load_dict({"num": {"a": cells, "b": cells}, "den": {"b": 10.0},
+                  "num_a": {"a": cells}, "den_a": {"a": 5.0}, "quiet": {"a": 1.0}, "echoes": {"a": 0.1}})
+    assert set(bg.num) == set(bg.den) == {"b"} and set(bg.num_a) == set(bg.den_a) == {"a"}
+    assert np.all(np.isfinite(bg.b("a"))) and np.all(np.isfinite(bg.b("b")))
+
+
 def test_echo_sources_begin_live_end_and_are_counted():
     m = Model()
     e = ld2410.Echoes(m)

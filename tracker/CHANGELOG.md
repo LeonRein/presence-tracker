@@ -38,6 +38,8 @@
   alte Modell wusste danach nichts über die Personen. Jetzt wird der Zustand von vor der Änderung gespeichert.
 - **Fehler: Zwei gleichzeitig gesendete Meldungen überschrieben einander** (ein Doppelklick). Der Name einer
   Meldung wird jetzt beim Wählen belegt (`O_EXCL`), nicht erst, wenn der Thread sie schreibt.
+- `ld2410.json`: Ein Teil ohne seine Zeit (`num` ohne `den`, nur in einer von Hand verdorbenen Datei) wird
+  beim Laden verworfen; bisher scheiterte das Modell an jedem LD2410C-Frame dieses Sensors.
 
 ## 0.28.0
 
