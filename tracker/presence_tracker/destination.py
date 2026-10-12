@@ -2,7 +2,7 @@
 from each place, in each direction and at each speed.
 
 The map: per cell (CELL m squares, split at the rooms like the tiles), per velocity cell (SECTORS
-directions x the speed classes SPEEDS) and per outcome - the room behind the first door the walk goes
+directions x the speed classes around SPEED_MID) and per outcome - the room behind the first door the walk goes
 through, a region without a sensor, out of the house, or "stays" (the walk ends without a door) - the
 number of walks that went so (J_Luber2014 ch. 6, sec. 6.5: place-dependent motion learned from
 tracks; G_Liao2003: transitions learned on a graph). Each step of a walk counts with a Gaussian kernel
@@ -39,8 +39,7 @@ from .world import CELL as FINE, OBSERVED
 
 CELL = 0.3  # m: side of a cell of the map
 SECTORS = 16  # directions
-SPEEDS = (0.3, 0.7, 1.1)  # m/s: lower edges of the speed classes (the last open)
-SPEED_MID = (0.5, 0.9, 1.35)  # m/s: their centres
+SPEED_MID = (0.5, 0.9, 1.35)  # m/s: centres of the speed classes (interpolated between, vel_interp)
 BW_POS = 0.3  # m: kernel (the investigation's kernel map)
 BW_VEL = 0.3  # m/s
 MIN_SPEED = 0.3  # m/s: slower walkers have no direction worth learning or asking
@@ -62,13 +61,6 @@ def _vel_cells():
 
 
 VEL = _vel_cells()  # (V, 2) centres of the velocity cells, speed class major
-
-
-def vel_cell(vx: float, vy: float) -> int:
-    s = math.hypot(vx, vy)
-    k = sum(1 for e in SPEEDS[1:] if s >= e)
-    sec = int(round(math.atan2(vy, vx) / (2 * math.pi / SECTORS))) % SECTORS
-    return k * SECTORS + sec
 
 
 def vel_interp(vx: float, vy: float):
@@ -110,7 +102,7 @@ class Geometry:
         # outcomes: the observed rooms, the regions, out of the house, stays
         self.names = self.rooms + list(w.regions) + ["outside", "stays"]
         self.C = len(self.names)
-        self.OUT, self.STAY = K + self.R, K + self.R + 1
+        self.STAY = K + self.R + 1
         room_of = tr.room_of
         # spaces: rooms joined by a divider
         parent = list(range(K))
@@ -119,7 +111,6 @@ class Geometry:
             while parent[a] != a:
                 a = parent[a]
             return a
-        index = {r: k for k, r in enumerate(self.rooms)}
         for (ax, ay), (bx, by), kind in wall_pieces(tr.config.walls):
             if kind != "divider":
                 continue
@@ -365,7 +356,6 @@ class Learner:
             self._advance(wk, loc, space, W, walk, wst, dt, t, geo, dmap)
 
     def _advance(self, wk, loc, space, W, walk, wst, dt, t, geo, dmap):
-        K = len(geo.rooms)
         if loc < 0:
             return
         if wk.space is None:  # beyond a door, or nowhere yet: a walk begins in the next space in view

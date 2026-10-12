@@ -102,9 +102,6 @@ def test_nobody_walks_along_unseen():
     assert present(samples, 15, a.waypoints[-1][0] - 1) == {1}
 
 
-import pytest  # noqa: E402
-
-
 def test_somebody_else_coming_in_is_counted():
     # one person is known to be out (in the stairwell), nobody else; they come in and sit, then
     # somebody nobody knew of walks in through the flat's door and stays (MODEL.md 3.4)

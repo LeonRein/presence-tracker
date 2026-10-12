@@ -1,8 +1,6 @@
 """The model must not depend on how time is cut into frames (MODEL.md 4.4): a heartbeat gap of 5 s
 weighs like the 56 empty frames it stands for."""
 
-import numpy as np
-
 from presence_tracker.filter import Tracker
 
 from test_filter import flat_config

@@ -49,7 +49,7 @@ class Tiling:
         keys, tile = np.unique(np.stack([bi, bj, room], axis=1), axis=0, return_inverse=True) if len(ii) else (np.zeros((0, 3), int), np.zeros(0, int))
         tile = tile.ravel()
         self.n = n = len(keys)
-        self.fine, self.fine_xy, self.fine_ij = tile, centers, (ii, jj)
+        self.fine, self.fine_xy = tile, centers
         cnt = np.bincount(tile, minlength=n).astype(float)
         self.area = cnt * CELL * CELL
         self.centers = np.stack([np.bincount(tile, centers[:, k], n) / cnt for k in range(2)], axis=1) if n else np.zeros((0, 2))

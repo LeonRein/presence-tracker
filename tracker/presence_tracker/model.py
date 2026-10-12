@@ -464,19 +464,6 @@ class Config:
             y += 0.4
         return n > 0 and seen / n >= 0.6
 
-    def closed_region_at(self, x: float, y: float) -> str | None:
-        """The closed unobserved region at this point: in one of its rooms or at its door."""
-        for z in self.closed_doors:
-            if z.contains(x, y):
-                return z.region
-        for rid, region in self.regions.items():
-            if not region["open"] and any(z.id in region["rooms"] and z.contains(x, y) for z in self.zones_of("room")):
-                return rid
-        return None
-
-    def door_of(self, region: str):
-        return next((z for z in self.closed_doors if z.region == region), None)
-
     def zones_of(self, kind: str) -> list:
         return [z for z in self.zones if z.kind == kind]
 
@@ -527,9 +514,6 @@ class Config:
             k = (0.01 if side >= 0 else -0.01) / math.sqrt(L2)
             cands.append((fx + nx * k, fy + ny * k))
         return not any(line_of_sight(o, c, segs) for c in cands)
-
-    def visible_sensors(self, x: float, y: float, margin: float = 0.0) -> list:
-        return [s for s in self.sensors if s.enabled and s.placed and s.sees(x, y, self.wall_segments, margin)]
 
     # --- persistence ---
 

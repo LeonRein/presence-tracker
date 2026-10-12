@@ -14,7 +14,7 @@ from test_frames import walk
 
 
 def walker(v=(0.8, 0.0)) -> Gauss:
-    m, sh = Model(), Shapes(Model())
+    sh = Shapes(Model())
     mean = np.zeros((2, 2, 2))
     mean[WALK, :, 1] = v
     cov = np.zeros((2, 2, 2, 2))

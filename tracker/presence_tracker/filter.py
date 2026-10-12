@@ -512,8 +512,7 @@ class Tracker:
             # the LD2410C sees where the LD2450 in the same housing could see at all (its own beam
             # aside, ld2410.expected): through no wall
             los = (grid > 0).astype(float)
-            if self.m.sight_spread:
-                grid, los = self._spread_sight(si, grid), self._spread_sight(si, los)
+            grid, los = self._spread_sight(si, grid), self._spread_sight(si, los)
             self._gcache[si] = grid
             self._gcache[("los", si)] = los
             self._area[si] = float((grid > 0.05).sum()) * CELL * CELL
@@ -1101,9 +1100,6 @@ class Tracker:
         likely than a person, MODEL.md 10.)"""
         lost = info["lost"]
         types = self._ghost_types()
-        if not self.m.ghost_end_exact or (lost is None and self.m.ghost_end_unheld):
-            u = t - (lost["t"] if lost else info.get("gt", info["born"]))
-            return np.array([math.log(max(-math.expm1(-max(u, FRAME) / life), 1e-300)) for _, life in types])
         if lost is None:
             return None
         u = t - lost["t"]
@@ -2130,7 +2126,7 @@ class Tracker:
             end = self._target_mass(*self._walk_ahead(obj, h), A)
             # who stops stays where they stopped: the time of stopping on the three nodes
             # (0, h/2, h), each taking the stops nearest to it
-            q1, q3, q4 = (math.exp(-mu * h * f) for f in (0.25, 0.75, 1.0))
+            q1, q3 = (math.exp(-mu * h * f) for f in (0.25, 0.75))
             at_half = (1.0 - q1) * now + q1 * half
             at_end = (1.0 - q1) * now + (q1 - q3) * half + q3 * end
             r = w * np.maximum(np.maximum(at_half, at_end) - now, 0.0)
@@ -2282,7 +2278,7 @@ class Tracker:
             if prob >= 0.01 and share:
                 key = max(share, key=lambda q: share[q][k])
                 if share[key][k] > 0:
-                    pw, room, space, f, nn, x, y, vx, vy = walkers[key]
+                    pw, room, space, f, _, x, y, vx, vy = walkers[key]
                     dist = geo.door_distance(space, k, x, y)
                     speed = math.hypot(vx, vy)
                     e.update({"from": self.rooms[room], "distance": dist,

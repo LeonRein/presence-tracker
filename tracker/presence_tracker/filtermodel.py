@@ -56,7 +56,6 @@ class Model:
     refind = {"coast": (0.13, 1.0, 0.03), "frozen": (0.2, 2.0, 0.02)}
     find_radius = 0.7  # m: the sensor finds its lost target only on somebody near where it holds it
     find_clutter = 0.05  # ... or on a reflection near the spot, as likely as on this many people there
-    sight_spread = True  # the sight of a person: of the spot their track sits on (Tracker._spread_sight)
     track_life = (60.0, 30.0)  # s [STILL, WALK]: how long a track lasts (measured median), for tracks there at the start
     res_range, res_cross = 0.6, 0.9  # m: two people this far apart are resolved half of the time (Svensson 2012)
     const_share = 0.57  # share of the offset's variance that is constant over a track (measured)
@@ -70,8 +69,6 @@ class Model:
     # Estimated by EM on 21 h of recordings without truth (6.10., tools/ghostmap.py): 1.8e-5 per m^2
     # and s over all setups, 40 % living 3 s on average, 60 % 39 s (setup of 4.10. 18:06, 10.8 h)
     ghost_types = ((0.4 * 1.8e-5, 3.0), (0.6 * 1.8e-5, 39.0))
-    ghost_end_exact = True  # a ghost's track ending: died or not found again (Tracker._ghost_end)
-    ghost_end_unheld = False  # ... ended without being held: as before, it died in that frame (comparison)
     # weight of that rate in each cell of a ghost map, in ghosts: the shape of the cells' Gamma prior
     # (J_Luber2014 eq. 6.13: 1). With 0.04 (4 h of watching, until 0.12.0) two tracks taken for ghosts
     # made a spot 10 times as likely a ghost source (MODEL.md 4.2, 10)
@@ -258,16 +255,3 @@ def gamma_log_grid(shape: float, k: int, tail: float = 1e-3) -> tuple:
     w = np.array([mass[b] - mass[a] for a, b in zip(idx[:-1], idx[1:])])
     vals = np.array([(first[b] - first[a]) / (mass[b] - mass[a]) for a, b in zip(idx[:-1], idx[1:])])
     return vals / float(w @ vals / w.sum()), w / w.sum()
-
-
-def gamma_levels(shape: float, k: int) -> tuple:
-    """Gamma(shape, rate shape) (mean 1) in k equally probable levels: (the mean of each level,
-    their weights)."""
-    x = np.exp(np.linspace(math.log(1e-8), math.log(60.0 / shape + 60.0), 200001))
-    pdf = np.exp((shape - 1) * np.log(x) - shape * x + shape * math.log(shape) - math.lgamma(shape))
-    dx = np.diff(x)
-    mass = np.concatenate([[0.0], np.cumsum(0.5 * (pdf[1:] + pdf[:-1]) * dx)])
-    first = np.concatenate([[0.0], np.cumsum(0.5 * (pdf[1:] * x[1:] + pdf[:-1] * x[:-1]) * dx)])
-    idx = np.concatenate([[0], np.searchsorted(mass / mass[-1], np.arange(1, k) / k), [len(x) - 1]])
-    vals = np.array([(first[b] - first[a]) / (mass[b] - mass[a]) for a, b in zip(idx[:-1], idx[1:])])
-    return vals / vals.mean(), np.full(k, 1.0 / k)

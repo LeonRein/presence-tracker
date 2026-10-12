@@ -191,22 +191,20 @@ def test_a_remounted_sensor_starts_its_part_of_the_ghost_map_over():
     assert set(tr.ghost_map.poses) == {"b", "c"} and set(tr.ghost_map.count) == {"b"}
 
 
-def test_a_ghost_map_of_0_27_is_converted_to_the_sensors_frames():
-    from presence_tracker.ghostmap import CELL, GhostMap
+def test_a_saved_ghost_map_reads_back_the_same():
+    from presence_tracker.ghostmap import GhostMap
     tr = Tracker(room_config())
-    s = tr.config.sensors[0]
-    nx, ny = 16, 14
-    count = np.zeros((nx, ny))
-    count[5, 6] = 12.0  # the cell (2.0-2.4, 2.4-2.8) of the house frame from (0, 0)
-    old = {"x0": 0.0, "y0": 0.0, "nx": nx, "ny": ny, "prior_rate": tr.ghost_map.prior_rate,
-           "prior_time": tr.ghost_map.prior_time, "time": {"a": 86400.0},
-           "poses": {"a": [s.x, s.y, s.heading, s.height, s.mirror, s.scale]}, "count": {"a": count.tolist()}}
-    gm = GhostMap.from_dict(json.loads(json.dumps(old)))
-    assert tr.use_ghost_map(gm) and gm.count["a"].sum() == pytest.approx(12.0)
-    centre = np.array([[2.0 + CELL / 2, 2.4 + CELL / 2]])
-    assert gm.rate("a", centre)[0] > 3 * gm.prior_rate  # as the map in the house frame: 3.5 times
+    gm = tr.ghost_map
+    gm.add_watch("a", 86400.0)
+    gm.add_birth("a", np.array([[2.2, 2.6]]), 12.0)
+    centre = np.array([[2.2, 2.6]])
+    assert gm.rate("a", centre)[0] > 3 * gm.prior_rate
     again = GhostMap.from_dict(json.loads(json.dumps(gm.to_dict())))
-    assert again.rate("a", centre)[0] == pytest.approx(gm.rate("a", centre)[0])
+    assert again.use(tr.config) == [] and again.rate("a", centre)[0] == pytest.approx(gm.rate("a", centre)[0])
+    # a map of 0.27 or earlier (counts in the house frame) is not read: the app starts a new one
+    with pytest.raises(KeyError):
+        GhostMap.from_dict({"x0": 0.0, "y0": 0.0, "nx": 1, "ny": 1, "prior_rate": gm.prior_rate,
+                            "prior_time": gm.prior_time, "time": {}, "poses": {}, "count": {}})
 
 
 def test_the_ld2410c_background_stays_with_a_recalibration_not_with_a_remount():

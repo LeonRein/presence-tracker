@@ -92,15 +92,6 @@ def test_a_person_in_a_walls_shadow_is_partly_seen():
     assert 0.1 < g[1] < 0.9  # just inside the shadow
     assert g[2] < 0.05  # far inside
     assert g[3] == 0.0  # on the balcony, behind the wall
-    off = Tracker(Config.from_dict(d), start=0.0, model=_without_spread())
-    assert off._g(off.sidx["a"], np.array([[3.15, 3.0]]))[0] == 0.0  # a point's sight: a sharp edge
-
-
-def _without_spread():
-    from presence_tracker.filtermodel import Model
-    m = Model()
-    m.sight_spread = False
-    return m
 
 
 def _nook_config():

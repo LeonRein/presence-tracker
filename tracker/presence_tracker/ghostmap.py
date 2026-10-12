@@ -168,41 +168,18 @@ class GhostMap:
         self._smooth.pop(sid, None)
 
     def to_dict(self) -> dict:
-        return {"frame": "sensor", "cell": CELL, "range": RANGE, "prior_rate": self.prior_rate,
+        return {"cell": CELL, "range": RANGE, "prior_rate": self.prior_rate,
                 "prior_time": self.prior_time, "time": dict(self.time), "poses": dict(self.poses),
                 "count": {k: v.round(4).tolist() for k, v in self.count.items()}}
 
     @classmethod
     def from_dict(cls, d: dict) -> "GhostMap":
-        if "frame" not in d:
-            return cls._from_house_frame(d)
         if not (math.isclose(d["cell"], CELL) and math.isclose(d["range"], RANGE)):
             raise ValueError("ghost map of another grid")
         g = cls(d["prior_rate"], d["prior_time"])
         g.time = dict(d["time"])
         g.poses = {k: tuple(v) for k, v in d["poses"].items()}
         g.count = {k: np.array(v) for k, v in d["count"].items()}
-        return g
-
-    @classmethod
-    def _from_house_frame(cls, d: dict) -> "GhostMap":
-        """One-time conversion of a map saved by 0.27 or earlier, its counts in the house frame (cells
-        of CELL from x0, y0): each cell's count goes to the cell of the sensor's frame its center lies
-        in, with the pose the map was learned with. Remove in the release after the one that brings it."""
-        g = cls(d["prior_rate"], d["prior_time"])
-        g.poses = {k: tuple(v) for k, v in d["poses"].items()}
-        g.time = {k: v for k, v in d["time"].items() if k in g.poses}
-        for sid, c in d["count"].items():
-            if sid not in g.poses:
-                continue
-            c = np.asarray(c, dtype=float)
-            i, j = np.nonzero(c)
-            pts = np.stack([d["x0"] + (i + 0.5) * CELL, d["y0"] + (j + 0.5) * CELL], axis=1)
-            li, lj = _local_cell(g.poses[sid], pts)
-            m = np.zeros((NX, NY))
-            np.add.at(m, (li, lj), c[i, j])
-            g.count[sid] = m
-        log.info("ghost map converted from the house frame to the sensors' frames (once)")
         return g
 
     def save(self, path):
