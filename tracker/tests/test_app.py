@@ -339,6 +339,30 @@ def test_a_broken_report_file_hides_only_itself(tmp_path):
     assert not list(app.reports.glob(".*"))  # no temporary file left
 
 
+def test_reports_sent_at_once_are_files_of_their_own(tmp_path):
+    """A double click: the second report is made while the first is written in its thread. Its name is
+    taken when it is chosen (O_EXCL), so neither overwrites the other."""
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    for k, sid in enumerate(("a", "b")):
+        frame = {"uptime_ms": 1000, "targets": [], "ld2410": {}}
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + k)
+    app.tick(1001.0)
+
+    class Request:
+        def __init__(self, body):
+            self.body = body
+
+        async def json(self):
+            return self.body
+
+    async def main():
+        return await asyncio.gather(*(app.h_report(Request({"kind": "other", "room": "wohn"})) for _ in range(3)))
+
+    names = [json.loads(r.text)["name"] for r in asyncio.run(main())]
+    assert len(set(names)) == 3 and len(list(app.reports.glob("*.jsonl.gz"))) == 3
+
+
 def test_a_refused_floor_plan_keeps_the_people(tmp_path, monkeypatch):
     """A new floor plan the model fails with after it built the new tiles: the old configuration holds,
     and so do the people - saved as they were before it (the old tiles), not from the half-built model.

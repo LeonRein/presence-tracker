@@ -8,6 +8,7 @@ import gzip
 import json
 import logging
 import math
+import os
 import pathlib
 import re
 import signal
@@ -810,12 +811,22 @@ class App:
         # the buffers the frames go on into; lines and gzip in a thread (15 min of frames: 0.2 s and
         # 0.6 s here, many times that on Home Assistant, MODEL.md 10)
         head = json.dumps(meta)
-        path = self.reports / f"{name}.jsonl.gz"
+        # one of the same second, room and kind: a file of its own. The name is taken now (an empty file,
+        # O_EXCL; the list skips it), not when the thread writes: a second report sent meanwhile (a double
+        # click) took the same name and overwrote the first until 0.28
         k = 1
-        while path.exists():  # one of the same second, room and kind: a file of its own
-            k += 1
-            path = self.reports / f"{name}-{k}.jsonl.gz"
-        n = await asyncio.to_thread(self._write_report, path, head, list(self.recent), list(self.shown))
+        while True:
+            path = self.reports / (f"{name}.jsonl.gz" if k == 1 else f"{name}-{k}.jsonl.gz")
+            try:
+                os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                break
+            except FileExistsError:
+                k += 1
+        try:
+            n = await asyncio.to_thread(self._write_report, path, head, list(self.recent), list(self.shown))
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
         log.info("error report %s: %d messages", path.name, n)
         return web.json_response({"name": path.name, "messages": n})
 

@@ -36,6 +36,8 @@
   nachdem es schon die neuen Kacheln gebaut hatte, galt zwar die alte weiter, aber die Personen wurden aus dem
   halb umgebauten Modell gespeichert: Das scheiterte oder schrieb den Fingerabdruck der neuen Kacheln, und das
   alte Modell wusste danach nichts über die Personen. Jetzt wird der Zustand von vor der Änderung gespeichert.
+- **Fehler: Zwei gleichzeitig gesendete Meldungen überschrieben einander** (ein Doppelklick). Der Name einer
+  Meldung wird jetzt beim Wählen belegt (`O_EXCL`), nicht erst, wenn der Thread sie schreibt.
 
 ## 0.28.0
 
