@@ -166,7 +166,7 @@ class Tracker:
         self.ghost_map = None  # where each sensor starts ghost tracks (ghostmap.py)
         # what each LD2410C sees without anybody (ld2410.py, learned online, MODEL.md 4.3)
         self.ld_background = ld2410.Background(ld2410.prior(self.m), self.m.ld_prior_time, self.m.ld_forget,
-                                               self.m.ld_echo_rate, self.m.ld_echo_prior_time)
+                                               self.m.ld_echo_rate, self.m.ld_echo_prior_time, self.m.ld_anchor_forget)
         self.ld_background.use(config)
         self.learn_ghosts = True  # learn the map online (MODEL.md 4.2); off for the offline EM tool
         self.dest_map = None  # where walks go (destination.py, learned online, MODEL.md 6 "Ziel")

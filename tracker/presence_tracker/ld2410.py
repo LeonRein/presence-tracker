@@ -27,7 +27,6 @@ CENTRE = np.concatenate([(np.arange(9) + 0.5) * GATE, (np.arange(2, 9) + 0.5) * 
 CAP = 99.5  # energies at 100 are capped: censored above this
 FLOOR = 0.05  # expected energy below this: the tile is out of the LD2410C's view
 LOG_CAP = 600.0  # likelihood ratios are capped at e^this (keeps the densities finite)
-MIN_WEIGHT = 1e-3  # s: below this the background's weights are scaled up, its level kept (Background.learn)
 
 
 def cell_values(m, kind_moving, kind_still) -> np.ndarray:
@@ -287,20 +286,23 @@ class Background:
     app: online EM of the superposition - the background's share of an energy is b / mu on average
     (Richardson 1972, Lucy 1974; Shepp & Vardi 1982), with mu from the people as the filter saw them
     before these frames (the energies' own judgement is not learned back, Park et al. 2020), and
-    only as far as no echo source holds the energy (learn). A prior of prior_time s of the measured
-    means; forgotten with forget s, the prior with the frames (a local level: what is forgotten is how
-    well the level is known, not the level; West & Harrison 1997 ch. 6, Harvey & Fernandes 1989). With
-    it the rate at which echo sources begin (learn_echoes). Per sensor it holds only while the sensor is
-    where it was (pose_of): moved, it starts over."""
+    only as far as no echo source holds the energy (learn). Forgotten with forget s towards an anchor
+    of prior_time s: the sensor's own long-run level (the same online EM, forgotten with anchor_forget
+    s, from the measured means of the prior with prior_time s) - a level that wanders around its
+    sensor's mean (a stationary AR(1) level, Harvey 1989; the anchor learned like an empirical Bayes
+    prior). With it the rate at which echo sources begin (learn_echoes). Per sensor it holds only
+    while the sensor is where it was (pose_of): moved, it starts over."""
 
     def __init__(self, prior: np.ndarray, prior_time: float, forget: float, echo_rate: float = 1 / 10800,
-                 echo_time: float = 10800.0):
+                 echo_time: float = 10800.0, anchor_forget: float = 86400.0):
         self.prior = np.asarray(prior, dtype=float)
         self.prior_time = prior_time
         self.forget = forget
+        self.anchor_forget = anchor_forget
         self.num = {}  # sensor id -> (16,) s x the background's share of the energy
         self.den = {}  # sensor id -> s watched
-        self.pw = {}  # sensor id -> what is left of the prior's weight (s), forgotten like den
+        self.num_a = {}  # sensor id -> as num, forgotten with anchor_forget: the sensor's own level ...
+        self.den_a = {}  # ... and its s watched
         self.echoes = {}  # sensor id -> expected number of echo sources begun (forgotten like den) ...
         self.quiet = {}  # sensor id -> ... in this many s with nobody in view
         self.poses = {}
@@ -318,8 +320,16 @@ class Background:
         n = self.num.get(sid)
         if n is None:
             return self.prior.copy()
-        pw = self.pw.get(sid, self.prior_time)
-        return (self.prior * pw + n) / (pw + self.den[sid])
+        return (self.anchor(sid) * self.prior_time + n) / (self.prior_time + self.den[sid])
+
+    def anchor(self, sid: str) -> np.ndarray:
+        """The level the background goes back to while nothing is learned: the sensor's own, learned
+        over days, from the measured prior. Until 0.27 the prior itself (5 in the still cells), where
+        the bedroom's sensor gives 9 without anybody and the kitchen's 2.5 (MODEL.md 10)."""
+        n = self.num_a.get(sid)
+        if n is None:
+            return self.prior.copy()
+        return (self.prior * self.prior_time + n) / (self.prior_time + self.den_a[sid])
 
     def rate(self, sid: str) -> float:
         """Echo sources begun per s at this sensor: the prior (Model) with what was counted."""
@@ -372,18 +382,15 @@ class Background:
             tail = np.exp(log_gammaq(alpha + 1.0, x) - log_gammaq(alpha, x))
             gained = gained + b * (w @ tail) * st.t_cens
         w_bg = off * (1.0 - st.t_target / st.time) if st.time > 0 else 0.0
-        # forgotten: the frames and the prior alike, so that what is not learned keeps its level
-        # (MODEL.md 4.3). Until 0.27 the prior kept its weight: in hours without learning (the
-        # LD2450 sees somebody all night) the level went back to the prior, the bedroom's 9 to 5, and
-        # the energies of the empty bedroom held an unknown person (MODEL.md 10, "Der Hintergrund
-        # vergisst sein Niveau nicht")
-        pw = self.pw.get(sid, self.prior_time) * k
-        num = self.num.get(sid, np.zeros(CELLS)) * k + w_bg * gained
-        den = self.den.get(sid, 0.0) * k + w_bg * st.time
-        if pw + den < MIN_WEIGHT:  # weeks without learning: the same level at a weight that stays a number
-            f = MIN_WEIGHT / (pw + den)
-            pw, num, den = pw * f, num * f, den * f
-        self.pw[sid], self.num[sid], self.den[sid] = pw, num, den
+        self.num[sid] = self.num.get(sid, np.zeros(CELLS)) * k + w_bg * gained
+        self.den[sid] = self.den.get(sid, 0.0) * k + w_bg * st.time
+        # the anchor: the same over days. Until 0.27 the global prior: in hours without learning (the
+        # LD2450 sees somebody all night) the bedroom's level went from 9 back to 5, and the energies
+        # of the empty bedroom held an unknown person (MODEL.md 10, "Der Hintergrund kehrt zu seinem
+        # eigenen Niveau zurück")
+        ka = math.exp(-st.time / self.anchor_forget)
+        self.num_a[sid] = self.num_a.get(sid, np.zeros(CELLS)) * ka + w_bg * gained
+        self.den_a[sid] = self.den_a.get(sid, 0.0) * ka + w_bg * st.time
 
     def use(self, config):
         """Keep what was learned for the sensors that are where they were; the others start over."""
@@ -392,7 +399,8 @@ class Background:
             if self.poses.get(s.id) != pose:
                 self.num.pop(s.id, None)
                 self.den.pop(s.id, None)
-                self.pw.pop(s.id, None)
+                self.num_a.pop(s.id, None)
+                self.den_a.pop(s.id, None)
                 self.echoes.pop(s.id, None)
                 self.quiet.pop(s.id, None)
                 self.poses[s.id] = pose
@@ -402,7 +410,8 @@ class Background:
         return {"poses": {k: list(v) for k, v in self.poses.items()},
                 "num": {k: [round(float(x), 4) for x in v] for k, v in self.num.items()},
                 "den": {k: round(float(v), 3) for k, v in self.den.items()},
-                "pw": {k: float(v) for k, v in self.pw.items()},
+                "num_a": {k: [round(float(x), 4) for x in v] for k, v in self.num_a.items()},
+                "den_a": {k: round(float(v), 3) for k, v in self.den_a.items()},
                 "echoes": {k: round(float(v), 4) for k, v in self.echoes.items()},
                 "quiet": {k: round(float(v), 3) for k, v in self.quiet.items()},
                 **({"held": held} if held else {})}
@@ -411,7 +420,10 @@ class Background:
         self.poses = {k: tuple(v) for k, v in d.get("poses", {}).items()}
         self.num = {k: np.array(v, dtype=float) for k, v in d.get("num", {}).items() if len(v) == CELLS}
         self.den = {k: float(v) for k, v in d.get("den", {}).items() if k in self.num}
-        self.pw = {k: float(v) for k, v in d.get("pw", {}).items() if k in self.num}
+        self.den_a = {k: float(v) for k, v in d.get("den_a", {}).items()}
+        self.num_a = {k: np.array(v, dtype=float) for k, v in d.get("num_a", {}).items()
+                      if len(v) == CELLS and k in self.den_a}
+        self.den_a = {k: v for k, v in self.den_a.items() if k in self.num_a}
         self.quiet = {k: float(v) for k, v in d.get("quiet", {}).items() if k in self.num}
         self.echoes = {k: float(v) for k, v in d.get("echoes", {}).items() if k in self.quiet}
         self.held = {k: float(v) for k, v in d.get("held", {}).items()}

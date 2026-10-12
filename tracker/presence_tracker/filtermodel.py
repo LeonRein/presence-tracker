@@ -122,6 +122,11 @@ class Model:
     # means, Harvey 1989) the optimal exponential forgetting has 0.7 h (moving and still alike, all seven
     # sensors 6.-9.10., 0.4-2.5 h per sensor; MODEL.md 4.3). Until 0.26 6 h (assumed)
     ld_forget = 0.7 * 3600.0  # s
+    # what the background goes back to while nothing is learned (a level wandering around its sensor's
+    # own mean, MODEL.md 4.3): the sensor's level over days. Empty nights 24 h apart differ by at most 7 %
+    # per sensor, between sensors by up to a factor 2 (MODEL.md 10 "Lernschleifen"); a day (assumed).
+    # Until 0.27 the prior ld_background itself
+    ld_anchor_forget = 24 * 3600.0  # s
     # the amplitude of a standing person with a track on the profile, per stay (Swerling III: slow, as
     # kappa: new at each stop, now and then within a stay, together with kappa): Gamma(shape, shape).
     # Measured 6./7.10. within a sensor: shape 5-16 (MODEL.md 4.3). The filter carries its posterior,
