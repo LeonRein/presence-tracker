@@ -1269,6 +1269,38 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   80 ms; die Zielkarte wird in der Loop kopiert und im Thread komprimiert). Was bleibt, sind der
   Personenzustand (4 ms, er wird aus dem Modell gebaut) und bis zu 5 ms, die ein rechnender Thread den
   GIL hält (`sys.getswitchinterval`).
+- **Rechenzeit: weniger Aufrufe, bitgleich (12./13.10., Qualitätsrunde nach 0.28.0)**. Profil der vollsten
+  Stunde der Aufnahmen (10.10. 12–13 Uhr, 154 398 Frames, cProfile): kein einzelner Brennpunkt, sondern
+  Pythons und numpys Aufwand je Objekt und Schritt – LD2410C-Bewertung 24 %, Bewegen der Gauß-Mischungen
+  (`_sync`) 25 %, `Hidden.move` 8 %, 50 Mio. numpy-Reduktionen auf winzigen Arrays. Neu in `kernels.py`:
+  Gewichten der Kacheldichten (`hidden_weigh`, auch für `_normalize`, `_expire` und nur an den Kacheln im
+  Blick des LD2410C, `hidden_weigh_at`), die Raten aller Sensoren an den Sigma-Punkten in einem Aufruf
+  (`gauss_rates`, die lebenden Spuren je Bewegung aller einmal gepackt), Sigma-Punkte mit Wänden
+  (`sigma_points`, `near_parts`), Sichtraster (`grid_at`), die Vorhersage einer Gauß-Mischung bis zu den
+  Gewichten (`gauss_predict`), die LD2410C-Likelihood zwischen numpys Logarithmen und Produkten
+  (`ld_gain_*`, was nur von den Frames abhängt einmal je Bewertung), ihre Profile je Komponente
+  (`ld2410.expected_rows`), Punkte und Verhältnisse (`ld_tile_masses`, `ld_tile_points`, `ld_ratio_parts`),
+  `Hidden.distance`. Dazu: was für alle Objekte eines Schritts gleich ist, einmal (die Faktoren für keine
+  neue Spur hoch MAX_STEP / dt je Bewegung statt je Gauß-Mischung, expm1 der Raten je Schritt, der Faktor
+  des Nicht-Wiederfindens); Polygone prüfen zuerst ihr Rechteck. Bitgleich heißt hier: dieselben
+  Rechenschritte in derselben Reihenfolge. Was numpy anders rechnet als eine Schleife, bleibt numpy: `exp`,
+  `log` und Potenzen (SIMD, weichen vom skalaren libm bei bis zu 5 % der Werte im letzten Bit ab), die
+  BLAS-Produkte (deren Bits hängen von Form und Lage der Zeile im Array ab, nicht von der Adresse:
+  geprüft), Summen als numpys paarweise Summation (`_pairwise`, als Schleife: Numbas Cache lädt rekursive
+  Funktionen nicht – ein gecachter rekursiver Kernel stürzte beim zweiten Start ab). Jeder Kernel hat einen
+  Test gegen den numpy-Code von 0.28.0 (`tests/test_kernels.py`, bitweise). Geprüft mit einer Spur je
+  Schritt (Hypothesengewichte und Zählverteilungen mit allen Stellen): 10.10. 12–13 Uhr zeichengleich mit
+  0.28.0; über alle Aufnahmen (ein Lauf ohne Abschnitte, 6.–10.10., 5,27 Mio. Frames, 4651 s CPU) die
+  Ausgabe zeichengleich mit `fast/ckpt/base_0280/continuous.jsonl`. CPU (dieselbe Stunde, ein Kern, je dreimal, Median): 0.28.0
+  386,3 s, nach den fünf Commits 352,7 → 309,9 → 291,9 → 267,5 → 263,1 s (−32 %, 1,47-mal so schnell).
+  Was bleibt (Profil danach): die Matrix des Gehens in `Hidden.move` (687 × 687, dicht, 11 %: als dünne Matrix in
+  einer Schleife langsamer als BLAS, 46 statt 35 µs), die LD2410C-Bewertung 24 % (Python über Hypothesen
+  und Personen, die BLAS-Produkte), Gewichten der Dichten (gerechnet, nicht Aufruf). Nicht gemacht, weil
+  nur bis auf Rundung gleich: alle Dichten eines Schritts als ein Matrixprodukt (anders gerundet als
+  einzeln; startet in OpenBLAS Threads, s. o.), die LD2410C-Likelihood ganz kompiliert (skalares log/exp
+  und eigene Summen statt BLAS). Beides zusammen schätzungsweise weitere 10–15 %; Rundungsunterschiede
+  schaukeln sich im chaotischen Filter zu Minuten Licht auf (die Rauschgrenze von `fast_eval`: 6,3 min in
+  87 h).
 - **Weniger Schichten je Kachel** (7.10., 11 h aus 3.1): 5 statt 7 Arten des Aufenthalts und 3 statt
   5 Stufen κ, also 15 statt 35 Schichten von `steht`: Evidenz −1 (bei 24 Hypothesen ab 10⁻⁹ −3,
   ab 10⁻⁷ +56), Lichtfehler gleich, Rechenzeit 3,0 statt 3,3 % (21 Uhr). Mehr spart das nicht,

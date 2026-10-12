@@ -2,6 +2,14 @@
 
 ## Unveröffentlicht
 
+- **Rechenzeit −32 %, Ergebnisse bitgleich** (MODEL.md 10 „Rechenzeit: weniger Aufrufe, bitgleich“). Die Zeit
+  ging nicht an eine Stelle, sondern an Pythons und numpys Aufwand je Objekt und Schritt. Mehr kompilierte
+  Kernel (Gewichten der Kacheldichten, Raten an den Sigma-Punkten, Sigma-Punkte an Wänden, Vorhersage der
+  Gauß-Mischungen, LD2410C-Likelihood, -Profile und -Punkte), und was für alle Objekte eines Schritts gleich
+  ist, wird einmal gerechnet. numpys exp/log und die BLAS-Produkte bleiben, so sind die Zahlen dieselben:
+  vollste Stunde (10.10. 12–13 Uhr, ein Kern, Median aus drei) 386 → 263 s, jeder Schritt der Hypothesen
+  zeichengleich; über alle Aufnahmen die Ausgabe zeichengleich mit 0.28.0.
+
 ## 0.28.0
 
 - **Der LD2410C-Hintergrund kehrt zu seinem eigenen Niveau zurück, nicht zum Prior** (MODEL.md 4.3 „Anker“,
