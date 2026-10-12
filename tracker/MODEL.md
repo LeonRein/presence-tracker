@@ -449,6 +449,15 @@ Das Modell, je Sensor:
   neue Kalibrierung (Richtung, Maßstab, Spiegelung, berichtigte Zeichnung) ändert an ihm nichts, er bleibt;
   neu nur für einen anders montierten Sensor (4.2, `model.remounted`; bis 0.27 bei jeder Änderung der Lage).
   Gespeichert mit der Geisterkarte.
+  **Anker (seit 0.28):** Vergessen wird nicht mehr zum Prior hin (ruhig 5), sondern zum eigenen Niveau des
+  Sensors: derselbe Online-EM, mit 1 Tag vergessen und nur aus Frames nach 10 min, in denen der LD2450 des
+  Gehäuses nichts sah (ein leerer Raum: Stunden; Sitzende und Schlafende lassen Lücken von Sekunden bis
+  Minuten). Ein lokales Niveau, das um das Mittel seines Sensors wandert (stationäres AR(1)-Niveau, Harvey
+  1989; der Anker wie ein empirischer Bayes-Prior). Bis 0.27 zog der Prior mit seinem festen Gewicht in
+  Stunden ohne Lernen (der LD2450 sieht nachts jemanden) den Schlafzimmer-Hintergrund von leer 9 auf 5 zurück;
+  den Überschuss im leeren Raum erklärten dann unbekannte Personen, deren Intensität ohne Messung wuchs, bis
+  das Licht anging (9.10. 08:25, 16:58–17:53; 10.10. 12:18–14:35; 10 „Licht im leeren Schlafzimmer“). Der
+  Anker eines Sensors beginnt nach einem Update leer (der Prior) und lernt sich über Stunden ein.
 - **Zeit:** Die Frames werden je Sekunde gesammelt (Gamma: die Summen von Δt, Δt·e, Δt·ln e und Δt der
   gekappten genügen), jeder mit Δt / τ, τ 4 s bewegt / 13 s ruhig (zusammengesetzte Likelihood mit der
   Korrelationszeit als effektiver Stichprobengröße; Varin, Reid & Firth 2011). Ein Frame steht für

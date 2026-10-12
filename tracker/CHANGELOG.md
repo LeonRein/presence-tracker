@@ -2,6 +2,20 @@
 
 ## Unveröffentlicht
 
+## 0.28.0
+
+- **Der LD2410C-Hintergrund kehrt zu seinem eigenen Niveau zurück, nicht zum Prior** (MODEL.md 4.3 „Anker“,
+  10 „Licht im leeren Schlafzimmer“). Bis 0.27 zog der feste Prior (ruhig 5, Gewicht 10 min) den gelernten
+  Hintergrund in Stunden ohne Lernen nach unten, im Schlafzimmer von leer 9 auf 5–7; den Überschuss im leeren
+  Raum erklärten unbekannte Personen, deren Intensität ohne Messung wuchs, und ohne die Regel „eigener LD2450 in
+  10 s“ (live seit 11.10. aus) ging das Licht im leeren Schlafzimmer an: 9.10. 08:25 und 16:58–17:53, 10.10.
+  12:18–14:35. Jetzt vergisst der Hintergrund zu einem Anker je Sensor, demselben Online-EM über einen Tag, nur
+  aus Frames nach 10 min ohne Ziel des LD2450 im Gehäuse. Nachgespielt über alle Aufnahmen (6.–10.10., mit
+  Lernpausen für Saugroboter und Geräte, ohne die LD2450-Regel): Wahrheit 0,48 / 3,28 = 3,77 min wie 0.27.0,
+  leere Nacht und leeres Haus 0; über die ganze Aufnahme (Indizien aus Telefonen und Sensoren,
+  `tools/proxy_seated.py`) 546 min weniger Licht im leeren Schlafzimmer, 2,3 min mehr dunkel mit
+  wahrscheinlich Person, 26 min unklar (Schlafzimmer 10.10. 09:40); Rechenzeit +0,5 %. Nach dem Update
+  beginnt der Anker leer und lernt sich über Stunden ein.
 - **Gelerntes bleibt bei neuer Kalibrierung** (MODEL.md 4.2, 4.3, 10 „Gelerntes bleibt bei neuer Kalibrierung“).
   Bis 0.27 begann die Geisterkarte aller Sensoren neu, sobald sich die Lage eines Sensors um mehr als 5 cm, 2°
   oder 2 % Maßstab änderte, und der LD2410C-Hintergrund des Sensors bei jeder Änderung; am 8.10. um 10:07 warf
