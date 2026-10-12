@@ -330,3 +330,74 @@ def test_the_near_sigma_kernel_is_the_numpy_bit_for_bit():
         k, pts = g.near_sigma(z, radius, world)
         k_ref, pts_ref = _near_sigma_numpy(g, z, radius, world)
         assert np.array_equal(k, k_ref) and np.array_equal(pts, pts_ref)
+
+
+def test_the_ld2410_profile_rows_are_expected_bit_for_bit():
+    rng = np.random.default_rng(12)
+    m = Model()
+    for _ in range(200):
+        k = int(rng.integers(1, 6))
+        angle = rng.uniform(0, 90, k)
+        slant = rng.uniform(0.0, 8.0, k)
+        sight = rng.uniform(0, 1, k) * (rng.random(k) < 0.8)
+        modes = tuple(int(x) for x in rng.integers(0, 2, k))
+        rows = ld2410.expected_rows(m, angle, slant, sight, modes)
+        ref = ld2410.expected(m, angle, slant, sight)
+        for j, mode in enumerate(modes):
+            assert np.array_equal(rows[j], ref[mode][j])
+
+
+def test_the_ld2410_ratio_parts_are_the_numpy_bit_for_bit():
+    rng = np.random.default_rng(13)
+    lik = ld2410.Likelihood(Model())
+    for _ in range(100):
+        st = ld2410.Stats()
+        for _ in range(rng.integers(1, 20)):
+            st.add(rng.integers(0, 101, ld2410.CELLS).astype(float), float(rng.uniform(0.05, 1.0)))
+        mu0 = np.exp(rng.uniform(0, 3, ld2410.CELLS))
+        S = np.exp(rng.uniform(-3, 6, (int(rng.integers(1, 40)), ld2410.CELLS))) * (rng.random() < 0.9)
+        m = rng.uniform(0, 1, len(S)) / len(S)
+        lr, top, msum = kernels.ld_ratio_parts(st.log_ratio(mu0[None, :] + S, mu0, lik), m, ld2410.LOG_CAP)
+        both = _mu_part_numpy(st, np.vstack([mu0[None, :] + S, mu0[None, :]]), lik)
+        ref = np.minimum(both[:-1] - both[-1], ld2410.LOG_CAP)
+        assert np.array_equal(lr, ref) and top == max(float(ref.max()), 0.0) and msum == float(m.sum())
+
+
+def test_the_tile_mass_and_distance_kernels_are_the_numpy_bit_for_bit():
+    rng = np.random.default_rng(14)
+    for _ in range(50):
+        n = int(rng.integers(1, 800))
+        walk, still = rng.uniform(0, 1, n) * 1e-3, rng.uniform(0, 1, (5, 3, n)) * 1e-4
+        idx = np.sort(rng.choice(n, int(rng.integers(0, n + 1)), replace=False)).astype(np.int64)
+        share = float(rng.uniform(0, 1))
+        assert np.array_equal(kernels.ld_tile_masses(walk, still, idx, share),
+                              share * np.concatenate([walk[idx], still.sum(axis=(0, 1))[idx]]))
+        walk2, still2 = rng.uniform(0, 1, n) * 1e-3, rng.uniform(0, 1, (5, 3, n)) * 1e-4
+        region, region2 = rng.uniform(0, 1, (2, 18)), rng.uniform(0, 1, (2, 18))
+        a, b, out, out2 = (float(x) for x in rng.uniform(0, 1, 4))
+        ref = float(np.abs(a * walk - b * walk2).sum() + np.abs(a * still - b * still2).sum()
+                    + np.abs(a * region - b * region2).sum() + abs(a * out - b * out2))
+        assert kernels.hidden_distance(a, walk, still, region, out, b, walk2, still2, region2, out2) == ref
+
+
+def test_the_weights_of_a_mixture_are_the_numpy_bit_for_bit():
+    rng = np.random.default_rng(15)
+    sh = Shapes(Model())
+    for trial in range(300):
+        g = _random_gauss(rng, sh, 0)
+        g.logw = rng.normal(0, 30, 2)
+        if trial % 10 == 0:
+            g.logw[rng.integers(0, 2)] = -np.inf
+        if trial % 50 == 0:
+            g.logw[:] = -np.inf
+        top = g.logw.max()
+        ref = np.array([0.5, 0.5]) if top == -np.inf else np.exp(g.logw - top) / np.exp(g.logw - top).sum()
+        assert np.array_equal(g.weights(), ref)
+        dlog = rng.normal(0, 5, 2)
+        lw = g.logw + dlog
+        top = lw.max()
+        comps = top + math.log(float(np.exp(lw - top).sum())) if top > -math.inf else -math.inf
+        h = g.copy()
+        assert h.reweigh(dlog) == (comps if comps > -math.inf else -math.inf)
+        if comps > -math.inf:
+            assert np.array_equal(h.logw, lw - comps)

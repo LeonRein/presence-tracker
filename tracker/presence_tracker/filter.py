@@ -189,6 +189,7 @@ class Tracker:
         self.tracks = {sid: SensorTracks(sid, self._ids) for sid in self.sensors}
         self._gcache = {}
         self._rates_ctx = None  # while everybody moves (_flush): the sensors' live tracks, packed (_sync_rates)
+        self._lat_pow = (None, None, None)  # _sync: the factors of no track started for a part of a move
         self._area = {}
         self._ghost_total = {}
         rooms = self.config.observed_rooms()
@@ -351,10 +352,8 @@ class Tracker:
             if self._expiry is None or self._expiry[0] != key:  # the same for everybody in a step
                 self._expiry = (key, np.exp(-dt / m.unseen_life * (1.0 - tl.observed(live))))
             f = self._expiry[1]
-            before = float(obj.walk.sum() + obj.still.sum())
-            obj.walk *= f
-            obj.still *= f
-            lost += before - float(obj.walk.sum() + obj.still.sum())
+            d, _ = kernels.hidden_weigh(obj.walk, obj.still, obj.region, 0.0, f, f[None, :], True)
+            lost += -d  # the mass before less after
         if lost > 0:
             obj.r *= 1.0 - lost
             obj._normalize()
@@ -750,11 +749,11 @@ class Tracker:
                     d = obj.weigh(*lat_f) if lat_f is not None else 0.0
                     for h in refs:
                         self.hyps[h].logw += d
+        lat_f = None if lat_f is None else tuple(f ** (MAX_STEP * parts / (t - t0)) for f in lat_f)
         for obj, refs in objs:
             if isinstance(obj, Hidden):
                 continue
-            self._sync(obj, refs, t, None if lat_f is None else
-                       tuple(f ** (MAX_STEP * parts / (t - t0)) for f in lat_f))
+            self._sync(obj, refs, t, lat_f)
 
     def _watching(self, t: float, dt: float) -> tuple:
         """The sensors watching at t, and the factors (walkers, still people per level of
@@ -791,7 +790,9 @@ class Tracker:
             da = 0.0
             if obj.away is not None and lat_f is not None:
                 share = dt / MAX_STEP  # lat_f holds for MAX_STEP; dt is at most that long
-                da = obj.away.weigh(lat_f[0] ** share, lat_f[1] ** share)
+                if self._lat_pow[0] is not lat_f or self._lat_pow[1] != share:  # the same for all in a move
+                    self._lat_pow = (lat_f, share, (lat_f[0] ** share, lat_f[1] ** share))
+                da = obj.away.weigh(*self._lat_pow[2])
             # E[exp(-rate(x) dt)] over each component, per level of detectability
             d = obj.reweigh(obj.kappa_weigh(self._expect(np.exp(-np.outer(kappa, r[STILL]) * dt)),
                                             float(self._expect(np.exp(-r[WALK] * dt)))), da)
@@ -1030,12 +1031,12 @@ class Tracker:
         lr = math.log(max(ratio, 1e-300))
         if lr < 0:
             kl = self._kk_tiles(si, lost["z"]) if self.tiles.n else None
+            f = np.exp(kl * lr) if kl is not None else np.zeros(0)  # the same factor for every density
             for obj, refs in self._objects():
                 if isinstance(obj, Hidden):
-                    f = np.exp(kl * lr) if kl is not None else np.zeros(0)
                     dl = obj.weigh(f, f)
                 else:
-                    da = obj.away.weigh(np.exp(kl * lr), np.exp(kl * lr)) if obj.away is not None and kl is not None else 0.0
+                    da = obj.away.weigh(f, f) if obj.away is not None and kl is not None else 0.0
                     dl = obj.reweigh(self._kk_gauss(si, obj, lost["z"]) * lr, da)
                 for h in refs:
                     self.hyps[h].logw += dl
@@ -1621,7 +1622,10 @@ class Tracker:
             if not len(idx):
                 return np.zeros(0), np.zeros((0, ld2410.CELLS))
             if not h.measured:  # g = 1 everywhere
-                return share * np.concatenate([h.walk[idx], h.still.sum(axis=(0, 1))[idx]]), np.concatenate([sw, ss])
+                both = self._gcache.get(("ld2410 both", si))
+                if both is None:
+                    both = self._gcache[("ld2410 both", si)] = np.concatenate([sw, ss])
+                return kernels.ld_tile_masses(h.walk, h.still, idx, float(share)), both
             still, ms, big = self._ld_split(si, h, share)
             amp = self.shapes.tile_amp
             small = ~big
@@ -1634,7 +1638,9 @@ class Tracker:
             return tiles(obj, obj.r)
         w = obj.weights()
         angle, slant, sight = self._ld_geometry(si, obj.pos)
-        s_still, s_walk = ld2410.expected(self.m, angle, slant, sight)
+        # ld2410.expected, the standing profile at the standing component, the walking one at the walking
+        rows = ld2410.expected_rows(self.m, angle, slant, sight, (STILL, WALK))
+        s_still, s_walk = {STILL: rows[STILL]}, {WALK: rows[WALK]}
         # the standing component per level of its amplitude (4.3), then the walking one
         sh = self.shapes
         aw = obj.amw
@@ -1660,12 +1666,13 @@ class Tracker:
         the unknown ones log((1 + int lambda L) / (1 + Lambda)): at most one of them in view (the
         Poisson process truncated after one; afterwards moment-matched again)."""
         m, S = pts
-        lr = np.minimum(st.log_ratio(mu0[None, :] + S, mu0, lik), ld2410.LOG_CAP)
-        top = max(float(lr.max()), 0.0)
+        # the ratios capped, their top and the sum of m in a compiled loop: the same numbers
+        lr, top, msum = kernels.ld_ratio_parts(st.log_ratio(mu0[None, :] + S, mu0, lik),
+                                               np.ascontiguousarray(m, dtype=float), ld2410.LOG_CAP)
         inside = float(m @ np.exp(lr - top))
         if isinstance(obj, Undetected):
-            return lr, top + math.log(math.exp(-top) + inside) - math.log1p(float(m.sum()))
-        rest = max(1.0 - float(m.sum()), 0.0)
+            return lr, top + math.log(math.exp(-top) + inside) - math.log1p(msum)
+        rest = max(1.0 - msum, 0.0)
         total = rest * math.exp(-top) + inside
         if total > 0:
             return lr, top + math.log(total)

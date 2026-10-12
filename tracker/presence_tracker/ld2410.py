@@ -59,6 +59,25 @@ def expected(m, angle, slant, sight) -> tuple:
     return out[0], out[1]
 
 
+def expected_rows(m, angle, slant, sight, modes) -> np.ndarray:
+    """expected's row of mode modes[j] for each point j (k, 16): the same numbers (the arithmetic in
+    compiled loops, numpy's exponentials and powers as before), for a person's components, each
+    with its own mode."""
+    angle = np.asarray(angle, dtype=float).reshape(-1)
+    slant = np.asarray(slant, dtype=float).reshape(-1)
+    sight = np.asarray(sight, dtype=float).reshape(-1)
+    pm = np.array([m.ld_moving[mode] for mode in modes], dtype=float)
+    ps = np.array([m.ld_still[mode] for mode in modes], dtype=float)
+    full, none = m.ld_beam
+    v, r, D, args = kernels.ld_profile_args(angle, slant, sight, pm, ps, CENTRE, 9, float(full), float(none))
+    pw = np.empty((len(r), 2))
+    for j in range(len(r)):  # r^-n as _profile takes it (numpy's power of an array by a number)
+        rj = r[j:j + 1, None]
+        pw[j, 0] = (rj ** (-m.ld_moving[modes[j]][1]))[0, 0]
+        pw[j, 1] = (rj ** (-m.ld_still[modes[j]][1]))[0, 0]
+    return kernels.ld_profile_rows(v, D, np.exp(args), pw, pm, ps, 9)
+
+
 def log_gammaq(a, x) -> np.ndarray:
     """log of the regularized upper incomplete gamma function Q(a, x), x >= 0, a and x broadcast
     (Numerical Recipes 6.2: the series for x < a + 1, the continued fraction (Lentz) above)."""
@@ -225,7 +244,7 @@ class Stats:
 
     def log_ratio(self, mu1: np.ndarray, mu0: np.ndarray, lik: "Likelihood") -> np.ndarray:
         """Tempered log-likelihood ratio of the means mu1 (k, 16) against mu0 (16,), (k,)."""
-        both = self._mu_part(np.vstack([mu1, mu0[None, :]]), lik)
+        both = self._mu_part(kernels.ld_stack(np.ascontiguousarray(mu1, dtype=float), mu0), lik)
         return both[:-1] - both[-1]
 
 

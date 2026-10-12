@@ -577,6 +577,24 @@ def amp_mass(still, amp, idx):
 
 
 @njit(cache=True)
+def ld_tile_masses(walk, still, idx, share):
+    """filter.Tracker._ld_points for a density nothing measured: share x [the walkers in the tiles idx,
+    the still mass there (summed over the kinds of stay and the detectability in numpy's order)]."""
+    L, K, n = still.shape
+    m = len(idx)
+    out = np.empty(2 * m)
+    for j in range(m):
+        c = idx[j]
+        out[j] = share * walk[c]
+        t = 0.0
+        for l in range(L):
+            for k in range(K):
+                t += still[l, k, c]
+        out[m + j] = share * t
+    return out
+
+
+@njit(cache=True)
 def hidden_regions(region, walk, out, ends_p, door_ptr, door_tiles, exits, entries, arrive_p, older_p):
     """hidden.Hidden._regions, in place on region (R, A) and walk; returns out. ends_p (R, A):
     probability that a stay ends in the step; who comes out leaves through one of the region's doors
@@ -656,6 +674,95 @@ def ld_censored(mu, lm, cols, rows, tables, grid):
                     v = (fp[j + 1] - fp[j]) / (grid[j + 1] - grid[j]) * (x - grid[j]) + fp[j]
             out[r, c] = v
     return out
+
+
+@njit(cache=True)
+def ld_profile_args(angle, slant, sight, pm, ps, centre, n_moving, full, none):
+    """ld2410.expected for one mode per row (pm, ps (k, 6): its moving and still profile, ld2410._profile):
+    the beam v (k,), the slant r (at least 0.3 m, k), D = centre - r - delta (k, C) and the arguments of
+    the profile's two exponentials (k, 2, C) - numpy takes them. The same arithmetic as the numpy it
+    replaces."""
+    k = len(angle)
+    C = len(centre)
+    v = np.empty(k)
+    r = np.empty(k)
+    D = np.empty((k, C))
+    args = np.empty((k, 2, C))
+    for j in range(k):
+        x = (none - angle[j]) / (none - full)
+        if x < 0.0:
+            x = 0.0
+        elif x > 1.0:
+            x = 1.0
+        v[j] = x * sight[j]
+        rj = slant[j] if not slant[j] < 0.3 else 0.3
+        r[j] = rj
+        for c in range(C):
+            p = pm[j] if c < n_moving else ps[j]
+            d = centre[c] - rj - p[2]
+            D[j, c] = d
+            t = d / p[3]
+            args[j, 0, c] = -0.5 * (t * t)
+            args[j, 1, c] = -(d if not d < 0.0 else 0.0) / p[5]
+    return v, r, D, args
+
+
+@njit(cache=True)
+def ld_profile_rows(v, D, E, pw, pm, ps, n_moving):
+    """ld2410.expected's rows from ld_profile_args and numpy's exponentials E (k, 2, C) and powers
+    r^-n (k, 2: moving, still): v x A r^-n x (the Gaussian main lobe, and beyond the centre the tail mixed
+    in)."""
+    k, C = D.shape
+    out = np.empty((k, C))
+    for j in range(k):
+        for c in range(C):
+            moving = c < n_moving
+            p = pm[j] if moving else ps[j]
+            main = E[j, 0, c]
+            if D[j, c] <= 0:
+                kk = main
+            else:
+                kk = (1 - p[4]) * main + p[4] * E[j, 1, c]
+            out[j, c] = v[j] * (p[0] * pw[j, 0 if moving else 1] * kk)
+    return out
+
+
+@njit(cache=True)
+def ld_stack(mu1, mu0):
+    """ld2410.Stats.log_ratio's means: the rows of mu1 (k, 16), then mu0 (k + 1, 16)."""
+    k, C = mu1.shape
+    out = np.empty((k + 1, C))
+    for i in range(k):
+        for c in range(C):
+            out[i, c] = mu1[i, c]
+    for c in range(C):
+        out[k, c] = mu0[c]
+    return out
+
+
+@njit(cache=True)
+def ld_ratio_parts(ratios, m, cap):
+    """filter.Tracker._ld_ratio: the log likelihood ratios capped, min(ratios, cap) (numpy's minimum:
+    NaN wins), their top max(max, 0) (as Python's max of the two) and the sum of the masses m
+    (numpy's). Results equal bit for bit."""
+    k = len(ratios)
+    lr = np.empty(k)
+    top = -np.inf
+    nan = False
+    for i in range(k):
+        x = ratios[i]
+        if not x <= cap and x == x:
+            x = cap
+        lr[i] = x
+        if x != x:
+            nan = True
+        elif x > top:
+            top = x
+    if nan:
+        top = np.nan
+    elif top < 0.0:
+        top = 0.0
+    return lr, top, _pairwise(m)
 
 
 @njit(cache=True)
@@ -811,6 +918,25 @@ def _npsum(a):
 
 
 @njit(cache=True)
+def _abs_diff_sum(a, x, b, y):
+    """numpy's np.abs(a * x - b * y).sum() of two contiguous arrays of one shape."""
+    fx = x.reshape(x.size)
+    fy = y.reshape(y.size)
+    d = np.empty(fx.size)
+    for i in range(fx.size):
+        d[i] = abs(a * fx[i] - b * fy[i])
+    return _pairwise(d)
+
+
+@njit(cache=True)
+def hidden_distance(a, walk, still, region, out, b, walk2, still2, region2, out2):
+    """hidden.Hidden.distance: the L1 distance between a x one density and b x another, summed in the
+    same order as the numpy it replaces (results equal bit for bit)."""
+    return (_abs_diff_sum(a, walk, b, walk2) + _abs_diff_sum(a, still, b, still2) + _abs_diff_sum(a, region, b, region2)
+            + abs(a * out - b * out2))
+
+
+@njit(cache=True)
 def hidden_weigh(walk, still, region, out, f_walk, f_still, intensity):
     """hidden.Hidden.weigh / Undetected.weigh in place: walk *= f_walk (n,), still (L, K, n) *= f_still
     (K, n) or (1, n) for every kind of stay. A person (intensity False): normalized, returns (log of
@@ -865,16 +991,22 @@ def warm():
     sensor_rates(f((1, 2)), f((2, 0)), 0.0, 0.0, f((2, 2)), 0.0, 0.0, 0.1, f(4), 1e-6, 1.0, f((1, 3)), np.ones(2), 0.7)
     hidden_stays(f(3), f((2, 2, 3)), f((2, 3)), 0.1, f(2), 0.1, f(2), f(2), True)
     amp_mass(f((2, 2, 3)), f((2, 2, 3)), i(1))
+    ld_tile_masses(f(3), f((2, 2, 3)), i(1), 1.0)
     hidden_regions(f((1, 3)), f(3), 0.0, f((1, 3)), i(2), i(0), i(1), i(0), 0.1, f(2))
     ld_censored(np.ones((1, 16)), f((1, 16)), i(1), i(1), f((1, 5)), np.arange(5.0))
     gauss_exponents(f((1, 2)), 0.0, 0.0, 1.0, 1.0)
     hidden_weigh(f(3), f((2, 2, 3)), f((1, 3)), 0.0, f(3), f((2, 3)), False)
+    hidden_distance(1.0, f(3), f((2, 2, 3)), f((1, 3)), 0.0, 1.0, f(3), f((2, 2, 3)), f((1, 3)), 0.0)
     sigma_points(f((2, 2)), f((2, 2)), f((2, 2)), f((5, 2)), 1.7, f((2, 2)), 0.0, 0.0, 0.1, walls, walls)
     grid_at(f((2, 2)), f((1, 2)), 0.0, 0.0, 0.1)
     near_weight(*near_parts(f((2, 2)), np.ones((2, 2)), 0.0, 0.0, 0.5, f((5, 2)), 1.7, f((2, 2)), 0.0, 0.0, 0.1, walls,
                             walls)[:2])
     ld_gain_total(f(3), *ld_gain_terms(ld_gain_sums(f((2, 3)), f((2, 2))), f(4), f(4))[:1], f((2, 3)))
     ld_gain_pairs(f((4, 3)))
+    ld_ratio_parts(f(3), f(2), 600.0)
+    ld_stack(f((2, 16)), f(16))
+    v, r, D, args = ld_profile_args(f(2), f(2), f(2), np.ones((2, 6)), np.ones((2, 6)), f(16), 9, 50.0, 70.0)
+    ld_profile_rows(v, D, args, f((2, 2)), f((2, 6)), f((2, 6)), 9)
     gauss_rates(f((2, 5, 2)), np.ones(1, dtype=np.bool_), f((1, 2)), f((1, 2, 2)), f((1, 3)), i(2), 0.0, 0.0, 0.1, f(4),
                 1e-6, 1.0, np.ones(2), 0.7)
 

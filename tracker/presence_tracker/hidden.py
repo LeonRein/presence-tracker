@@ -60,6 +60,14 @@ _NO_KEEP = np.ones((1, 1))  # hidden_stays without a measured amplitude (not use
 MEASURED_CUT = 1e-6  # a share of measured amplitude below this everywhere: nothing measured (Hidden.amp)
 
 
+def _ones(tiles) -> tuple:
+    """Factors 1 for weigh: (n,) and (1, n)."""
+    hit = getattr(tiles, "_ones", None)
+    if hit is None or len(hit[0]) != tiles.n:
+        hit = tiles._ones = (np.ones(tiles.n), np.ones((1, tiles.n)))
+    return hit
+
+
 def _factors(f_walk, f_still) -> tuple:
     """The factors of weigh as kernels.hidden_weigh takes them: (n,) and (K, n) or (1, n), contiguous."""
     f_still = np.asarray(f_still, dtype=float)
@@ -271,11 +279,9 @@ class Hidden:
         return float(self.walk.sum() + self.still.sum() + self.region.sum() + self.out)
 
     def _normalize(self) -> float:
-        tot = self.total()
-        if tot <= 0:
-            return -math.inf
-        self.scale(1.0 / tot)
-        return math.log(tot)
+        """Scale the masses to sum 1; the log of what they summed to (kernels.hidden_weigh by 1)."""
+        q, self.out = kernels.hidden_weigh(self.walk, self.still, self.region, float(self.out), *_ones(self.tiles), False)
+        return q
 
     # ------------------------------------------------------------ motion
 
@@ -384,9 +390,8 @@ class Hidden:
     def distance(self, other: "Hidden") -> float:
         """L1 distance between two Bernoullis, r x density (for pairing exchangeable people, MODEL.md
         5.6)."""
-        a, b = self.r, other.r
-        return float(np.abs(a * self.walk - b * other.walk).sum() + np.abs(a * self.still - b * other.still).sum()
-                     + np.abs(a * self.region - b * other.region).sum() + abs(a * self.out - b * other.out))
+        return kernels.hidden_distance(float(self.r), self.walk, self.still, self.region, float(self.out), float(other.r),
+                                       other.walk, other.still, other.region, float(other.out))
 
     def in_view(self) -> np.ndarray:
         """Expected number per tile in view (n,): r x the mass."""

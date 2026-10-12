@@ -54,6 +54,12 @@ class Shape:
             (x1, y1), (x2, y2) = self.points
             self.xmin, self.xmax = sorted((x1, x2))
             self.ymin, self.ymax = sorted((y1, y2))
+        # a polygon's bounding box: far outside it (by more than the margin and any rounding) a point
+        # is not inside, whatever the edges say (contains answers so without them)
+        self._box = None
+        if shape not in ("rect", "circle") and self.points:
+            xs, ys = [p[0] for p in self.points], [p[1] for p in self.points]
+            self._box = (min(xs), min(ys), max(xs), max(ys))
 
     def contains(self, x: float, y: float, margin: float = 0.0) -> bool:
         """Point inside, with the outline grown (margin > 0) or shrunk (< 0)."""
@@ -62,6 +68,11 @@ class Shape:
         if self.shape == "rect":
             return (self.xmin - margin <= x <= self.xmax + margin
                     and self.ymin - margin <= y <= self.ymax + margin)
+        if self._box is not None:
+            far = max(margin, 0.0) + 1e-6
+            x0, y0, x1, y1 = self._box
+            if x < x0 - far or x > x1 + far or y < y0 - far or y > y1 + far:
+                return False
         inside = point_in_polygon(x, y, self.points)
         if margin == 0.0:
             return inside

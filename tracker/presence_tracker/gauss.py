@@ -76,6 +76,11 @@ def _exp_go(shapes, dt: float) -> np.ndarray:
     return _EXP_GO[2]
 
 
+def _max2(a: float, b: float) -> float:
+    """numpy's max of two (NaN wins)."""
+    return a if a >= b or a != a else b
+
+
 def _log(w):
     with np.errstate(divide="ignore"):
         return np.log(w)
@@ -118,20 +123,27 @@ class Gauss:
         return set(self.slots)
 
     def weights(self) -> np.ndarray:
-        """The components' weights (summing to 1; the part gone through a door aside)."""
-        top = self.logw.max()
+        """The components' weights (summing to 1; the part gone through a door aside). The two
+        numbers as Python floats (numpy's max and sum of two, numpy's exp: the same numbers)."""
+        l0, l1 = self.logw.tolist()
+        top = _max2(l0, l1)
         if top == -math.inf:
             return np.array([0.5, 0.5])
-        w = np.exp(self.logw - top)
-        return w / w.sum()
+        w0, w1 = np.exp(self.logw - top).tolist()
+        s = 0.0 + w0 + w1
+        return np.array([w0 / s, w1 / s])
 
     def reweigh(self, dlog, d_away: float = 0.0) -> float:
         """Multiply the components' weights by exp(dlog) and the part gone through a door by
         exp(d_away); returns the log of the factor of the whole person (for the hypotheses) and
         normalizes."""
         lw = self.logw + dlog
-        top = lw.max()
-        comps = top + math.log(float(np.exp(lw - top).sum())) if top > -math.inf else -math.inf
+        top = _max2(*lw.tolist())
+        if top > -math.inf:
+            e0, e1 = np.exp(lw - top).tolist()
+            comps = top + math.log(0.0 + e0 + e1)
+        else:
+            comps = -math.inf
         if self.a <= 0:
             if comps == -math.inf:
                 return -math.inf
