@@ -60,6 +60,13 @@ _NO_KEEP = np.ones((1, 1))  # hidden_stays without a measured amplitude (not use
 MEASURED_CUT = 1e-6  # a share of measured amplitude below this everywhere: nothing measured (Hidden.amp)
 
 
+def _factors(f_walk, f_still) -> tuple:
+    """The factors of weigh as kernels.hidden_weigh takes them: (n,) and (K, n) or (1, n), contiguous."""
+    f_still = np.asarray(f_still, dtype=float)
+    return (np.ascontiguousarray(f_walk, dtype=float),
+            np.ascontiguousarray(f_still if f_still.ndim == 2 else f_still[None, :]))
+
+
 class Hidden:
     """The density of one person without a track (module doc). Objects are shared between
     hypotheses and changed only by what applies to all of them (motion, no track started); what
@@ -332,9 +339,6 @@ class Hidden:
 
     # ------------------------------------------------------------ evidence
 
-    def _times(self, f_walk, f_still):
-        self.walk *= f_walk
-        self.still *= f_still if np.ndim(f_still) == 2 else np.asarray(f_still)[None, :]
 
     def weigh(self, f_walk: np.ndarray, f_still: np.ndarray) -> float:
         """Multiply by a likelihood per tile: walkers f_walk (n,), still people f_still (n,) or per
@@ -343,8 +347,7 @@ class Hidden:
         the Bernoulli update of Garcia-Fernandez et al. 2018 eq. 31 (r = 1: the mass that is left)."""
         if not self.tiles.n:
             return 0.0
-        self._times(f_walk, f_still)
-        q = self._normalize()
+        q, self.out = kernels.hidden_weigh(self.walk, self.still, self.region, self.out, *_factors(f_walk, f_still), False)
         if self.r >= 1.0:
             return q
         if q == -math.inf:  # nothing left where the person could be: they do not exist
@@ -434,9 +437,8 @@ class Undetected(Hidden):
     def weigh(self, f_walk: np.ndarray, f_still: np.ndarray) -> float:
         if not self.tiles.n:
             return 0.0
-        before = float(self.walk.sum() + self.still.sum())
-        self._times(f_walk, f_still)
-        return -(before - float(self.walk.sum() + self.still.sum()))
+        d, self.out = kernels.hidden_weigh(self.walk, self.still, self.region, self.out, *_factors(f_walk, f_still), True)
+        return d
 
     def _normalize(self) -> float:
         return 0.0

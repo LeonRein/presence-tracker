@@ -272,6 +272,58 @@ def sensor_rates(pts, base, sx, sy, grid, x0, y0, cell, acq, p_fa, s50, live, re
 
 
 @njit(cache=True)
+def _rate_at(px, py, kind, sx, sy, grid, x0, y0, cell, acq, p_fa, s50, live, lo, hi, res, find_radius):
+    """sensor_rates for one point and one kind (0 walkers, 1 still people), its live tracks
+    live[lo:hi]: the same arithmetic in the same order."""
+    nx, ny = grid.shape
+    dx, dy = px - sx, py - sy
+    r = math.hypot(dx, dy)
+    i = min(max(int((px - x0) / cell), 0), nx - 1)
+    j = min(max(int((py - y0) / cell), 0), ny - 1)
+    g = grid[i, j]
+    b = acq[2 * kind] * _pd(r, acq[2 * kind + 1], p_fa, s50) * g
+    mask = 1.0
+    if hi > lo:
+        th = math.atan2(dy, dx)
+        for k in range(lo, hi):
+            if live[k, 0] == 0:
+                zx, zy = live[k, 1] - sx, live[k, 2] - sy
+                rz, tz = math.hypot(zx, zy), math.atan2(zy, zx)
+                dr = r - rz
+                a = th - tz  # in (-2 pi, 2 pi): to (-pi, pi]
+                if a > math.pi:
+                    a -= 2 * math.pi
+                elif a <= -math.pi:
+                    a += 2 * math.pi
+                dc = 0.5 * (r + rz) * a
+                mask *= 1 - math.exp(-math.log(2.0) * ((dr / res[0]) ** 2 + (dc / res[1]) ** 2))
+            else:
+                ex, ey = px - live[k, 1], py - live[k, 2]
+                mask *= 1 - math.exp(-0.5 * (ex * ex + ey * ey) / find_radius ** 2)
+    return b * mask
+
+
+@njit(cache=True)
+def gauss_rates(pts, use, sxy, grids, live, ptr, x0, y0, cell, acq, p_fa, s50, res, find_radius):
+    """filter.Tracker._sync: the rates (2, P) at which the sensors start a track on a person, summed
+    over the sensors s with use[s] (the others have a measuring track of them: 0) - the still people's
+    at the standing component's sigma points pts[0], the walkers' at the walking one's pts[1] (P, 2);
+    sensor s at sxy[s], its sight grids[s], its live tracks live[ptr[s]:ptr[s + 1]] (sensor_rates).
+    Summed in the order of the sensors as before: results equal bit for bit."""
+    P = pts.shape[1]
+    out = np.zeros((2, P))
+    for s in range(len(use)):
+        if not use[s]:
+            continue
+        for mode in range(2):
+            kind = 1 - mode  # the standing component: the still people's rate
+            for p in range(P):
+                out[mode, p] += _rate_at(pts[mode, p, 0], pts[mode, p, 1], kind, sxy[s, 0], sxy[s, 1], grids[s], x0, y0,
+                                         cell, acq, p_fa, s50, live, ptr[s], ptr[s + 1], res, find_radius)
+    return out
+
+
+@njit(cache=True)
 def _chol2(c00, c10, c11):
     l00 = math.sqrt(max(c00, 1e-24))
     l10 = c10 / l00
@@ -510,6 +562,118 @@ def gauss_exponents(points, mx, my, vx, vy):
     return out
 
 
+@njit(cache=True)
+def _pairwise_leaf(a, lo, n):
+    """numpy's pairwise_sum for n <= 128 elements a[lo:lo + n]: 8 accumulators (fewer than 8: in a row)."""
+    if n < 8:
+        res = 0.0
+        for i in range(n):
+            res += a[lo + i]
+        return res
+    r0, r1, r2, r3 = a[lo], a[lo + 1], a[lo + 2], a[lo + 3]
+    r4, r5, r6, r7 = a[lo + 4], a[lo + 5], a[lo + 6], a[lo + 7]
+    m = n - n % 8
+    for i in range(lo + 8, lo + m, 8):
+        r0 += a[i]
+        r1 += a[i + 1]
+        r2 += a[i + 2]
+        r3 += a[i + 3]
+        r4 += a[i + 4]
+        r5 += a[i + 5]
+        r6 += a[i + 6]
+        r7 += a[i + 7]
+    res = ((r0 + r1) + (r2 + r3)) + ((r4 + r5) + (r6 + r7))
+    for i in range(lo + m, lo + n):
+        res += a[i]
+    return res
+
+
+@njit(cache=True)
+def _pairwise(a):
+    """numpy's sum of a contiguous 1-D array: its pairwise summation (numpy/_core/src/umath/
+    loops_utils.h.src) - blocks of up to 128 with 8 accumulators, above that the halves (at multiples
+    of 8) summed apart and added -, so the same sum bit for bit as a.sum(). The halving as a loop
+    with its own stack (Numba's cache does not hold recursive functions)."""
+    n = a.size
+    if n <= 128:
+        return _pairwise_leaf(a, 0, n)
+    los = np.empty(64, dtype=np.int64)
+    ns = np.empty(64, dtype=np.int64)
+    stage = np.zeros(64, dtype=np.int64)
+    left = np.empty(64)
+    sp = 0
+    los[0], ns[0] = 0, n
+    ret = 0.0
+    while True:
+        lo, m = los[sp], ns[sp]
+        half = m // 2
+        half -= half % 8
+        if stage[sp] == 0:
+            if m <= 128:
+                ret = _pairwise_leaf(a, lo, m)
+                sp -= 1
+                if sp < 0:
+                    return ret
+                continue
+            stage[sp] = 1
+            sp += 1
+            los[sp], ns[sp], stage[sp] = lo, half, 0
+        elif stage[sp] == 1:
+            left[sp] = ret
+            stage[sp] = 2
+            sp += 1
+            los[sp], ns[sp], stage[sp] = lo + half, m - half, 0
+        else:
+            ret = left[sp] + ret
+            sp -= 1
+            if sp < 0:
+                return ret
+
+
+@njit(cache=True)
+def _npsum(a):
+    """a.sum() of a contiguous array, bit for bit as numpy (_pairwise)."""
+    return _pairwise(a.reshape(a.size))
+
+
+@njit(cache=True)
+def hidden_weigh(walk, still, region, out, f_walk, f_still, intensity):
+    """hidden.Hidden.weigh / Undetected.weigh in place: walk *= f_walk (n,), still (L, K, n) *= f_still
+    (K, n) or (1, n) for every kind of stay. A person (intensity False): normalized, returns (log of
+    the mass that was left, out scaled); -inf and nothing scaled if none was left. The unknown ones:
+    returns (mass after - mass before in view, out). The same arithmetic and sums as the numpy it
+    replaces (_npsum): results equal bit for bit."""
+    L, K, n = still.shape
+    before = 0.0
+    if intensity:
+        before = _npsum(walk) + _npsum(still)
+    for c in range(n):
+        walk[c] *= f_walk[c]
+    one = f_still.shape[0] == 1
+    for l in range(L):
+        for k in range(K):
+            kk = 0 if one else k
+            for c in range(n):
+                still[l, k, c] *= f_still[kk, c]
+    if intensity:
+        return -(before - (_npsum(walk) + _npsum(still))), out
+    tot = _npsum(walk) + _npsum(still) + _npsum(region) + out
+    if tot <= 0:
+        return -np.inf, out
+    s = 1.0 / tot
+    for c in range(n):
+        walk[c] *= s
+    for l in range(L):
+        for k in range(K):
+            for c in range(n):
+                still[l, k, c] *= s
+    R, A = region.shape
+    for r in range(R):
+        for a in range(A):
+            region[r, a] *= s
+    return math.log(tot), out * s
+
+
 def warm():
     """Compile every kernel for the types the tracker calls it with (the image does this when it is
     built, so the app starts without compiling: NUMBA_CACHE_DIR)."""
@@ -529,6 +693,9 @@ def warm():
     hidden_regions(f((1, 3)), f(3), 0.0, f((1, 3)), i(2), i(0), i(1), i(0), 0.1, f(2))
     ld_censored(np.ones((1, 16)), f((1, 16)), i(1), i(1), f((1, 5)), np.arange(5.0))
     gauss_exponents(f((1, 2)), 0.0, 0.0, 1.0, 1.0)
+    hidden_weigh(f(3), f((2, 2, 3)), f((1, 3)), 0.0, f(3), f((2, 3)), False)
+    gauss_rates(f((2, 5, 2)), np.ones(1, dtype=np.bool_), f((1, 2)), f((1, 2, 2)), f((1, 3)), i(2), 0.0, 0.0, 0.1, f(4),
+                1e-6, 1.0, np.ones(2), 0.7)
 
 
 if __name__ == "__main__":

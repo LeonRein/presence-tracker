@@ -188,6 +188,7 @@ class Tracker:
         self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
         self.tracks = {sid: SensorTracks(sid, self._ids) for sid in self.sensors}
         self._gcache = {}
+        self._rates_ctx = None  # while everybody moves (_flush): the sensors' live tracks, packed (_sync_rates)
         self._area = {}
         self._ghost_total = {}
         rooms = self.config.observed_rooms()
@@ -607,6 +608,32 @@ class Tracker:
         r = self._rates(si, pts, skip)
         return np.stack([r[1, :n], r[0, n:]])
 
+    def _sync_rates(self, live: list, measured: set, pts: np.ndarray) -> np.ndarray:
+        """sum over the sensors live of _gauss_rates at the sigma points pts (2, P, 2), in one
+        compiled call (kernels.gauss_rates): the same numbers. The sensors' live tracks are packed
+        once per move of everybody (_flush: they stay as they are meanwhile)."""
+        key = tuple(live)
+        ctx = self._rates_ctx.get(key) if self._rates_ctx is not None else None
+        if ctx is None:
+            grids = self._gcache.get(("grids", key))
+            if grids is None:
+                grids = self._gcache[("grids", key)] = np.stack([self._grid(si) for si in live])
+            rows, ptr = [], [0]
+            for si in live:
+                rows += [(0.0, *self.segs[seg]["z"]) if self.segs[seg]["lost"] is None else (1.0, *self.segs[seg]["lost"]["z"])
+                         for seg in self._live_by_sensor.get(si, [])]
+                ptr.append(len(rows))
+            w, m = self.world, self.m
+            (rs, r50s), (rw, r50w) = m.acquire
+            sensors = [self.config.sensors[si] for si in live]
+            ctx = (np.array([(float(s.x), float(s.y)) for s in sensors]), grids, np.array(rows, dtype=float).reshape(-1, 3),
+                   np.array(ptr, dtype=np.int64), float(w.x0), float(w.y0), CELL, np.array([rw, r50w, rs, r50s], dtype=float),
+                   P_FA, S50, np.array([m.res_range, m.res_cross], dtype=float), float(m.find_radius))
+            if self._rates_ctx is not None:
+                self._rates_ctx[key] = ctx
+        use = np.array([si not in measured for si in live])
+        return kernels.gauss_rates(np.ascontiguousarray(pts, dtype=float), use, *ctx)
+
     @staticmethod
     def _expect(f) -> np.ndarray:
         """Expectation over the sigma points (last axis) of values at them."""
@@ -704,6 +731,18 @@ class Tracker:
             return
         objs = self._objects(phantoms=True)
         t0 = self._flushed
+        outer, self._rates_ctx = self._rates_ctx, {}  # the tracks stay as they are while everybody moves
+        try:
+            self._flush_parts(t, t0, objs)
+        finally:
+            self._rates_ctx = outer
+        for si in sorted(self._ld_stats):
+            if self._ld_stats[si].time >= self.m.ld_every:
+                self._ld_weigh(si, self._ld_stats.pop(si))
+        self._flushed = t
+        self._version += 1
+
+    def _flush_parts(self, t: float, t0: float, objs: list):
         parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
         lat_f = None
         for k in range(parts):
@@ -721,11 +760,6 @@ class Tracker:
                 continue
             self._sync(obj, refs, t, None if lat_f is None else
                        tuple(f ** (MAX_STEP * parts / (t - t0)) for f in lat_f))
-        for si in sorted(self._ld_stats):
-            if self._ld_stats[si].time >= self.m.ld_every:
-                self._ld_weigh(si, self._ld_stats.pop(si))
-        self._flushed = t
-        self._version += 1
 
     def _watching(self, t: float, dt: float) -> tuple:
         """The sensors watching at t, and the factors (walkers, still people per level of
@@ -748,6 +782,7 @@ class Tracker:
         kappa = self.shapes.kappa
         parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
         dt = (t - t0) / parts
+        measured = None
         for k in range(parts):
             obj.predict(dt, self.m, self.shapes, self.tiles)
             if obj.phantom:
@@ -755,8 +790,9 @@ class Tracker:
             live = self._live(t0 + dt * (k + 1))
             if not live:
                 continue
-            pts = obj.sigma(self.world)
-            r = sum(self._gauss_rates(si, obj, pts=pts) for si in live)
+            if measured is None:  # the sensors with a measuring track of this person: none of theirs starts
+                measured = {self.segs[s]["si"] for s in obj.slots if s in self.segs and self._measuring(s)}
+            r = self._sync_rates(live, measured, obj.sigma(self.world))
             da = 0.0
             if obj.away is not None and lat_f is not None:
                 share = dt / MAX_STEP  # lat_f holds for MAX_STEP; dt is at most that long

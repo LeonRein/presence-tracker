@@ -2,6 +2,8 @@
 image's cache covers everything and the app never compiles while it runs (on Home Assistant that
 would stop it for many seconds)."""
 
+import math
+
 import numpy as np
 
 from presence_tracker import kernels, ld2410
@@ -99,3 +101,81 @@ def test_the_gauss_points_kernel_is_the_numpy_formula_bit_for_bit():
         assert np.array_equal(got, ref)
     assert kernels.gauss_exponents(np.array([[1.0, 2.0]]), 1.0, 2.0, 0.5, 0.5)[0] == 0.0  # at the mean
     assert len(kernels.gauss_exponents(np.zeros((0, 2)), 0.0, 0.0, 1.0, 1.0)) == 0
+
+
+def test_the_sum_kernel_is_numpys_pairwise_sum_bit_for_bit():
+    rng = np.random.default_rng(4)
+    for n in list(range(0, 300)) + [687, 1000, 4097, 17175, 100003]:
+        a = rng.uniform(0, 1, n) * 10.0 ** rng.uniform(-12, 0, n)
+        assert kernels._npsum(a) == a.sum()
+        b = rng.uniform(0, 1, (5, 5, max(n, 1)))
+        assert kernels._npsum(b) == b.sum()
+
+
+def _weigh_numpy(walk, still, region, out, f_walk, f_still, intensity):
+    """Hidden.weigh / Undetected.weigh before kernels.hidden_weigh (0.28.0)."""
+    if intensity:
+        before = float(walk.sum() + still.sum())
+        walk *= f_walk
+        still *= f_still
+        return -(before - float(walk.sum() + still.sum())), out
+    walk *= f_walk
+    still *= f_still
+    tot = float(walk.sum() + still.sum() + region.sum() + out)
+    if tot <= 0:
+        return -np.inf, out
+    k = 1.0 / tot
+    walk *= k
+    still *= k
+    region *= k
+    return math.log(tot), out * k
+
+
+def test_the_weigh_kernel_is_the_numpy_arithmetic_bit_for_bit():
+    rng = np.random.default_rng(5)
+    for trial in range(60):
+        n = int(rng.integers(1, 900))
+        walk = rng.uniform(0, 1, n) * 10.0 ** rng.uniform(-9, 0, n)
+        still = rng.uniform(0, 1, (5, 3, n)) * 10.0 ** rng.uniform(-9, 0, (5, 3, n))
+        region = rng.uniform(0, 1, (2, 18))
+        out = float(rng.uniform(0, 1))
+        f_walk = rng.uniform(0, 1, n)
+        f_still = rng.uniform(0, 1, (3, n)) if trial % 2 else rng.uniform(0, 1, (1, n))
+        if trial == 7:  # nothing left
+            f_walk[:] = 0.0
+            f_still[:] = 0.0
+            region[:] = 0.0
+            out = 0.0
+        for intensity in (False, True):
+            a = [x.copy() for x in (walk, still, region)]
+            b = [x.copy() for x in (walk, still, region)]
+            got = kernels.hidden_weigh(*a, out, f_walk, f_still, intensity)
+            ref = _weigh_numpy(*b, out, f_walk, f_still, intensity)
+            assert got == ref
+            assert all(np.array_equal(x, y) for x, y in zip(a, b))
+
+
+def test_the_gauss_rates_kernel_is_the_sum_of_sensor_rates_bit_for_bit():
+    rng = np.random.default_rng(6)
+    acq = np.array([0.9, 4.0, 0.5, 3.0])
+    res = np.array([0.4, 0.6])
+    for _ in range(30):
+        S = int(rng.integers(1, 4))
+        grids = rng.uniform(0, 1, (S, 40, 30))
+        sxy = rng.uniform(0, 4, (S, 2))
+        lives = [np.column_stack([rng.integers(0, 2, m).astype(float), rng.uniform(0, 4, (m, 2))])
+                 for m in rng.integers(0, 4, S)]
+        ptr = np.cumsum([0] + [len(x) for x in lives]).astype(np.int64)
+        live = np.concatenate(lives).reshape(-1, 3)
+        use = rng.random(S) < 0.8
+        pts = rng.uniform(-0.5, 4.5, (2, 5, 2))
+        ref = 0
+        for s in range(S):  # as Tracker._sync summed _gauss_rates before (0.28.0)
+            if not use[s]:
+                ref = ref + np.zeros((2, 5))
+                continue
+            r = kernels.sensor_rates(pts.reshape(-1, 2), np.zeros((2, 0)), sxy[s, 0], sxy[s, 1], grids[s], 0.0, 0.0, 0.1,
+                                     acq, 1e-6, 1.0, lives[s], res, 0.7)
+            ref = ref + np.stack([r[1, :5], r[0, 5:]])
+        got = kernels.gauss_rates(pts, use, sxy, grids, live, ptr, 0.0, 0.0, 0.1, acq, 1e-6, 1.0, res, 0.7)
+        assert np.array_equal(got, ref)
