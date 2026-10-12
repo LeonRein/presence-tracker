@@ -180,7 +180,7 @@ const LIVE = {
     const names = Object.fromEntries(state.config.zones.map(z => [z.id, z.name]));
     return regions.map(r => [r.name, `<div class="item" style="flex-wrap:wrap"><span class="grow" style="white-space:normal">${(r.rooms || []).map(id => esc(names[id] || id)).join(', ') || esc(r.name)}</span>
       ${r.open ? '<span class="badge" title="Von hier aus kann man das Haus verlassen (Tür nach draußen, Eingang)">Ausgang</span>' : ''}
-      ${r.probabilities.length ? r.probabilities.map(p => `<span class="badge ${p >= 0.5 ? 'on' : ''}" title="Wahrscheinlichkeit, dass diese Person hier ist">${pct(p)}</span>`).join('') : '<span class="badge">leer</span>'}
+      ${r.probabilities.length ? r.probabilities.map(p => `<span class="badge ${p >= 0.5 ? 'on' : ''}" title="Wahrscheinlichkeit, dass jemand hier ist">${pct(p)}</span>`).join('') : '<span class="badge">leer</span>'}
       <div class="meta sub">${(r.rooms || []).length > 1 ? 'Ohne Sensor über Türen verbunden, deshalb zusammen. ' : ''}Aufenthalt typisch ${fmtS(r.dwell.median)}, 90\u00a0% unter ${fmtS(r.dwell.p90)} (Annahme)</div></div>`]);
   },
   sensorNow(ds) {
@@ -270,7 +270,7 @@ function livePanel(panel, view) {
     <p class="note">% = Wahrscheinlichkeit, dass jemand im Raum ist. Besetzt (Licht an) ab ${pct(occupiedAbove())}, aus den Kosten in den Einstellungen, oder solange der LD2450 des Raums dort jemanden misst (Filter / LD2450 / beide: was entschied).</p>
     <div class="list" data-live="zones"></div>
     <h3>Räume ohne Sensor</h3><div class="list" data-live="unobserved"></div>
-    <p class="note">Aus dem Grundriss: Räume, die kein Sensor überwiegend sieht, über Türen zu Gruppen verbunden. Wer hineingeht, ist dort. Die Wahrscheinlichkeit, dass jemand noch drin ist, sinkt mit der Zeit, je nachdem, wie lange Besuche dort üblicherweise dauern. % = Wahrscheinlichkeit, dass diese Person dort ist, je Person.</p>
+    <p class="note">Aus dem Grundriss: Räume, die kein Sensor überwiegend sieht, über Türen zu Gruppen verbunden. Wer hineingeht, ist dort. Die Wahrscheinlichkeit, dass jemand noch drin ist, sinkt mit der Zeit, je nachdem, wie lange Besuche dort üblicherweise dauern. % = Wahrscheinlichkeit, dass jemand dort ist.</p>
     <h3>Sensoren</h3><div class="list" data-live="sensorHealth"></div>
     <h3>Personen im Modell</h3><div class="list" data-live="people"></div>
     <p class="note">Je Person die zwei wahrscheinlichsten Orte; % = Wahrscheinlichkeit, dass diese Person dort ist (nicht dieselbe Zahl wie beim Raum). Auf der Karte in ihrer Farbe: der Punkt und die Wolke, wo sie sein kann.</p>

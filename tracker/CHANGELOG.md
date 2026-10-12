@@ -30,6 +30,8 @@
   wieder „online“. Ohne Veröffentlichen gibt es jetzt keinen letzten Willen.
 - Einstellungen: Der Hinweis sagte, nur die Schwellen „Ziel“ starteten das Modell nicht neu; das gilt für alles
   unter „Ausgabe“ (Kosten, Haltezeit eigener LD2450, Vorausschau) und die Haltezeit des LD2410C.
+- Live, Räume ohne Sensor: Die Prozentzahl hieß „Wahrscheinlichkeit, dass diese Person dort ist, je Person“;
+  seit 0.8 ist es eine Zahl je Gruppe, die Wahrscheinlichkeit, dass jemand dort ist. So heißt sie jetzt.
 
 ## 0.28.0
 
