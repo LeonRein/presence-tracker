@@ -637,7 +637,9 @@ ein gleichmäßiges Raster:
 
 **Neustart der App:** Was über die Personen bekannt ist, speichert die App alle 10 Minuten und beim
 Beenden (`people.json`, `Tracker.people_state`): je Hypothese ihr Gewicht, die bekannten und die
-unbekannten Personen als Dichten über den Kacheln. Laufende Spuren überleben den Neustart nicht (die
+unbekannten Personen als Dichten über den Kacheln. Das Speichern ändert am Modell nichts (es rechnet auf
+Kopien; bis 0.28 wandte das Lesen einer gespeicherten Amplitude ihre aufgeschobene Mischung, `Hidden.amp`,
+im Modell selbst an, und der Lauf ging nach jedem Speichern anders weiter als ein Nachspiel). Laufende Spuren überleben den Neustart nicht (die
 nächsten Frames der Sensoren sind ein Start, 4.1): Personen mit Spur gehen auf die Kacheln wie am Ende
 ihrer letzten Spur (5.4), Geisterspuren enden, und Hypothesen, die danach dasselbe sagen, werden eine
 (5.6; eine je Zahl bekannter Personen). Beim Start ist dieser Zustand der Prior, die PMBM-Rekursion

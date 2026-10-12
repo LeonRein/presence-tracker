@@ -153,3 +153,34 @@ def test_nothing_known_finds_who_sits_in_view_at_the_start():
         crowd.process_frame(sid, t, frame)
         occupied.append((t, 1 - crowd.count_distribution()["wohn"][0]))
     assert min(p for t, p in occupied if t > 60) > 0.9, [(round(t), round(p, 2)) for t, p in occupied[::50]]
+
+
+def test_saving_the_people_changes_nothing():
+    # people_state is read at every save (10 min, app.py): until 0.28 reading a stored LD2410C
+    # amplitude applied its deferred mixing (Hidden.amp) in the model's own densities - the live run
+    # then went another way than a replay of the same frames (rounding, MEASURED_CUT)
+    from presence_tracker.gauss import Gauss
+    crowd = Tracker(flat_config(), start=0.0)
+    m, sh, tl = crowd.m, crowd.shapes, crowd.tiles
+    g = Gauss.source(1, np.array([3.0, 3.0]), 0.01, m, sh)
+    g.logw = np.log(np.array([1.0 - 1e-9, 1e-9]))  # standing
+    a = int(np.argmin(abs(sh.amp - 0.3)))
+    ka = np.zeros_like(g.ka)
+    ka[:, a] = g.kw
+    g.ka = ka
+    h, away = g.to_tiles(tl), g.to_tiles(tl)
+    for _ in range(5):  # moving on defers the mixing of the amplitude (Hidden._keep)
+        h.move(1.0)
+        away.move(1.0)
+    g.a, g.away = 0.3, away  # a part gone through a door, measured too
+    hy = crowd.hyps[0]
+    hy.hidden, hy.kind, hy.groups = [h], {7: 1}, {1: g}
+
+    def raw():
+        return [np.copy(x) for u in (h, away) for x in (u._amp, u._keep, u.still)]
+    assert h._keep is not None and away._keep is not None
+    before = raw()
+    first = crowd.people_state()
+    assert all(np.array_equal(x, y) for x, y in zip(raw(), before))
+    assert h._keep is not None and away._keep is not None
+    assert crowd.people_state() == first

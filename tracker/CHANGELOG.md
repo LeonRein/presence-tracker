@@ -2,6 +2,13 @@
 
 ## Unveröffentlicht
 
+- **Fehler: Speichern veränderte das Modell** (MODEL.md 5.3 „Neustart der App“). `Tracker.people_state`, alle
+  10 min und beim Beenden gelesen, wandte beim Lesen einer gemessenen LD2410C-Amplitude deren aufgeschobene
+  Mischung (`Hidden.amp`) in den Dichten des laufenden Modells an. Mathematisch gleich, aber anders gerundet
+  und mit anderem Zeitpunkt für `MEASURED_CUT`: Der Live-Lauf ging nach jedem Speichern anders weiter als ein
+  Nachspiel derselben Frames. Jetzt rechnet `people_state` auf Kopien; das gespeicherte `people.json` ist
+  dasselbe. Nachspiele ändern sich nicht (sie speichern nicht).
+
 ## 0.28.0
 
 - **Der LD2410C-Hintergrund kehrt zu seinem eigenen Niveau zurück, nicht zum Prior** (MODEL.md 4.3 „Anker“,
