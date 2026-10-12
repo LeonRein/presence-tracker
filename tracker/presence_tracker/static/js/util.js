@@ -4,7 +4,6 @@
 export const PERSON_COLORS = ['#2f6fde', '#d9822b', '#2e9d5a', '#a855c7', '#c2413b', '#0f8f9c'];
 export function personColor(id) { return PERSON_COLORS[((id - 1) % PERSON_COLORS.length + PERSON_COLORS.length) % PERSON_COLORS.length]; }
 
-export const SENSOR_COLORS = ['#e8590c', '#0c8599', '#9c36b5', '#2b8a3e', '#c2255c', '#5c7cfa', '#a16207', '#0b7285'];
 // color: fills and strokes; text: labels on the map (darker in light mode, for 4.5:1 contrast)
 export const ZONE_KINDS = {
   room: { label: 'Raum', color: '#2f6fde', text: 'var(--accent-text)' },  // from the walls, not drawn

@@ -112,6 +112,7 @@ const LIVE = {
   // plan on the server: rooms no sensor covers, grouped by the doors between them)
   zones() {
     const live = state.live;
+    if (!live) return '';  // which rooms have no sensor comes with the first live message
     const zones = [...roomsWithSensor(state.config, live), ...state.config.zones.filter(z => z.kind === 'area')];
     if (!zones.length) return '<p class="note">Noch keine Räume oder Bereiche mit Sensor. Im Tab „Zonen“ einzeichnen, Sensoren platzieren.</p>';
     // occupied first (what the lights follow), else in the order of the plan
@@ -174,7 +175,8 @@ const LIVE = {
     });
   },
   unobserved() {
-    const regions = Object.values(state.live?.regions || {});
+    if (!state.live) return '';
+    const regions = Object.values(state.live.regions || {});
     if (!regions.length) return '<p class="note">Alle Räume haben einen Sensor.</p>';
     const fmtS = s => s >= 5400 ? `${Math.round(s / 3600)} h` : s >= 90 ? `${Math.round(s / 60)} min` : `${s} s`;
     const names = Object.fromEntries(state.config.zones.map(z => [z.id, z.name]));
@@ -267,7 +269,7 @@ function livePanel(panel, view) {
       <div class="list" id="rep-list"></div>
     </details>
     <h3>Räume mit Sensor</h3>
-    <p class="note">% = Wahrscheinlichkeit, dass jemand im Raum ist. Besetzt (Licht an) ab ${pct(occupiedAbove())}, aus den Kosten in den Einstellungen, oder solange der LD2450 des Raums dort jemanden misst (Filter / LD2450 / beide: was entschied).</p>
+    <p class="note">% = Wahrscheinlichkeit, dass jemand im Raum ist. Besetzt (Licht an) ab ${pct(occupiedAbove())}, aus den Kosten in den Einstellungen${(state.config.params?.seen_hold ?? 10) > 0 ? ', oder solange der LD2450 des Raums dort jemanden misst (Filter / LD2450 / beide: was entschied)' : ''}.</p>
     <div class="list" data-live="zones"></div>
     <h3>Räume ohne Sensor</h3><div class="list" data-live="unobserved"></div>
     <p class="note">Aus dem Grundriss: Räume, die kein Sensor überwiegend sieht, über Türen zu Gruppen verbunden. Wer hineingeht, ist dort. Die Wahrscheinlichkeit, dass jemand noch drin ist, sinkt mit der Zeit, je nachdem, wie lange Besuche dort üblicherweise dauern. % = Wahrscheinlichkeit, dass jemand dort ist.</p>
@@ -882,7 +884,7 @@ const PARAMS = [
   ]],
   ['Ausgabe', [
     ['light_cost', 'Kosten: Licht ohne Person', '×', 'Eine Sekunde Licht ohne Person ist so schlimm wie so viele Sekunden Dunkel mit Person. Ein Raum gilt als besetzt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.5],
-    ['seen_hold', 'Haltezeit eigener LD2450', 's', 'Ein Raum gilt auch als besetzt, solange der LD2450 dieses Raums in den letzten so vielen Sekunden ein gemessenes Ziel im Raum hatte (nicht gehalten, nicht hinter einer Wand), auch wenn der Filter „leer“ sagt. Nur der Sensor des Raums zählt: Andere messen Personen an Raumgrenzen im Nachbarraum. 0 = nur der Filter. Gemessen mit 10 s: dunkel mit Person 25,6 → 0,6 min, Licht im leeren Raum 4,3 → 6,3 min.', 1],
+    ['seen_hold', 'Haltezeit eigener LD2450', 's', 'Ein Raum gilt auch als besetzt, solange der LD2450 dieses Raums in den letzten so vielen Sekunden ein gemessenes Ziel im Raum hatte (nicht gehalten, nicht hinter einer Wand), auch wenn der Filter „leer“ sagt. Nur der Sensor des Raums zählt: Andere messen Personen an Raumgrenzen im Nachbarraum. 0 = nur der Filter. Gemessen mit 10 s auf den Wahrheiten bis 8.10.: dunkel mit Person 25,6 → 0,6 min, Licht im leeren Raum 4,3 → 6,3 min.', 1],
     ['lead_time', 'Vorausschau „wird betreten“', 's', 'So weit rechnet das Modell jeden Gehenden mit seinem eigenen Bewegungsmodell voraus (Wände halten auf, Türen nicht). Weil es Richtung und Tempo mit der Zeit vergisst, kommt das Signal später als diese Zeit vor dem Eintritt: gemessen mit 2 s: bei 60 % der Eintritte mindestens 1 s (1 m) vorher.', 0.1],
     ['approach_cost', 'Kosten: Einschalten auf Verdacht', '×', 'Ein Einschalten auf Verdacht, nach dem niemand hereinkommt, ist so schlimm wie so viele Eintritte in einen dunklen Raum. „Wird betreten“ gilt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.01],
     ['target_threshold', 'Schwelle „Ziel“', '', '„Ziel“ ist an, wenn die Wahrscheinlichkeit, dass ein Gehender als Nächstes in den Raum geht, mindestens so hoch ist. Sie entsteht aus der Bewegung (wie „wird betreten“) und der gelernten Karte, wohin die Gänge von dort bisher gingen; wo die Karte noch nichts weiß, ist „Ziel“ genau „wird betreten“. Schwelle = K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein vergebliches Licht ist so schlimm wie 4 späte. Je Raum unten anders einstellbar.', 0.05],
