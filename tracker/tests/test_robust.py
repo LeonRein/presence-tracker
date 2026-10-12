@@ -165,6 +165,70 @@ def test_the_mqtt_loop_survives_whatever_a_message_does(monkeypatch):
     assert seen == [b"0", b"1", b"2"] and clients[-1] is None  # all messages, then reconnecting
 
 
+@pytest.mark.parametrize("publish", [True, False])
+def test_a_stop_says_offline_and_a_silent_app_has_no_last_will(tmp_path, monkeypatch, publish):
+    """Stopped (SIGTERM: an update, a restart of the app), the app says "offline" before its clean goodbye,
+    which drops the last will (MQTT 3.1.2.5): until 0.28 it tried after the connection was closed, and Home
+    Assistant kept "online" with the last states while the app was gone. One that publishes nothing (a
+    development run with --no-publish against the live broker) has no last will: when it died, the
+    broker said "offline" for the live app's entities, and the live app, which sends its availability
+    only when it changes, never said "online" again."""
+    import os
+    import signal
+
+    import aiomqtt
+
+    log = []
+
+    class Client:
+        def __init__(self, *args, will=None, **kwargs):
+            log.append(("will", None if will is None else (will.topic, will.payload)))
+            self.closed = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            self.closed = True
+            log.append(("goodbye",))
+            return False
+
+        async def subscribe(self, topic):
+            pass
+
+        async def publish(self, topic, payload, qos=0, retain=False):
+            if self.closed:
+                raise aiomqtt.MqttError("not connected")
+            log.append((topic, payload))
+
+        @property
+        def messages(self):
+            async def gen():
+                await asyncio.Future()
+                yield None
+            return gen()
+
+    monkeypatch.setattr(aiomqtt, "Client", Client)
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=publish, mqtt={"host": "x"})
+
+    async def main():
+        asyncio.get_running_loop().call_later(0.8, os.kill, os.getpid(), signal.SIGTERM)
+        frames = asyncio.create_task(feed(app, 0.6, [1000]))
+        await app.run("127.0.0.1", 0)
+        await frames
+
+    asyncio.run(main())
+    said = [e[1] for e in log if e[0] == AVAILABILITY]
+    if publish:
+        assert log[0] == ("will", (AVAILABILITY, "offline"))
+        assert said == ["offline", "online", "offline"]
+        last = max(i for i, e in enumerate(log) if e[0] == AVAILABILITY)
+        assert log[last] == (AVAILABILITY, "offline") and last < log.index(("goodbye",))
+    else:
+        assert log[0] == ("will", None) and not said and not [e for e in log if len(e) == 2 and e[0] != "will"]
+
+
 def run_a_while(app, until=40.0):
     config = app.config
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), start=2, pauses={2: 60}))

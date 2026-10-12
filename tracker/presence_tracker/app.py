@@ -556,7 +556,8 @@ class App:
         if self.replay:
             tasks.append(replay_source(self.replay, self.clock, self.on_message))
         elif self.mqtt_settings:
-            tasks.append(mqtt_source(self.mqtt_settings, self.prefix, self.on_message, self._on_client))
+            tasks.append(mqtt_source(self.mqtt_settings, self.prefix, self.on_message, self._on_client,
+                                     publish=self.publish_enabled))
         else:
             log.warning("no MQTT broker and no replay: nothing to track")
         main = asyncio.gather(*tasks)
@@ -568,9 +569,7 @@ class App:
         except asyncio.CancelledError:
             log.info("stopping")
         finally:
-            if self.client is not None:
-                await self._publish(ha.AVAILABILITY, "offline", True)
-                self.available = "offline"
+            # "offline" went out before the MQTT connection closed (mqtt_source): here it is closed
             if not self.replay:
                 if self._saving is not None:
                     await asyncio.gather(self._saving, return_exceptions=True)

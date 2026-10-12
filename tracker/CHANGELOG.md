@@ -19,6 +19,15 @@
   Jetzt wird ein Bericht ganz oder gar nicht geschrieben (wie das Gelernte), und eine kaputte Datei fehlt nur
   selbst in der Liste. Zwei Meldungen derselben Sekunde, desselben Raums und derselben Art überschrieben
   einander; die zweite bekommt jetzt `-2` im Namen.
+- **Fehler: Beim Beenden blieben die Entitäten „online“** (DOCS.md *Verfügbarkeit*). Die App sagte „offline“
+  erst, nachdem die MQTT-Verbindung schon sauber geschlossen war – vergeblich, und ein sauberer Abschied
+  verwirft den letzten Willen. Bei jedem Update oder Neustart der App zeigte Home Assistant so die letzten
+  Zustände als aktuell, bis sie wieder lief. Jetzt geht „offline“ vor dem Abschied hinaus.
+- **Fehler: Ein Entwicklungslauf mit `--no-publish` konnte die Live-Entitäten abschalten.** Auch ohne zu
+  veröffentlichen meldete er sich mit dem letzten Willen „offline“ auf dem Verfügbarkeitstopic der App an;
+  starb er (Rechner im Ruhezustand, `kill -9`, WLAN weg), setzte der Broker die Entitäten der Live-App auf
+  *nicht verfügbar*, und die Live-App, die ihre Verfügbarkeit nur bei einer Änderung sendet, sagte nie
+  wieder „online“. Ohne Veröffentlichen gibt es jetzt keinen letzten Willen.
 
 ## 0.28.0
 
