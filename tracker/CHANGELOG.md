@@ -28,6 +28,8 @@
   starb er (Rechner im Ruhezustand, `kill -9`, WLAN weg), setzte der Broker die Entitäten der Live-App auf
   *nicht verfügbar*, und die Live-App, die ihre Verfügbarkeit nur bei einer Änderung sendet, sagte nie
   wieder „online“. Ohne Veröffentlichen gibt es jetzt keinen letzten Willen.
+- Einstellungen: Der Hinweis sagte, nur die Schwellen „Ziel“ starteten das Modell nicht neu; das gilt für alles
+  unter „Ausgabe“ (Kosten, Haltezeit eigener LD2450, Vorausschau) und die Haltezeit des LD2410C.
 
 ## 0.28.0
 

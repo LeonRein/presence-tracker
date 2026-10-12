@@ -922,7 +922,7 @@ function targetRooms(p) {
 
 function settingsPanel(panel) {
   const p = state.config.params;
-  const root = h('<div><h2>Einstellungen</h2><p class="note">Änderungen wirken sofort. Dabei startet das Modell neu (außer bei den Schwellen „Ziel“): Es behält, was es über die Personen weiß, wenn der Grundriss gleich bleibt.</p></div>');
+  const root = h('<div><h2>Einstellungen</h2><p class="note">Änderungen wirken sofort. Dabei startet das Modell neu (außer bei allem unter „Ausgabe“ und der Haltezeit des LD2410C): Es behält, was es über die Personen weiß, wenn der Grundriss gleich bleibt.</p></div>');
   const experts = h(`<details style="margin-top:16px"><summary><b>Experten: Werte des Modells</b></summary>
     <p class="note">Gemessen oder aus Messungen abgeleitet. Wer sie ändert, ändert das Modell; die Auswertung mit
     bekannter Wahrheit gilt dann nicht mehr. Nur zum Ausprobieren.</p></details>`);
