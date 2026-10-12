@@ -783,9 +783,12 @@ class App:
             return web.json_response({"error": "Art des Fehlers fehlt."}, status=400)
         room = str(body.get("room") or "")
         try:
-            ago = min(max(float(body.get("minutes_ago") or 0), 0.0), REPORT_WINDOW / 60)
+            ago = float(body.get("minutes_ago") or 0)
         except (TypeError, ValueError):
+            ago = math.nan
+        if not math.isfinite(ago):  # (NaN passed min and max: comparisons with it are false)
             return web.json_response({"error": "Die Minuten sind keine Zahl."}, status=400)
+        ago = min(max(ago, 0.0), REPORT_WINDOW / 60)
         now = self.clock()  # the wall clock, or the recording's time in a replay
         start = self.model_start or self.tracker.start
         # what was learned and known when the model started, if that is in the report (the replay starts there,

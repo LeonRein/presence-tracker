@@ -363,6 +363,24 @@ def test_reports_sent_at_once_are_files_of_their_own(tmp_path):
     assert len(set(names)) == 3 and len(list(app.reports.glob("*.jsonl.gz"))) == 3
 
 
+def test_a_report_needs_a_number_of_minutes(tmp_path):
+    """minutes_ago "nan" passed max/min (comparisons with NaN are false) and put NaN into the header."""
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+
+    class Request:
+        def __init__(self, body):
+            self.body = body
+
+        async def json(self):
+            return self.body
+
+    for bad in ("nan", "inf", "-inf", "x", [1]):
+        r = asyncio.run(app.h_report(Request({"kind": "other", "room": "wohn", "minutes_ago": bad})))
+        assert r.status == 400, bad
+    assert not list(app.reports.glob("*")) if app.reports.is_dir() else True
+
+
 def test_a_refused_floor_plan_keeps_the_people(tmp_path, monkeypatch):
     """A new floor plan the model fails with after it built the new tiles: the old configuration holds,
     and so do the people - saved as they were before it (the old tiles), not from the half-built model.

@@ -40,6 +40,7 @@
   Meldung wird jetzt beim Wählen belegt (`O_EXCL`), nicht erst, wenn der Thread sie schreibt.
 - `ld2410.json`: Ein Teil ohne seine Zeit (`num` ohne `den`, nur in einer von Hand verdorbenen Datei) wird
   beim Laden verworfen; bisher scheiterte das Modell an jedem LD2410C-Frame dieses Sensors.
+- Fehlermeldung: `minutes_ago` muss eine endliche Zahl sein; „nan“ kam bisher durch und schrieb NaN in den Kopf.
 
 ## 0.28.0
 
