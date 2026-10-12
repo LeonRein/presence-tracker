@@ -57,12 +57,20 @@ class RoomSeen:
         silent) counts from start."""
         if start is None:
             return set()
-        limit = SILENT_AFTER if limit is None else limit
         quiet: dict[str, bool] = {}
         for sid, room in self.own.items():
             if sid in self.in_use:
-                quiet[room] = quiet.get(room, True) and now - self.heard.get(sid, start) > limit
+                quiet[room] = quiet.get(room, True) and not self.online(sid, now, start, limit)
         return {r for r, q in quiet.items() if q}
+
+    def online(self, sensor_id: str, now: float, start: float | None, limit: float | None = None) -> bool:
+        """The sensor sent a frame within the last limit s (default SILENT_AFTER; one that sent nothing
+        counts from start, None: not started, online). The web UI's "online" too: until 0.28 it said
+        "offline" after 15 s, Home Assistant after 30 s."""
+        if start is None:
+            return True
+        limit = SILENT_AFTER if limit is None else limit
+        return now - self.heard.get(sensor_id, start) <= limit
 
     @staticmethod
     def own_room(s, zones) -> str | None:

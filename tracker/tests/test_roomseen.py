@@ -227,6 +227,24 @@ def test_a_room_whose_own_sensor_went_silent_is_unavailable():
     assert all(available(tr, 30.5).values())
 
 
+def test_the_web_ui_calls_a_sensor_offline_exactly_when_home_assistant_does():
+    """One definition (roomseen.SILENT_AFTER, counted from the model's start for a sensor that sent
+    nothing): until 0.28 the live view said "offline" after 15 s (and right after "Neu beginnen" for
+    every sensor), Home Assistant after 30 s - the header said 1/2 while the room was still there."""
+    tr = Tracker(open_plan())
+    k = feed_both(tr, 0.0, 10.0)
+    k = feed_both(tr, 10.0, 9.9 + LOST - 0.05, wohn=False, k0=k)
+    tr.step(9.9 + LOST - 0.05)
+    assert tr.snapshot()["sensors"]["presence-wohn"]["online"] and available(tr, tr.now)["wohn"]
+    for rt in tr.runtime.values():  # as after "Neu beginnen" (app.h_reset_tracks)
+        rt.last_frame = float("-inf")
+    assert all(s["online"] for s in tr.snapshot()["sensors"].values())
+    feed_both(tr, 9.9 + LOST - 0.05, 30.0, wohn=False, k0=k)
+    tr.step(30.0)
+    on = {sid: s["online"] for sid, s in tr.snapshot()["sensors"].items()}
+    assert on == {"presence-wohn": False, "presence-ess": True} and not available(tr, 30.0)["wohn"]
+
+
 def test_at_the_start_a_sensor_counts_as_silent_only_after_the_limit():
     """Before the first frames nothing is silent (the app's start); a sensor that sent nothing since the
     model started counts from that start: no room flaps to unavailable while the boards come in."""

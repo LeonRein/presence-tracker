@@ -30,7 +30,8 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
 - **Verbindung:** Oben rechts stehen Sensoren und Personen, auch am Handy. *Sensoren* zählt alle
   eingeschalteten und platzierten Sensoren, auch einen, der seit dem Start nichts gesendet hat (bis 0.26.0
   nur die, von denen Daten kamen: zwei ausgefallene Boards zeigten 5/5); der Punkt ist nur grün, wenn
-  alle online sind. Die Sensorliste im Tab *Live* zeigt einen ausgefallenen als *offline*. Kommen 3 s lang keine Daten
+  alle online sind. Die Sensorliste im Tab *Live* zeigt einen ausgefallenen als *offline*: nach 30 s ohne Frame,
+  wie Home Assistant seinen Raum *nicht verfügbar* nennt (bis 0.28 schon nach 15 s). Kommen 3 s lang keine Daten
   oder ist die Verbindung getrennt, wird die Karte grau, die Listen blass, und ein roter Balken sagt, seit
   wann der Stand alt ist.
 - **Niemand taucht aus dem Nichts auf und niemand verschwindet einfach.** Personen kommen und gehen nur

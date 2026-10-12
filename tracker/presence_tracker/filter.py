@@ -2369,7 +2369,7 @@ class Tracker:
         sensors = {}
         for sid, rt in self.runtime.items():
             sensors[sid] = {
-                "online": t - rt.last_frame < 15,
+                "online": self.seen.online(sid, t, self.start),  # as Home Assistant's rooms (roomseen.py)
                 "detections": [{"x": round(float(d.pos[0]), 3), "y": round(float(d.pos[1]), 3),
                                 "lx": round(d.local[0], 3), "ly": round(d.local[1], 3),
                                 "speed": round(d.speed, 2), "hidden": d.hidden or d.stale}

@@ -41,6 +41,9 @@
 - `ld2410.json`: Ein Teil ohne seine Zeit (`num` ohne `den`, nur in einer von Hand verdorbenen Datei) wird
   beim Laden verworfen; bisher scheiterte das Modell an jedem LD2410C-Frame dieses Sensors.
 - Fehlermeldung: `minutes_ago` muss eine endliche Zahl sein; „nan“ kam bisher durch und schrieb NaN in den Kopf.
+- **Sensor „online“ heißt in der Web-Oberfläche dasselbe wie in Home Assistant** (DOCS.md *Verbindung*): ein
+  Frame in den letzten 30 s (`roomseen.SILENT_AFTER`). Bisher sagte die Oberfläche nach 15 s „offline“ und
+  nach „Neu beginnen“ für jeden Sensor bis zu seinem nächsten Frame, Home Assistant erst nach 30 s.
 
 ## 0.28.0
 
