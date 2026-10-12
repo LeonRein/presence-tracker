@@ -337,3 +337,35 @@ def test_a_broken_report_file_hides_only_itself(tmp_path):
     assert status == 200
     assert len(set(names)) == 2 and {r["name"] for r in listed} == set(names)
     assert not list(app.reports.glob(".*"))  # no temporary file left
+
+
+def test_a_refused_floor_plan_keeps_the_people(tmp_path, monkeypatch):
+    """A new floor plan the model fails with after it built the new tiles: the old configuration holds,
+    and so do the people - saved as they were before it (the old tiles), not from the half-built model.
+    Until 0.28 people.json got the new tiles' fingerprint, and the old model restored nothing."""
+    config = flat_config(entry=True)
+    config.save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    sit = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.52, 1.0), start=1, pauses={2: 600}))
+    for t, sid, frame in simulate([sit], sim_sensors(config), 60.0, walls=config.wall_segments):
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
+        app.tick(1000.0 + t)
+    fingerprint = app.tracker.tiles.fingerprint()
+    d = config.to_dict()
+    d["sensors"].append({"id": "c", "x": -1.95, "y": 3.05, "heading": 45, "placed": True})
+    d["zones"] = [{**z, "entry": False} for z in d["zones"]]
+    real = Tracker.use_dest_map
+
+    def use_dest_map(self, dm):  # fails once, after reconfigure built the new tiles
+        monkeypatch.setattr(Tracker, "use_dest_map", real)
+        raise ValueError("broken")
+    monkeypatch.setattr(Tracker, "use_dest_map", use_dest_map)
+
+    class Request:
+        async def json(self):
+            return d
+
+    r = asyncio.run(app.h_put_config(Request()))
+    assert r.status == 400 and app.config.to_dict() == config.to_dict()
+    assert json.loads((tmp_path / "people.json").read_text())["tiles"] == fingerprint
+    assert app.tracker.started_from is not None and app.tracker.tiles.fingerprint() == fingerprint

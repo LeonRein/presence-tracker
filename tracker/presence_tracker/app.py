@@ -133,12 +133,13 @@ class App:
         self._reset_tracker()
         self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
 
-    def _model_failed(self, where: str, count: bool = True):
+    def _model_failed(self, where: str, count: bool = True, people: dict | None = None):
         """An error in the model must not stop the app: 0.9.3 died on one LD2410C frame (7.10.,
         between 22:52 and 2:07), the MQTT client said goodbye cleanly, so its last will never went
         out, and Home Assistant kept the last states for hours. Logged with the traceback; the model
         starts over from what was learned and saved, about the people from what it knew just before
-        (if that is still sound, else from the last save)."""
+        (if that is still sound, else from the last save); people: that state as taken before (a new
+        configuration the model failed with half-way)."""
         log.exception("model failed on %s: starting over", where)
         now = time.monotonic()
         if count:  # (not a configuration refused in PUT /api/config: the old one holds)
@@ -153,7 +154,11 @@ class App:
                           "Check the configuration and the errors above.", len(self.failures), where, RETRY, RETRY)
             self.paused_until = now + RETRY
         try:
-            if not self.replay:
+            if self.replay:
+                pass
+            elif people is not None:
+                atomic_write(self.data_dir / "people.json", json.dumps(people, allow_nan=False).encode())
+            else:
                 self._save_people()
         except Exception:  # noqa: BLE001 - the failed model may be broken: then the last save holds
             log.warning("the people could not be saved, starting from the last save")
@@ -653,7 +658,10 @@ class App:
             restarted = self.tracker.reconfigure(config)
             self.tracker.zone_states()
         except Exception as e:  # noqa: BLE001 - the old configuration holds
-            self._model_failed("a new configuration", count=False)
+            # and the people as they were before it (the model may have the new tiles by now: saved from
+            # it, people.json had their fingerprint, and the old model restored nothing until 0.28)
+            self._model_failed("a new configuration", count=False,
+                               people=getattr(self.tracker, "reconfigured_from", None))
             return web.json_response({"error": f"Das Modell läuft mit dieser Konfiguration nicht: {e!r}. "
                                                "Es gilt die vorige."}, status=400)
         self.config = config

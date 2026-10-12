@@ -32,6 +32,10 @@
   unter „Ausgabe“ (Kosten, Haltezeit eigener LD2450, Vorausschau) und die Haltezeit des LD2410C.
 - Live, Räume ohne Sensor: Die Prozentzahl hieß „Wahrscheinlichkeit, dass diese Person dort ist, je Person“;
   seit 0.8 ist es eine Zahl je Gruppe, die Wahrscheinlichkeit, dass jemand dort ist. So heißt sie jetzt.
+- **Fehler: Ein abgelehnter Grundriss vergaß die Personen.** Scheiterte das Modell an einer neuen Konfiguration,
+  nachdem es schon die neuen Kacheln gebaut hatte, galt zwar die alte weiter, aber die Personen wurden aus dem
+  halb umgebauten Modell gespeichert: Das scheiterte oder schrieb den Fingerabdruck der neuen Kacheln, und das
+  alte Modell wusste danach nichts über die Personen. Jetzt wird der Zustand von vor der Änderung gespeichert.
 
 ## 0.28.0
 

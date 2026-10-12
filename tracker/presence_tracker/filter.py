@@ -375,8 +375,11 @@ class Tracker:
         set of sensors, the observed area) the model starts over as after a restart: from what it
         knew (people_state) if the tiles stay the same, else from nothing known. Returns whether it
         started over."""
+        self.reconfigured_from = None
         changed = self._changed_sensors(self.config, config)
         state = self.people_state() if changed is None else None
+        # if what follows fails half-way (new tiles, old people), the app saves this (app.h_put_config)
+        self.reconfigured_from = state
         self.config = config
         self.p = config.params
         self.seen.use(config)
