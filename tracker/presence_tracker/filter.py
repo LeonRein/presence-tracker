@@ -543,15 +543,9 @@ class Tracker:
 
     def _g(self, si: int, pos: np.ndarray) -> np.ndarray:
         """How well sensor si sees the points (..., 2), 0..1 (MODEL.md 4.1, from the geometry)."""
-        grid = self._grid(si)
-        shape = pos.shape[:-1]
-        flat = pos.reshape(-1, 2)
         w = self.world
-        if len(flat) <= 4:  # a person's components: plain Python is faster than numpy for so few
-            return np.array([grid[min(max(int((x - w.x0) / CELL), 0), w.nx - 1), min(max(int((y - w.y0) / CELL), 0), w.ny - 1)]
-                             for x, y in flat.tolist()]).reshape(shape)
-        i, j = w.cell_of(flat)
-        return grid[i, j].reshape(shape)
+        return kernels.grid_at(self._grid(si), np.ascontiguousarray(pos, dtype=float).reshape(-1, 2), float(w.x0), float(w.y0),
+                               CELL).reshape(pos.shape[:-1])
 
     def _polar(self, si: int, pos: np.ndarray) -> tuple:
         s = self.config.sensors[si]
@@ -562,8 +556,9 @@ class Tracker:
         """How much of a person at the points (n, 2) is in the line of sight of sensor si (0..1,
         the LD2410C's sight; _grid)."""
         self._grid(si)
-        i, j = self.world.cell_of(pos.reshape(-1, 2))
-        return self._gcache[("los", si)][i, j]
+        w = self.world
+        return kernels.grid_at(self._gcache[("los", si)], np.ascontiguousarray(pos, dtype=float).reshape(-1, 2), float(w.x0),
+                               float(w.y0), CELL)
 
     def _rates(self, si: int, pos: np.ndarray, skip=(), masked=True, base=None) -> np.ndarray:
         """(2, n) rates (1/s) [walkers, still people] at which sensor si starts a track on somebody

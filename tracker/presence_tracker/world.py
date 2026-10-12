@@ -66,6 +66,7 @@ class World:
             t = np.clip(((pts - [ax, ay]) @ d) / max(float(d @ d), 1e-12), 0.0, 1.0)
             dist = np.minimum(dist, np.hypot(*(pts - [ax, ay] - t[:, None] * d).T))
         self.wall_dist = (dist - CELL / math.sqrt(2)).reshape(self.nx, self.ny).tolist()
+        self.wall_grid = np.array(self.wall_dist, dtype=float).reshape(self.nx, self.ny)  # the same for the kernels
         # doors out of the observed area: where someone coming out appears, walking inward
         self.portals = []
         for q in config.portals:

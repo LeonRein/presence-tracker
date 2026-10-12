@@ -6,9 +6,10 @@ import math
 
 import numpy as np
 
-from presence_tracker import kernels, ld2410
+from presence_tracker import gauss, kernels, ld2410
 from presence_tracker.filtermodel import Model
 from presence_tracker.sim import Person
+from presence_tracker.world import CELL, World
 
 from test_filter import BALCONY_DOOR, FLUR_DOOR, flat_config, run
 from test_frames import walk
@@ -179,3 +180,75 @@ def test_the_gauss_rates_kernel_is_the_sum_of_sensor_rates_bit_for_bit():
             ref = ref + np.stack([r[1, :5], r[0, 5:]])
         got = kernels.gauss_rates(pts, use, sxy, grids, live, ptr, 0.0, 0.0, 0.1, acq, 1e-6, 1.0, res, 0.7)
         assert np.array_equal(got, ref)
+
+
+def _sigma_numpy(world, pos, mean, var):
+    """Gauss.sigma with the world before kernels.sigma_points (0.28.0)."""
+    sd = np.sqrt(np.maximum(var, 0.0))
+    pts = mean[:, None, :] + gauss.UNIT[None, :, :] * sd[:, None, :]
+    near = []
+    for k, ((x, y), (mx, my), (sx, sy)) in enumerate(zip(pos.tolist(), mean.tolist(), sd.tolist())):
+        if not world.clear(x, y, abs(mx - x) + abs(my - y) + gauss.UNIT_REACH * max(sx, sy)):
+            near.append(k)
+    if not near:
+        return pts
+    n = pts.shape[1]
+    p0 = np.repeat(pos[near], n, axis=0)
+    pts[near] = world.reflect(p0, pts[near].reshape(-1, 2))[0].reshape(len(near), n, 2)
+    return pts
+
+
+def test_the_sigma_points_kernel_is_the_numpy_bit_for_bit():
+    world = World(flat_config())
+    rng = np.random.default_rng(7)
+    mirrored = 0
+    for _ in range(400):
+        pos = rng.uniform(-0.5, 7.0, (2, 2))
+        mean = pos + rng.normal(0, 0.3, (2, 2)) * (rng.random() < 0.5)
+        var = rng.uniform(0, 1.5, (2, 2)) ** 2
+        var[rng.random((2, 2)) < 0.05] = -1e-9  # rounding below 0
+        ref = _sigma_numpy(world, pos, mean, var)
+        got = kernels.sigma_points(pos, mean, var, gauss.UNIT, gauss.UNIT_REACH, world.wall_grid, world.x0, world.y0,
+                                   CELL, world.walls, world.wall_box)
+        assert np.array_equal(got, ref)
+        plain = mean[:, None, :] + gauss.UNIT[None, :, :] * np.sqrt(np.maximum(var, 0.0))[:, None, :]
+        mirrored += not np.array_equal(ref, plain)
+    assert mirrored > 20  # walls were met
+
+
+def _mu_part_numpy(st, mu, lik):
+    """ld2410.Stats._mu_part before the kernels.ld_gain_* (0.28.0)."""
+    a, tau = lik.alpha, lik.tau
+    look = a * st.t_unc / tau
+    out = -(np.log(mu) @ look)
+    inv = 1.0 / mu
+    ae = a * st.t_e / tau
+    for cells, comps in lik.kinds:
+        N = float(look[cells].sum())
+        if N <= 0:
+            continue
+        A = inv[:, cells] @ ae[cells]
+        terms = np.array([c + math.lgamma(N + k) - (N + k) * np.log(r + A) for c, k, r in comps])
+        top = terms.max(axis=0)
+        out += top + np.log(np.exp(terms - top).sum(axis=0))
+    c = np.flatnonzero(st.t_cens > 0)
+    if len(c):
+        rows, tables = ld2410._censored_tables(a)
+        m = np.ascontiguousarray(mu)
+        out += kernels.ld_censored(m, np.log(m), c, rows[c], tables, ld2410._GRID) @ (st.t_cens[c] / tau[c])
+    return out
+
+
+def test_the_ld2410_likelihood_is_the_numpy_bit_for_bit():
+    rng = np.random.default_rng(8)
+    lik = ld2410.Likelihood(Model())
+    for trial in range(200):
+        st = ld2410.Stats()
+        for _ in range(rng.integers(0 if trial % 10 == 0 else 1, 20)):
+            e = rng.integers(0, 101, ld2410.CELLS).astype(float)
+            e[rng.random(ld2410.CELLS) < 0.1] = 100.0
+            if trial % 7 == 0:
+                e[9:] = 100.0  # the still cells all censored: no looks there
+            st.add(e, float(rng.uniform(0.05, 1.0)))
+        mu = np.exp(rng.uniform(-3, 6, (int(rng.integers(1, 300)), ld2410.CELLS)))
+        assert np.array_equal(st._mu_part(mu, lik), _mu_part_numpy(st, mu, lik))

@@ -190,6 +190,65 @@ def reflect(p0, p1, walls, box):
 
 
 @njit(cache=True)
+def sigma_points(pos, mean, var, unit, reach, wall_grid, x0, y0, cell, walls, box):
+    """gauss.Gauss.sigma with the world: per mode k the points mean[k] + unit * sd (P, 2), those of a
+    mode with a wall within reach of them (seen from where the component is, pos[k]: world.World.clear)
+    mirrored at the first wall their move from pos[k] crosses (reflect, with the same moves). The same
+    arithmetic as the numpy it replaces: results equal bit for bit. (K, P, 2)."""
+    K = pos.shape[0]
+    P = unit.shape[0]
+    nx, ny = wall_grid.shape
+    pts = np.empty((K, P, 2))
+    near = np.zeros(K, dtype=np.bool_)
+    m = 0
+    for k in range(K):
+        sx = var[k, 0] if not var[k, 0] < 0.0 else 0.0
+        sy = var[k, 1] if not var[k, 1] < 0.0 else 0.0
+        sx, sy = math.sqrt(sx), math.sqrt(sy)
+        for p in range(P):
+            pts[k, p, 0] = mean[k, 0] + unit[p, 0] * sx
+            pts[k, p, 1] = mean[k, 1] + unit[p, 1] * sy
+        x, y = pos[k, 0], pos[k, 1]
+        r = abs(mean[k, 0] - x) + abs(mean[k, 1] - y) + reach * max(sx, sy)
+        i = min(max(int((x - x0) / cell), 0), nx - 1)
+        j = min(max(int((y - y0) / cell), 0), ny - 1)
+        if not wall_grid[i, j] > r:
+            near[k] = True
+            m += 1
+    if m == 0:
+        return pts
+    p0 = np.empty((m * P, 2))
+    p1 = np.empty((m * P, 2))
+    q = 0
+    for k in range(K):
+        if near[k]:
+            for p in range(P):
+                p0[q, 0], p0[q, 1] = pos[k, 0], pos[k, 1]
+                p1[q, 0], p1[q, 1] = pts[k, p, 0], pts[k, p, 1]
+                q += 1
+    moved, _ = reflect(p0, p1, walls, box)
+    q = 0
+    for k in range(K):
+        if near[k]:
+            for p in range(P):
+                pts[k, p, 0], pts[k, p, 1] = moved[q, 0], moved[q, 1]
+                q += 1
+    return pts
+
+
+@njit(cache=True)
+def grid_at(grid, pts, x0, y0, cell):
+    """grid's value in the 0.1 m cell of each point (n, 2), clipped to the raster (world.World.cell_of)."""
+    nx, ny = grid.shape
+    out = np.empty(len(pts))
+    for p in range(len(pts)):
+        i = min(max(int((pts[p, 0] - x0) / cell), 0), nx - 1)
+        j = min(max(int((pts[p, 1] - y0) / cell), 0), ny - 1)
+        out[p] = grid[i, j]
+    return out
+
+
+@njit(cache=True)
 def crosses_wall(p0, p1, walls, box):
     """world.World.crosses_wall: per move p0 -> p1 (n, 2), does it cross a wall?"""
     n = len(p0)
@@ -548,6 +607,69 @@ def ld_censored(mu, lm, cols, rows, tables, grid):
 
 
 @njit(cache=True)
+def ld_gain_sums(As, r):
+    """ld2410.Stats._mu_part, the block's common gain integrated out: per kind q of cell (rows of As,
+    (Q, k): sum over its cells of the energies over the means) and component c of its prior (r (Q, 2)),
+    r[q, c] + As[q] (2 Q, k) - what its logarithm is taken of (by numpy, as before)."""
+    Q, k = As.shape
+    out = np.empty((2 * Q, k))
+    for q in range(Q):
+        for c in range(2):
+            for i in range(k):
+                out[2 * q + c, i] = r[q, c] + As[q, i]
+    return out
+
+
+@njit(cache=True)
+def ld_gain_terms(logs, cl, nk):
+    """ld2410.Stats._mu_part: the terms cl - nk log(r + A) of each kind's two components (2 Q, k), their
+    maximum per kind (Q, k) and the terms less it (2 Q, k) - what the exponential is taken of. numpy's
+    maximum (NaN wins)."""
+    J, k = logs.shape
+    Q = J // 2
+    top = np.empty((Q, k))
+    d = np.empty((J, k))
+    for q in range(Q):
+        for i in range(k):
+            t0 = cl[2 * q] - nk[2 * q] * logs[2 * q, i]
+            t1 = cl[2 * q + 1] - nk[2 * q + 1] * logs[2 * q + 1, i]
+            if t0 != t0:
+                m = t0
+            elif t1 != t1:
+                m = t1
+            else:
+                m = t0 if t0 >= t1 else t1
+            top[q, i] = m
+            d[2 * q, i] = t0 - m
+            d[2 * q + 1, i] = t1 - m
+    return top, d
+
+
+@njit(cache=True)
+def ld_gain_pairs(e):
+    """The sum of each kind's two components (2 Q, k) -> (Q, k)."""
+    J, k = e.shape
+    out = np.empty((J // 2, k))
+    for q in range(J // 2):
+        for i in range(k):
+            out[q, i] = e[2 * q, i] + e[2 * q + 1, i]
+    return out
+
+
+@njit(cache=True)
+def ld_gain_total(dot, top, logs):
+    """-dot + (top + log sum) of each kind in turn (k,): ld2410.Stats._mu_part's sum in its order."""
+    Q, k = top.shape
+    out = np.empty(k)
+    for i in range(k):
+        o = -dot[i]
+        for q in range(Q):
+            o = o + (top[q, i] + logs[q, i])
+        out[i] = o
+    return out
+
+
+@njit(cache=True)
 def gauss_exponents(points, mx, my, vx, vy):
     """tiling.Tiling.gauss_points' exponents -0.5 ((x - mx)^2 / vx + (y - my)^2 / vy) at the points
     (P, 2), without numpy's temporary arrays. The caller takes np.exp: numpy's vectorized exp is
@@ -694,6 +816,10 @@ def warm():
     ld_censored(np.ones((1, 16)), f((1, 16)), i(1), i(1), f((1, 5)), np.arange(5.0))
     gauss_exponents(f((1, 2)), 0.0, 0.0, 1.0, 1.0)
     hidden_weigh(f(3), f((2, 2, 3)), f((1, 3)), 0.0, f(3), f((2, 3)), False)
+    sigma_points(f((2, 2)), f((2, 2)), f((2, 2)), f((5, 2)), 1.7, f((2, 2)), 0.0, 0.0, 0.1, walls, walls)
+    grid_at(f((2, 2)), f((1, 2)), 0.0, 0.0, 0.1)
+    ld_gain_total(f(3), *ld_gain_terms(ld_gain_sums(f((2, 3)), f((2, 2))), f(4), f(4))[:1], f((2, 3)))
+    ld_gain_pairs(f((4, 3)))
     gauss_rates(f((2, 5, 2)), np.ones(1, dtype=np.bool_), f((1, 2)), f((1, 2, 2)), f((1, 3)), i(2), 0.0, 0.0, 0.1, f(4),
                 1e-6, 1.0, np.ones(2), 0.7)
 

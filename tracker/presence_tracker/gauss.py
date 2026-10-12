@@ -26,6 +26,7 @@ import numpy as np
 
 from . import kernels
 from .filtermodel import STILL, WALK
+from .world import CELL
 
 LOG2PI = math.log(2 * math.pi)
 X, V = 0, 1  # state indices; a track's c and o follow at slots[seg], slots[seg] + 1
@@ -154,21 +155,13 @@ class Gauss:
         pos = self.pos
         mean = pos if mean is None else mean
         var = self.pos_var() if var is None else var
-        sd = np.sqrt(np.maximum(var, 0.0))
-        pts = mean[:, None, :] + UNIT[None, :, :] * sd[:, None, :]
         if world is None:
-            return pts
-        # only components with a wall within reach of their points (from their mean)
-        near = []
-        for k, ((x, y), (mx, my), (sx, sy)) in enumerate(zip(pos.tolist(), mean.tolist(), sd.tolist())):
-            if not world.clear(x, y, abs(mx - x) + abs(my - y) + UNIT_REACH * max(sx, sy)):
-                near.append(k)
-        if not near:
-            return pts
-        n = pts.shape[1]
-        p0 = np.repeat(pos[near], n, axis=0)
-        pts[near] = world.reflect(p0, pts[near].reshape(-1, 2))[0].reshape(len(near), n, 2)
-        return pts
+            sd = np.sqrt(np.maximum(var, 0.0))
+            return mean[:, None, :] + UNIT[None, :, :] * sd[:, None, :]
+        # only components with a wall within reach of their points (from their mean): kernels.sigma_points
+        return kernels.sigma_points(np.ascontiguousarray(pos), np.ascontiguousarray(mean, dtype=float),
+                                    np.ascontiguousarray(var, dtype=float), UNIT, UNIT_REACH, world.wall_grid, world.x0,
+                                    world.y0, CELL, world.walls, world.wall_box)
 
     def near_sigma(self, z, radius: float, world=None) -> tuple:
         """E[exp(-|x - z|^2 / (2 radius^2))] per component (2,) and the sigma points (2, P, 2) of

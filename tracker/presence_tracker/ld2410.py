@@ -140,7 +140,7 @@ class Stats:
     of censored ones (each frame for the time it stands for: Tracker._ld_frame); and the time in which
     the LD2450 in the same housing had a target in sight (for what the background learns)."""
 
-    __slots__ = ("time", "t_unc", "t_e", "t_le", "t_cens", "t_target")
+    __slots__ = ("time", "t_unc", "t_e", "t_le", "t_cens", "t_target", "_prep")
 
     def __init__(self):
         self.time = 0.0
@@ -149,8 +149,10 @@ class Stats:
         self.t_e = np.zeros(CELLS)
         self.t_le = np.zeros(CELLS)
         self.t_cens = np.zeros(CELLS)
+        self._prep = None
 
     def add(self, e: np.ndarray, dt: float, target: bool = False):
+        self._prep = None
         cens = e >= CAP
         ee = np.maximum(e, 0.5)  # integer energies: 0 as half a unit
         self.time += dt
@@ -160,27 +162,59 @@ class Stats:
         self.t_le += dt * np.where(cens, 0.0, np.log(ee))
         self.t_cens += dt * cens
 
-    def _mu_part(self, mu: np.ndarray, lik: "Likelihood") -> np.ndarray:
-        """The part of the tempered log-likelihood that depends on the means mu (k, 16), with the
-        block's common gain of each kind integrated out (Likelihood), (k,)."""
+    def _prepared(self, lik: "Likelihood") -> tuple:
+        """What _mu_part takes from these frames and lik, computed once for all the means it is asked
+        about: alpha x looks per cell; per kind of cell with looks (N > 0) its cells and alpha x energy
+        per cell, its components' r, c + lgamma(N + k) and N + k; the censored cells."""
+        p = self._prep
+        if p is not None and p[0] is lik:
+            return p
         a, tau = lik.alpha, lik.tau
         look = a * self.t_unc / tau  # alpha x looks per cell
-        out = -(np.log(mu) @ look)
-        inv = 1.0 / mu
         ae = a * self.t_e / tau
-        for cells, comps in lik.kinds:
-            N = float(look[cells].sum())
+        cells, r, cl, nk = [], [], [], []
+        for cs, comps in lik.kinds:
+            N = float(look[cs].sum())
             if N <= 0:
                 continue
-            A = inv[:, cells] @ ae[cells]
-            terms = np.array([c + math.lgamma(N + k) - (N + k) * np.log(r + A) for c, k, r in comps])
-            top = terms.max(axis=0)
-            out += top + np.log(np.exp(terms - top).sum(axis=0))
+            assert len(comps) == 2  # kernels.ld_gain_terms
+            cells.append((cs, ae[cs]))
+            for c, k, rr in comps:
+                r.append(rr)
+                cl.append(c + math.lgamma(N + k))
+                nk.append(N + k)
         c = np.flatnonzero(self.t_cens > 0)
-        if len(c):  # log_censored compiled (kernels.ld_censored)
+        cens = None
+        if len(c):
             rows, tables = _censored_tables(a)
-            m = np.ascontiguousarray(mu)
-            out += kernels.ld_censored(m, np.log(m), c, rows[c], tables, _GRID) @ (self.t_cens[c] / tau[c])
+            cens = (c, rows[c], tables, self.t_cens[c] / tau[c])
+        p = self._prep = (lik, look, cells, np.array(r, dtype=float).reshape(-1, 2), np.array(cl, dtype=float),
+                          np.array(nk, dtype=float), cens)
+        return p
+
+    def _mu_part(self, mu: np.ndarray, lik: "Likelihood") -> np.ndarray:
+        """The part of the tempered log-likelihood that depends on the means mu (k, 16), with the
+        block's common gain of each kind integrated out (Likelihood), (k,): per kind of cell
+        log sum_c exp(c + lgamma(N + k) - (N + k) log(r + A)), A the sum of alpha x energy / mean
+        over its cells. The arithmetic between numpy's logarithms, exponentials and products in
+        compiled loops (kernels.ld_gain_*), the same numbers in the same order: results equal bit for
+        bit to the numpy before."""
+        _, look, cells, r, cl, nk, cens = self._prepared(lik)
+        mu = np.ascontiguousarray(mu, dtype=float)
+        lm = np.log(mu)
+        dot = lm @ look
+        if cells:
+            inv = 1.0 / mu
+            As = np.empty((len(cells), len(mu)))
+            for q, (cs, ae) in enumerate(cells):
+                As[q] = inv[:, cs] @ ae
+            top, d = kernels.ld_gain_terms(np.log(kernels.ld_gain_sums(As, r)), cl, nk)
+            out = kernels.ld_gain_total(dot, top, np.log(kernels.ld_gain_pairs(np.exp(d))))
+        else:
+            out = -dot
+        if cens is not None:  # log_censored compiled (kernels.ld_censored)
+            c, rows, tables, wc = cens
+            out += kernels.ld_censored(mu, lm, c, rows, tables, _GRID) @ wc
         return out
 
     def loglik(self, mu: np.ndarray, lik: "Likelihood") -> float:
