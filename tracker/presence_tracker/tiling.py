@@ -142,6 +142,7 @@ class Tiling:
         self.widths = np.diff(np.concatenate([AGE_EDGES, [AGE_EDGES[-1] * 2]]))
         self.A = len(AGE_EDGES)
         self._region_rates = None
+        self._doors = None
         self._observed = {}
         self.g = {}
         self.dist = {}
@@ -222,10 +223,13 @@ class Tiling:
         times the tiles' rates."""
         if not len(self.door_tiles):
             return np.zeros(self.R + 1)
-        t = self.door_tiles
-        v = np.asarray(var)[None, :] + self.var[t]
-        dens = np.exp(-0.5 * (((self.centers[t] - np.asarray(mean)[None, :]) ** 2) / v).sum(axis=1)) / (2 * math.pi * np.sqrt(v.prod(axis=1)))
-        return np.minimum(dens * self.area[t], 1.0) @ self.door_rate[t]
+        if self._doors is None:  # the door tiles' centres, spreads, areas and rates
+            t = self.door_tiles
+            self._doors = (self.centers[t], self.var[t], self.area[t], self.door_rate[t])
+        centers, tvar, area, rate = self._doors
+        v = np.asarray(var)[None, :] + tvar
+        dens = np.exp(-0.5 * (((centers - np.asarray(mean)[None, :]) ** 2) / v).sum(axis=1)) / (2 * math.pi * np.sqrt(v.prod(axis=1)))
+        return np.minimum(dens * area, 1.0) @ rate
 
     def spread(self, mass: np.ndarray) -> np.ndarray:
         """Masses per tile onto their sample points."""

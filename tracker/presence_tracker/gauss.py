@@ -25,6 +25,7 @@ import math
 import numpy as np
 
 from . import kernels
+from .hidden import Hidden
 from .filtermodel import STILL, WALK
 from .world import CELL
 
@@ -62,6 +63,17 @@ def _collapse(parts):
         e = mm - m
         P += w * (PP + e[:, :, None] * e[:, None, :])
     return tot, m, P / tot
+
+
+_NO_SLOTS = (np.zeros(0, dtype=np.int64), np.zeros(0))
+_EXP_GO = [None, None, None]  # (shapes, dt, exp(-go dt)): the same step for every Gaussian of a move
+
+
+def _exp_go(shapes, dt: float) -> np.ndarray:
+    """exp(-go dt) per kind of stay (numpy's exp, as before)."""
+    if _EXP_GO[0] is not shapes or _EXP_GO[1] != dt:
+        _EXP_GO[:] = [shapes, dt, np.exp(-shapes.go * dt)]
+    return _EXP_GO[2]
 
 
 def _log(w):
@@ -167,6 +179,12 @@ class Gauss:
         """E[exp(-|x - z|^2 / (2 radius^2))] per component (2,) and the sigma points (2, P, 2) of
         the position weighted by that kernel (a Gaussian again: z as a measurement with variance
         radius^2) - for the expectation of something else times the kernel."""
+        if world is not None:  # in compiled loops (kernels.near_parts), the same numbers
+            zx, zy = np.asarray(z, dtype=float).tolist()
+            expo, sq, pts = kernels.near_parts(np.ascontiguousarray(self.pos), np.ascontiguousarray(self.pos_var()), zx, zy,
+                                               float(radius ** 2), UNIT, UNIT_REACH, world.wall_grid, world.x0, world.y0,
+                                               CELL, world.walls, world.wall_box)
+            return kernels.near_weight(sq, np.exp(expo)), pts
         P, r2 = self.pos_var(), radius ** 2
         z = np.asarray(z)[None, :]
         mean = (self.pos * r2 + z * P) / (P + r2)
@@ -196,8 +214,6 @@ class Gauss:
         if dt <= 0:
             return
         w = self.weights()
-        stayed = self.gow * np.exp(-shapes.go * dt)
-        p_stay = float(stayed.sum())
         p_stop = -math.expm1(-m.speed / m.walk_length * dt)
         # the incoming parts of each mode matched to one Gaussian (walking -> standing: the velocity is
         # 0 from now on; standing -> walking: off in any direction at the walking speed, MODEL.md
@@ -205,21 +221,19 @@ class Gauss:
         # ex. 6.2; the velocity's correlation time 1 / turn_rate, MODEL.md 3.2)
         s2 = 0.5 * (m.speed ** 2 + m.speed_spread ** 2)  # walking: stationary velocity variance per axis
         ao = math.exp(-dt / m.tau)
-        F, Q = kernels.motion(self.mean.shape[2], float(dt), float(m.still_noise ** 2), 1.0 / m.turn_rate, float(s2), ao,
-                              np.array(list(self.slots.values()), dtype=np.int64),
-                              np.array([self.var[seg] * (1 - m.const_share) * (1 - ao * ao) for seg in self.slots]))
-        tot_s, tot_w, w_ss, w_ws, m0, P0, self.mean, self.cov = kernels.imm_predict(
-            w, np.ascontiguousarray(self.mean), np.ascontiguousarray(self.cov), p_stay, p_stop, s2, F, Q)
         # the kinds of stay: who stood on is more likely a long stay; who just stopped, a fresh one.
-        # The detectability changes now and then within a stay, and is new for a new one
-        if tot_s > 0:
-            fresh = shapes.go_w
-            kept = stayed / p_stay if p_stay > 0 else fresh
-            self.gow = (w_ss * kept + w_ws * fresh) / tot_s
-            # (with the LD2410C amplitude, drawn together, 4.3)
-            q = -math.expm1(-m.kappa_switch * dt)
-            ka = (1 - q) * self.ka + q * shapes.ka_w
-            self.ka = (w_ss * ka + w_ws * shapes.ka_w) / tot_s
+        # The detectability changes now and then within a stay, and is new for a new one (with the
+        # LD2410C amplitude, drawn together, 4.3): all in kernels.gauss_predict
+        q = -math.expm1(-m.kappa_switch * dt)
+        if self.slots:
+            slot_k = np.array(list(self.slots.values()), dtype=np.int64)
+            slot_q = np.array([self.var[seg] * (1 - m.const_share) * (1 - ao * ao) for seg in self.slots])
+        else:
+            slot_k, slot_q = _NO_SLOTS
+        tot_s, tot_w, m0, P0, self.mean, self.cov, F, Q, self.gow, self.ka = kernels.gauss_predict(
+            w, np.ascontiguousarray(self.mean), np.ascontiguousarray(self.cov), self.gow, self.ka, _exp_go(shapes, dt),
+            shapes.go_w, shapes.ka_w, p_stop, float(s2), float(dt), float(m.still_noise ** 2), 1.0 / m.turn_rate, ao,
+            slot_k, slot_q, q)
         self.logw = _log(np.array([tot_s, tot_w]))
         top = self.logw.max()
         self.logw -= top + math.log(float(np.exp(self.logw - top).sum()))
@@ -300,7 +314,6 @@ class Gauss:
         tiles at the doors, by the walking component's mass there) goes to the part gone through a
         door, into the region behind it, its stay just begun, or out of the house (a door to the
         outside, MODEL.md 2); that part moves on."""
-        from .hidden import Hidden
         if self.away is not None:
             self.away.move(dt)
         w = self.weights()
@@ -400,7 +413,6 @@ class Gauss:
         """sum_i w_i * mixture_i for [(w_i, Gauss)] (weights summing to 1): per mode matched to one
         Gaussian; offsets of tracks that not all of them hold are marginalized out; the parts gone
         through a door mixed."""
-        from .hidden import Hidden
         common = [s for s in parts[0][1].slots if all(s in g.slots for _, g in parts)]
         parts = [(w, g._ordered(common)) for w, g in parts]
         comps = []
@@ -535,7 +547,6 @@ class Gauss:
         """The density of this person over the tiles (MODEL.md 5.4), when their last track ends:
         each component spread over the tiles, standing ones with their kinds of stay and
         detectability; with the part gone through a door. The velocity and the offsets are lost."""
-        from .hidden import Hidden
         h = Hidden(tiles)
         if not tiles.n:
             h.out = 1.0

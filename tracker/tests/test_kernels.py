@@ -7,7 +7,7 @@ import math
 import numpy as np
 
 from presence_tracker import gauss, kernels, ld2410
-from presence_tracker.filtermodel import Model
+from presence_tracker.filtermodel import Model, Shapes
 from presence_tracker.sim import Person
 from presence_tracker.world import CELL, World
 
@@ -252,3 +252,81 @@ def test_the_ld2410_likelihood_is_the_numpy_bit_for_bit():
             st.add(e, float(rng.uniform(0.05, 1.0)))
         mu = np.exp(rng.uniform(-3, 6, (int(rng.integers(1, 300)), ld2410.CELLS)))
         assert np.array_equal(st._mu_part(mu, lik), _mu_part_numpy(st, mu, lik))
+
+
+def _predict_numpy(g, dt, m, sh):
+    """Gauss.predict before kernels.gauss_predict (0.28.0), without walls and doors."""
+    w = g.weights()
+    stayed = g.gow * np.exp(-sh.go * dt)
+    p_stay = float(stayed.sum())
+    p_stop = -math.expm1(-m.speed / m.walk_length * dt)
+    s2 = 0.5 * (m.speed ** 2 + m.speed_spread ** 2)
+    ao = math.exp(-dt / m.tau)
+    F, Q = kernels.motion(g.mean.shape[2], float(dt), float(m.still_noise ** 2), 1.0 / m.turn_rate, float(s2), ao,
+                          np.array(list(g.slots.values()), dtype=np.int64),
+                          np.array([g.var[seg] * (1 - m.const_share) * (1 - ao * ao) for seg in g.slots]))
+    tot_s, tot_w, w_ss, w_ws, m0, P0, g.mean, g.cov = kernels.imm_predict(
+        w, np.ascontiguousarray(g.mean), np.ascontiguousarray(g.cov), p_stay, p_stop, s2, F, Q)
+    if tot_s > 0:
+        fresh = sh.go_w
+        kept = stayed / p_stay if p_stay > 0 else fresh
+        g.gow = (w_ss * kept + w_ws * fresh) / tot_s
+        q = -math.expm1(-m.kappa_switch * dt)
+        ka = (1 - q) * g.ka + q * sh.ka_w
+        g.ka = (w_ss * ka + w_ws * sh.ka_w) / tot_s
+    g.logw = gauss._log(np.array([tot_s, tot_w]))
+    top = g.logw.max()
+    g.logw -= top + math.log(float(np.exp(g.logw - top).sum()))
+
+
+def _random_gauss(rng, sh, tracks):
+    d = 2 + 2 * tracks
+    mean = rng.normal(0, 1, (2, 2, d)) + 3.0
+    A = rng.normal(0, 0.3, (2, 2, d, d))
+    cov = A @ np.swapaxes(A, 2, 3) + 1e-3 * np.eye(d)
+    gow = rng.uniform(0, 1, len(sh.go_w))
+    ka = rng.uniform(0, 1, sh.ka_w.shape)
+    logw = np.log(rng.dirichlet([1.0, 1.0]))
+    slots = {f"s{k}": 2 + 2 * k for k in range(tracks)}
+    var = {f"s{k}": float(rng.uniform(0.01, 0.3)) for k in range(tracks)}
+    return gauss.Gauss(logw, mean, cov, gow / gow.sum(), ka / ka.sum(), slots, var)
+
+
+def test_the_predict_kernel_is_the_numpy_bit_for_bit():
+    rng = np.random.default_rng(10)
+    m, sh = Model(), Shapes(Model())
+    for trial in range(200):
+        g = _random_gauss(rng, sh, trial % 3)
+        if trial % 11 == 0:
+            g.logw = np.array([-np.inf, 0.0])  # nobody stands
+        ref = g.copy()
+        dt = float(rng.uniform(0.01, 0.4))
+        g.predict(dt, m, sh)
+        _predict_numpy(ref, dt, m, sh)
+        for a, b in ((g.mean, ref.mean), (g.cov, ref.cov), (g.gow, ref.gow), (g.ka, ref.ka), (g.logw, ref.logw)):
+            assert np.array_equal(a, b)
+
+
+def _near_sigma_numpy(g, z, radius, world):
+    """Gauss.near_sigma before kernels.near_parts (0.28.0)."""
+    P, r2 = g.pos_var(), radius ** 2
+    z = np.asarray(z)[None, :]
+    mean = (g.pos * r2 + z * P) / (P + r2)
+    v = radius ** 2 + g.pos_var()
+    d2 = (g.pos - z[0][None, :]) ** 2
+    k = np.prod(np.sqrt(radius ** 2 / v) * np.exp(-0.5 * d2 / v), axis=1)
+    return k, _sigma_numpy(world, g.pos, mean, P * r2 / (P + r2))
+
+
+def test_the_near_sigma_kernel_is_the_numpy_bit_for_bit():
+    rng = np.random.default_rng(11)
+    world = World(flat_config())
+    sh = Shapes(Model())
+    for _ in range(300):
+        g = _random_gauss(rng, sh, 1)
+        g.mean[:, :, 0] = rng.uniform(-0.5, 7.0, (2, 2))
+        z = rng.uniform(-0.5, 7.0, 2)
+        radius = float(rng.uniform(0.2, 1.5))
+        k, pts = g.near_sigma(z, radius, world)
+        k_ref, pts_ref = _near_sigma_numpy(g, z, radius, world)
+        assert np.array_equal(k, k_ref) and np.array_equal(pts, pts_ref)

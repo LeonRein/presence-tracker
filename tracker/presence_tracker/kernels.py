@@ -82,6 +82,24 @@ def imm_predict(w, mean, cov, p_stay, p_stop, v_walk, F, Q):
 
 
 @njit(cache=True)
+def gauss_predict(w, mean, cov, gow, ka, e_go, go_w, ka_w, p_stop, s2, dt, still_q, tau, ao, slot_k, slot_q, q):
+    """gauss.Gauss.predict up to the weights' logarithm: the kinds of stay (gow times e_go = exp(-go dt)
+    stayed, p_stay of them), motion and imm_predict, then the kinds of stay and the detectability with
+    the LD2410C amplitude (ka, drawn anew with q) after the mode changes. The same arithmetic as the
+    numpy it replaces: results equal bit for bit. Returns (tot_s, tot_w, m0, P0, mean, cov, F, Q, gow,
+    ka) - gow and ka as they were if nobody stands."""
+    stayed = gow * e_go
+    p_stay = _pairwise(stayed)
+    F, Q = motion(mean.shape[2], dt, still_q, tau, s2, ao, slot_k, slot_q)
+    tot_s, tot_w, w_ss, w_ws, m0, P0, m1, P1 = imm_predict(w, mean, cov, p_stay, p_stop, s2, F, Q)
+    if tot_s > 0:
+        kept = stayed / p_stay if p_stay > 0 else go_w
+        gow = (w_ss * kept + w_ws * go_w) / tot_s
+        ka = (w_ss * ((1 - q) * ka + q * ka_w) + w_ws * ka_w) / tot_s
+    return tot_s, tot_w, m0, P0, m1, P1, F, Q, gow, ka
+
+
+@njit(cache=True)
 def poisson_binomial(ps, means, lgam):
     """filter.Tracker._poisson_binomial (lgam[i] = lgamma(i + 1), long enough)."""
     P, C = ps.shape
@@ -234,6 +252,40 @@ def sigma_points(pos, mean, var, unit, reach, wall_grid, x0, y0, cell, walls, bo
                 pts[k, p, 0], pts[k, p, 1] = moved[q, 0], moved[q, 1]
                 q += 1
     return pts
+
+
+@njit(cache=True)
+def near_parts(pos, P, zx, zy, r2, unit, reach, wall_grid, x0, y0, cell, walls, box):
+    """gauss.Gauss.near_sigma: per component (2 modes, 2 axes) the exponent -0.5 d^2 / v and the factor
+    sqrt(r2 / v) of E[exp(-|x - z|^2 / (2 r2))] (v = r2 + P; numpy takes the exponential), and the sigma
+    points (sigma_points) of the position weighted by that kernel. The same arithmetic as the numpy
+    it replaces: results equal bit for bit."""
+    K = pos.shape[0]
+    expo = np.empty((K, 2))
+    sq = np.empty((K, 2))
+    mean = np.empty((K, 2))
+    var = np.empty((K, 2))
+    for k in range(K):
+        for a in range(2):
+            z = zx if a == 0 else zy
+            p = P[k, a]
+            v = r2 + p
+            d = pos[k, a] - z
+            sq[k, a] = math.sqrt(r2 / v)
+            expo[k, a] = -0.5 * (d * d) / v
+            mean[k, a] = (pos[k, a] * r2 + z * p) / (p + r2)
+            var[k, a] = p * r2 / (p + r2)
+    return expo, sq, sigma_points(pos, mean, var, unit, reach, wall_grid, x0, y0, cell, walls, box)
+
+
+@njit(cache=True)
+def near_weight(sq, e):
+    """near_parts' factor times numpy's exponential, the product over the axes (2 modes,)."""
+    K = sq.shape[0]
+    out = np.empty(K)
+    for k in range(K):
+        out[k] = (sq[k, 0] * e[k, 0]) * (sq[k, 1] * e[k, 1])
+    return out
 
 
 @njit(cache=True)
@@ -805,6 +857,7 @@ def warm():
     w = np.array([0.5, 0.5])
     mean, cov = f((2, 2, 4)), np.broadcast_to(np.eye(4), (2, 2, 4, 4)).copy()
     imm_predict(w, mean, cov, 0.9, 0.1, 0.5, F, Q)
+    gauss_predict(w, mean, cov, f(3), f((3, 4)), f(3), f(3), f((3, 4)), 0.1, 0.5, 0.2, 1e-4, 1.2, 0.9, i(1), f(1), 0.1)
     wall_moves(mean[1], cov[1], F[1], Q[1], mean[1], cov[1], walls, walls)
     poisson_binomial(f((1, 2)), np.array([0.0, 0.5]), f(64))
     reflect(f((1, 2)), np.ones((1, 2)), walls, walls)
@@ -818,6 +871,8 @@ def warm():
     hidden_weigh(f(3), f((2, 2, 3)), f((1, 3)), 0.0, f(3), f((2, 3)), False)
     sigma_points(f((2, 2)), f((2, 2)), f((2, 2)), f((5, 2)), 1.7, f((2, 2)), 0.0, 0.0, 0.1, walls, walls)
     grid_at(f((2, 2)), f((1, 2)), 0.0, 0.0, 0.1)
+    near_weight(*near_parts(f((2, 2)), np.ones((2, 2)), 0.0, 0.0, 0.5, f((5, 2)), 1.7, f((2, 2)), 0.0, 0.0, 0.1, walls,
+                            walls)[:2])
     ld_gain_total(f(3), *ld_gain_terms(ld_gain_sums(f((2, 3)), f((2, 2))), f(4), f(4))[:1], f((2, 3)))
     ld_gain_pairs(f((4, 3)))
     gauss_rates(f((2, 5, 2)), np.ones(1, dtype=np.bool_), f((1, 2)), f((1, 2, 2)), f((1, 3)), i(2), 0.0, 0.0, 0.1, f(4),

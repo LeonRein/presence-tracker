@@ -925,13 +925,14 @@ class Tracker:
     def _count_walkers(self, si) -> np.ndarray:
         val = np.zeros(len(self.hyps))
         g, _ = self.tiles.seen(si)
+        seen = (g > 0.1).astype(float)  # the same products as with the mask itself (numpy casts it so)
         for obj, refs in self._objects():
             if isinstance(obj, Hidden):
-                v = float(obj.walking() @ (g > 0.1)) if self.tiles.n else 0.0
+                v = float(obj.walking() @ seen) if self.tiles.n else 0.0
             else:
                 v = (1 - obj.a) * obj.walking() * float(self._expect(self._g(si, obj.sigma(self.world)[WALK]) > 0.1))
                 if obj.away is not None and self.tiles.n:
-                    v += obj.a * float(obj.away.walking() @ (g > 0.1))
+                    v += obj.a * float(obj.away.walking() @ seen)
             for h in refs:
                 val[h] += v
         return val

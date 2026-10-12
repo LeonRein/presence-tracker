@@ -67,6 +67,19 @@ def _factors(f_walk, f_still) -> tuple:
             np.ascontiguousarray(f_still if f_still.ndim == 2 else f_still[None, :]))
 
 
+_STEP = [None, None, None]  # (tiles, dt, _per_step): every density moves by the same step in a move of everybody
+
+
+def _per_step(tl, dt: float) -> tuple:
+    """What Hidden.move takes for a step dt that is the same for every density (numpy's expm1, as
+    before): the stays' probability of getting up per kind (L,), of ending per region and age bin
+    (R, A), of ageing into the next bin (A - 1,)."""
+    if _STEP[0] is not tl or _STEP[1] != dt:
+        _STEP[:] = [tl, dt, (-np.expm1(-tl.sh.go * dt), -np.expm1(-tl.region_rates() * dt),
+                             -np.expm1(-dt / tl.widths[:-1]))]
+    return _STEP[2]
+
+
 class Hidden:
     """The density of one person without a track (module doc). Objects are shared between
     hypotheses and changed only by what applies to all of them (motion, no track started); what
@@ -280,7 +293,7 @@ class Hidden:
             if measured and self._keep is None:
                 self._keep = np.ones((len(sh.kappa), tl.n))
             kernels.hidden_stays(self.walk, self.still, self._keep if measured else _NO_KEEP, -math.expm1(-m.speed / m.walk_length * dt),
-                                 -np.expm1(-sh.go * dt), -math.expm1(-m.kappa_switch * dt), sh.kappa_w, sh.go_w,
+                                 _per_step(tl, dt)[0], -math.expm1(-m.kappa_switch * dt), sh.kappa_w, sh.go_w,
                                  measured)
             self.clock += dt
             while self.clock >= tl.tick:
@@ -333,9 +346,10 @@ class Hidden:
         m = tl.tr.m
         # stays end (through one of the region's doors: walking into view, or out of the house; without
         # any the stay goes on); coming home by the ways in; the stays age
-        self.out = kernels.hidden_regions(self.region, self.walk, self.out, -np.expm1(-tl.region_rates() * dt),
+        _, ends_p, older_p = _per_step(tl, dt)
+        self.out = kernels.hidden_regions(self.region, self.walk, self.out, ends_p,
                                           tl.door_ptr, tl.door_list, tl.exits, tl.entry_idx,
-                                          -math.expm1(-m.arrive_rate * tl.ways * dt), -np.expm1(-dt / tl.widths[:-1]))
+                                          -math.expm1(-m.arrive_rate * tl.ways * dt), older_p)
 
     # ------------------------------------------------------------ evidence
 
