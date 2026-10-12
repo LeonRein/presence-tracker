@@ -64,6 +64,31 @@ def test_no_background_is_learned_while_something_is_seen_or_an_echo_source_hold
     assert bg.b("a")[0] > 1.5 * b[0]
 
 
+def test_what_is_not_learned_keeps_its_level():
+    # a local level (MODEL.md 4.3): forgetting loses how well the level is known, not the level. The
+    # bedroom's sensor gives 9 where the prior says 5; a night with somebody in sight of its LD2450
+    # teaches nothing, and until 0.27 the level went back to the prior's 5 by the morning - the empty
+    # room's 9 then held an unknown person there (MODEL.md 10)
+    m = Model()
+    b = ld2410.prior(m)
+    st, alpha = _frames(1.8 * b, 3 * 3600)
+    bg = ld2410.Background(b, m.ld_prior_time, m.ld_forget)
+    bg.learn("a", b, b[None, :], np.ones(1), st, alpha)
+    evening = bg.b("a")
+    # the prior is forgotten with the frames: no lasting pull towards it (until 0.27 19 % of it with
+    # 0.7 h of forgetting)
+    assert np.all(np.abs(evening / (1.8 * b) - 1) < 0.05), evening / b
+    night = ld2410.Stats()
+    night.add(3 * b, 600.0, True)  # somebody in sight of the LD2450: nothing learned
+    for _ in range(9 * 6):
+        bg.learn("a", evening, evening[None, :], np.ones(1), night, alpha)
+    assert np.allclose(bg.b("a"), evening, rtol=1e-9)
+    # what it sees next is learned as fast as after a start: the weight of the old level is gone
+    st, alpha = _frames(1.2 * b, 600, seed=2)
+    bg.learn("a", evening, evening[None, :], np.ones(1), st, alpha)
+    assert np.all(np.abs(bg.b("a") / (1.2 * b) - 1) < 0.1), bg.b("a") / b
+
+
 def test_the_echo_rate_counts_where_nobody_is_and_without_itself():
     m = Model()
     bg = ld2410.Background(ld2410.prior(m), m.ld_prior_time, m.ld_forget, 1e-4, 3600.0)
