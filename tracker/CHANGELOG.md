@@ -2,6 +2,19 @@
 
 ## Unveröffentlicht
 
+- **Gelerntes bleibt bei neuer Kalibrierung** (MODEL.md 4.2, 4.3, 10 „Gelerntes bleibt bei neuer Kalibrierung“).
+  Bis 0.27 begann die Geisterkarte aller Sensoren neu, sobald sich die Lage eines Sensors um mehr als 5 cm, 2°
+  oder 2 % Maßstab änderte, und der LD2410C-Hintergrund des Sensors bei jeder Änderung; am 8.10. um 10:07 warf
+  die Kalibrierung des Arbeitszimmers so 285 gelernte Geister aus 35 h weg. Jetzt liegt jeder Teil der Karte im
+  Rahmen seines Sensors und wandert mit einer neuen Richtung oder einem neuen Maßstab mit; der Hintergrund
+  bleibt (seine Ringe sind Entfernungen vom Sensor). Neu beginnt nur, was zu einem anders montierten Sensor
+  gehört (Ort oder Höhe mehr als 0,5 m, Richtung mehr als 30° geändert), die anderen behalten ihres.
+  Zielkarte und Kalibrierdaten blieben schon. Nachgespielt mit dem Wechsel vom 8.10.: Wahrheit 3,67 → 3,77 min
+  (6 s auf dem Sofa 8.10. 19:04, gleich wie ohne Wechsel), leere Nacht und leeres Haus 0; ohne Wechsel gleich
+  wie 0.27.0. Rechenzeit ohne Wechsel −3 %, mit Wechsel +4,5 % gegen zurückgesetzt (eine leere Karte rechnet
+  sich schneller). Eine gespeicherte Geisterkarte wird beim ersten Start einmal in die Rahmen der
+  Sensoren umgerechnet; der Umrechner fällt im Release danach weg.
+
 ## 0.27.0
 
 Mit korrigierter Wahrheit für den 8.10. abends (MODEL.md 10 „0.27: korrigierte Wahrheit 8.10.“): Ein Gast war

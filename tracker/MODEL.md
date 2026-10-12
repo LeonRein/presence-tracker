@@ -2513,7 +2513,8 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
     dem niemand stand, war als Ersatz übrig.
   - Die Geisterkarte war am 8.10. um 10:07 durch die neue Kalibrierung des Arbeitszimmers zurückgesetzt und
     wusste um 18:20 nichts von den Geistern an der Balkontür. Dass jede Lageänderung die ganze Karte
-    zurücksetzt, ist offen (9).
+    zurücksetzte, war offen (9); behoben, ohne Wirkung auf diese Fenster (unten, „Gelerntes bleibt bei neuer
+    Kalibrierung“).
   - Leons Vorgaben: Beide Fehler zählen gleich; wache Personen, die im Bad oder auf dem Sofa sitzen, dürfen
     nicht verloren gehen; Schlafende sind kein Ziel; nicht auf Fehlerfälle optimieren. Darum ist nichts auf das
     Fenster 19:04 abgestimmt.
@@ -2525,6 +2526,39 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Rechenzeit +1,4 % (269 → 273 s; die Sitzenden mit der Regel +8 %). Gegen 0.25.1 gleich viel Licht im
   leeren Raum, dunkel 0,5 → 0,3 min. Gelernt: Eine Regel, deren ganzer Nutzen aus einem Fenster kommt, hängt
   an der Wahrheit dieses Fensters.
+- **Gelerntes bleibt bei neuer Kalibrierung** (11./12.10., nach 0.27.0; 9 Punkt 3). Bis 0.27 lag die
+  Geisterkarte im Hausrahmen und begann ganz neu, sobald sich die Lage irgendeines Sensors um mehr als 5 cm, 2°
+  oder 2 % Maßstab änderte; der LD2410C-Hintergrund des Sensors begann bei jeder Änderung von Ort, Richtung oder
+  Höhe neu. Die Zielkarte (Räume und Türen) und die Kalibrierdaten (Rohwerte im Sensorrahmen) blieben schon.
+  Jetzt liegt jeder Teil der Geisterkarte im Rahmen seines Sensors (4.2), der Hintergrund bleibt (4.3); neu
+  beginnt nur der Teil eines anders montierten Sensors (> 0,5 m, > 30°).
+  - *Prüfung:* durchgehendes Nachspiel aller Aufnahmen (6.10. 18:00 – 10.10. 18:00, Lernpausen für Saugroboter,
+    Schalter und Geräte, `seen_hold` 0) mit der echten Kalibrierung des Arbeitszimmers mitten im Lauf: bis 8.10.
+    10:07:38 324,39° / 1,049, danach 321,57° / 1,0918 (−2,8°, +4,1 %; `Tracker.reconfigure` wie die App). Mit
+    0.27.0 verwirft der Wechsel 285 gezählte Geister aus 34,8 h Beobachtung aller sieben Sensoren und den
+    Hintergrund des Arbeitszimmers; neu bleibt beides (am Ende 616 statt 376 Geister in der Karte).
+  - *Wahrheit (52 Fenster):* zurückgesetzt 0,48 / 3,18 = 3,67 min, behalten 0,48 / 3,28 = 3,77 min; leere Nacht
+    und leeres Haus beide 0. Der einzige Unterschied sind 6 s im Fenster 8.10. 19:04 (Sofa, Wohnzimmer dunkel);
+    behalten ist dort genau wie 0.27.0 ohne Wechsel. Die Fenster 18:20–19:10, für die 9 Punkt 3 die
+    zurückgesetzte Karte verdächtigte, ändern sich sonst nicht: Was dort fehlt, ist nicht die Karte.
+  - *Ganze Aufnahme:* behalten gegen zurückgesetzt Licht 65,1 min mehr, 4,5 min weniger. Davon 62,5 min im
+    Schlafzimmer 10.10. 12:05–13:07, als beide Telefone im Ess-/Wohnzimmer waren: Eine Belegung mit
+    P = 0,667 genau an der Schwelle (`light_cost` 2) beginnt in allen vier Läufen um diese Zeit (0.27.0 12:18,
+    neu ohne Wechsel 12:16, zurückgesetzt 13:07, behalten 12:05) und hält bis 14:35. Das ist ein Fehler von
+    0.27.0 an der Schwelle, nicht der Karte; offen. Sonst nur Sekunden bis 2 min (Arbeitszimmer 7.10. 17:40 vor dem
+    Wechsel, 2 min mit dem Saugroboter; Wohnzimmer 10.10. 14:49 1 min dunkel, als die zweite Person hereinkam).
+  - *Ohne Wechsel* (gegen 0.27.0, nur der Rahmen der Karte ist anders): Wahrheit gleich (0,48 / 3,28), ganze
+    Aufnahme 6,3 min mehr und 9,6 min weniger Licht; nach den Telefonen besser im Wohnzimmer 7.10. 17:14 und
+    17:34 (3,4 min Licht ohne jemanden), schlechter im Esszimmer 10.10. 11:42 (5,4 min, eine Person an der
+    offenen Trennlinie zum Wohnzimmer) und im Schlafzimmer 7.10. 22:06 (2,6 min vor dem Hineingehen).
+  - *Rechenzeit* (ganzes Nachspiel, ein Kern, Rechner unter Last): 0.27.0 8234 s, neu ohne Wechsel 7955 s
+    (−3,4 %); mit Wechsel zurückgesetzt 7973 s, behalten 8332 s (+4,5 %: eine leere Karte rechnet sich
+    schneller).
+  - *Umrechnung* einer Karte von 0.27 (Ende des Nachspiels): die Rate je 0,1-m-Zelle im Blick jedes Sensors
+    im Median 0–7 % anders, in 95 % der Zellen bis 34 %, Korrelation 0,79–0,89 (Zellen eines Rasters auf ein
+    gedrehtes verteilt; einmalig).
+  - *Grenze:* Die Wahrheit hat nach dem Wechsel nur die Fenster des 8.10. Ob ein anders montierter Sensor die
+    Geister der anderen ändert (gegenseitige Störung), ist nicht gemessen.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.
