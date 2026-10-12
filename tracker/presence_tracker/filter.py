@@ -1628,11 +1628,8 @@ class Tracker:
                 return kernels.ld_tile_masses(h.walk, h.still, idx, float(share)), both
             still, ms, big = self._ld_split(si, h, share)
             amp = self.shapes.tile_amp
-            small = ~big
-            gm = np.divide(amp @ still[:, small], ms[small], out=np.ones(int(small.sum())), where=ms[small] > 0)
-            S = np.concatenate([sw, (amp[:, None, None] * ss[big][None, :, :]).reshape(-1, ld2410.CELLS),
-                                gm[:, None] * ss[small]])
-            return share * np.concatenate([h.walk[idx], still[:, big].ravel(), ms[small]]), S
+            # the small tiles at their mean amplitude: numpy's product, the rest compiled (the same numbers)
+            return kernels.ld_tile_points(h.walk, still, ms, big, amp @ still[:, ~big], idx, sw, ss, amp, float(share))
 
         if isinstance(obj, Hidden):
             return tiles(obj, obj.r)
@@ -1847,13 +1844,12 @@ class Tracker:
             # standing: per level of the amplitude; the factor per detectability is the sum over the
             # levels given it, and the amplitude's levels given it are reweighed (Swerling III, 4.3).
             # A tile with little of the person: one factor at its mean amplitude (_ld_points)
-            fw = np.ones(self.tiles.n)
-            fw[idx] = np.exp(g[:n])
+            # the factors at the tiles idx (1 elsewhere: Hidden.weigh_at)
             if not h.measured:  # g = 1 everywhere (_ld_points)
-                fs = np.ones(self.tiles.n)
-                fs[idx] = np.exp(g[n:])
-                return h.weigh(fw, fs)
-            fs = np.ones((len(self.shapes.kappa), self.tiles.n))
+                e = np.exp(g)
+                return h.weigh_at(idx, e[:n], e[n:])
+            fw = np.exp(g[:n])
+            fs = np.empty((len(self.shapes.kappa), n))
             big = self._ld_split(si, h, share)[2]
             nb = int(big.sum())
             ib = idx[big]
@@ -1863,9 +1859,9 @@ class Tracker:
             amp = h.amp[:, :, ib] * E[None, :, :]  # (K, A, nb)
             tot = amp.sum(axis=1)  # (K, nb)
             h.amp[:, :, ib] = np.where(tot[:, None, :] > 0, amp / np.where(tot > 0, tot, 1.0)[:, None, :], h.amp[:, :, ib])
-            fs[:, ib] = tot * np.exp(top)[None, :]
-            fs[:, idx[~big]] = np.exp(g[n + AT * nb:])[None, :]
-            return h.weigh(fw, fs)
+            fs[:, big] = tot * np.exp(top)[None, :]
+            fs[:, ~big] = np.exp(g[n + AT * nb:])[None, :]
+            return h.weigh_at(idx, fw, fs)
 
         if isinstance(obj, Hidden):
             tiles(obj, logf, obj.r)

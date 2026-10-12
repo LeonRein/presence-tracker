@@ -595,6 +595,48 @@ def ld_tile_masses(walk, still, idx, share):
 
 
 @njit(cache=True)
+def ld_tile_points(walk, still_a, ms, big, num, idx, sw, ss, amp, share):
+    """filter.Tracker._ld_points for a density with a measured amplitude: its masses (share x [walkers in
+    the tiles idx, the still mass per level of the amplitude in the tiles big (level-major), the still
+    mass of the other tiles]) and what each puts in (k, 16): walkers sw, the big tiles' standing
+    profile ss per level amp, the others' at their mean amplitude num / ms (1 without still mass). The
+    same numbers as the numpy it replaces."""
+    m = len(idx)
+    A = len(amp)
+    C = sw.shape[1]
+    nb = 0
+    for j in range(m):
+        if big[j]:
+            nb += 1
+    ns = m - nb
+    k = m + A * nb + ns
+    mass = np.empty(k)
+    S = np.empty((k, C))
+    for j in range(m):
+        mass[j] = share * walk[idx[j]]
+        for c in range(C):
+            S[j, c] = sw[j, c]
+    q = m
+    for a in range(A):
+        for j in range(m):
+            if big[j]:
+                mass[q] = share * still_a[a, j]
+                for c in range(C):
+                    S[q, c] = amp[a] * ss[j, c]
+                q += 1
+    i = 0
+    for j in range(m):
+        if not big[j]:
+            mass[q] = share * ms[j]
+            g = num[i] / ms[j] if ms[j] > 0 else 1.0
+            for c in range(C):
+                S[q, c] = g * ss[j, c]
+            q += 1
+            i += 1
+    return mass, S
+
+
+@njit(cache=True)
 def hidden_regions(region, walk, out, ends_p, door_ptr, door_tiles, exits, entries, arrive_p, older_p):
     """hidden.Hidden._regions, in place on region (R, A) and walk; returns out. ends_p (R, A):
     probability that a stay ends in the step; who comes out leaves through one of the region's doors
@@ -974,6 +1016,40 @@ def hidden_weigh(walk, still, region, out, f_walk, f_still, intensity):
     return math.log(tot), out * s
 
 
+@njit(cache=True)
+def hidden_weigh_at(walk, still, region, out, idx, f_walk, f_still, intensity):
+    """hidden_weigh with the factors given only at the tiles idx (f_walk (m,), f_still (K, m) or (1, m)),
+    1 elsewhere: the same numbers (x times 1 is x), without the arrays of ones."""
+    L, K, n = still.shape
+    before = 0.0
+    if intensity:
+        before = _npsum(walk) + _npsum(still)
+    one = f_still.shape[0] == 1
+    for j in range(len(idx)):
+        c = idx[j]
+        walk[c] *= f_walk[j]
+        for l in range(L):
+            for k in range(K):
+                still[l, k, c] *= f_still[0 if one else k, j]
+    if intensity:
+        return -(before - (_npsum(walk) + _npsum(still))), out
+    tot = _npsum(walk) + _npsum(still) + _npsum(region) + out
+    if tot <= 0:
+        return -np.inf, out
+    s = 1.0 / tot
+    for c in range(n):
+        walk[c] *= s
+    for l in range(L):
+        for k in range(K):
+            for c in range(n):
+                still[l, k, c] *= s
+    R, A = region.shape
+    for r in range(R):
+        for a in range(A):
+            region[r, a] *= s
+    return math.log(tot), out * s
+
+
 def warm():
     """Compile every kernel for the types the tracker calls it with (the image does this when it is
     built, so the app starts without compiling: NUMBA_CACHE_DIR)."""
@@ -992,10 +1068,12 @@ def warm():
     hidden_stays(f(3), f((2, 2, 3)), f((2, 3)), 0.1, f(2), 0.1, f(2), f(2), True)
     amp_mass(f((2, 2, 3)), f((2, 2, 3)), i(1))
     ld_tile_masses(f(3), f((2, 2, 3)), i(1), 1.0)
+    ld_tile_points(f(3), f((2, 1)), f(1), np.zeros(1, dtype=np.bool_), f(1), i(1), f((1, 16)), f((1, 16)), f(2), 1.0)
     hidden_regions(f((1, 3)), f(3), 0.0, f((1, 3)), i(2), i(0), i(1), i(0), 0.1, f(2))
     ld_censored(np.ones((1, 16)), f((1, 16)), i(1), i(1), f((1, 5)), np.arange(5.0))
     gauss_exponents(f((1, 2)), 0.0, 0.0, 1.0, 1.0)
     hidden_weigh(f(3), f((2, 2, 3)), f((1, 3)), 0.0, f(3), f((2, 3)), False)
+    hidden_weigh_at(f(3), f((2, 2, 3)), f((1, 3)), 0.0, i(1), f(1), f((2, 1)), False)
     hidden_distance(1.0, f(3), f((2, 2, 3)), f((1, 3)), 0.0, 1.0, f(3), f((2, 2, 3)), f((1, 3)), 0.0)
     sigma_points(f((2, 2)), f((2, 2)), f((2, 2)), f((5, 2)), 1.7, f((2, 2)), 0.0, 0.0, 0.1, walls, walls)
     grid_at(f((2, 2)), f((1, 2)), 0.0, 0.0, 0.1)

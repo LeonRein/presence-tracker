@@ -94,6 +94,7 @@ class Hidden:
     differs between hypotheses makes a new object."""
 
     __slots__ = ("tiles", "walk", "still", "_amp", "_keep", "region", "out", "clock", "r")
+    _INTENSITY = False  # weigh: a person (normalized, a Bernoulli), not an intensity (Undetected)
 
     def __init__(self, tiles):
         self.tiles = tiles
@@ -368,6 +369,10 @@ class Hidden:
         if not self.tiles.n:
             return 0.0
         q, self.out = kernels.hidden_weigh(self.walk, self.still, self.region, self.out, *_factors(f_walk, f_still), False)
+        return self._bernoulli(q)
+
+    def _bernoulli(self, q: float) -> float:
+        """weigh's factor for the hypotheses from the log of the mass that was left, q, and r's update."""
         if self.r >= 1.0:
             return q
         if q == -math.inf:  # nothing left where the person could be: they do not exist
@@ -380,6 +385,15 @@ class Hidden:
         z = 1.0 - self.r + self.r * math.exp(q)
         self.r = self.r * math.exp(q) / z
         return math.log(z)
+
+    def weigh_at(self, idx: np.ndarray, f_walk: np.ndarray, f_still: np.ndarray) -> float:
+        """weigh with the factors given at the tiles idx only (f_walk (m,), f_still (m,) or (K, m)), 1
+        elsewhere: the same."""
+        if not self.tiles.n:
+            return 0.0
+        q, self.out = kernels.hidden_weigh_at(self.walk, self.still, self.region, float(self.out), idx,
+                                              *_factors(f_walk, f_still), self._INTENSITY)
+        return q if self._INTENSITY else self._bernoulli(q)
 
     def integrate(self, f_walk: np.ndarray, f_still: np.ndarray) -> float:
         """sum of r x density x f over the tiles in view (f as in weigh)."""
@@ -415,6 +429,7 @@ class Undetected(Hidden):
     (Garcia-Fernandez et al. 2018, eq. 18-24)."""
 
     __slots__ = ()
+    _INTENSITY = True
 
     @classmethod
     def anywhere(cls, tiles, people: float = 1.0, **kw) -> "Undetected":

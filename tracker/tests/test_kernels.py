@@ -401,3 +401,45 @@ def test_the_weights_of_a_mixture_are_the_numpy_bit_for_bit():
         assert h.reweigh(dlog) == (comps if comps > -math.inf else -math.inf)
         if comps > -math.inf:
             assert np.array_equal(h.logw, lw - comps)
+
+
+def test_the_measured_tile_points_kernel_is_the_numpy_bit_for_bit():
+    rng = np.random.default_rng(16)
+    amp = np.append(np.exp(rng.normal(0, 0.5, 9)), 1.0)
+    for _ in range(100):
+        n = int(rng.integers(1, 700))
+        idx = np.sort(rng.choice(n, int(rng.integers(0, min(n, 300) + 1)), replace=False)).astype(np.int64)
+        m = len(idx)
+        walk = rng.uniform(0, 1, n)
+        still = rng.uniform(0, 1, (len(amp), m)) * (rng.random((len(amp), m)) < 0.7)
+        ms = still.sum(axis=0)
+        big = rng.random(m) < 0.4
+        ss, sw = rng.uniform(0, 50, (m, ld2410.CELLS)), rng.uniform(0, 50, (m, ld2410.CELLS))
+        share = float(rng.uniform(0, 1))
+        small = ~big
+        gm = np.divide(amp @ still[:, small], ms[small], out=np.ones(int(small.sum())), where=ms[small] > 0)
+        S = np.concatenate([sw, (amp[:, None, None] * ss[big][None, :, :]).reshape(-1, ld2410.CELLS), gm[:, None] * ss[small]])
+        mass = share * np.concatenate([walk[idx], still[:, big].ravel(), ms[small]])
+        got = kernels.ld_tile_points(walk, still, ms, big, amp @ still[:, small], idx, sw, ss, amp, share)
+        assert np.array_equal(got[0], mass) and np.array_equal(got[1], S)
+
+
+def test_weighing_at_some_tiles_is_weighing_with_ones_elsewhere_bit_for_bit():
+    rng = np.random.default_rng(17)
+    for trial in range(60):
+        n = int(rng.integers(1, 800))
+        idx = np.sort(rng.choice(n, int(rng.integers(0, n + 1)), replace=False)).astype(np.int64)
+        walk = rng.uniform(0, 1, n) * 1e-3
+        still = rng.uniform(0, 1, (5, 3, n)) * 1e-4
+        region = rng.uniform(0, 1, (2, 18))
+        out = float(rng.uniform(0, 1))
+        fw = rng.uniform(0, 2, len(idx))
+        fs = rng.uniform(0, 2, (3 if trial % 2 else 1, len(idx)))
+        full_w, full_s = np.ones(n), np.ones((fs.shape[0], n))
+        full_w[idx], full_s[:, idx] = fw, fs
+        for intensity in (False, True):
+            a = [x.copy() for x in (walk, still, region)]
+            b = [x.copy() for x in (walk, still, region)]
+            assert (kernels.hidden_weigh_at(*a, out, idx, fw, fs, intensity)
+                    == kernels.hidden_weigh(*b, out, full_w, full_s, intensity))
+            assert all(np.array_equal(x, y) for x, y in zip(a, b))
