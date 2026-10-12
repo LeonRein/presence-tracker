@@ -308,3 +308,32 @@ def test_a_report_can_be_deleted_and_nothing_else(tmp_path):
     assert not (app.reports / names[0]).exists()
     assert (tmp_path / "secret.jsonl.gz").exists() and (tmp_path / "tracker.json").exists() and outside.exists()
     assert (app.reports / "link.jsonl.gz").is_symlink()
+
+
+def test_a_broken_report_file_hides_only_itself(tmp_path):
+    """A report cut off (power cut while it was written, or listed while it is being written) must not
+    break the list: until 0.28 gzip's EOFError made GET /api/reports a 500. Two reports of the same
+    second, room and kind are two files."""
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    for k, sid in enumerate(("a", "b")):
+        frame = {"uptime_ms": 1000, "targets": [], "ld2410": {}}
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + k)
+    app.tick(1001.0)
+    app.reports.mkdir(parents=True)
+    whole = gzip.compress((json.dumps({"report": {"t": 1.0, "kind": "other"}}) + "\n" + "x" * 10000).encode())
+    (app.reports / "20261001-120000-haus-other.jsonl.gz").write_bytes(whole[:30])
+
+    async def main():
+        async with TestClient(TestServer(app.web_app())) as client:
+            names = []
+            for _ in range(2):
+                r = await client.post("/api/reports", json={"kind": "other", "room": "wohn"})
+                names.append((await r.json())["name"])
+            r = await client.get("/api/reports")
+            return names, r.status, (await r.json())["reports"] if r.status == 200 else None
+
+    names, status, listed = asyncio.run(main())
+    assert status == 200
+    assert len(set(names)) == 2 and {r["name"] for r in listed} == set(names)
+    assert not list(app.reports.glob(".*"))  # no temporary file left

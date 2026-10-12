@@ -804,6 +804,10 @@ class App:
         # 0.6 s here, many times that on Home Assistant, MODEL.md 10)
         head = json.dumps(meta)
         path = self.reports / f"{name}.jsonl.gz"
+        k = 1
+        while path.exists():  # one of the same second, room and kind: a file of its own
+            k += 1
+            path = self.reports / f"{name}-{k}.jsonl.gz"
         n = await asyncio.to_thread(self._write_report, path, head, list(self.recent), list(self.shown))
         log.info("error report %s: %d messages", path.name, n)
         return web.json_response({"name": path.name, "messages": n})
@@ -824,7 +828,8 @@ class App:
                 data = payload.decode(errors="replace")
             lines.append(json.dumps({"t": recv, "topic": topic, "payload": data}))
         lines += [json.dumps({"t": t, "topic": "app/shown", "payload": data}) for t, data in shown]
-        path.write_bytes(gzip.compress("\n".join(lines).encode(), compresslevel=6))
+        # whole or not at all: a report cut off (a power cut) is no truth, and the list must not see one half written
+        atomic_write(path, gzip.compress("\n".join(lines).encode(), compresslevel=6))
         return len(lines) - 1
 
     async def h_reports(self, request):
@@ -833,7 +838,9 @@ class App:
             try:
                 with gzip.open(path, "rt") as f:
                     rep = json.loads(f.readline())["report"]
-            except (OSError, ValueError, KeyError):
+            except (OSError, EOFError, ValueError, KeyError, TypeError):  # (EOFError: a gzip cut off)
+                continue
+            if not isinstance(rep, dict):
                 continue
             out.append({"name": path.name, "size": path.stat().st_size, **rep,
                         "kind_text": REPORT_KINDS.get(rep.get("kind"), rep.get("kind"))})

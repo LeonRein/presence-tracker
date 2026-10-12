@@ -13,6 +13,12 @@
   sein. Die Ruhe zählte aber als Laufen: Brach jeder Frame eines Sensors das Modell, während die Takte
   dazwischen liefen, bekam Home Assistant nach jeder Ruhe für einen Moment „online“ mit frischen Zuständen,
   und das Modell wurde dreimal neu gebaut. Jetzt zählt die Minute ab dem Ende der Ruhe.
+- **Fehler: Eine abgeschnittene Fehlermeldung legte die Liste lahm.** Ein Bericht wurde direkt in seine Datei
+  geschrieben; las die Liste ihn halb geschrieben, oder blieb er nach einem Stromausfall abgeschnitten, brach
+  gzip mit `EOFError` ab und `GET /api/reports` gab 500 – keine Meldung war mehr zu sehen oder zu löschen.
+  Jetzt wird ein Bericht ganz oder gar nicht geschrieben (wie das Gelernte), und eine kaputte Datei fehlt nur
+  selbst in der Liste. Zwei Meldungen derselben Sekunde, desselben Raums und derselben Art überschrieben
+  einander; die zweite bekommt jetzt `-2` im Namen.
 
 ## 0.28.0
 
