@@ -22,8 +22,9 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   standardmäßig aus; der Schalter steht unter *Anzeige* und wird im Browser gemerkt.
 - **Tab *Live*:** Ganz oben steht, welche Räume besetzt sind (Licht an), darunter die Personenzahl. In der
   Raumliste stehen die besetzten Räume zuerst. Die Prozentzahl am Raum ist die Wahrscheinlichkeit, dass
-  *jemand* im Raum ist (besetzt ab der Schwelle aus *Kosten: Licht ohne Person*, oder solange der LD2450 des
-  Raums dort jemanden misst; neben *besetzt* steht, was entschied: *Filter*, *LD2450* oder *beide*); die an einer Person ist die
+  *jemand* im Raum ist (besetzt ab der Schwelle aus *Kosten: Licht ohne Person*; mit *Haltezeit eigener
+  LD2450* über 0 auch, solange der LD2450 des Raums dort jemanden misst, und neben *besetzt* steht, was
+  entschied: *Filter*, *LD2450* oder *beide*); die an einer Person ist die
   Wahrscheinlichkeit, dass *diese Person* dort ist. *wird betreten* und *Ziel* (mit Wahrscheinlichkeit und
   Quelle *Bewegung* oder *Karte*) stehen nur an Räumen, die noch nicht besetzt sind, und bleiben 2 s
   sichtbar, auch wenn sie nur kurz an waren.

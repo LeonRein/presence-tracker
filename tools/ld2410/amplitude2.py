@@ -5,7 +5,7 @@ also behind walls (Detection.hidden: its echoes, e.g. the kitchen's beyond the o
 target is often nobody any more (the LD2450 keeps a frozen target 35 s after the person left), and
 those stays had the lowest gains. Here a stay is built from measured, visible frames only.
 
-Per stay and kind the gain g on the average profile (as amplitude.py), the median slant r and angle
+Per stay and kind the gain g on the average profile (as its first version), the median slant r and angle
 off the axis; then where the misfit lies: per sensor, over the distance, over the angle (a
 regression log g ~ sensor + log r + angle, stays weighted by 1 / (sd^2 + spread^2)).
 

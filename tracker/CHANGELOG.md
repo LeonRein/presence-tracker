@@ -2,6 +2,18 @@
 
 ## Unveröffentlicht
 
+- **Aufgeräumt: toter Code, Umrechner und einmalige Analysen entfernt, Ausgabe zeichengleich.** Der Umrechner
+  der Geisterkarte von 0.28 fällt wie angekündigt weg: Eine Karte von 0.27 gilt jetzt als unlesbar, die App
+  beginnt eine neue (live ist sie längst umgerechnet). Weg sind Modellschalter, die immer gleich standen
+  (`sight_spread`, `ghost_end_exact`, `ghost_end_unheld` samt dem Vergleichszweig von vor 0.10), ungenutzte
+  Funktionen und Felder (`destination.vel_cell`, `Config.closed_region_at`, `door_of`, `visible_sensors`,
+  `filtermodel.gamma_levels` u. a.; zusammen 77 Zeilen im Modell) und in `tools/ld2410/` die einmaligen
+  Prüfungen des LD2410C-Entwurfs und der verworfenen Textur (12 Skripte, 1030 Zeilen; die in MODEL.md
+  genannten bleiben). Oberfläche: Der Hinweis zu *besetzt* im Tab *Live* nennt die Regel „LD2450 des Raums“
+  nur noch, wenn *Haltezeit eigener LD2450* über 0 ist; bis zur ersten Live-Nachricht stand der Balkon
+  unter „Räume mit Sensor“ und darunter „Alle Räume haben einen Sensor.“, jetzt bleiben beide Listen bis
+  dahin leer. Entitäten bleiben alle: *Personen*, *Bewegung* und *wird betreten* nutzt im Moment weder der
+  Node-RED-Flow noch ein Dashboard, sie bleiben für andere Automationen.
 - **Rechenzeit −32 %, Ergebnisse bitgleich** (MODEL.md 10 „Rechenzeit: weniger Aufrufe, bitgleich“). Die Zeit
   ging nicht an eine Stelle, sondern an Pythons und numpys Aufwand je Objekt und Schritt. Mehr kompilierte
   Kernel (Gewichten der Kacheldichten, Raten an den Sigma-Punkten, Sigma-Punkte an Wänden, Vorhersage der

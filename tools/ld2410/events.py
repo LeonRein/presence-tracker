@@ -31,9 +31,6 @@ def main():
     ap.add_argument("t1")
     ap.add_argument("--ref", nargs=2, default=["2026-10-07 01:20:00", "2026-10-07 02:20:00"])
     ap.add_argument("--quiet", action="store_true")
-    ap.add_argument("--clutter", type=float, default=0.0,
-                    help="also the log-likelihood ratio of a clutter episode against nobody: every gate's "
-                         "background times its own texture T, 1/T ~ Gamma(nu, nu), no people")
     a = ap.parse_args()
     D = load(REC)
     x = D[a.sensor]
@@ -62,31 +59,13 @@ def main():
         lr = st.log_ratio(b[None, :] + S, b, lik)
         j = int(np.argmax(lr))
         total += lr[j]
-        c = clutter_ratio(st, b, lik, a.clutter) if a.clutter else 0.0
-        out.append((t0 + k, lr[j], rs[j], c))
+        out.append((t0 + k, lr[j], rs[j]))
     if not a.quiet:
-        for tt, v, r, c in out:
-            print(time.strftime("%H:%M:%S", time.localtime(tt)), f"best person at {r:.2f} m: {v:+8.2f}"
-                  + (f"   clutter {c:+8.2f}   person - clutter {v - c:+8.2f}" if a.clutter else ""))
+        for tt, v, r in out:
+            print(time.strftime("%H:%M:%S", time.localtime(tt)), f"best person at {r:.2f} m: {v:+8.2f}")
     v = np.array([o[1] for o in out])
-    c = np.array([o[3] for o in out])
     print(f"{a.sensor} {a.t0}..{a.t1}: blocks {len(v)}, sum of the best ratios {v.sum():+.1f}, "
-          f"blocks > 0: {np.mean(v > 0):.2f}, max {v.max():+.1f}"
-          + (f"; clutter sum {c.sum():+.1f}, person - clutter sum {(v - c).sum():+.1f}, blocks person > clutter "
-             f"{np.mean(v > c):.2f}" if a.clutter else ""))
-
-
-def clutter_ratio(st, b, lik, nu):
-    """log l(e | clutter) - log l(e | nobody): per gate the background times a texture T,
-    1/T ~ Gamma(nu, nu), integrated exactly (censored frames counted as 100); against the model
-    without people (with its common gain)."""
-    a, tau = lik.alpha, lik.tau
-    N = a * (st.t_unc + st.t_cens) / tau
-    A = a * (st.t_e + 100.0 * st.t_cens) / tau / b
-    from math import lgamma
-    ll = np.array([nu * np.log(nu) - lgamma(nu) + lgamma(n + nu) - (n + nu) * np.log(nu + q) for n, q in zip(N, A)])
-    ll -= N * np.log(b)
-    return float(ll.sum()) - float(st._mu_part(b[None, :], lik)[0])
+          f"blocks > 0: {np.mean(v > 0):.2f}, max {v.max():+.1f}")
 
 
 if __name__ == "__main__":

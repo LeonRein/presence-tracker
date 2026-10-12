@@ -306,9 +306,9 @@ Eine Spur, die zu keiner Person gehört.
   eigene Unterscheidung („Neu sammeln“ der Kalibrierung gilt für alle Sensoren zugleich). Eine mit einem
   anderen Prior gelernte Karte beginnt ganz neu. Bis 0.27 lag die Karte im Hausrahmen, und jede Änderung
   der Lage irgendeines Sensors um mehr als 5 cm, 2° oder 2 % Maßstab ließ die ganze Karte neu beginnen (10,
-  „Gelerntes bleibt bei neuer Kalibrierung“). Eine gespeicherte Karte von 0.27 wird beim Laden einmal
-  umgerechnet (jede Zelle des Hausrahmens in die Zelle des Sensorrahmens, in der ihre Mitte liegt, mit der
-  Lage, mit der sie gelernt wurde); der Umrechner fällt im Release danach weg.
+  „Gelerntes bleibt bei neuer Kalibrierung“). 0.28 rechnete eine gespeicherte Karte von 0.27 beim Laden
+  einmal um (jede Zelle des Hausrahmens in die Zelle des Sensorrahmens, in der ihre Mitte liegt, mit der
+  Lage, mit der sie gelernt wurde); seitdem ist der Umrechner weg, eine Karte von 0.27 gilt als unlesbar.
 - Begründung: Wiederkehrende Reflexionen (Möbel, Ladestation des Saugroboters) stehen an festen
   Stellen. Mit gleichverteilter Dichte erklärt das Modell sie als Person.
 - Solange der Schalter *Lernen pausieren* an ist (Hintergrundaktivität, 10), lernt die Karte nichts:
@@ -347,7 +347,7 @@ Ziele des LD2450 im selben Gehäuse (der unterdrückt Sitzende und hat Geister: 
   hinter einer Wand): innerhalb eines Sensors log g Streuung 0,47 ruhig (6.10. 18–23 Uhr, 88
   Aufenthalte) bzw. 0,25 (7.10. 6–8 Uhr, 39), als Gamma(β, β) β 5–16; ruhig und bewegt derselbe
   Gewinn (0,82–0,88); mit der Wiederfinderate des LD2450 innerhalb Sensor und 1 m Entfernung Spearman
-  0,37 bewegt / 0,47 ruhig. Die erste Messung (`amplitude.py`: 0,93, β 1,6, Flur −1,1, Spearman 0,62)
+  0,37 bewegt / 0,47 ruhig. Die erste Messung (erste Fassung von `amplitude2.py`: 0,93, β 1,6, Flur −1,1, Spearman 0,62)
   nahm auch gehaltene Ziele: Der LD2450 hält ein eingefrorenes Ziel bis 35 s, nachdem die Person
   gegangen ist, und die Küche hat ihre Echos hinter der Wand; dort war wenig Energie, daher die
   niedrigsten Gewinne und ein Teil der Kopplung an κ. Je Sensor (Mittel von log g ruhig, beide Tage):
