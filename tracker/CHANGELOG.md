@@ -9,6 +9,48 @@
   ist, wird einmal gerechnet. numpys exp/log und die BLAS-Produkte bleiben, so sind die Zahlen dieselben:
   vollste Stunde (10.10. 12–13 Uhr, ein Kern, Median aus drei) 386 → 263 s, jeder Schritt der Hypothesen
   zeichengleich; über alle Aufnahmen die Ausgabe zeichengleich mit 0.28.0.
+- **Fehler: Speichern veränderte das Modell** (MODEL.md 5.3 „Neustart der App“). `Tracker.people_state`, alle
+  10 min und beim Beenden gelesen, wandte beim Lesen einer gemessenen LD2410C-Amplitude deren aufgeschobene
+  Mischung (`Hidden.amp`) in den Dichten des laufenden Modells an. Mathematisch gleich, aber anders gerundet
+  und mit anderem Zeitpunkt für `MEASURED_CUT`: Der Live-Lauf ging nach jedem Speichern anders weiter als ein
+  Nachspiel derselben Frames. Jetzt rechnet `people_state` auf Kopien; das gespeicherte `people.json` ist
+  dasselbe. Nachspiele ändern sich nicht (sie speichern nicht).
+- **Fehler: Ein dauernd scheiterndes Modell war kurz wieder „online“** (DOCS.md *Verfügbarkeit*). Nach drei
+  Fehlern ruht das Modell eine Minute und soll erst nach einer Minute fehlerfreien Laufens wieder verfügbar
+  sein. Die Ruhe zählte aber als Laufen: Brach jeder Frame eines Sensors das Modell, während die Takte
+  dazwischen liefen, bekam Home Assistant nach jeder Ruhe für einen Moment „online“ mit frischen Zuständen,
+  und das Modell wurde dreimal neu gebaut. Jetzt zählt die Minute ab dem Ende der Ruhe.
+- **Fehler: Eine abgeschnittene Fehlermeldung legte die Liste lahm.** Ein Bericht wurde direkt in seine Datei
+  geschrieben; las die Liste ihn halb geschrieben, oder blieb er nach einem Stromausfall abgeschnitten, brach
+  gzip mit `EOFError` ab und `GET /api/reports` gab 500 – keine Meldung war mehr zu sehen oder zu löschen.
+  Jetzt wird ein Bericht ganz oder gar nicht geschrieben (wie das Gelernte), und eine kaputte Datei fehlt nur
+  selbst in der Liste. Zwei Meldungen derselben Sekunde, desselben Raums und derselben Art überschrieben
+  einander; die zweite bekommt jetzt `-2` im Namen.
+- **Fehler: Beim Beenden blieben die Entitäten „online“** (DOCS.md *Verfügbarkeit*). Die App sagte „offline“
+  erst, nachdem die MQTT-Verbindung schon sauber geschlossen war – vergeblich, und ein sauberer Abschied
+  verwirft den letzten Willen. Bei jedem Update oder Neustart der App zeigte Home Assistant so die letzten
+  Zustände als aktuell, bis sie wieder lief. Jetzt geht „offline“ vor dem Abschied hinaus.
+- **Fehler: Ein Entwicklungslauf mit `--no-publish` konnte die Live-Entitäten abschalten.** Auch ohne zu
+  veröffentlichen meldete er sich mit dem letzten Willen „offline“ auf dem Verfügbarkeitstopic der App an;
+  starb er (Rechner im Ruhezustand, `kill -9`, WLAN weg), setzte der Broker die Entitäten der Live-App auf
+  *nicht verfügbar*, und die Live-App, die ihre Verfügbarkeit nur bei einer Änderung sendet, sagte nie
+  wieder „online“. Ohne Veröffentlichen gibt es jetzt keinen letzten Willen.
+- Einstellungen: Der Hinweis sagte, nur die Schwellen „Ziel“ starteten das Modell nicht neu; das gilt für alles
+  unter „Ausgabe“ (Kosten, Haltezeit eigener LD2450, Vorausschau) und die Haltezeit des LD2410C.
+- Live, Räume ohne Sensor: Die Prozentzahl hieß „Wahrscheinlichkeit, dass diese Person dort ist, je Person“;
+  seit 0.8 ist es eine Zahl je Gruppe, die Wahrscheinlichkeit, dass jemand dort ist. So heißt sie jetzt.
+- **Fehler: Ein abgelehnter Grundriss vergaß die Personen.** Scheiterte das Modell an einer neuen Konfiguration,
+  nachdem es schon die neuen Kacheln gebaut hatte, galt zwar die alte weiter, aber die Personen wurden aus dem
+  halb umgebauten Modell gespeichert: Das scheiterte oder schrieb den Fingerabdruck der neuen Kacheln, und das
+  alte Modell wusste danach nichts über die Personen. Jetzt wird der Zustand von vor der Änderung gespeichert.
+- **Fehler: Zwei gleichzeitig gesendete Meldungen überschrieben einander** (ein Doppelklick). Der Name einer
+  Meldung wird jetzt beim Wählen belegt (`O_EXCL`), nicht erst, wenn der Thread sie schreibt.
+- `ld2410.json`: Ein Teil ohne seine Zeit (`num` ohne `den`, nur in einer von Hand verdorbenen Datei) wird
+  beim Laden verworfen; bisher scheiterte das Modell an jedem LD2410C-Frame dieses Sensors.
+- Fehlermeldung: `minutes_ago` muss eine endliche Zahl sein; „nan“ kam bisher durch und schrieb NaN in den Kopf.
+- **Sensor „online“ heißt in der Web-Oberfläche dasselbe wie in Home Assistant** (DOCS.md *Verbindung*): ein
+  Frame in den letzten 30 s (`roomseen.SILENT_AFTER`). Bisher sagte die Oberfläche nach 15 s „offline“ und
+  nach „Neu beginnen“ für jeden Sensor bis zu seinem nächsten Frame, Home Assistant erst nach 30 s.
 
 ## 0.28.0
 

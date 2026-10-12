@@ -8,6 +8,7 @@ import gzip
 import json
 import logging
 import math
+import os
 import pathlib
 import re
 import signal
@@ -133,12 +134,13 @@ class App:
         self._reset_tracker()
         self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
 
-    def _model_failed(self, where: str, count: bool = True):
+    def _model_failed(self, where: str, count: bool = True, people: dict | None = None):
         """An error in the model must not stop the app: 0.9.3 died on one LD2410C frame (7.10.,
         between 22:52 and 2:07), the MQTT client said goodbye cleanly, so its last will never went
         out, and Home Assistant kept the last states for hours. Logged with the traceback; the model
         starts over from what was learned and saved, about the people from what it knew just before
-        (if that is still sound, else from the last save)."""
+        (if that is still sound, else from the last save); people: that state as taken before (a new
+        configuration the model failed with half-way)."""
         log.exception("model failed on %s: starting over", where)
         now = time.monotonic()
         if count:  # (not a configuration refused in PUT /api/config: the old one holds)
@@ -153,7 +155,11 @@ class App:
                           "Check the configuration and the errors above.", len(self.failures), where, RETRY, RETRY)
             self.paused_until = now + RETRY
         try:
-            if not self.replay:
+            if self.replay:
+                pass
+            elif people is not None:
+                atomic_write(self.data_dir / "people.json", json.dumps(people, allow_nan=False).encode())
+            else:
                 self._save_people()
         except Exception:  # noqa: BLE001 - the failed model may be broken: then the last save holds
             log.warning("the people could not be saved, starting from the last save")
@@ -167,8 +173,10 @@ class App:
         return len(self.failures) >= DOWN_AFTER
 
     def _model_ran(self):
-        """A good tick: once the model has run RETRY s since it last failed, it runs (again)."""
-        if self.failures and time.monotonic() - self.failures[-1] >= RETRY:
+        """A good tick: once the model has run RETRY s since it last failed, it runs (again). The rest
+        while down (paused_until) is no running: until 0.28 it counted, and a model that one sensor's
+        frames break was "online" for a moment after every rest."""
+        if self.failures and time.monotonic() - max(self.failures[-1], self.paused_until) >= RETRY:
             if self.down:
                 log.warning("the model runs again (%.0f s without failing, after %d failures)", RETRY, len(self.failures))
             self.failures.clear()
@@ -554,7 +562,8 @@ class App:
         if self.replay:
             tasks.append(replay_source(self.replay, self.clock, self.on_message))
         elif self.mqtt_settings:
-            tasks.append(mqtt_source(self.mqtt_settings, self.prefix, self.on_message, self._on_client))
+            tasks.append(mqtt_source(self.mqtt_settings, self.prefix, self.on_message, self._on_client,
+                                     publish=self.publish_enabled))
         else:
             log.warning("no MQTT broker and no replay: nothing to track")
         main = asyncio.gather(*tasks)
@@ -566,9 +575,7 @@ class App:
         except asyncio.CancelledError:
             log.info("stopping")
         finally:
-            if self.client is not None:
-                await self._publish(ha.AVAILABILITY, "offline", True)
-                self.available = "offline"
+            # "offline" went out before the MQTT connection closed (mqtt_source): here it is closed
             if not self.replay:
                 if self._saving is not None:
                     await asyncio.gather(self._saving, return_exceptions=True)
@@ -652,7 +659,10 @@ class App:
             restarted = self.tracker.reconfigure(config)
             self.tracker.zone_states()
         except Exception as e:  # noqa: BLE001 - the old configuration holds
-            self._model_failed("a new configuration", count=False)
+            # and the people as they were before it (the model may have the new tiles by now: saved from
+            # it, people.json had their fingerprint, and the old model restored nothing until 0.28)
+            self._model_failed("a new configuration", count=False,
+                               people=getattr(self.tracker, "reconfigured_from", None))
             return web.json_response({"error": f"Das Modell läuft mit dieser Konfiguration nicht: {e!r}. "
                                                "Es gilt die vorige."}, status=400)
         self.config = config
@@ -773,9 +783,12 @@ class App:
             return web.json_response({"error": "Art des Fehlers fehlt."}, status=400)
         room = str(body.get("room") or "")
         try:
-            ago = min(max(float(body.get("minutes_ago") or 0), 0.0), REPORT_WINDOW / 60)
+            ago = float(body.get("minutes_ago") or 0)
         except (TypeError, ValueError):
+            ago = math.nan
+        if not math.isfinite(ago):  # (NaN passed min and max: comparisons with it are false)
             return web.json_response({"error": "Die Minuten sind keine Zahl."}, status=400)
+        ago = min(max(ago, 0.0), REPORT_WINDOW / 60)
         now = self.clock()  # the wall clock, or the recording's time in a replay
         start = self.model_start or self.tracker.start
         # what was learned and known when the model started, if that is in the report (the replay starts there,
@@ -801,8 +814,22 @@ class App:
         # the buffers the frames go on into; lines and gzip in a thread (15 min of frames: 0.2 s and
         # 0.6 s here, many times that on Home Assistant, MODEL.md 10)
         head = json.dumps(meta)
-        path = self.reports / f"{name}.jsonl.gz"
-        n = await asyncio.to_thread(self._write_report, path, head, list(self.recent), list(self.shown))
+        # one of the same second, room and kind: a file of its own. The name is taken now (an empty file,
+        # O_EXCL; the list skips it), not when the thread writes: a second report sent meanwhile (a double
+        # click) took the same name and overwrote the first until 0.28
+        k = 1
+        while True:
+            path = self.reports / (f"{name}.jsonl.gz" if k == 1 else f"{name}-{k}.jsonl.gz")
+            try:
+                os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                break
+            except FileExistsError:
+                k += 1
+        try:
+            n = await asyncio.to_thread(self._write_report, path, head, list(self.recent), list(self.shown))
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
         log.info("error report %s: %d messages", path.name, n)
         return web.json_response({"name": path.name, "messages": n})
 
@@ -822,7 +849,8 @@ class App:
                 data = payload.decode(errors="replace")
             lines.append(json.dumps({"t": recv, "topic": topic, "payload": data}))
         lines += [json.dumps({"t": t, "topic": "app/shown", "payload": data}) for t, data in shown]
-        path.write_bytes(gzip.compress("\n".join(lines).encode(), compresslevel=6))
+        # whole or not at all: a report cut off (a power cut) is no truth, and the list must not see one half written
+        atomic_write(path, gzip.compress("\n".join(lines).encode(), compresslevel=6))
         return len(lines) - 1
 
     async def h_reports(self, request):
@@ -831,7 +859,9 @@ class App:
             try:
                 with gzip.open(path, "rt") as f:
                     rep = json.loads(f.readline())["report"]
-            except (OSError, ValueError, KeyError):
+            except (OSError, EOFError, ValueError, KeyError, TypeError):  # (EOFError: a gzip cut off)
+                continue
+            if not isinstance(rep, dict):
                 continue
             out.append({"name": path.name, "size": path.stat().st_size, **rep,
                         "kind_text": REPORT_KINDS.get(rep.get("kind"), rep.get("kind"))})

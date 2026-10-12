@@ -254,16 +254,24 @@ class Tracker:
         Live tracks do not survive a restart (the sensors' next frames are a start, 4.1): the
         people with tracks go to the tiles as when their last track ends (5.4), ghost tracks end,
         and the hypotheses that then say the same are merged (5.6) - one per number of known
-        people. The time is that of the last move of everybody. Changes nothing here."""
+        people. The time is that of the last move of everybody. Changes nothing here: it works on
+        copies, as reading a stored amplitude applies its deferred mixing (Hidden.amp) - in the
+        model's own densities the live run went another way after every save than a replay (0.28)."""
         cache = {}
+        own = {}  # id of a density -> its copy (shared ones stay shared: the merge goes by identity)
+
+        def copy(o):
+            if id(o) not in own:
+                own[id(o)] = o.copy()
+            return own[id(o)]
         hyps = []
         for hy in self.hyps:
-            people = list(hy.hidden)
+            people = [copy(u) for u in hy.hidden]
             for g in hy.groups.values():
                 if id(g) not in cache:
-                    cache[id(g)] = g.to_tiles(self.tiles)
+                    cache[id(g)] = g.copy().to_tiles(self.tiles)
                 people.append(cache[id(g)])
-            hyps.append(Hyp(hy.logw, {}, {}, {}, people, hy.ppp))
+            hyps.append(Hyp(hy.logw, {}, {}, {}, people, copy(hy.ppp)))
         hyps = self._merged(hyps)
         total = _logsumexp([hy.logw for hy in hyps])
         index = {}
@@ -367,8 +375,11 @@ class Tracker:
         set of sensors, the observed area) the model starts over as after a restart: from what it
         knew (people_state) if the tiles stay the same, else from nothing known. Returns whether it
         started over."""
+        self.reconfigured_from = None
         changed = self._changed_sensors(self.config, config)
         state = self.people_state() if changed is None else None
+        # if what follows fails half-way (new tiles, old people), the app saves this (app.h_put_config)
+        self.reconfigured_from = state
         self.config = config
         self.p = config.params
         self.seen.use(config)
@@ -2393,7 +2404,7 @@ class Tracker:
         sensors = {}
         for sid, rt in self.runtime.items():
             sensors[sid] = {
-                "online": t - rt.last_frame < 15,
+                "online": self.seen.online(sid, t, self.start),  # as Home Assistant's rooms (roomseen.py)
                 "detections": [{"x": round(float(d.pos[0]), 3), "y": round(float(d.pos[1]), 3),
                                 "lx": round(d.local[0], 3), "ly": round(d.local[1], 3),
                                 "speed": round(d.speed, 2), "hidden": d.hidden or d.stale}

@@ -165,6 +165,70 @@ def test_the_mqtt_loop_survives_whatever_a_message_does(monkeypatch):
     assert seen == [b"0", b"1", b"2"] and clients[-1] is None  # all messages, then reconnecting
 
 
+@pytest.mark.parametrize("publish", [True, False])
+def test_a_stop_says_offline_and_a_silent_app_has_no_last_will(tmp_path, monkeypatch, publish):
+    """Stopped (SIGTERM: an update, a restart of the app), the app says "offline" before its clean goodbye,
+    which drops the last will (MQTT 3.1.2.5): until 0.28 it tried after the connection was closed, and Home
+    Assistant kept "online" with the last states while the app was gone. One that publishes nothing (a
+    development run with --no-publish against the live broker) has no last will: when it died, the
+    broker said "offline" for the live app's entities, and the live app, which sends its availability
+    only when it changes, never said "online" again."""
+    import os
+    import signal
+
+    import aiomqtt
+
+    log = []
+
+    class Client:
+        def __init__(self, *args, will=None, **kwargs):
+            log.append(("will", None if will is None else (will.topic, will.payload)))
+            self.closed = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            self.closed = True
+            log.append(("goodbye",))
+            return False
+
+        async def subscribe(self, topic):
+            pass
+
+        async def publish(self, topic, payload, qos=0, retain=False):
+            if self.closed:
+                raise aiomqtt.MqttError("not connected")
+            log.append((topic, payload))
+
+        @property
+        def messages(self):
+            async def gen():
+                await asyncio.Future()
+                yield None
+            return gen()
+
+    monkeypatch.setattr(aiomqtt, "Client", Client)
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=publish, mqtt={"host": "x"})
+
+    async def main():
+        asyncio.get_running_loop().call_later(0.8, os.kill, os.getpid(), signal.SIGTERM)
+        frames = asyncio.create_task(feed(app, 0.6, [1000]))
+        await app.run("127.0.0.1", 0)
+        await frames
+
+    asyncio.run(main())
+    said = [e[1] for e in log if e[0] == AVAILABILITY]
+    if publish:
+        assert log[0] == ("will", (AVAILABILITY, "offline"))
+        assert said == ["offline", "online", "offline"]
+        last = max(i for i, e in enumerate(log) if e[0] == AVAILABILITY)
+        assert log[last] == (AVAILABILITY, "offline") and last < log.index(("goodbye",))
+    else:
+        assert log[0] == ("will", None) and not said and not [e for e in log if len(e) == 2 and e[0] != "will"]
+
+
 def run_a_while(app, until=40.0):
     config = app.config
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), start=2, pauses={2: 60}))
@@ -415,6 +479,41 @@ def test_a_model_that_fails_again_and_again_is_unavailable(tmp_path, monkeypatch
     asyncio.run(main())
     assert not app.down and mqtt.availability() == ["offline", "online", "offline", "online"]
     assert caplog.text.count("FAILS AGAIN AND AGAIN") == 1 and "runs again" in caplog.text
+
+
+def test_a_model_that_one_sensor_breaks_stays_unavailable(tmp_path, monkeypatch):
+    """Every frame of sensor b breaks the model, the ticks between run (app.down): after the rest of
+    RETRY s the model must run RETRY s before it is "online" again. Until 0.28 the rest counted as
+    running: every RETRY s Home Assistant got "online" for a moment, with DOWN_AFTER rebuilds."""
+    monkeypatch.setattr(app_module, "RETRY", 0.6)
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=True)
+    mqtt = FakeMqtt()
+    real_frame = Tracker.process_frame
+
+    def process_frame(self, sensor_id, t, frame):
+        real_frame(self, sensor_id, t, frame)
+        if sensor_id == "b":
+            raise TypeError("'NoneType' object is not subscriptable")
+
+    uptime = [1000]
+
+    async def main():
+        await app._on_client(mqtt)
+        task = asyncio.create_task(app.housekeeping())
+        end = time.monotonic() + 3.0
+        while time.monotonic() < end:
+            for sid, pause in (("a", 0.15), ("b", 0.05)):
+                uptime[0] += 100
+                frame = {"uptime_ms": uptime[0], "targets": [], "ld2410": {}}
+                app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), time.time())
+                await asyncio.sleep(pause)
+        task.cancel()
+
+    monkeypatch.setattr(Tracker, "process_frame", process_frame)
+    asyncio.run(main())
+    # online with the first fresh states (nothing known to be wrong yet), offline at the DOWN_AFTER-th failure
+    assert app.down and mqtt.availability() == ["offline", "online", "offline"]
 
 
 def test_reset_tracks_sees_whoever_sits_there_again(tmp_path):

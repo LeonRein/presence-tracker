@@ -31,8 +31,13 @@ class ReplayClock(Clock):
         return t0 + (time.monotonic() - m0) * self.speed
 
 
-async def mqtt_source(settings: dict, prefix: str, on_message, on_client):
-    """Subscribe to the sensor frames. Calls on_client(client or None) on (dis)connect."""
+async def mqtt_source(settings: dict, prefix: str, on_message, on_client, publish: bool = True):
+    """Subscribe to the sensor frames. Calls on_client(client or None) on (dis)connect. publish: the
+    app publishes the entities' availability - then the last will says "offline" when the connection
+    dies, and a stop says it before the clean goodbye (which drops the will, MQTT 3.1.2.5). One that
+    publishes nothing (--no-publish, a development run against the live broker) has no will: the
+    broker said "offline" for the live app's entities when it died, and the live app, which sends its
+    availability only when it changes, never said "online" again (until 0.28)."""
     import aiomqtt
 
     from .ha import AVAILABILITY
@@ -43,17 +48,27 @@ async def mqtt_source(settings: dict, prefix: str, on_message, on_client):
                 settings["host"], int(settings.get("port", 1883)),
                 username=settings.get("username") or None, password=settings.get("password") or None,
                 identifier=f"presence-tracker-{int(time.time())}",
-                will=aiomqtt.Will(AVAILABILITY, "offline", retain=True),
+                will=aiomqtt.Will(AVAILABILITY, "offline", retain=True) if publish else None,
             ) as client:
                 log.info("connected to MQTT %s:%s", settings["host"], settings.get("port", 1883))
                 await client.subscribe(f"{prefix}/+/frame")
                 await client.subscribe(f"{prefix}/+/status")
                 await on_client(client)
-                async for msg in client.messages:
-                    try:
-                        on_message(str(msg.topic), msg.payload, time.time())
-                    except Exception:  # noqa: BLE001 - one message must not end the connection
-                        log.exception("MQTT message on %s not handled", msg.topic)
+                try:
+                    async for msg in client.messages:
+                        try:
+                            on_message(str(msg.topic), msg.payload, time.time())
+                        except Exception:  # noqa: BLE001 - one message must not end the connection
+                            log.exception("MQTT message on %s not handled", msg.topic)
+                except asyncio.CancelledError:
+                    # the app stops: "offline" while the connection is still there (until 0.28 the app
+                    # said it after the goodbye, in vain, and Home Assistant kept "online" and the states)
+                    if publish:
+                        try:
+                            await asyncio.wait_for(client.publish(AVAILABILITY, "offline", qos=1, retain=True), 2.0)
+                        except Exception as e:  # noqa: BLE001 - then the states stay as they were
+                            log.warning("MQTT: \"offline\" not sent at the stop: %s", e)
+                    raise
         except aiomqtt.MqttError as e:
             log.warning("MQTT: %s, reconnecting in 5 s", e)
             await on_client(None)

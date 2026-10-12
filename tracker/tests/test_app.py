@@ -308,3 +308,106 @@ def test_a_report_can_be_deleted_and_nothing_else(tmp_path):
     assert not (app.reports / names[0]).exists()
     assert (tmp_path / "secret.jsonl.gz").exists() and (tmp_path / "tracker.json").exists() and outside.exists()
     assert (app.reports / "link.jsonl.gz").is_symlink()
+
+
+def test_a_broken_report_file_hides_only_itself(tmp_path):
+    """A report cut off (power cut while it was written, or listed while it is being written) must not
+    break the list: until 0.28 gzip's EOFError made GET /api/reports a 500. Two reports of the same
+    second, room and kind are two files."""
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    for k, sid in enumerate(("a", "b")):
+        frame = {"uptime_ms": 1000, "targets": [], "ld2410": {}}
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + k)
+    app.tick(1001.0)
+    app.reports.mkdir(parents=True)
+    whole = gzip.compress((json.dumps({"report": {"t": 1.0, "kind": "other"}}) + "\n" + "x" * 10000).encode())
+    (app.reports / "20261001-120000-haus-other.jsonl.gz").write_bytes(whole[:30])
+
+    async def main():
+        async with TestClient(TestServer(app.web_app())) as client:
+            names = []
+            for _ in range(2):
+                r = await client.post("/api/reports", json={"kind": "other", "room": "wohn"})
+                names.append((await r.json())["name"])
+            r = await client.get("/api/reports")
+            return names, r.status, (await r.json())["reports"] if r.status == 200 else None
+
+    names, status, listed = asyncio.run(main())
+    assert status == 200
+    assert len(set(names)) == 2 and {r["name"] for r in listed} == set(names)
+    assert not list(app.reports.glob(".*"))  # no temporary file left
+
+
+def test_reports_sent_at_once_are_files_of_their_own(tmp_path):
+    """A double click: the second report is made while the first is written in its thread. Its name is
+    taken when it is chosen (O_EXCL), so neither overwrites the other."""
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    for k, sid in enumerate(("a", "b")):
+        frame = {"uptime_ms": 1000, "targets": [], "ld2410": {}}
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + k)
+    app.tick(1001.0)
+
+    class Request:
+        def __init__(self, body):
+            self.body = body
+
+        async def json(self):
+            return self.body
+
+    async def main():
+        return await asyncio.gather(*(app.h_report(Request({"kind": "other", "room": "wohn"})) for _ in range(3)))
+
+    names = [json.loads(r.text)["name"] for r in asyncio.run(main())]
+    assert len(set(names)) == 3 and len(list(app.reports.glob("*.jsonl.gz"))) == 3
+
+
+def test_a_report_needs_a_number_of_minutes(tmp_path):
+    """minutes_ago "nan" passed max/min (comparisons with NaN are false) and put NaN into the header."""
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+
+    class Request:
+        def __init__(self, body):
+            self.body = body
+
+        async def json(self):
+            return self.body
+
+    for bad in ("nan", "inf", "-inf", "x", [1]):
+        r = asyncio.run(app.h_report(Request({"kind": "other", "room": "wohn", "minutes_ago": bad})))
+        assert r.status == 400, bad
+    assert not list(app.reports.glob("*")) if app.reports.is_dir() else True
+
+
+def test_a_refused_floor_plan_keeps_the_people(tmp_path, monkeypatch):
+    """A new floor plan the model fails with after it built the new tiles: the old configuration holds,
+    and so do the people - saved as they were before it (the old tiles), not from the half-built model.
+    Until 0.28 people.json got the new tiles' fingerprint, and the old model restored nothing."""
+    config = flat_config(entry=True)
+    config.save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    sit = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.52, 1.0), start=1, pauses={2: 600}))
+    for t, sid, frame in simulate([sit], sim_sensors(config), 60.0, walls=config.wall_segments):
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
+        app.tick(1000.0 + t)
+    fingerprint = app.tracker.tiles.fingerprint()
+    d = config.to_dict()
+    d["sensors"].append({"id": "c", "x": -1.95, "y": 3.05, "heading": 45, "placed": True})
+    d["zones"] = [{**z, "entry": False} for z in d["zones"]]
+    real = Tracker.use_dest_map
+
+    def use_dest_map(self, dm):  # fails once, after reconfigure built the new tiles
+        monkeypatch.setattr(Tracker, "use_dest_map", real)
+        raise ValueError("broken")
+    monkeypatch.setattr(Tracker, "use_dest_map", use_dest_map)
+
+    class Request:
+        async def json(self):
+            return d
+
+    r = asyncio.run(app.h_put_config(Request()))
+    assert r.status == 400 and app.config.to_dict() == config.to_dict()
+    assert json.loads((tmp_path / "people.json").read_text())["tiles"] == fingerprint
+    assert app.tracker.started_from is not None and app.tracker.tiles.fingerprint() == fingerprint
