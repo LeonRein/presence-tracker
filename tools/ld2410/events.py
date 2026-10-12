@@ -1,10 +1,9 @@
 """How strongly do the energies of one sensor ask for a person, second by second, under the filter's
 likelihood (presence_tracker.ld2410)? Per 1-s block: the best log-likelihood ratio "one standing
 person at slant r on the axis" against "nobody" (r on a 0.25 m grid), with the background = the
-gate's median in a quiet reference window. Optionally with a per-gate texture (--nu): the background
-of each gate times T ~ Gamma(nu, mean 1) per block, integrated numerically.
+gate's median in a quiet reference window.
 
-usage: events.py SENSOR "YYYY-MM-DD HH:MM:SS" "YYYY-MM-DD HH:MM:SS" [--ref "from" "to"] [--nu NU]"""
+usage: events.py SENSOR "YYYY-MM-DD HH:MM:SS" "YYYY-MM-DD HH:MM:SS" [--ref "from" "to"]"""
 import argparse
 import os
 import sys
@@ -31,7 +30,6 @@ def main():
     ap.add_argument("t0")
     ap.add_argument("t1")
     ap.add_argument("--ref", nargs=2, default=["2026-10-07 01:20:00", "2026-10-07 02:20:00"])
-    ap.add_argument("--nu", type=float, default=0.0)
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--clutter", type=float, default=0.0,
                     help="also the log-likelihood ratio of a clutter episode against nobody: every gate's "
@@ -55,34 +53,13 @@ def main():
     blk = np.floor(t - t0).astype(int)
     total = 0.0
     out = []
-    if a.nu:
-        # texture levels per gate: Gamma(nu, mean 1) in 12 equal-probability levels
-        from presence_tracker.filtermodel import gamma_levels
-        lev, lw = gamma_levels(a.nu, 12)
     for k in np.unique(blk):
         st = ld2410.Stats()
         for i in np.nonzero(blk == k)[0]:
             st.add(E[sel[i]].astype(float), dt[i])
         if st.time <= 0:
             continue
-        if not a.nu:
-            lr = st.log_ratio(b[None, :] + S, b, lik)
-        else:
-            # per gate independently: log mean over texture levels of the likelihood; the common gain
-            # left out here (texture per gate replaces it)
-            def ll(mu):  # (k, 16) -> (k,)
-                tot = np.zeros(len(mu))
-                for g in range(16):
-                    parts = []
-                    for T, w in zip(lev, lw):
-                        mm = mu.copy()
-                        mm[:, g] = mu[:, g] - b[g] + T * b[g]
-                        parts.append(np.log(w) + _cell_ll(st, mm[:, g], g, lik))
-                    parts = np.array(parts)
-                    top = parts.max(axis=0)
-                    tot += top + np.log(np.exp(parts - top).sum(axis=0))
-                return tot
-            lr = ll(b[None, :] + S) - ll(b[None, :])[0]
+        lr = st.log_ratio(b[None, :] + S, b, lik)
         j = int(np.argmax(lr))
         total += lr[j]
         c = clutter_ratio(st, b, lik, a.clutter) if a.clutter else 0.0
@@ -110,15 +87,6 @@ def clutter_ratio(st, b, lik, nu):
     ll = np.array([nu * np.log(nu) - lgamma(nu) + lgamma(n + nu) - (n + nu) * np.log(nu + q) for n, q in zip(N, A)])
     ll -= N * np.log(b)
     return float(ll.sum()) - float(st._mu_part(b[None, :], lik)[0])
-
-
-def _cell_ll(st, mu, g, lik):
-    """Tempered log-likelihood of one cell (no common gain), (k,)."""
-    a, tau = lik.alpha[g], lik.tau[g]
-    out = (-a * st.t_unc[g] * np.log(mu) - a * st.t_e[g] / mu) / tau
-    if st.t_cens[g] > 0:
-        out = out + st.t_cens[g] / tau * ld2410.log_censored(np.full(len(mu), a), mu)
-    return out
 
 
 if __name__ == "__main__":

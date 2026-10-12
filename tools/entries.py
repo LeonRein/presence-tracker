@@ -301,7 +301,7 @@ def replay(a, configs, starts, rooms):
     starts = sorted(s for s in starts if t0 < s <= t1) + [math.inf]
     nxt_start, nstep = 0, 0.0
     cfg_of = lambda t: [c for tc, c in configs if tc <= t][-1]
-    walks0, cpu_targets = 0.0, 0.0
+    cpu_targets = 0.0
     t_cpu = time.process_time()
     for t_rec, sid, payload in frames(a.recordings, t0, t1, None if a.no_pauses else pauses):
         if tracker is None or t_rec >= starts[nxt_start]:

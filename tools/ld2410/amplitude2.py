@@ -1,5 +1,5 @@
 """The amplitude of one person per stay, again (MODEL.md 4.3, 10), with what the filter counts as a
-measurement only: amplitude.py took the LD2450 target of the housing as the person also while the
+measurement only: its first version took the LD2450 target of the housing as the person also while the
 LD2450 held it (frozen: bit-identical coordinates; coasting: >= 3 frames with the same speed) and
 also behind walls (Detection.hidden: its echoes, e.g. the kitchen's beyond the outer wall). A held
 target is often nobody any more (the LD2450 keeps a frozen target 35 s after the person left), and
