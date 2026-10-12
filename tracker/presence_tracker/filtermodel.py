@@ -127,6 +127,10 @@ class Model:
     # per sensor, between sensors by up to a factor 2 (MODEL.md 10 "Lernschleifen"); a day (assumed).
     # Until 0.27 the prior ld_background itself
     ld_anchor_forget = 24 * 3600.0  # s
+    # ... learned only after this long without anything in sight of the housing's LD2450: sleepers leave
+    # it gaps of seconds to minutes (bedroom nights 7.-10.10.: 0.0-0.6 % of the time 10 min silent), an
+    # empty room hours (bedroom over the recordings 21 %, kitchen 67 %)
+    ld_anchor_quiet = 600.0  # s
     # the amplitude of a standing person with a track on the profile, per stay (Swerling III: slow, as
     # kappa: new at each stop, now and then within a stay, together with kappa): Gamma(shape, shape).
     # Measured 6./7.10. within a sensor: shape 5-16 (MODEL.md 4.3). The filter carries its posterior,

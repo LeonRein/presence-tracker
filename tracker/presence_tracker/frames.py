@@ -40,6 +40,7 @@ class SensorRuntime:
     # LD2410C for the filter (MODEL.md 4.3): when its energies came last, and what they were
     ld_t: float = -math.inf
     ld_e: object = None
+    ld_target_t: float = -math.inf  # the last frame whose LD2450 had something in sight (Background anchor)
 
 
 class SensorClock:

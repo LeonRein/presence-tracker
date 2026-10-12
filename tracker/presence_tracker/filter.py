@@ -166,7 +166,8 @@ class Tracker:
         self.ghost_map = None  # where each sensor starts ghost tracks (ghostmap.py)
         # what each LD2410C sees without anybody (ld2410.py, learned online, MODEL.md 4.3)
         self.ld_background = ld2410.Background(ld2410.prior(self.m), self.m.ld_prior_time, self.m.ld_forget,
-                                               self.m.ld_echo_rate, self.m.ld_echo_prior_time, self.m.ld_anchor_forget)
+                                               self.m.ld_echo_rate, self.m.ld_echo_prior_time, self.m.ld_anchor_forget,
+                                               self.m.ld_anchor_quiet)
         self.ld_background.use(config)
         self.learn_ghosts = True  # learn the map online (MODEL.md 4.2); off for the offline EM tool
         self.dest_map = None  # where walks go (destination.py, learned online, MODEL.md 6 "Ziel")
@@ -1538,6 +1539,8 @@ class Tracker:
         frame = self.m.ld_frame
         # the LD2450 of the housing has something in sight (in a silence it had nothing)
         target = any(not d.hidden for d in rt.detections)
+        if target or dt > IDLE:  # how long it has seen nothing (a gap in the data says nothing: from now)
+            rt.ld_target_t = t
         if dt > IDLE:
             st.add(e, frame, target)
         elif dt > 2 * frame and prev is not None:
@@ -1791,7 +1794,9 @@ class Tracker:
         if learn:
             # the background where no echo source is on (as judged with these frames), and the
             # echo sources' rate where nobody is in view
-            self.ld_background.learn(sid, b, np.array(mus), prior_w, st, lik.alpha, float(echo.p[0]))
+            rt = self.runtime.get(sid)
+            quiet = self.now - rt.ld_target_t if rt is not None else 0.0
+            self.ld_background.learn(sid, b, np.array(mus), prior_w, st, lik.alpha, float(echo.p[0]), quiet)
             self.ld_background.learn_echoes(sid, echo.began(), rate, nobody, st.time)
         self._normalize()
 

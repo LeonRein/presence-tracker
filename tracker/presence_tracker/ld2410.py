@@ -288,17 +288,18 @@ class Background:
     before these frames (the energies' own judgement is not learned back, Park et al. 2020), and
     only as far as no echo source holds the energy (learn). Forgotten with forget s towards an anchor
     of prior_time s: the sensor's own long-run level (the same online EM, forgotten with anchor_forget
-    s, from the measured means of the prior with prior_time s) - a level that wanders around its
-    sensor's mean (a stationary AR(1) level, Harvey 1989; the anchor learned like an empirical Bayes
-    prior). With it the rate at which echo sources begin (learn_echoes). Per sensor it holds only
+    s, from the measured means of the prior with prior_time s, and only from frames after anchor_quiet
+    s without anything in sight of the housing's LD2450) - a level that wanders around its sensor's
+    mean (a stationary AR(1) level, Harvey 1989; the anchor learned like an empirical Bayes prior). With it the rate at which echo sources begin (learn_echoes). Per sensor it holds only
     while the sensor is where it was (pose_of): moved, it starts over."""
 
     def __init__(self, prior: np.ndarray, prior_time: float, forget: float, echo_rate: float = 1 / 10800,
-                 echo_time: float = 10800.0, anchor_forget: float = 86400.0):
+                 echo_time: float = 10800.0, anchor_forget: float = 86400.0, anchor_quiet: float = 600.0):
         self.prior = np.asarray(prior, dtype=float)
         self.prior_time = prior_time
         self.forget = forget
         self.anchor_forget = anchor_forget
+        self.anchor_quiet = anchor_quiet
         self.num = {}  # sensor id -> (16,) s x the background's share of the energy
         self.den = {}  # sensor id -> s watched
         self.num_a = {}  # sensor id -> as num, forgotten with anchor_forget: the sensor's own level ...
@@ -356,7 +357,7 @@ class Background:
         self.quiet[sid] = self.quiet.get(sid, 0.0) + nobody * seconds
 
     def learn(self, sid: str, b: np.ndarray, mus: np.ndarray, w: np.ndarray, st: Stats, alpha: np.ndarray,
-              off: float = 1.0):
+              off: float = 1.0, quiet: float = math.inf):
         """One step of online EM (MODEL.md 4.3): the frames st, and per hypothesis (weight w) the
         mean energy mus (H, 16) the people, the echo sources and the background b put in. The
         background's share of an energy is b / mu (Richardson 1972; Shepp & Vardi 1982); of a capped
@@ -384,13 +385,16 @@ class Background:
         w_bg = off * (1.0 - st.t_target / st.time) if st.time > 0 else 0.0
         self.num[sid] = self.num.get(sid, np.zeros(CELLS)) * k + w_bg * gained
         self.den[sid] = self.den.get(sid, 0.0) * k + w_bg * st.time
-        # the anchor: the same over days. Until 0.27 the global prior: in hours without learning (the
-        # LD2450 sees somebody all night) the bedroom's level went from 9 back to 5, and the energies
-        # of the empty bedroom held an unknown person (MODEL.md 10, "Der Hintergrund kehrt zu seinem
-        # eigenen Niveau zurück")
+        # the anchor: the same over days, but only from frames after anchor_quiet s in which the LD2450
+        # of the housing saw nothing (as the empty level was measured, MODEL.md 4.3): sleepers and
+        # sitters leave it gaps of seconds to minutes, an empty room hours. Until 0.27 the global prior:
+        # in hours without learning (the LD2450 sees somebody all night) the bedroom's level went from 9
+        # back to 5, and the energies of the empty bedroom held an unknown person (MODEL.md 10, "Der
+        # Hintergrund kehrt zu seinem eigenen Niveau zurück")
         ka = math.exp(-st.time / self.anchor_forget)
-        self.num_a[sid] = self.num_a.get(sid, np.zeros(CELLS)) * ka + w_bg * gained
-        self.den_a[sid] = self.den_a.get(sid, 0.0) * ka + w_bg * st.time
+        w_a = w_bg if quiet >= self.anchor_quiet else 0.0
+        self.num_a[sid] = self.num_a.get(sid, np.zeros(CELLS)) * ka + w_a * gained
+        self.den_a[sid] = self.den_a.get(sid, 0.0) * ka + w_a * st.time
 
     def use(self, config):
         """Keep what was learned for the sensors that are where they were; the others start over."""

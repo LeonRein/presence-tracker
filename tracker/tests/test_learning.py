@@ -94,6 +94,21 @@ def test_what_is_not_learned_goes_back_to_the_sensors_own_level():
     assert np.all(np.abs(bg.b("a") / ((6 * 1.8 + 4) / 7 * b) - 1) < 0.1), bg.b("a") / b
 
 
+def test_the_anchor_learns_only_after_a_long_silence_of_the_ld2450():
+    # sleepers and sitters leave the LD2450 gaps of seconds to minutes; what the background learns in
+    # them does not reach the sensor's own level (the anchor), what follows 10 min of silence does
+    m = Model()
+    b = ld2410.prior(m)
+    bg = ld2410.Background(b, m.ld_prior_time, m.ld_forget, anchor_forget=m.ld_anchor_forget,
+                           anchor_quiet=m.ld_anchor_quiet)
+    st, alpha = _frames(3 * b, 3600)
+    bg.learn("a", b, b[None, :], np.ones(1), st, alpha, quiet=90.0)
+    assert np.all(bg.b("a") > 2.5 * b)  # the fast level learns it
+    assert np.allclose(bg.anchor("a"), b)  # the anchor not
+    bg.learn("a", bg.b("a"), bg.b("a")[None, :], np.ones(1), st, alpha, quiet=m.ld_anchor_quiet)
+    assert np.all(bg.anchor("a") > 2.5 * b)
+
+
 def test_the_echo_rate_counts_where_nobody_is_and_without_itself():
     m = Model()
     bg = ld2410.Background(ld2410.prior(m), m.ld_prior_time, m.ld_forget, 1e-4, 3600.0)
