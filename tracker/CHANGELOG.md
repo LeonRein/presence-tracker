@@ -2,6 +2,8 @@
 
 ## Unveröffentlicht
 
+## 0.29.0
+
 - **Aufgeräumt: toter Code, Umrechner und einmalige Analysen entfernt, Ausgabe zeichengleich.** Der Umrechner
   der Geisterkarte von 0.28 fällt wie angekündigt weg: Eine Karte von 0.27 gilt jetzt als unlesbar, die App
   beginnt eine neue (live ist sie längst umgerechnet). Weg sind Modellschalter, die immer gleich standen
