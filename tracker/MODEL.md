@@ -377,6 +377,28 @@ Das Modell, je Sensor:
   mal Strahl mal Sicht (Wände wie beim LD2450: der Anteil der Person, den der LD2450 im selben Gehäuse
   ohne Wand dazwischen sehen könnte, über ihren Versatz gemittelt wie in 4.1; bis 0.10.0 ja/nein). Ruhig zählt das Verzögerte: M ist, was die Personen
   zuletzt hineingaben (geglättet mit 2 s), w_m sein Anteil im Block; bewegt w_m = 0.
+- **Blick des LD2410C in einen anderen Raum** (gemessen, `Model.ld_view`, `_ld_view`): Die Sicht durch eine
+  Türöffnung oder über den Raumteiler ist geometrisch, was dort ankommt, nicht: Je Paar „Sensor ← Raum“ trägt
+  die Sicht einen gemessenen Faktor v ≤ 1, S(x) = v_{s,Raum(x)} · Profil · Strahl · Sicht; im eigenen Raum und
+  wo nichts gemessen ist v = 1. Gemessen (`tools/ld2410/footprint.py`) mit Bezeichnungen, die nicht vom Filter
+  kommen: Sitzende oder Stehende, die der LD2450 ihres Raums als einziges Ziel misst (|v| ≤ 0,1 m/s, dieselbe
+  Spur ≥ 10 s davor und danach), während der beurteilte Sensor in seinem eigenen Raum ±30 s niemanden hat;
+  Gewinn = Ruhig-Energien (Ringe 2–8) über dem Leer-Pegel des Boards, summiert über die Zellen, in denen das
+  Profil ≥ 1 erwartet, durch die erwartete Summe; geteilt durch den Gewinn desselben LD2410C auf Personen im
+  eigenen Raum. Je Aufenthalt (Sekunden mit Lücken ≤ 10 s) der Median, die Aufenthalte nach Minuten gewichtet
+  (höchstens 5 je Aufenthalt, ihre Sekunden sind nicht unabhängig), ihr gewichteter Median (die Gewinne haben
+  schwere Ränder: andere bewegen sich, die Energien streuen) zur geometrischen Erwartung 1 gezogen mit einem
+  Prior, der 5 min Aufenthalte wiegt (Mittel des Posteriors, Schrumpfung wie Efron & Morris 1975), höchstens 1
+  (das Profil ist das der Sicht; eine Öffnung nimmt nur weg). Das ist eine Antwortkarte des Sensors, gelernt
+  aus Referenzdetektionen eines zweiten Sensors am selben Ort (wie die Signalkarte aus Referenzorten bei Bahl &
+  Padmanabhan 2000, RADAR) und ein ortsabhängiges Profil der Entdeckung, das man schätzt statt annimmt (Mahler,
+  Vo & Vo 2011: CPHD mit unbekanntem Entdeckungsprofil). Weil v die Sicht skaliert, gilt das Übrige von selbst:
+  Was mit v dem LD2410C nicht mehr als `FLOOR` gibt, ist außerhalb seines Blicks und wird nicht gewogen
+  (Faktor 1, neutral) statt „mit null Energie gesehen“, und die Beobachtbarkeit der Kacheln (5.5, Ablauf
+  ungesehener Masse) sinkt mit v. Die Tabelle ist derzeit vorab gerechnet (6.–10.10.); das Ziel ist sie online
+  zu lernen: dieselben Summen (gewichteter Median → laufende Quantilschätzung, Minuten) je Sensor und Raum,
+  wenn die Bedingung oben gilt, im lokalen Rahmen des Sensors gespeichert wie die gelernte Lage (Zweig
+  `learned-pose`). Je Raum statt je Kachel, weil die Daten nicht mehr tragen (Paare mit 0,6–105 min).
 - **Amplitude je Aufenthalt** (Swerling III: langsam, fest über einen Aufenthalt): Eine Stehende mit
   Spur gibt g·S ab, g ~ Gamma(6, 6) (gemessen β 5–16, s. o.). Der Filter führt den Posterior von g,
   nicht seine Momente: ein Gitter von 9 Zellen gleichen Abstands in log g zwischen dem 0,1-%- und dem
@@ -2602,6 +2624,36 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
     gedrehtes verteilt; einmalig).
   - *Grenze:* Die Wahrheit hat nach dem Wechsel nur die Fenster des 8.10. Ob ein anders montierter Sensor die
     Geister der anderen ändert (gegenseitige Störung), ist nicht gemessen.
+- **Blick des LD2410C je Raum** (12.10. früh; 4.3 „Blick des LD2410C in einen anderen Raum“). Statt eines
+  Faktors für alle Öffnungen je Paar Sensor ← Raum gemessen (`tools/ld2410/footprint.py`, Bezeichnungen vom
+  LD2450 des Raums der Person, nie vom Filter). Gewinn des eigenen Raums (Bezug): Schlafzimmer 0,36, Bad 1,08,
+  Arbeitszimmer 0,64, Flur 0,90, Wohnzimmer 1,75, Esszimmer 0,50, Küche 0,89. Blick (Rohwert → geschrumpft,
+  Minuten Aufenthalte): Flur ← Arbeitszimmer −0,01 → 0,31 (10,9), Flur ← Küche 0,05 → 0,62 (3,2), Esszimmer ←
+  Küche 0,44 → 0,51 (12,8), Esszimmer ← Wohnzimmer 0,51 → 0,56 (105), Wohnzimmer ← Esszimmer 0,71 → 0,72 (52),
+  Flur ← Esszimmer 1,38 → 0,95 (35), Arbeitszimmer ← Bad 0,24 → 0,80 (2,0), Schlafzimmer ← Flur 0,34 → 0,87
+  (0,6), der Rest ≈ 1 oder ohne Daten (alle Paare ins Schlafzimmer und ins Bad: 1). Ohne je einen Tag gelernt
+  (Stabilität): Esszimmer ← Wohnzimmer 0,53–0,65, Wohnzimmer ← Esszimmer 0,63–0,79, Esszimmer ← Küche
+  0,53–0,65, Flur ← Arbeitszimmer 0,30–0,47 stabil; Flur ← Esszimmer nicht (0,51–1,00, der 7.10. allein 2,1
+  gegen 0,26 an den anderen Tagen).
+  *Nachgespielt* (Grundlinie 0.27.0, `seen_hold` = 0, Lernpausen der Geräte): Wahrheit 0,48 / 3,30 = 3,78 min
+  (Grundlinie 0,48 / 3,28 = 3,77; das Sofa 8.10. 19:06 bleibt, es hängt nicht am Blick), leere Nacht und leeres
+  Haus 0. Über die ganze Aufnahme (`tools/proxy_seated.py`, Licht neu / Licht weg): mit wahrscheinlicher Person
+  +6,4 min (die Sitzende im Arbeitszimmer 6.10. 20:52 2,8, Wohnzimmer 3,5) / −3,9 (Schlafzimmer 2,4, Wohnzimmer
+  1,2); ohne wahrscheinliche Person +28,0 / −5,6, davon Schlafzimmer 10.10. 11:55 23 min (derselbe Tag, an dem
+  der gemeinsame Faktor 0,61 das leere Schlafzimmer erhellte), Küche +0,3. Rechenzeit 6398 s (Grundlinie 8234 s
+  unter anderer Last, der Faktor 0,61 6500 s): kein messbarer Unterschied. Eine Ablation (der Blick nur im
+  Wägen, die Beobachtbarkeit der Kacheln geometrisch) gibt auf der Wahrheit dasselbe.
+  *Ergebnis auf 0.27:* nicht übernommen. Der gemessene Blick ändert auf der Wahrheit nichts, hält die eine Sitzende im
+  Arbeitszimmer, aber kostet 23 min Licht im leeren Schlafzimmer, obwohl kein Paar ins Schlafzimmer verändert ist
+  (Schlafzimmer ← Flur 0,87 ist das einzige mit dem Schlafzimmer-Sensor; zu prüfen, ob es das ist).
+  *Auf 0.29 neu bewertet* (14.10., derselbe Code auf 0.29 mit dem Anker; `fast_eval` über die ganze Aufnahme in
+  zwei Stufen, Checkpoints von 0.28; Gewicht nach Leon: 1 min dunkel mit Person = 5 min Licht im leeren Raum):
+  Wahrheit 0,48 / 3,28 = 3,77 wie 0.29 (gewichtet 16,9 = 16,9), leere Nacht und leeres Haus 0. Über die ganze
+  Aufnahme (`proxy_seated.py`, beide Richtungen): mit wahrscheinlicher Person 7,6 min Licht neu / 3,2 weg (netto
+  +4,4, gewichtet +22), ohne wahrscheinliche Person 6,4 neu / 7,9 weg, unklar 0,7 / 5,6; das Licht weicht in
+  51,5 von 5784 min von 0.29 ab. Die 23 min im leeren Schlafzimmer am 10.10. treten mit dem Anker nicht mehr auf.
+  *Ergebnis:* übernommen in 0.30.0. Den Fall der Meldung 13.10. 21:46 (die zweite Person im Bad verloren: eine
+  Echoquelle nimmt ihre Energie) löst der Blick nicht: Es gibt kein gemessenes Paar „Bad ← Flur“.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

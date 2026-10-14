@@ -180,3 +180,50 @@ def test_the_end_of_a_track_is_not_the_end_of_the_stay():
     # hours on: what was measured is gone (nothing left measured at all: g = 1 again)
     h.leap(6 * 3600.0)
     assert float(h.amp[:, -1, c].min()) > 0.99
+
+
+def _two_rooms():
+    """Two rooms 4 x 4 m side by side, a door between at (4, 2), one sensor in each looking at it."""
+    def rect(zid, x0, y0, x1, y1):
+        return {"id": zid, "name": zid, "kind": "room", "shape": "rect", "points": [[x0, y0], [x1, y1]],
+                "anchor": [(x0 + x1) / 2, (y0 + y1) / 2], "entry": False}
+
+    def w(a, b):
+        return {"points": [list(a), list(b)], "kind": "wall"}
+    return Config.from_dict({
+        "sensors": [{"id": "a", "x": 0.05, "y": 2.0, "heading": 0, "placed": True},
+                    {"id": "b", "x": 7.95, "y": 2.0, "heading": 180, "placed": True}],
+        "zones": [rect("links", 0, 0, 4, 4), rect("rechts", 4, 0, 8, 4)],
+        "walls": [w((0, 0), (8, 0)), w((8, 0), (8, 4)), w((8, 4), (0, 4)), w((0, 4), (0, 0)), w((4, 0), (4, 4))],
+        "doors": [{"id": "tuer", "x": 4.0, "y": 2.0, "width": 0.9}],
+    })
+
+
+def test_the_ld2410c_sees_another_room_as_far_as_measured():
+    """MODEL.md 4.3 "Blick des LD2410C": the measured view of the other room scales the sight there;
+    where it gives the LD2410C nothing above FLOOR the place is out of its view (weighed by 1), its own
+    room keeps the geometric sight."""
+    pts = np.array([[2.0, 2.0], [5.0, 2.0]])  # in front of a: its own room, and through the door
+    base = Tracker(_two_rooms(), start=0.0)
+    _, _, s0 = base._ld_geometry(0, pts)
+    assert s0[0] > 0.5 and s0[1] > 0.5
+
+    class Half(Model):
+        ld_view = {"links<-rechts": 0.5}
+
+    class Blind(Model):
+        ld_view = {"links<-rechts": 0.0}
+
+    half = Tracker(_two_rooms(), start=0.0, model=Half())
+    _, _, s = half._ld_geometry(0, pts)
+    assert np.allclose(s, [s0[0], 0.5 * s0[1]])
+    _, _, s = half._ld_geometry(0, pts, view=False)
+    assert np.allclose(s, s0)
+    blind = Tracker(_two_rooms(), start=0.0, model=Blind())
+    assert np.allclose(blind._ld_geometry(0, pts)[2], [s0[0], 0.0])
+    # the other sensor is untouched; no tile of the other room is in a's view any more
+    assert np.allclose(blind._ld_geometry(1, pts)[2], base._ld_geometry(1, pts)[2])
+    i, j = blind.world.cell_of(blind.tiles.centers)
+    other = blind.room_of[i, j] == blind.rooms.index("rechts")
+    assert other[base._ld_tiles(0)[0]].any()
+    assert not other[blind._ld_tiles(0)[0]].any()

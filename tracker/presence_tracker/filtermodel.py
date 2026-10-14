@@ -90,6 +90,18 @@ class Model:
     # Without anything to report the firmware sends only a heartbeat every 5 s: the silence before a
     # frame belongs to the energies of the frame before it, not to the new one (MODEL.md 4.3, 4.4)
     ld_frame = 0.089
+    # the LD2410C's view of another room against its own room ("own<-other", 4.3 "Blick des LD2410C"):
+    # the energy a still person there puts in, against what the geometric sight expects, relative to
+    # the same sensor's gain on people in its own room; measured 6.-10.10. from people tracked by the
+    # LD2450 of that room while nobody was in the sensor's own (tools/ld2410/footprint.py), per stay,
+    # their weighted median pulled towards 1 by a prior worth 5 min of stays, at most 1. Not measured:
+    # 1 (the geometric sight). Interim: precomputed here; to be learned online from the same labels.
+    ld_view = {
+        "arbeitszimmer<-badezimmer": 0.801, "arbeitszimmer<-flur": 0.98, "esszimmer<-kueche": 0.514,
+        "esszimmer<-wohnzimmer": 0.562, "flur<-arbeitszimmer": 0.308, "flur<-badezimmer": 0.998,
+        "flur<-esszimmer": 0.946, "flur<-kueche": 0.62, "schlafzimmer<-flur": 0.866,
+        "wohnzimmer<-esszimmer": 0.722, "wohnzimmer<-kueche": 0.991,
+    }
     # all cells of a kind move together within a block (broadband interference, the moving flag's
     # blips): 1/gain ~ Gamma(kappa, kappa) per block and kind, measured sd of the log gain over 1-s
     # blocks without anybody 0.14-0.27 moving, 0.09-0.18 still [moving, still]; mixed with bursts

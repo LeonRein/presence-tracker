@@ -2,6 +2,16 @@
 
 ## Unveröffentlicht
 
+## 0.30.0
+
+- **Gemessener Blick des LD2410C in andere Räume** (MODEL.md 4.3 „Blick des LD2410C in einen anderen Raum“,
+  10 „Blick des LD2410C je Raum“). Was ein LD2410C von einer Person in einem anderen Raum bekommt, ist nicht mehr
+  die geometrische Sicht allein, sondern trägt je Paar „Sensor ← Raum“ einen gemessenen Faktor ≤ 1
+  (`Model.ld_view`, gemessen 6.–10.10. mit `tools/ld2410/footprint.py`, zur Geometrie geschrumpft). Bewertet über
+  die ganze Aufnahme: Wahrheit 0,48 / 3,28 min wie 0.29 (gewichtet 1:5 jeweils 16,9), leere Nacht und leeres Haus
+  0; nach den Indizien von `proxy_seated.py` 4,4 min mehr Licht bei wahrscheinlich anwesender Person und kein
+  zusätzliches Licht ohne Person (6,4 neu, 7,9 weg).
+
 ## 0.29.0
 
 - **Aufgeräumt: toter Code, Umrechner und einmalige Analysen entfernt, Ausgabe zeichengleich.** Der Umrechner

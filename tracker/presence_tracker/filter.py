@@ -1536,8 +1536,10 @@ class Tracker:
 
     # -------------------------------------------------------------- LD2410C
 
-    def _ld_geometry(self, si: int, pos) -> tuple:
-        """(degrees off the LD2410C's axis, slant distance, in sight) of the points (n, 2)."""
+    def _ld_geometry(self, si: int, pos, view: bool = True) -> tuple:
+        """(degrees off the LD2410C's axis, slant distance, in sight) of the points (n, 2). In sight:
+        the geometric sight times the measured view of the room the point is in (_ld_view; view=False:
+        the geometric sight alone, as the view is measured against it)."""
         s = self.config.sensors[si]
         pos = np.asarray(pos, dtype=float).reshape(-1, 2)
         dx, dy = pos[:, 0] - s.x, pos[:, 1] - s.y
@@ -1545,7 +1547,35 @@ class Tracker:
         side = dx * s._sin - dy * s._cos
         angle = np.degrees(np.abs(np.arctan2(side, np.maximum(ahead, 1e-9))))
         slant = np.sqrt(dx * dx + dy * dy + (s.height - self.p.target_height) ** 2)
-        return angle, slant, np.where(ahead > 0, self._los(si, pos), 0.0)
+        sight = np.where(ahead > 0, self._los(si, pos), 0.0)
+        if view:
+            v = self._ld_view(si)
+            if v is not None:
+                i, j = self.world.cell_of(pos)
+                sight = sight * v[self.room_of[i, j]]
+        return angle, slant, sight
+
+    def _ld_view(self, si: int):
+        """Per room (index as room_of, the last for none) how much of what the geometric sight
+        expects sensor si's LD2410C gets from a person there, against its own room (MODEL.md 4.3,
+        "Blick des LD2410C"): measured from people the LD2450 of that room tracked while nobody was
+        in the sensor's own room (tools/ld2410/footprint.py), shrunk towards the geometric 1. None:
+        nothing measured for it (the geometric sight everywhere)."""
+        key = ("ld_view", si)
+        if key not in self._gcache:
+            table = self.m.ld_view
+            out = None
+            if table:
+                ox, oy = self.config.sensors[si].sight_origin()
+                i, j = self.world.cell_of(np.array([[ox, oy]]))
+                k = int(self.room_of[i[0], j[0]])
+                if k >= 0:
+                    own = self.rooms[k]
+                    v = np.array([float(table.get(f"{own}<-{r}", 1.0)) for r in self.rooms] + [1.0])
+                    v[k] = 1.0
+                    out = v if (v != 1.0).any() else None
+            self._gcache[key] = out
+        return self._gcache[key]
 
     def _ld_frame(self, si, rt, t, ld):
         """The LD2410C's energies of this frame (MODEL.md 4.3), gathered until they are weighed
