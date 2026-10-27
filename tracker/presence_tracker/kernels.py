@@ -1050,6 +1050,51 @@ def hidden_weigh_at(walk, still, region, out, idx, f_walk, f_still, intensity):
     return math.log(tot), out * s
 
 
+@njit(cache=True)
+def sync_weigh(r, kappa, dt, unit_w, ka, logw, a, d_away):
+    """filter.Tracker._sync's weighing of a Gaussian by no track started in dt: E[exp(-rate dt)] over
+    each component's sigma points (r (2, P) [STILL, WALK], per level of detectability kappa for the
+    standing one), then Gauss.kappa_weigh and Gauss.reweigh in one call. Returns (log factor of the
+    whole person, ka, logw, a)."""
+    K, P = len(kappa), r.shape[1]
+    f_walk = 0.0
+    for p in range(P):
+        f_walk += unit_w[p] * math.exp(-r[1, p] * dt)
+    ka2 = np.empty_like(ka)
+    s = 0.0
+    for k in range(K):
+        f = 0.0
+        for p in range(P):
+            f += unit_w[p] * math.exp(-kappa[k] * r[0, p] * dt)
+        for j in range(ka.shape[1]):
+            ka2[k, j] = ka[k, j] * f
+            s += ka2[k, j]
+    if s > 0:
+        ka = ka2 / s
+    l0 = logw[0] + (math.log(s) if s > 0 else -np.inf)
+    l1 = logw[1] + (math.log(f_walk) if f_walk > 0 else -np.inf)
+    top = max(l0, l1)
+    if top > -np.inf:
+        comps = top + math.log(math.exp(l0 - top) + math.exp(l1 - top))
+    else:
+        comps = -np.inf
+    lw = np.array([l0, l1])
+    if a <= 0:
+        if comps == -np.inf:
+            return -np.inf, ka, logw, a
+        return comps, ka, lw - comps, a
+    p0 = math.log1p(-a) + comps if a < 1 else -np.inf
+    p1 = math.log(a) + d_away
+    hi = max(p0, p1)
+    if hi == -np.inf:
+        return -np.inf, ka, logw, a
+    total = hi + math.log(math.exp(p0 - hi) + math.exp(p1 - hi))
+    a = math.exp(p1 - total)
+    if comps > -np.inf:
+        logw = lw - comps
+    return total, ka, logw, a
+
+
 def warm():
     """Compile every kernel for the types the tracker calls it with (the image does this when it is
     built, so the app starts without compiling: NUMBA_CACHE_DIR)."""
@@ -1085,6 +1130,7 @@ def warm():
     ld_stack(f((2, 16)), f(16))
     v, r, D, args = ld_profile_args(f(2), f(2), f(2), np.ones((2, 6)), np.ones((2, 6)), f(16), 9, 50.0, 70.0)
     ld_profile_rows(v, D, args, f((2, 2)), f((2, 6)), f((2, 6)), 9)
+    sync_weigh(f((2, 5)), f(3), 0.2, f(5), f((3, 4)), f(2), 0.0, 0.0)
     gauss_rates(f((2, 5, 2)), np.ones(1, dtype=np.bool_), f((1, 2)), f((1, 2, 2)), f((1, 3)), i(2), 0.0, 0.0, 0.1, f(4),
                 1e-6, 1.0, np.ones(2), 0.7)
 

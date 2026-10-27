@@ -188,6 +188,7 @@ class Tracker:
         self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
         self.tracks = {sid: SensorTracks(sid, self._ids) for sid in self.sensors}
         self._gcache = {}
+        self._live_at = {}  # while everybody moves (_flush): t -> _live(t)
         self._rates_ctx = None  # while everybody moves (_flush): the sensors' live tracks, packed (_sync_rates)
         self._lat_pow = (None, None, None)  # _sync: the factors of no track started for a part of a move
         self._area = {}
@@ -736,6 +737,7 @@ class Tracker:
         objs = self._objects(phantoms=True)
         t0 = self._flushed
         outer, self._rates_ctx = self._rates_ctx, {}  # the tracks stay as they are while everybody moves
+        self._live_at = {}  # t -> _live(t), the same for everybody in this move
         try:
             self._flush_parts(t, t0, objs)
         finally:
@@ -752,9 +754,10 @@ class Tracker:
         for k in range(parts):
             tk = t0 + (t - t0) * (k + 1) / parts
             live, lat_f = self._watching(tk, (t - t0) / parts)
+            hidden = [obj for obj, _ in objs if isinstance(obj, Hidden)]
+            Hidden.move_all(hidden, (t - t0) / parts)
             for obj, refs in objs:
                 if isinstance(obj, Hidden):
-                    obj.move((t - t0) / parts)
                     self._expire(obj, (t - t0) / parts, live)
                     d = obj.weigh(*lat_f) if lat_f is not None else 0.0
                     for h in refs:
@@ -791,7 +794,12 @@ class Tracker:
             obj.predict(dt, self.m, self.shapes, self.tiles)
             if obj.phantom:
                 continue
-            live = self._live(t0 + dt * (k + 1))
+            tk = t0 + dt * (k + 1)
+            live = self._live_at.get(tk) if self._rates_ctx is not None else None
+            if live is None:
+                live = self._live(tk)
+                if self._rates_ctx is not None:
+                    self._live_at[tk] = live
             if not live:
                 continue
             if measured is None:  # the sensors with a measuring track of this person: none of theirs starts
@@ -803,9 +811,8 @@ class Tracker:
                 if self._lat_pow[0] is not lat_f or self._lat_pow[1] != share:  # the same for all in a move
                     self._lat_pow = (lat_f, share, (lat_f[0] ** share, lat_f[1] ** share))
                 da = obj.away.weigh(*self._lat_pow[2])
-            # E[exp(-rate(x) dt)] over each component, per level of detectability
-            d = obj.reweigh(obj.kappa_weigh(self._expect(np.exp(-np.outer(kappa, r[STILL]) * dt)),
-                                            float(self._expect(np.exp(-r[WALK] * dt)))), da)
+            # E[exp(-rate(x) dt)] over each component, per level of detectability; kappa_weigh, reweigh
+            d, obj.ka, obj.logw, obj.a = kernels.sync_weigh(r, kappa, dt, gauss.UNIT_W, obj.ka, obj.logw, float(obj.a), float(da))
             for h in refs:
                 self.hyps[h].logw += d
         obj.t = t

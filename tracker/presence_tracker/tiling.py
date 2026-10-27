@@ -120,6 +120,7 @@ class Tiling:
         T[T < 1e-12] = 0.0
         self.T_walk = np.ascontiguousarray(T[:n])
         self.T_in = np.ascontiguousarray(T[n:])
+        self.T_walk_t, self.T_in_t = np.ascontiguousarray(self.T_walk.T), np.ascontiguousarray(self.T_in.T)  # Hidden.move_all
         self.tick = TICK
         self.Q = Q
         self._walk_end = None

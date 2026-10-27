@@ -289,29 +289,51 @@ class Hidden:
     def move(self, dt: float):
         """One step of the motion (MODEL.md 3.1, 3.2), all transitions as exact exponentials;
         walking on between the tiles in ticks."""
-        tl = self.tiles
+        Hidden.move_all([self], dt)
+
+    @staticmethod
+    def move_all(objs, dt: float):
+        """move for many densities on the same tiles: the walking steps of all of them as one matrix
+        product per tick (one product reads the matrix of walking once for all densities instead of
+        once per density)."""
+        if not objs:
+            return
+        tl = objs[0].tiles
         m, sh = tl.tr.m, tl.sh
         if tl.n:
             # walkers stop (the mean walk is walk_length long), standing people get up at their rate;
             # who stays: the detectability changes now and then within a stay (MODEL.md 4.1), drawn
             # anew from kappa_w; who stops begins a fresh stay (its kind from go_w, its
             # detectability from kappa_w: Shapes.stay_prior)
-            measured = self._amp is not None
-            if measured and self._keep is None:
-                self._keep = np.ones((len(sh.kappa), tl.n))
-            kernels.hidden_stays(self.walk, self.still, self._keep if measured else _NO_KEEP, -math.expm1(-m.speed / m.walk_length * dt),
-                                 _per_step(tl, dt)[0], -math.expm1(-m.kappa_switch * dt), sh.kappa_w, sh.go_w,
-                                 measured)
-            self.clock += dt
-            while self.clock >= tl.tick:
-                self.clock -= tl.tick
-                gone = tl.T_in @ self.walk
-                self.region[:, 0] += gone[:tl.R]
-                self.out += gone[tl.R]
-                self.walk = tl.T_walk @ self.walk
-        if tl.R or tl.ways:
-            self._regions(dt)
-        self._arrive(dt)
+            p_stop, p_up, p_switch = -math.expm1(-m.speed / m.walk_length * dt), _per_step(tl, dt)[0], -math.expm1(-m.kappa_switch * dt)
+            ticked = {}
+            for h in objs:
+                measured = h._amp is not None
+                if measured and h._keep is None:
+                    h._keep = np.ones((len(sh.kappa), tl.n))
+                kernels.hidden_stays(h.walk, h.still, h._keep if measured else _NO_KEEP, p_stop, p_up, p_switch,
+                                     sh.kappa_w, sh.go_w, measured)
+                h.clock += dt
+                k = 0
+                while h.clock >= tl.tick:
+                    h.clock -= tl.tick
+                    k += 1
+                if k:
+                    ticked.setdefault(k, []).append(h)
+            for k, hs in ticked.items():
+                W = np.stack([h.walk for h in hs])  # (densities, n)
+                for _ in range(k):
+                    gone = W @ tl.T_in_t
+                    for j, h in enumerate(hs):
+                        h.region[:, 0] += gone[j, :tl.R]
+                        h.out += float(gone[j, tl.R])
+                    W = W @ tl.T_walk_t
+                for j, h in enumerate(hs):
+                    h.walk = W[j]
+        for h in objs:
+            if tl.R or tl.ways:
+                h._regions(dt)
+            h._arrive(dt)
 
     def leap(self, dt: float):
         """The motion over a step dt much longer than a walk (a data gap of minutes to days, MODEL.md
