@@ -1293,6 +1293,29 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   80 ms; die Zielkarte wird in der Loop kopiert und im Thread komprimiert). Was bleibt, sind der
   Personenzustand (4 ms, er wird aus dem Modell gebaut) und bis zu 5 ms, die ein rechnender Thread den
   GIL hält (`sys.getswitchinterval`).
+- **Rechenzeit: ein Aufruf je Gauß-Mischung und Schritt, vektorisiertes log/exp (27.10., 0.31.0)**. Leon wollte
+  bei gleicher Erkennung weniger CPU; die Bitgleichheit ist dafür aufgegeben, das Modell nicht. Messung: 10.10.
+  12–13 Uhr, `live_config.json` (7 Sensoren), wie die App getrieben, die ersten 20 min: 0.30.0 56,7 s CPU (4,7 %
+  eines Kerns, Ryzen 9800X3D), auf inge 3,8-mal so lang. py-spy: Interpreter 32 %, numpy je Aufruf 32 %, Kernel
+  17 %, BLAS 8 %. Umgebaut: (1) `kernels.sync_step` macht einen Schritt einer Gauß-Mischung in einem Aufruf –
+  Vorhersage, Wände, Abfluss durch Türen, Sigma-Punkte, Raten aller Sensoren und die Gewichtung durch keine
+  neue Spur samt dem Teil hinter der Tür; `Gauss.predict` ruft ihn ohne Gewichtung. (2) Die Teile hinter einer
+  Tür bewegen sich mit den Kacheldichten in einem `Hidden.move_all` (Runde für Runde, jede mit ihrem eigenen dt):
+  das Matrixprodukt des Gehens (687 × 687) liest die Matrix einmal für alle. Vor einer Messung (`_measured`)
+  wird dieser Teil nicht mehr bewegt: `Gauss.update` verwirft ihn ohnehin, es zählt nur sein Gewicht a (exakt).
+  (3) Die LD2410C-Likelihood ganz kompiliert (`kernels.ld_ratio`, `ld_rows`, `ld_ratio_tail`), je Bewertung bis zu
+  570 Punkte zu 16 Zellen: Ihre Zeit ist log und exp (26 je Punkt). Numba ruft `math.log` je Zahl auf (2 ns,
+  numpy auf Arrays 1 ns, Numba hat hier kein SVML); `kernels.vlog` und `vexp` sind fdlibms e_log.c und e_exp.c
+  als Schleifen, die LLVM vektorisiert (`error_model="numpy"`, sonst prüft jede Division auf 0): 0,3 ns, höchstens
+  1 ulp von numpy (Test). Zelle für Zelle über alle Punkte gerechnet, denn Punkt für Punkt warten die Summen
+  aufeinander (vorher 110, jetzt 55 ns je Punkt). Punkte ohne Masse (bei Gauß-Mischungen 60 %: der Teil hinter
+  der Tür liegt meist in Regionen) bekommen −LOG_CAP ohne Rechnung; ihr Faktor multipliziert nichts. CPU
+  56,7 → 49,8 s nach (1)–(2), 48,9 s nach (3) (−14 %). Über die ganze Stunde max |ΔP(belegt)| 0,003, keine
+  Schwelle gekippt. Gemessen und verworfen: die Gehmatrix dünn (151 von 687 je Zeile) in Numba, auch mit den
+  Dichten als innerer Dimension, 1,5–3-mal langsamer als BLAS; ein Numba-Aufruf mit 20 Arrays kostet nur
+  1,2 µs, ein gemeinsamer Speicher aller Objekte lohnt den Umbau also nicht. Was bleibt (py-spy): Evidenz je
+  Frame 27 % (Verzweigen und Verschmelzen 11 %, gehaltene Spuren 6 %), LD2410C-Bewertung 24 % (davon
+  Likelihood 10 %, Punkte 6 %), Bewegen 20 % (davon BLAS 8 %), Ausgaben 11 %.
 - **Rechenzeit: weniger Aufrufe, bitgleich (12./13.10., Qualitätsrunde nach 0.28.0)**. Profil der vollsten
   Stunde der Aufnahmen (10.10. 12–13 Uhr, 154 398 Frames, cProfile): kein einzelner Brennpunkt, sondern
   Pythons und numpys Aufwand je Objekt und Schritt – LD2410C-Bewertung 24 %, Bewegen der Gauß-Mischungen

@@ -2,6 +2,17 @@
 
 ## Unveröffentlicht
 
+## 0.31.0
+
+- **Rechenzeit −14 %, dasselbe Modell bis auf Rundung** (MODEL.md 10 „Rechenzeit: ein Aufruf je Gauß-Mischung
+  und Schritt, vektorisiertes log/exp“). Die Bewegung einer Gauß-Mischung samt Wänden, Türen und der Gewichtung
+  durch keine neue Spur ist ein kompilierter Aufruf je Schritt (`kernels.sync_step`, auch für `Gauss.predict`);
+  ihre Teile „durch eine Tür“ werden mit den Personen ohne Spur in einem Matrixprodukt je Takt bewegt, und vor
+  einer Messung, die diesen Teil ohnehin verwirft, gar nicht mehr. Die LD2410C-Likelihood ist ganz kompiliert
+  (`kernels.ld_ratio`), mit einem eigenen vektorisierten log und exp (fdlibm, höchstens 1 ulp von numpy); Punkte
+  ohne Masse werden nicht gerechnet. 10.10. 12–13 Uhr: CPU 56,7 → 48,9 s für die ersten 20 min; über die ganze
+  Stunde höchstens 0,003 Unterschied in P(belegt), keine Schwelle gekippt.
+
 ## 0.30.0
 
 - **Gemessener Blick des LD2410C in andere Räume** (MODEL.md 4.3 „Blick des LD2410C in einen anderen Raum“,

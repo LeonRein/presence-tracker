@@ -239,7 +239,7 @@ def _mu_part_numpy(st, mu, lik):
     return out
 
 
-def test_the_ld2410_likelihood_is_the_numpy_bit_for_bit():
+def test_the_ld2410_likelihood_is_the_numpy():
     rng = np.random.default_rng(8)
     lik = ld2410.Likelihood(Model())
     for trial in range(200):
@@ -251,7 +251,7 @@ def test_the_ld2410_likelihood_is_the_numpy_bit_for_bit():
                 e[9:] = 100.0  # the still cells all censored: no looks there
             st.add(e, float(rng.uniform(0.05, 1.0)))
         mu = np.exp(rng.uniform(-3, 6, (int(rng.integers(1, 300)), ld2410.CELLS)))
-        assert np.array_equal(st._mu_part(mu, lik), _mu_part_numpy(st, mu, lik))
+        np.testing.assert_allclose(st._mu_part(mu, lik), _mu_part_numpy(st, mu, lik), rtol=1e-12, atol=1e-9)
 
 
 def _predict_numpy(g, dt, m, sh):
@@ -292,7 +292,7 @@ def _random_gauss(rng, sh, tracks):
     return gauss.Gauss(logw, mean, cov, gow / gow.sum(), ka / ka.sum(), slots, var)
 
 
-def test_the_predict_kernel_is_the_numpy_bit_for_bit():
+def test_the_predict_kernel_is_the_numpy():
     rng = np.random.default_rng(10)
     m, sh = Model(), Shapes(Model())
     for trial in range(200):
@@ -304,7 +304,7 @@ def test_the_predict_kernel_is_the_numpy_bit_for_bit():
         g.predict(dt, m, sh)
         _predict_numpy(ref, dt, m, sh)
         for a, b in ((g.mean, ref.mean), (g.cov, ref.cov), (g.gow, ref.gow), (g.ka, ref.ka), (g.logw, ref.logw)):
-            assert np.array_equal(a, b)
+            np.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-12)
 
 
 def _near_sigma_numpy(g, z, radius, world):
@@ -347,20 +347,42 @@ def test_the_ld2410_profile_rows_are_expected_bit_for_bit():
             assert np.array_equal(rows[j], ref[mode][j])
 
 
-def test_the_ld2410_ratio_parts_are_the_numpy_bit_for_bit():
+def test_the_ld2410_ratio_is_the_numpy():
     rng = np.random.default_rng(13)
     lik = ld2410.Likelihood(Model())
-    for _ in range(100):
+    for trial in range(100):
         st = ld2410.Stats()
         for _ in range(rng.integers(1, 20)):
             st.add(rng.integers(0, 101, ld2410.CELLS).astype(float), float(rng.uniform(0.05, 1.0)))
         mu0 = np.exp(rng.uniform(0, 3, ld2410.CELLS))
-        S = np.exp(rng.uniform(-3, 6, (int(rng.integers(1, 40)), ld2410.CELLS))) * (rng.random() < 0.9)
-        m = rng.uniform(0, 1, len(S)) / len(S)
-        lr, top, msum = kernels.ld_ratio_parts(st.log_ratio(mu0[None, :] + S, mu0, lik), m, ld2410.LOG_CAP)
+        S = np.exp(rng.uniform(-3, 6, (int(rng.integers(1, 400)), ld2410.CELLS))) * (rng.random() < 0.9)
+        m = rng.uniform(0, 1, len(S)) / len(S) * (rng.random(len(S)) < 0.7)
+        intensity = trial % 3 == 0
+        lr, norm, post = st.ratio(m, S, mu0, lik, intensity)
         both = _mu_part_numpy(st, np.vstack([mu0[None, :] + S, mu0[None, :]]), lik)
-        ref = np.minimum(both[:-1] - both[-1], ld2410.LOG_CAP)
-        assert np.array_equal(lr, ref) and top == max(float(ref.max()), 0.0) and msum == float(m.sum())
+        ref = np.where(m > 0, np.minimum(both[:-1] - both[-1], ld2410.LOG_CAP), -ld2410.LOG_CAP)  # no mass: not computed
+        top = max(float(ref.max()), 0.0)
+        inside = float(m @ np.exp(ref - top))
+        ref_norm = (top + math.log(math.exp(-top) + inside) - math.log1p(m.sum()) if intensity
+                    else top + math.log(max(1.0 - m.sum(), 0.0) * math.exp(-top) + inside))
+        np.testing.assert_allclose(lr, ref, rtol=1e-12, atol=1e-9)
+        assert math.isclose(norm, ref_norm, rel_tol=1e-12, abs_tol=1e-9)
+        np.testing.assert_allclose(post, (m * np.exp(ref - ref_norm)) @ S, rtol=1e-11, atol=1e-12)
+
+
+def test_the_vectorized_log_and_exp_are_numpys_within_one_ulp():
+    rng = np.random.default_rng(15)
+    with np.errstate(all="ignore"):
+        for f, ref, x in ((kernels.vlog, np.log, np.concatenate([np.exp(rng.uniform(-700, 700, 20000)), rng.uniform(0, 3, 20000),
+                                                                   [0.0, -1.0, np.inf, np.nan, 5e-324, 1e-310, 1.0, 2.0, math.sqrt(2)]])),
+                          (kernels.vexp, np.exp, np.concatenate([rng.uniform(-745, 709.8, 20000), rng.uniform(-1e-9, 1e-9, 1000),
+                                                                   [0.0, np.inf, -np.inf, np.nan, 709.0, 710.0, -708.0, -746.0]]))):
+            got, want = f(x, np.empty_like(x)), ref(x)
+            assert np.array_equal(np.isnan(got), np.isnan(want))
+            exact = ~np.isfinite(want) | (want == 0)
+            assert np.array_equal(got[exact & ~np.isnan(want)], want[exact & ~np.isnan(want)])
+            fin = ~exact
+            assert (np.abs(got[fin] - want[fin]) <= np.spacing(np.abs(want[fin]))).all()
 
 
 def test_the_tile_mass_and_distance_kernels_are_the_numpy_bit_for_bit():

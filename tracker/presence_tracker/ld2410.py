@@ -182,59 +182,51 @@ class Stats:
         self.t_cens += dt * cens
 
     def _prepared(self, lik: "Likelihood") -> tuple:
-        """What _mu_part takes from these frames and lik, computed once for all the means it is asked
-        about: alpha x looks per cell; per kind of cell with looks (N > 0) its cells and alpha x energy
-        per cell, its components' r, c + lgamma(N + k) and N + k; the censored cells."""
+        """What kernels.ld_rows / ld_ratio take from these frames and lik (after the means), computed
+        once for all the means they are asked about: alpha x looks per cell; the kinds of cell with
+        looks (N > 0) - their cells klo..khi, their components' r, c + lgamma(N + k) and N + k -;
+        alpha x energy per cell; the censored cells, their rows of the tables and weights."""
         p = self._prep
         if p is not None and p[0] is lik:
-            return p
+            return p[1]
         a, tau = lik.alpha, lik.tau
         look = a * self.t_unc / tau  # alpha x looks per cell
         ae = a * self.t_e / tau
-        cells, r, cl, nk = [], [], [], []
+        lo, hi, r, cl, nk = [], [], [], [], []
         for cs, comps in lik.kinds:
             N = float(look[cs].sum())
             if N <= 0:
                 continue
-            assert len(comps) == 2  # kernels.ld_gain_terms
-            cells.append((cs, ae[cs]))
+            assert len(comps) == 2  # kernels._ld_cols
+            lo.append(cs.start)
+            hi.append(cs.stop)
             for c, k, rr in comps:
                 r.append(rr)
                 cl.append(c + math.lgamma(N + k))
                 nk.append(N + k)
         c = np.flatnonzero(self.t_cens > 0)
-        cens = None
         if len(c):
             rows, tables = _censored_tables(a)
-            cens = (c, rows[c], tables, self.t_cens[c] / tau[c])
-        p = self._prep = (lik, look, cells, np.array(r, dtype=float).reshape(-1, 2), np.array(cl, dtype=float),
-                          np.array(nk, dtype=float), cens)
-        return p
+            cens = (c.astype(np.int64), rows[c], tables, self.t_cens[c] / tau[c])
+        else:
+            cens = (np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64), np.zeros((1, len(_GRID))), np.zeros(0))
+        args = (look, np.array(lo, dtype=np.int64), np.array(hi, dtype=np.int64), ae, np.array(r, dtype=float).reshape(-1, 2),
+                np.array(cl, dtype=float), np.array(nk, dtype=float), *cens[:3], _GRID, cens[3])
+        self._prep = (lik, args)
+        return args
 
     def _mu_part(self, mu: np.ndarray, lik: "Likelihood") -> np.ndarray:
         """The part of the tempered log-likelihood that depends on the means mu (k, 16), with the
         block's common gain of each kind integrated out (Likelihood), (k,): per kind of cell
         log sum_c exp(c + lgamma(N + k) - (N + k) log(r + A)), A the sum of alpha x energy / mean
-        over its cells. The arithmetic between numpy's logarithms, exponentials and products in
-        compiled loops (kernels.ld_gain_*), the same numbers in the same order: results equal bit for
-        bit to the numpy before."""
-        _, look, cells, r, cl, nk, cens = self._prepared(lik)
-        mu = np.ascontiguousarray(mu, dtype=float)
-        lm = np.log(mu)
-        dot = lm @ look
-        if cells:
-            inv = 1.0 / mu
-            As = np.empty((len(cells), len(mu)))
-            for q, (cs, ae) in enumerate(cells):
-                As[q] = inv[:, cs] @ ae
-            top, d = kernels.ld_gain_terms(np.log(kernels.ld_gain_sums(As, r)), cl, nk)
-            out = kernels.ld_gain_total(dot, top, np.log(kernels.ld_gain_pairs(np.exp(d))))
-        else:
-            out = -dot
-        if cens is not None:  # log_censored compiled (kernels.ld_censored)
-            c, rows, tables, wc = cens
-            out += kernels.ld_censored(mu, lm, c, rows, tables, _GRID) @ wc
-        return out
+        over its cells (kernels.ld_rows)."""
+        return kernels.ld_rows(np.ascontiguousarray(mu, dtype=float), *self._prepared(lik))
+
+    def ratio(self, m: np.ndarray, S: np.ndarray, mu0: np.ndarray, lik: "Likelihood", intensity: bool) -> tuple:
+        """kernels.ld_ratio: (log ratios per point, log normalizer, what they put in afterwards) of
+        masses m (k,) putting S (k, 16) on top of mu0 (16,)."""
+        return kernels.ld_ratio(np.ascontiguousarray(m, dtype=float), np.ascontiguousarray(S, dtype=float),
+                                np.ascontiguousarray(mu0, dtype=float), intensity, LOG_CAP, *self._prepared(lik))
 
     def loglik(self, mu: np.ndarray, lik: "Likelihood") -> float:
         """Tempered log-likelihood of the frames given the mean energies mu (16,)."""
@@ -244,7 +236,7 @@ class Stats:
 
     def log_ratio(self, mu1: np.ndarray, mu0: np.ndarray, lik: "Likelihood") -> np.ndarray:
         """Tempered log-likelihood ratio of the means mu1 (k, 16) against mu0 (16,), (k,)."""
-        both = self._mu_part(kernels.ld_stack(np.ascontiguousarray(mu1, dtype=float), mu0), lik)
+        both = self._mu_part(np.vstack([np.asarray(mu1, dtype=float), np.asarray(mu0, dtype=float)[None, :]]), lik)
         return both[:-1] - both[-1]
 
 

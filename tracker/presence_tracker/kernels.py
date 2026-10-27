@@ -679,12 +679,33 @@ def hidden_regions(region, walk, out, ends_p, door_ptr, door_tiles, exits, entri
 
 
 @njit(cache=True)
+def _censored_at(m, x, fp, grid, g0, h):
+    """ld2410.log_censored of one mean m (x = log m) by its table fp on the uniform grid, exactly as
+    np.interp does (a mean <= 0 as the grid's lowest, NaN stays NaN)."""
+    G = len(grid)
+    if m != m:
+        return m
+    if m <= 0.0 or x <= g0:
+        return fp[0]
+    if x >= grid[G - 1]:
+        return fp[G - 1]
+    j = int((x - g0) / h)
+    if j > G - 2:
+        j = G - 2
+    while j > 0 and x < grid[j]:
+        j -= 1
+    while j < G - 2 and x >= grid[j + 1]:
+        j += 1
+    if x == grid[j]:
+        return fp[j]
+    return (fp[j + 1] - fp[j]) / (grid[j + 1] - grid[j]) * (x - grid[j]) + fp[j]
+
+
+@njit(cache=True)
 def ld_censored(mu, lm, cols, rows, tables, grid):
     """ld2410.log_censored for Stats._mu_part's censored cells: per row r of the means mu (k, 16) and
-    cell cols[c], log P(energy >= CAP) interpolated in table rows[c] at lm = log(mu) on the uniform
-    grid exactly as np.interp does (a mean <= 0 as the grid's lowest, NaN stays NaN), (k, len(cols)).
-    The table lookup reuses lm and starts from the uniform grid's index; the caller sums with numpy
-    (@): the same order of the sums as before, results equal bit for bit."""
+    cell cols[c], log P(energy >= CAP) interpolated in table rows[c] at lm = log(mu) (_censored_at),
+    (k, len(cols))."""
     K = mu.shape[0]
     C = len(cols)
     G = len(grid)
@@ -693,29 +714,233 @@ def ld_censored(mu, lm, cols, rows, tables, grid):
     out = np.empty((K, C))
     for r in range(K):
         for c in range(C):
-            fp = tables[rows[c]]
-            m = mu[r, cols[c]]
-            x = lm[r, cols[c]]
-            if m != m:
-                v = m
-            elif m <= 0.0 or x <= g0:
-                v = fp[0]
-            elif x >= grid[G - 1]:
-                v = fp[G - 1]
-            else:
-                j = int((x - g0) / h)
-                if j > G - 2:
-                    j = G - 2
-                while j > 0 and x < grid[j]:
-                    j -= 1
-                while j < G - 2 and x >= grid[j + 1]:
-                    j += 1
-                if x == grid[j]:
-                    v = fp[j]
-                else:
-                    v = (fp[j + 1] - fp[j]) / (grid[j + 1] - grid[j]) * (x - grid[j]) + fp[j]
-            out[r, c] = v
+            out[r, c] = _censored_at(mu[r, cols[c]], lm[r, cols[c]], tables[rows[c]], grid, g0, h)
     return out
+
+
+# fdlibm e_log.c and e_exp.c (Sun Microsystems 1993; the same polynomials as glibc's old ieee754
+# routines): error below 1 ulp
+_LG1, _LG2, _LG3, _LG4 = 6.666666666666735130e-01, 3.999999999940941908e-01, 2.857142874366239149e-01, 2.222219843214978396e-01
+_LG5, _LG6, _LG7 = 1.818357216161805012e-01, 1.531383769920937332e-01, 1.479819860511658591e-01
+_LN2_HI, _LN2_LO, _INV_LN2 = 6.93147180369123816490e-01, 1.90821492927058770002e-10, 1.44269504088896338700e+00
+_P1, _P2, _P3 = 1.66666666666666019037e-01, -2.77777777770155933842e-03, 6.61375632143793436117e-05
+_P4, _P5 = -1.65339022054652515390e-06, 4.13813679705723846039e-08
+_TINY = 2.2250738585072014e-308
+
+
+@njit(cache=True, error_model="numpy")
+def vlog(x, out):
+    """out = log(x) for contiguous 1-D x (returned; out may be x): fdlibm's e_log.c in loops LLVM
+    vectorizes - Numba's math.log is a call per number (2 ns, numpy's on arrays 1 ns), this 0.3 ns.
+    What is no positive normal number goes to math.log."""
+    n = x.size
+    xi = x.view(np.int64)
+    mb = np.empty(n, dtype=np.int64)
+    e = np.empty(n)
+    odd = _odd(x, -1)
+    for i in range(n):
+        b = xi[i]
+        frac = b & 0x000fffffffffffff
+        big = np.int64(frac > 0x6a09e667f3bcd)  # the mantissa above sqrt(2): halved, the exponent + 1
+        mb[i] = (frac | 0x3ff0000000000000) - (big << 52)
+        e[i] = np.float64(((b >> 52) & 0x7ff) - 1023 + big)
+    m = mb.view(np.float64)
+    for i in range(n):
+        f = m[i] - 1.0
+        s = f / (2.0 + f)
+        z = s * s
+        w = z * z
+        t1 = w * (_LG2 + w * (_LG4 + w * _LG6))
+        t2 = z * (_LG1 + w * (_LG3 + w * (_LG5 + w * _LG7)))
+        hfsq = 0.5 * f * f
+        out[i] = e[i] * _LN2_HI - ((hfsq - (s * (hfsq + (t2 + t1)) + e[i] * _LN2_LO)) - f)
+    for j in range(len(odd[0])):
+        out[odd[0][j]] = odd[1][j]
+    return out
+
+
+@njit(cache=True, error_model="numpy")
+def vexp(x, out):
+    """out = exp(x) for contiguous 1-D x (returned; out may be x): fdlibm's e_exp.c in loops LLVM
+    vectorizes (as vlog); beyond -708..709 (underflow, overflow, inf, NaN) math.exp."""
+    n = x.size
+    k = np.empty(n)
+    odd = _odd(x, 1)
+    for i in range(n):
+        xv = x[i]
+        ok = xv > -708.0 and xv < 709.0
+        kk = math.floor(xv * _INV_LN2 + 0.5) if ok else 0.0
+        k[i] = kk
+        hi = (xv - kk * _LN2_HI) if ok else 0.0
+        lo = kk * _LN2_LO
+        r = hi - lo
+        t = r * r
+        c = r - t * (_P1 + t * (_P2 + t * (_P3 + t * (_P4 + t * _P5))))
+        out[i] = 1.0 - ((lo - (r * c) / (2.0 - c)) - hi)
+    oi = out.view(np.int64)
+    for i in range(n):
+        oi[i] += np.int64(k[i]) << 52
+    for j in range(len(odd[0])):
+        out[odd[0][j]] = odd[1][j]
+    return out
+
+
+_NO_ODD = (np.zeros(0, dtype=np.int64), np.zeros(0))
+
+
+@njit(cache=True)
+def _odd(x, kind):
+    """The numbers vlog (kind -1) or vexp (1) leave to math.log / math.exp: (their indices, values).
+    Counted first in a loop that vectorizes; usually there are none."""
+    n = 0
+    for i in range(x.size):
+        v = x[i]
+        n += (not (v >= _TINY and v < np.inf)) if kind < 0 else (not (v > -708.0 and v < 709.0))
+    if n == 0:
+        return _NO_ODD
+    idx = np.empty(n, dtype=np.int64)
+    val = np.empty(n)
+    j = 0
+    for i in range(x.size):
+        v = x[i]
+        if kind < 0 and not (v >= _TINY and v < np.inf):  # 0, subnormal, negative, inf, NaN
+            idx[j] = i
+            val[j] = math.log(v) if v > 0 else (-np.inf if v == 0 else np.nan)
+            j += 1
+        elif kind > 0 and not (v > -708.0 and v < 709.0):
+            idx[j] = i
+            val[j] = math.exp(v)
+            j += 1
+    return idx, val
+
+
+@njit(cache=True, error_model="numpy")
+def ld_rows(mu, look, klo, khi, ae, r, cl, nk, ccols, crows, tables, grid, wc):
+    """ld2410.Stats._mu_part of the rows of means mu (k, 16), (k,): _ld_cols of them by cell."""
+    return _ld_cols(np.ascontiguousarray(mu.T), look, klo, khi, ae, r, cl, nk, ccols, crows, tables, grid, wc)
+
+
+@njit(cache=True, error_model="numpy")
+def _ld_cols(mu, look, klo, khi, ae, r, cl, nk, ccols, crows, tables, grid, wc):
+    """ld2410.Stats._mu_part of the means mu (16, k) by cell, (k,): -sum log(mu) x looks, per kind q
+    of cell (cells klo[q]..khi[q]) log sum_c exp(cl - nk log(r + A)) over its two components, A the
+    sum of alpha x energy / mean over its cells, and the censored cells ccols (log_censored, weights
+    wc). Cell by cell over all means, the logarithms and exponentials by vlog and vexp: the loops
+    over the means vectorize (mean by mean the sums over the cells would wait on each other, and
+    log and exp would be calls)."""
+    C, k = mu.shape
+    lm = vlog(mu.reshape(-1), np.empty(C * k)).reshape((C, k))
+    out = np.zeros(k)
+    for c in range(C):
+        for i in range(k):
+            out[i] -= lm[c, i] * look[c]
+    A = np.empty(k)
+    t0, t1, m = np.empty(k), np.empty(k), np.empty(k)
+    for q in range(len(klo)):
+        A[:] = 0.0
+        for c in range(klo[q], khi[q]):
+            for i in range(k):
+                A[i] += ae[c] / mu[c, i]
+        l0, l1 = vlog(r[q, 0] + A, t0), vlog(r[q, 1] + A, t1)
+        for i in range(k):
+            a, b = cl[2 * q] - nk[2 * q] * l0[i], cl[2 * q + 1] - nk[2 * q + 1] * l1[i]
+            top = a if (a != a or (b == b and a >= b)) else b  # numpy's maximum: NaN wins
+            m[i] = top
+            t0[i], t1[i] = a - top, b - top
+        e0, e1 = vexp(t0, t0), vexp(t1, t1)
+        for i in range(k):
+            A[i] = e0[i] + e1[i]
+        ls = vlog(A, A)
+        for i in range(k):
+            out[i] += m[i] + ls[i]
+    if len(ccols):
+        G = len(grid)
+        g0 = grid[0]
+        h = (grid[G - 1] - g0) / (G - 1)
+        for j in range(len(ccols)):
+            c = ccols[j]
+            for i in range(k):
+                out[i] += _censored_at(mu[c, i], lm[c, i], tables[crows[j]], grid, g0, h) * wc[j]
+    return out
+
+
+@njit(cache=True, error_model="numpy")
+def ld_ratio(m, S, mu0, intensity, cap, look, klo, khi, ae, r, cl, nk, ccols, crows, tables, grid, wc):
+    """filter.Tracker._ld_ratio in one call: the log likelihood ratios per point against mu0 (16,) of
+    the means mu0 + S (k, 16) (ld2410.Stats.log_ratio by _ld_cols), then ld_ratio_tail. A point
+    without mass gets -cap without being computed: what it is weighed by multiplies nothing (a
+    Gaussian's part gone through a door has no mass on most tiles)."""
+    k, C = S.shape
+    idx = np.flatnonzero(m > 0)
+    n = len(idx)
+    mu = np.empty((C, n + 1))
+    for c in range(C):
+        for j in range(n):
+            mu[c, j] = mu0[c] + S[idx[j], c]
+        mu[c, n] = mu0[c]
+    both = _ld_cols(mu, look, klo, khi, ae, r, cl, nk, ccols, crows, tables, grid, wc)
+    ratios = np.full(k, -cap)
+    for j in range(n):
+        ratios[idx[j]] = both[j] - both[n]
+    return ld_ratio_tail(ratios, m, S, intensity, cap)
+
+
+@njit(cache=True, error_model="numpy")
+def ld_ratio_tail(ratios, m, S, intensity, cap):
+    """filter.Tracker._ld_ratio from the log likelihood ratios per point (k,) of a person (or the
+    unknown ones, intensity) at the points with masses m (k,) putting S (k, 16) in: the ratios capped
+    at cap (numpy's minimum: NaN wins), the log of the normalizer (the factor of the whole person; for
+    the unknown ones log((1 + int lambda L) / (1 + Lambda))), and what they put in afterwards:
+    sum_i m_i exp(lr_i - norm) S_i (16,)."""
+    k, C = S.shape
+    lr = np.empty(k)
+    top = -np.inf
+    nan = False
+    msum = 0.0
+    for i in range(k):
+        x = ratios[i]
+        if not x <= cap and x == x:
+            x = cap
+        lr[i] = x
+        if x != x:
+            nan = True
+        elif x > top:
+            top = x
+        msum += m[i]
+    if nan:
+        top = np.nan
+    elif top < 0.0:
+        top = 0.0
+    e = vexp(lr - top, np.empty(k))
+    inside = 0.0
+    for i in range(k):
+        inside += m[i] * e[i]
+    if intensity:
+        norm = top + math.log(math.exp(-top) + inside) - math.log1p(msum)
+    else:
+        rest = max(1.0 - msum, 0.0)
+        total = rest * math.exp(-top) + inside
+        if total > 0:
+            norm = top + math.log(total)
+        else:  # every ratio below e^-745 and all of the person in view: the same in the log space
+            hi = math.log(rest) if rest > 0 else -np.inf
+            for i in range(k):
+                if m[i] > 0 and lr[i] + math.log(m[i]) > hi:
+                    hi = lr[i] + math.log(m[i])
+            norm = hi
+            if hi > -np.inf:
+                s = math.exp(math.log(rest) - hi) if rest > 0 else 0.0
+                for i in range(k):
+                    if m[i] > 0:
+                        s += math.exp(lr[i] + math.log(m[i]) - hi)
+                norm = hi + math.log(s)
+    e = vexp(lr - norm, e)
+    post = np.zeros(C)
+    for i in range(k):
+        wi = m[i] * e[i]
+        for c in range(C):
+            post[c] += wi * S[i, c]
+    return lr, norm, post
 
 
 @njit(cache=True)
@@ -766,107 +991,6 @@ def ld_profile_rows(v, D, E, pw, pm, ps, n_moving):
             else:
                 kk = (1 - p[4]) * main + p[4] * E[j, 1, c]
             out[j, c] = v[j] * (p[0] * pw[j, 0 if moving else 1] * kk)
-    return out
-
-
-@njit(cache=True)
-def ld_stack(mu1, mu0):
-    """ld2410.Stats.log_ratio's means: the rows of mu1 (k, 16), then mu0 (k + 1, 16)."""
-    k, C = mu1.shape
-    out = np.empty((k + 1, C))
-    for i in range(k):
-        for c in range(C):
-            out[i, c] = mu1[i, c]
-    for c in range(C):
-        out[k, c] = mu0[c]
-    return out
-
-
-@njit(cache=True)
-def ld_ratio_parts(ratios, m, cap):
-    """filter.Tracker._ld_ratio: the log likelihood ratios capped, min(ratios, cap) (numpy's minimum:
-    NaN wins), their top max(max, 0) (as Python's max of the two) and the sum of the masses m
-    (numpy's). Results equal bit for bit."""
-    k = len(ratios)
-    lr = np.empty(k)
-    top = -np.inf
-    nan = False
-    for i in range(k):
-        x = ratios[i]
-        if not x <= cap and x == x:
-            x = cap
-        lr[i] = x
-        if x != x:
-            nan = True
-        elif x > top:
-            top = x
-    if nan:
-        top = np.nan
-    elif top < 0.0:
-        top = 0.0
-    return lr, top, _pairwise(m)
-
-
-@njit(cache=True)
-def ld_gain_sums(As, r):
-    """ld2410.Stats._mu_part, the block's common gain integrated out: per kind q of cell (rows of As,
-    (Q, k): sum over its cells of the energies over the means) and component c of its prior (r (Q, 2)),
-    r[q, c] + As[q] (2 Q, k) - what its logarithm is taken of (by numpy, as before)."""
-    Q, k = As.shape
-    out = np.empty((2 * Q, k))
-    for q in range(Q):
-        for c in range(2):
-            for i in range(k):
-                out[2 * q + c, i] = r[q, c] + As[q, i]
-    return out
-
-
-@njit(cache=True)
-def ld_gain_terms(logs, cl, nk):
-    """ld2410.Stats._mu_part: the terms cl - nk log(r + A) of each kind's two components (2 Q, k), their
-    maximum per kind (Q, k) and the terms less it (2 Q, k) - what the exponential is taken of. numpy's
-    maximum (NaN wins)."""
-    J, k = logs.shape
-    Q = J // 2
-    top = np.empty((Q, k))
-    d = np.empty((J, k))
-    for q in range(Q):
-        for i in range(k):
-            t0 = cl[2 * q] - nk[2 * q] * logs[2 * q, i]
-            t1 = cl[2 * q + 1] - nk[2 * q + 1] * logs[2 * q + 1, i]
-            if t0 != t0:
-                m = t0
-            elif t1 != t1:
-                m = t1
-            else:
-                m = t0 if t0 >= t1 else t1
-            top[q, i] = m
-            d[2 * q, i] = t0 - m
-            d[2 * q + 1, i] = t1 - m
-    return top, d
-
-
-@njit(cache=True)
-def ld_gain_pairs(e):
-    """The sum of each kind's two components (2 Q, k) -> (Q, k)."""
-    J, k = e.shape
-    out = np.empty((J // 2, k))
-    for q in range(J // 2):
-        for i in range(k):
-            out[q, i] = e[2 * q, i] + e[2 * q + 1, i]
-    return out
-
-
-@njit(cache=True)
-def ld_gain_total(dot, top, logs):
-    """-dot + (top + log sum) of each kind in turn (k,): ld2410.Stats._mu_part's sum in its order."""
-    Q, k = top.shape
-    out = np.empty(k)
-    for i in range(k):
-        o = -dot[i]
-        for q in range(Q):
-            o = o + (top[q, i] + logs[q, i])
-        out[i] = o
     return out
 
 
@@ -980,6 +1104,12 @@ def hidden_distance(a, walk, still, region, out, b, walk2, still2, region2, out2
 
 @njit(cache=True)
 def hidden_weigh(walk, still, region, out, f_walk, f_still, intensity):
+    """hidden.Hidden.weigh / Undetected.weigh in place: _hidden_weigh."""
+    return _hidden_weigh(walk, still, region, out, f_walk, f_still, intensity)
+
+
+@njit(cache=True)
+def _hidden_weigh(walk, still, region, out, f_walk, f_still, intensity):
     """hidden.Hidden.weigh / Undetected.weigh in place: walk *= f_walk (n,), still (L, K, n) *= f_still
     (K, n) or (1, n) for every kind of stay. A person (intensity False): normalized, returns (log of
     the mass that was left, out scaled); -inf and nothing scaled if none was left. The unknown ones:
@@ -1095,6 +1225,133 @@ def sync_weigh(r, kappa, dt, unit_w, ka, logw, a, d_away):
     return total, ka, logw, a
 
 
+@njit(cache=True)
+def _weights2(l0, l1):
+    """gauss.Gauss.weights from the log weights (l0, l1)."""
+    top = l0 if l0 >= l1 or l0 != l0 else l1
+    if top == -np.inf:
+        return 0.5, 0.5
+    w0, w1 = math.exp(l0 - top), math.exp(l1 - top)
+    s = w0 + w1
+    return w0 / s, w1 / s
+
+
+@njit(cache=True)
+def _bernoulli(r, q):
+    """hidden.Hidden._bernoulli: (the factor for the hypotheses, r after) from the log q of the mass left."""
+    if r >= 1.0:
+        return q, r
+    if q == -np.inf:
+        return math.log1p(-r), 0.0
+    if q > 0:
+        z = r + (1.0 - r) * math.exp(-q)
+        return q + math.log(z), r / z
+    z = 1.0 - r + r * math.exp(q)
+    return math.log(z), r * math.exp(q) / z
+
+
+@njit(cache=True)
+def sync_step(mean, cov, logw, gow, ka, a, prm, slot_k, slot_var, go, go_w, ka_w, flags,
+              walls, box, wall_grid, wx0, wy0, cell, doors_c, doors_v, doors_a, doors_r,
+              aw_walk, aw_still, aw_region, aw_out, aw_r, f_walk, f_still,
+              unit, unit_w, reach, kappa, use, sxy, grids, live, ptr, acq, p_fa, s50, res, find_radius):
+    """filter.Tracker._sync for one part dt of one Gaussian in one call: Gauss.predict (gauss_predict,
+    the weights' logarithm, Gauss.walls, Gauss._through_doors without moving the part gone through a
+    door - the caller moves it first, Hidden.move_all), then the weighing by no track started
+    (sigma_points, gauss_rates, the part gone through a door by f_walk, f_still: Hidden.weigh,
+    sync_weigh). prm: gauss.step_params. flags: 1 walls and doors (tiles, not a ghost's source), 2 it
+    has a part gone through a door (aw_*), 4 that part is dropped next (a measurement follows: only
+    a changes), 8 weigh, 16 weigh the part gone through a door (f_walk, f_still). Without a part, what goes through a door is put into aw_region,
+    aw_out (zeros: the caller's new Hidden). Returns (log factor for the hypotheses, mean, cov,
+    logw, gow, ka, a, aw_out, aw_r, whether aw_* became the part)."""
+    dt, p_stop, s2, still_q, tau, ao, q, cs = prm[0], prm[1], prm[2], prm[3], prm[4], prm[5], prm[6], prm[7]
+    w = np.empty(2)
+    w[0], w[1] = _weights2(logw[0], logw[1])
+    e_go = np.exp(-go * dt)
+    slot_q = np.empty(len(slot_var))
+    for i in range(len(slot_var)):
+        slot_q[i] = slot_var[i] * (1 - cs) * (1 - ao * ao)
+    tot_s, tot_w, m0, P0, mean, cov, F, Q, gow, ka = gauss_predict(w, mean, cov, gow, ka, e_go, go_w, ka_w, p_stop, s2,
+                                                                   dt, still_q, tau, ao, slot_k, slot_q, q)
+    l0 = math.log(tot_s) if tot_s > 0 else -np.inf
+    l1 = math.log(tot_w) if tot_w > 0 else -np.inf
+    top = max(l0, l1)
+    tot = top + math.log(math.exp(l0 - top) + math.exp(l1 - top))
+    l0, l1 = l0 - tot, l1 - tot
+    has_away, keep_away = (flags & 2) != 0, (flags & 4) == 0
+    made = False
+    if flags & 1:
+        # Gauss.walls
+        x0, y0, x1, y1 = m0[1, 0, 0], m0[1, 1, 0], mean[1, 0, 0], mean[1, 1, 0]
+        vx, vv = max(P0[1, 0, 0, 0], P0[1, 1, 0, 0]), max(P0[1, 0, 1, 1], P0[1, 1, 1, 1])
+        s = math.sqrt(8.0)
+        rch = math.hypot(x1 - x0, y1 - y0) + s * (math.sqrt(max(vx, 0.0)) + abs(F[1, 0, 1]) * math.sqrt(max(vv, 0.0))
+                                                  + math.sqrt(max(Q[1, 0, 0], 0.0)))
+        nx, ny = wall_grid.shape
+        i = min(max(int((x0 - wx0) / cell), 0), nx - 1)
+        j = min(max(int((y0 - wy0) / cell), 0), ny - 1)
+        if not wall_grid[i, j] > rch:
+            hit, mw, cw = wall_moves(m0[1], P0[1], F[1], Q[1], mean[1], cov[1], walls, box)
+            if hit:
+                mean[1] = mw
+                cov[1] = cw
+        # Gauss._through_doors (tiling.Tiling.near_doors)
+        w0, w1 = _weights2(l0, l1)
+        if w1 >= 1e-9 and len(doors_c):
+            R1 = doors_r.shape[1]
+            rate = np.zeros(R1)
+            mx, my, vx, vy = mean[1, 0, 0], mean[1, 1, 0], cov[1, 0, 0, 0], cov[1, 1, 0, 0]
+            for d in range(len(doors_c)):
+                v0, v1 = vx + doors_v[d, 0], vy + doors_v[d, 1]
+                e0, e1 = doors_c[d, 0] - mx, doors_c[d, 1] - my
+                dens = math.exp(-0.5 * (e0 * e0 / v0 + e1 * e1 / v1)) / (2 * math.pi * math.sqrt(v0 * v1))
+                f = min(dens * doors_a[d], 1.0)
+                for r in range(R1):
+                    rate[r] += f * doors_r[d, r]
+            total = 0.0
+            for r in range(R1):
+                total += rate[r]
+            if total > 0:
+                frac = -math.expm1(-total * dt)
+                moved = (1 - a) * w1 * frac
+                if moved > 0:
+                    if keep_away:
+                        if has_away:
+                            k = a / (a + moved)
+                            aw_walk *= k
+                            aw_still *= k
+                            aw_region *= k
+                            aw_out *= k
+                        else:
+                            made = True
+                        for r in range(R1 - 1):
+                            aw_region[r, 0] += moved / (a + moved) * rate[r] / total
+                        aw_out += moved / (a + moved) * rate[R1 - 1] / total
+                    l1 += math.log1p(-frac) if frac < 1 else -np.inf
+                    top = max(l0, l1)
+                    tot = top + math.log(math.exp(l0 - top) + math.exp(l1 - top))
+                    l0, l1 = l0 - tot, l1 - tot
+                    a += moved
+    lw = np.empty(2)
+    lw[0], lw[1] = l0, l1
+    if not flags & 8:
+        return 0.0, mean, cov, lw, gow, ka, a, aw_out, aw_r, made
+    var = np.empty((2, 2))
+    pos = np.empty((2, 2))
+    for k in range(2):
+        for ax in range(2):
+            pos[k, ax] = mean[k, ax, 0]
+            var[k, ax] = cov[k, ax, 0, 0]
+    pts = sigma_points(pos, pos, var, unit, reach, wall_grid, wx0, wy0, cell, walls, box)
+    r = gauss_rates(pts, use, sxy, grids, live, ptr, wx0, wy0, cell, acq, p_fa, s50, res, find_radius)
+    da = 0.0
+    if (has_away or made) and flags & 16:
+        qd, aw_out = _hidden_weigh(aw_walk, aw_still, aw_region, aw_out, f_walk, f_still, False)
+        da, aw_r = _bernoulli(aw_r, qd)
+    d, ka, lw, a = sync_weigh(r, kappa, dt, unit_w, ka, lw, a, da)
+    return d, mean, cov, lw, gow, ka, a, aw_out, aw_r, made
+
+
 def warm():
     """Compile every kernel for the types the tracker calls it with (the image does this when it is
     built, so the app starts without compiling: NUMBA_CACHE_DIR)."""
@@ -1116,6 +1373,12 @@ def warm():
     ld_tile_points(f(3), f((2, 1)), f(1), np.zeros(1, dtype=np.bool_), f(1), i(1), f((1, 16)), f((1, 16)), f(2), 1.0)
     hidden_regions(f((1, 3)), f(3), 0.0, f((1, 3)), i(2), i(0), i(1), i(0), 0.1, f(2))
     ld_censored(np.ones((1, 16)), f((1, 16)), i(1), i(1), f((1, 5)), np.arange(5.0))
+    ld_args = (f(16), i(2), i(2), f(16), f((2, 2)), f(4), f(4), i(1), i(1), f((1, 5)), np.arange(5.0), f(1))
+    ld_rows(np.ones((2, 16)), *ld_args)
+    ld_ratio(f(3), f((3, 16)), np.ones(16), False, 600.0, *ld_args)
+    ld_ratio_tail(f(3), f(3), f((3, 16)), True, 600.0)
+    vlog(np.ones(3), f(3))
+    vexp(f(3), f(3))
     gauss_exponents(f((1, 2)), 0.0, 0.0, 1.0, 1.0)
     hidden_weigh(f(3), f((2, 2, 3)), f((1, 3)), 0.0, f(3), f((2, 3)), False)
     hidden_weigh_at(f(3), f((2, 2, 3)), f((1, 3)), 0.0, i(1), f(1), f((2, 1)), False)
@@ -1124,13 +1387,13 @@ def warm():
     grid_at(f((2, 2)), f((1, 2)), 0.0, 0.0, 0.1)
     near_weight(*near_parts(f((2, 2)), np.ones((2, 2)), 0.0, 0.0, 0.5, f((5, 2)), 1.7, f((2, 2)), 0.0, 0.0, 0.1, walls,
                             walls)[:2])
-    ld_gain_total(f(3), *ld_gain_terms(ld_gain_sums(f((2, 3)), f((2, 2))), f(4), f(4))[:1], f((2, 3)))
-    ld_gain_pairs(f((4, 3)))
-    ld_ratio_parts(f(3), f(2), 600.0)
-    ld_stack(f((2, 16)), f(16))
     v, r, D, args = ld_profile_args(f(2), f(2), f(2), np.ones((2, 6)), np.ones((2, 6)), f(16), 9, 50.0, 70.0)
     ld_profile_rows(v, D, args, f((2, 2)), f((2, 6)), f((2, 6)), 9)
     sync_weigh(f((2, 5)), f(3), 0.2, f(5), f((3, 4)), f(2), 0.0, 0.0)
+    sync_step(mean, cov, w, f(3), f((3, 4)), 0.0, np.array([0.2, 0.1, 0.5, 1e-4, 1.2, 0.9, 0.1, 0.5]), i(1), f(1), f(3),
+              f(3), f((3, 4)), 5, walls, walls, f((2, 2)), 0.0, 0.0, 0.1, f((1, 2)), np.ones((1, 2)), f(1), f((1, 2)), f(3),
+              f((2, 2, 3)), f((1, 3)), 0.0, 1.0, np.ones(3), np.ones((2, 3)), f((5, 2)), f(5), 1.7, f(3),
+              np.ones(1, dtype=np.bool_), f((1, 2)), f((1, 2, 2)), f((1, 3)), i(2), f(4), 1e-6, 1.0, np.ones(2), 0.7)
     gauss_rates(f((2, 5, 2)), np.ones(1, dtype=np.bool_), f((1, 2)), f((1, 2, 2)), f((1, 3)), i(2), 0.0, 0.0, 0.1, f(4),
                 1e-6, 1.0, np.ones(2), 0.7)
 

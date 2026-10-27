@@ -29,7 +29,7 @@ from .frames import SensorRuntime, detections as frame_detections
 from . import kernels, ld2410
 from . import gauss
 from .gauss import Gauss
-from .hidden import Hidden, Undetected
+from .hidden import Hidden, Undetected, _factors as hidden_factors
 from . import destination
 from .pause import Pauses
 from .roomseen import RoomSeen
@@ -613,10 +613,10 @@ class Tracker:
         r = self._rates(si, pts, skip)
         return np.stack([r[1, :n], r[0, n:]])
 
-    def _sync_rates(self, live: list, measured: set, pts: np.ndarray) -> np.ndarray:
-        """sum over the sensors live of _gauss_rates at the sigma points pts (2, P, 2), in one
-        compiled call (kernels.gauss_rates): the same numbers. The sensors' live tracks are packed
-        once per move of everybody (_flush: they stay as they are meanwhile)."""
+    def _rates_context(self, live: list) -> tuple:
+        """What kernels.gauss_rates takes of the sensors live (after the points and use): where they
+        are, their sight, their live tracks packed - once per move of everybody (_flush: the tracks
+        stay as they are meanwhile)."""
         key = tuple(live)
         ctx = self._rates_ctx.get(key) if self._rates_ctx is not None else None
         if ctx is None:
@@ -628,16 +628,15 @@ class Tracker:
                 rows += [(0.0, *self.segs[seg]["z"]) if self.segs[seg]["lost"] is None else (1.0, *self.segs[seg]["lost"]["z"])
                          for seg in self._live_by_sensor.get(si, [])]
                 ptr.append(len(rows))
-            w, m = self.world, self.m
+            m = self.m
             (rs, r50s), (rw, r50w) = m.acquire
             sensors = [self.config.sensors[si] for si in live]
             ctx = (np.array([(float(s.x), float(s.y)) for s in sensors]), grids, np.array(rows, dtype=float).reshape(-1, 3),
-                   np.array(ptr, dtype=np.int64), float(w.x0), float(w.y0), CELL, np.array([rw, r50w, rs, r50s], dtype=float),
-                   P_FA, S50, np.array([m.res_range, m.res_cross], dtype=float), float(m.find_radius))
+                   np.array(ptr, dtype=np.int64), np.array([rw, r50w, rs, r50s], dtype=float), float(P_FA), float(S50),
+                   np.array([m.res_range, m.res_cross], dtype=float), float(m.find_radius))
             if self._rates_ctx is not None:
                 self._rates_ctx[key] = ctx
-        use = np.array([si not in measured for si in live])
-        return kernels.gauss_rates(np.ascontiguousarray(pts, dtype=float), use, *ctx)
+        return ctx
 
     @staticmethod
     def _expect(f) -> np.ndarray:
@@ -749,24 +748,41 @@ class Tracker:
         self._version += 1
 
     def _flush_parts(self, t: float, t0: float, objs: list):
+        """The people without a track in parts of the move, each Gaussian in parts from its own time
+        (_sync), round by round: the parts gone through a door of the Gaussians move with the
+        people without a track (one Hidden.move_all per round)."""
         parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
-        lat_f = None
-        for k in range(parts):
-            tk = t0 + (t - t0) * (k + 1) / parts
-            live, lat_f = self._watching(tk, (t - t0) / parts)
-            hidden = [obj for obj, _ in objs if isinstance(obj, Hidden)]
-            Hidden.move_all(hidden, (t - t0) / parts)
-            for obj, refs in objs:
-                if isinstance(obj, Hidden):
-                    self._expire(obj, (t - t0) / parts, live)
-                    d = obj.weigh(*lat_f) if lat_f is not None else 0.0
+        dt = (t - t0) / parts
+        watch = [self._watching(t0 + (t - t0) * (k + 1) / parts, dt) for k in range(parts)]
+        lat_f = watch[-1][1]
+        lat_f = None if lat_f is None else tuple(f ** (MAX_STEP * parts / (t - t0)) for f in lat_f)
+        hidden = [(obj, refs) for obj, refs in objs if isinstance(obj, Hidden)]
+        gs = []  # [obj, refs, its time, parts, dt, measured]
+        for obj, refs in objs:
+            if not isinstance(obj, Hidden):
+                g0 = self._flushed if obj.t is None else obj.t
+                if t > g0:
+                    n = int(math.ceil((t - g0) / MAX_STEP - 1e-9))
+                    gs.append([obj, refs, g0, n, (t - g0) / n, None])
+        for j in range(max([parts] + [g[3] for g in gs])):
+            movers, dts = ([obj for obj, _ in hidden], [dt] * len(hidden)) if j < parts else ([], [])
+            for g in gs:
+                if j < g[3] and g[0].away is not None:
+                    movers.append(g[0].away)
+                    dts.append(g[4])
+            Hidden.move_all(movers, dts)
+            if j < parts:
+                live, f = watch[j]
+                for obj, refs in hidden:
+                    self._expire(obj, dt, live)
+                    d = obj.weigh(*f) if f is not None else 0.0
                     for h in refs:
                         self.hyps[h].logw += d
-        lat_f = None if lat_f is None else tuple(f ** (MAX_STEP * parts / (t - t0)) for f in lat_f)
-        for obj, refs in objs:
-            if isinstance(obj, Hidden):
-                continue
-            self._sync(obj, refs, t, lat_f)
+            for g in gs:
+                if j < g[3]:
+                    g[5] = self._sync_part(g[0], g[1], g[2] + g[4] * (j + 1), g[4], lat_f, True, g[5])
+        for g in gs:
+            g[0].t = t
 
     def _watching(self, t: float, dt: float) -> tuple:
         """The sensors watching at t, and the factors (walkers, still people per level of
@@ -778,44 +794,57 @@ class Tracker:
         rw, rs = sum(r[0] for r in rates), sum(r[1] for r in rates)
         return live, (np.exp(-rw * dt), np.exp(-np.outer(self.shapes.kappa, rs) * dt))
 
-    def _sync(self, obj: Gauss, refs, t: float, lat_f=None):
+    def _sync(self, obj: Gauss, refs, t: float, drop_away=False):
         """Move one Gaussian (a person with tracks, or a ghost's source) from its own time to t, and
-        weigh it by no track started on the person meanwhile. Its part gone through a door is
-        weighed with lat_f (the factors per tile for MAX_STEP from _flush); without (a measurement
-        of the person follows, which drops that part) only moved."""
+        weigh it by no track started on the person meanwhile, without its part gone through a door (a
+        measurement of the person follows; with drop_away it drops that part, which is then not
+        moved). _flush moves everybody (_flush_parts, weighing that part too)."""
         t0 = self._flushed if obj.t is None else obj.t
         if t <= t0:
             return
-        kappa = self.shapes.kappa
         parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
         dt = (t - t0) / parts
         measured = None
         for k in range(parts):
-            obj.predict(dt, self.m, self.shapes, self.tiles)
-            if obj.phantom:
-                continue
-            tk = t0 + dt * (k + 1)
+            if obj.away is not None and not drop_away:
+                obj.away.move(dt)
+            measured = self._sync_part(obj, refs, t0 + dt * (k + 1), dt, None, not drop_away, measured)
+        obj.t = t
+
+    def _sync_part(self, obj: Gauss, refs, tk: float, dt: float, lat_f, keep_away: bool, measured):
+        """One part dt of _sync up to tk (its part gone through a door already moved): Gauss.predict,
+        and the weighing by no track started on the person in dt - its part gone through a door with
+        lat_f (the factors per tile for MAX_STEP, _flush), without that part not weighed - in one
+        compiled call (kernels.sync_step). Returns measured: the sensors with a measuring track of
+        this person (none of theirs starts), once known."""
+        tl = self.tiles
+        flags = 0 if keep_away else 4
+        live = None
+        if not obj.phantom:
             live = self._live_at.get(tk) if self._rates_ctx is not None else None
             if live is None:
                 live = self._live(tk)
                 if self._rates_ctx is not None:
                     self._live_at[tk] = live
-            if not live:
-                continue
+        rates = gauss._NO_RATES
+        if live:
+            flags |= 8
             if measured is None:  # the sensors with a measuring track of this person: none of theirs starts
                 measured = {self.segs[s]["si"] for s in obj.slots if s in self.segs and self._measuring(s)}
-            r = self._sync_rates(live, measured, obj.sigma(self.world))
-            da = 0.0
-            if obj.away is not None and lat_f is not None:
-                share = dt / MAX_STEP  # lat_f holds for MAX_STEP; dt is at most that long
-                if self._lat_pow[0] is not lat_f or self._lat_pow[1] != share:  # the same for all in a move
-                    self._lat_pow = (lat_f, share, (lat_f[0] ** share, lat_f[1] ** share))
-                da = obj.away.weigh(*self._lat_pow[2])
-            # E[exp(-rate(x) dt)] over each component, per level of detectability; kappa_weigh, reweigh
-            d, obj.ka, obj.logw, obj.a = kernels.sync_weigh(r, kappa, dt, gauss.UNIT_W, obj.ka, obj.logw, float(obj.a), float(da))
+            rates = (np.array([si not in measured for si in live]), *self._rates_context(live))
+        f = None
+        if lat_f is not None and live:
+            flags |= 16
+            share = dt / MAX_STEP  # lat_f holds for MAX_STEP; dt is at most that long
+            if self._lat_pow[0] is not lat_f or self._lat_pow[1] != share:  # the same for all in a move
+                self._lat_pow = (lat_f, share, hidden_factors(lat_f[0] ** share, lat_f[1] ** share))
+            f = self._lat_pow[2]
+        doors = tl if tl.n and not obj.phantom else None
+        d = obj.step(dt, self.m, self.shapes, doors, flags, f, gauss.step_args(doors, self.shapes), rates)
+        if flags & 8:
             for h in refs:
                 self.hyps[h].logw += d
-        obj.t = t
+        return measured
 
     def _live(self, t: float) -> list:
         return [si for si, sid in enumerate(self.sensors)
@@ -996,7 +1025,7 @@ class Tracker:
             return
         for obj, refs in self._objects(phantoms=True):
             if isinstance(obj, Gauss) and seg in obj.slots:
-                self._sync(obj, refs, t)
+                self._sync(obj, refs, t, drop_away=True)
                 dl = obj.update(seg, d.pos, m.white)
                 obj.in_sight(self.world, self.config.sensors[info["si"]].sight_origin())
                 for h in refs:
@@ -1703,23 +1732,11 @@ class Tracker:
     @staticmethod
     def _ld_ratio(obj, pts, mu0, st, lik) -> tuple:
         """A person (or the unknown ones) on top of mean energies mu0 (16,): the log likelihood
-        ratio per point (k,) and the log of its normalizer - the factor of the whole person, or for
+        ratio per point (k,), the log of its normalizer - the factor of the whole person, or for
         the unknown ones log((1 + int lambda L) / (1 + Lambda)): at most one of them in view (the
-        Poisson process truncated after one; afterwards moment-matched again)."""
-        m, S = pts
-        # the ratios capped, their top and the sum of m in a compiled loop: the same numbers
-        lr, top, msum = kernels.ld_ratio_parts(st.log_ratio(mu0[None, :] + S, mu0, lik),
-                                               np.ascontiguousarray(m, dtype=float), ld2410.LOG_CAP)
-        inside = float(m @ np.exp(lr - top))
-        if isinstance(obj, Undetected):
-            return lr, top + math.log(math.exp(-top) + inside) - math.log1p(msum)
-        rest = max(1.0 - msum, 0.0)
-        total = rest * math.exp(-top) + inside
-        if total > 0:
-            return lr, top + math.log(total)
-        # all of the person in view (rest 0) and every ratio below e^-745: the same in the log space
-        # (math.log(0) stopped 0.9.3 with "math domain error")
-        return lr, _logsumexp(np.append(lr + _log(m), _log(rest)))
+        Poisson process truncated after one; afterwards moment-matched again) - and what they put in
+        afterwards (16,) (kernels.ld_ratio)."""
+        return st.ratio(pts[0], pts[1], mu0, lik, isinstance(obj, Undetected))
 
     def _ld_weigh(self, si: int, st: "ld2410.Stats"):
         """The LD2410C's energies since they were last weighed (MODEL.md 4.3): mean = background +
@@ -1785,10 +1802,8 @@ class Tracker:
                 key = (id(o), prefix)
                 hit = memo.get(key)
                 if hit is None:
-                    mm, S = pts[id(o)]
-                    lr, norm = cache[(id(o), R.tobytes())] = self._ld_ratio(o, pts[id(o)], b0 + R, st, lik)
-                    # what they put in afterwards (for the unknown ones: the moment-matched intensity)
-                    post = (mm * np.exp(lr - norm)) @ S
+                    # with what they put in afterwards (for the unknown ones: the moment-matched intensity)
+                    lr, norm, post = cache[(id(o), R.tobytes())] = self._ld_ratio(o, pts[id(o)], b0 + R, st, lik)
                     hit = memo[key] = (norm, post)
                 logf[h] += hit[0]
                 own.append((o, hit[1], R))
@@ -1832,7 +1847,7 @@ class Tracker:
                 hit = cache.get(key)
                 if hit is None:
                     hit = cache[key] = self._ld_ratio(obj, pts[id(obj)], b0 + rest, st, lik)
-                lr, norm = hit
+                lr, norm, _ = hit
                 # an unseen person and an echo source are alternatives (both rare): where the person
                 # is not, an echo may explain the energies - the person's view weighed against that
                 key = ("echo", rest.tobytes())
@@ -1861,7 +1876,7 @@ class Tracker:
         for qh, h in zip(q, range(len(self.hyps))):
             if qh < 1e-12:
                 continue
-            lr, norm = self._ld_ratio(echo, e_pts, b0 + tracked[h], st, lik)
+            lr, norm, _ = self._ld_ratio(echo, e_pts, b0 + tracked[h], st, lik)
             lq = math.log(qh) - norm
             parts.append(lq + lr)
             outs.append(lq)

@@ -75,17 +75,20 @@ def _factors(f_walk, f_still) -> tuple:
             np.ascontiguousarray(f_still if f_still.ndim == 2 else f_still[None, :]))
 
 
-_STEP = [None, None, None]  # (tiles, dt, _per_step): every density moves by the same step in a move of everybody
+_STEP = {}  # (tiles, dt) -> _per_step: most densities move by the same steps in a move of everybody
 
 
 def _per_step(tl, dt: float) -> tuple:
     """What Hidden.move takes for a step dt that is the same for every density (numpy's expm1, as
     before): the stays' probability of getting up per kind (L,), of ending per region and age bin
     (R, A), of ageing into the next bin (A - 1,)."""
-    if _STEP[0] is not tl or _STEP[1] != dt:
-        _STEP[:] = [tl, dt, (-np.expm1(-tl.sh.go * dt), -np.expm1(-tl.region_rates() * dt),
-                             -np.expm1(-dt / tl.widths[:-1]))]
-    return _STEP[2]
+    hit = _STEP.get((tl, dt))
+    if hit is None:
+        if len(_STEP) > 64:
+            _STEP.clear()
+        hit = _STEP[(tl, dt)] = (-np.expm1(-tl.sh.go * dt), -np.expm1(-tl.region_rates() * dt),
+                                 -np.expm1(-dt / tl.widths[:-1]))
+    return hit
 
 
 class Hidden:
@@ -292,12 +295,13 @@ class Hidden:
         Hidden.move_all([self], dt)
 
     @staticmethod
-    def move_all(objs, dt: float):
-        """move for many densities on the same tiles: the walking steps of all of them as one matrix
-        product per tick (one product reads the matrix of walking once for all densities instead of
-        once per density)."""
+    def move_all(objs, dt):
+        """move for many densities on the same tiles, each by dt (or its own, dt a list): the walking
+        steps of all of them as one matrix product per tick (one product reads the matrix of walking
+        once for all densities instead of once per density)."""
         if not objs:
             return
+        dts = dt if isinstance(dt, list) else [dt] * len(objs)
         tl = objs[0].tiles
         m, sh = tl.tr.m, tl.sh
         if tl.n:
@@ -305,9 +309,9 @@ class Hidden:
             # who stays: the detectability changes now and then within a stay (MODEL.md 4.1), drawn
             # anew from kappa_w; who stops begins a fresh stay (its kind from go_w, its
             # detectability from kappa_w: Shapes.stay_prior)
-            p_stop, p_up, p_switch = -math.expm1(-m.speed / m.walk_length * dt), _per_step(tl, dt)[0], -math.expm1(-m.kappa_switch * dt)
             ticked = {}
-            for h in objs:
+            for h, dt in zip(objs, dts):
+                p_stop, p_up, p_switch = -math.expm1(-m.speed / m.walk_length * dt), _per_step(tl, dt)[0], -math.expm1(-m.kappa_switch * dt)
                 measured = h._amp is not None
                 if measured and h._keep is None:
                     h._keep = np.ones((len(sh.kappa), tl.n))
@@ -330,7 +334,7 @@ class Hidden:
                     W = W @ tl.T_walk_t
                 for j, h in enumerate(hs):
                     h.walk = W[j]
-        for h in objs:
+        for h, dt in zip(objs, dts):
             if tl.R or tl.ways:
                 h._regions(dt)
             h._arrive(dt)

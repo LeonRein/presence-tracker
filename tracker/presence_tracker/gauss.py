@@ -66,14 +66,46 @@ def _collapse(parts):
 
 
 _NO_SLOTS = (np.zeros(0, dtype=np.int64), np.zeros(0))
-_EXP_GO = [None, None, None]  # (shapes, dt, exp(-go dt)): the same step for every Gaussian of a move
+# kernels.sync_step's use and sensors when it does not weigh (no sensor live)
+_NO_RATES = (np.zeros(1, dtype=np.bool_), np.zeros((1, 2)), np.zeros((1, 2, 2)), np.zeros((0, 3)),
+             np.zeros(2, dtype=np.int64), np.zeros(4), 0.0, 1.0, np.ones(2), 1.0)
+_ARGS = {}  # (tiles, shapes) -> step_args
+_PARAMS = [None, None, None]  # (model, dt, step_params): the same step for most Gaussians of a move
 
 
-def _exp_go(shapes, dt: float) -> np.ndarray:
-    """exp(-go dt) per kind of stay (numpy's exp, as before)."""
-    if _EXP_GO[0] is not shapes or _EXP_GO[1] != dt:
-        _EXP_GO[:] = [shapes, dt, np.exp(-shapes.go * dt)]
-    return _EXP_GO[2]
+def step_args(tiles, shapes) -> tuple:
+    """What kernels.sync_step takes that stays as it is: the walls and the door tiles (centres,
+    spreads, areas, rates), the sigma points, an empty part gone through a door (its region filled
+    when one is made), factors 1."""
+    key = (tiles, shapes)
+    hit = _ARGS.get(key)
+    if hit is None:
+        if tiles is not None:
+            w = tiles.world
+            t = tiles.door_tiles
+            doors = (tiles.centers[t], tiles.var[t], tiles.area[t], tiles.door_rate[t])
+            geo = (w.walls, w.wall_box, w.wall_grid, float(w.x0), float(w.y0), CELL,
+                   *(np.ascontiguousarray(a, dtype=float) for a in doors))
+            n, R, A = tiles.n, tiles.R, tiles.A
+        else:
+            geo = (np.zeros((0, 4)), np.zeros((0, 4)), np.zeros((1, 1)), 0.0, 0.0, CELL, np.zeros((0, 2)),
+                   np.zeros((0, 2)), np.zeros(0), np.zeros((0, 1)))
+            n, R, A = 0, 0, 1
+        sig = (UNIT, UNIT_W, UNIT_REACH, np.ascontiguousarray(shapes.kappa, dtype=float))
+        scratch = (np.zeros(n), np.zeros((len(shapes.go), len(shapes.kappa), n)), np.zeros((R, A)), 0.0, 1.0)
+        hit = _ARGS[key] = (geo, sig, scratch, (np.ones(n), np.ones((1, n))))
+    return hit
+
+
+def step_params(m, dt: float) -> np.ndarray:
+    """kernels.sync_step's parameters of a step dt: dt, p_stop, the walkers' stationary velocity
+    variance per axis, the standing position's diffusion, the velocity's correlation time, the decay
+    of the tracks' wandering offsets, the detectability's switch, const_share."""
+    if _PARAMS[0] is not m or _PARAMS[1] != dt:
+        _PARAMS[:] = [m, dt, np.array([dt, -math.expm1(-m.speed / m.walk_length * dt), 0.5 * (m.speed ** 2 + m.speed_spread ** 2),
+                                       m.still_noise ** 2, 1.0 / m.turn_rate, math.exp(-dt / m.tau),
+                                       -math.expm1(-m.kappa_switch * dt), m.const_share])]
+    return _PARAMS[2]
 
 
 def _max2(a: float, b: float) -> float:
@@ -219,65 +251,58 @@ class Gauss:
     # ------------------------------------------------------------ dynamics
 
     def predict(self, dt: float, m, shapes, tiles=None):
-        """One step of MODEL.md 3.1/3.2 and of the tracks' offsets (4.1): first the mode changes
-        (standing -> walking at the stay's rate, walking -> standing at speed / walk length), the
-        incoming parts of each mode matched to one Gaussian (IMM), then each mode's linear
-        prediction."""
+        """One step of MODEL.md 3.1/3.2 and of the tracks' offsets (4.1), in one compiled call
+        (kernels.sync_step without weighing): first the mode changes (standing -> walking at the
+        stay's rate, walking -> standing at speed / walk length; who stood on is more likely a long
+        stay, who just stopped a fresh one; the detectability changes now and then within a stay and
+        is new for a new one, with the LD2410C amplitude, 4.3), the incoming parts of each mode
+        matched to one Gaussian (IMM; walking -> standing: the velocity is 0 from now on; standing ->
+        walking: off in any direction at the walking speed), then each mode's linear prediction
+        (exact discretizations, Saerkkae & Solin 2019, ex. 6.2; the velocity's correlation time
+        1 / turn_rate, MODEL.md 3.2). With the tiles also: walls reflect what moves across them
+        (kernels.wall_moves, 3.2, 5.2: the augmented unscented transform with cubature points,
+        Saerkkae & Svensson 2023 alg. 8.16 / 8.11; where the component already was stays as it is,
+        only the motion meets the walls - cutting the spread at a wall trapped people behind it,
+        MODEL.md 10), and the walkers' share that walking takes through a door in dt (the rates of
+        the tiles at the doors by the walking component's mass there) goes to the part gone through a
+        door, which moves on first."""
         if dt <= 0:
             return
-        w = self.weights()
-        p_stop = -math.expm1(-m.speed / m.walk_length * dt)
-        # the incoming parts of each mode matched to one Gaussian (walking -> standing: the velocity is
-        # 0 from now on; standing -> walking: off in any direction at the walking speed, MODEL.md
-        # 3.1), then the linear prediction per mode (exact discretizations, Saerkkae & Solin 2019,
-        # ex. 6.2; the velocity's correlation time 1 / turn_rate, MODEL.md 3.2)
-        s2 = 0.5 * (m.speed ** 2 + m.speed_spread ** 2)  # walking: stationary velocity variance per axis
-        ao = math.exp(-dt / m.tau)
-        # the kinds of stay: who stood on is more likely a long stay; who just stopped, a fresh one.
-        # The detectability changes now and then within a stay, and is new for a new one (with the
-        # LD2410C amplitude, drawn together, 4.3): all in kernels.gauss_predict
-        q = -math.expm1(-m.kappa_switch * dt)
+        doors = tiles is not None and tiles.n and not self.phantom
+        if self.away is not None:
+            self.away.move(dt)
+        self.step(dt, m, shapes, tiles if doors else None, 0, None, step_args(tiles if doors else None, shapes),
+                  _NO_RATES)
+
+    def step(self, dt: float, m, shapes, tiles, flags: int, f, args, rates) -> float:
+        """predict (its part gone through a door already moved; tiles None: no walls and doors) and the
+        weighing by no track started (kernels.sync_step's flags: 4 the part gone through a door is
+        dropped next, 8 weigh, 16 also that part by f = (f_walk, f_still)); args: step_args, rates:
+        use and the sensors' context of kernels.gauss_rates. Returns the log factor."""
+        geo, sig, scratch, ones = args
+        flags |= 1 if tiles is not None else 0
+        away = self.away
+        if away is not None:
+            flags |= 2
+            aw = (away.walk, away.still, away.region, float(away.out), float(away.r))
+        else:
+            aw = scratch
         if self.slots:
             slot_k = np.array(list(self.slots.values()), dtype=np.int64)
-            slot_q = np.array([self.var[seg] * (1 - m.const_share) * (1 - ao * ao) for seg in self.slots])
+            slot_var = np.array([self.var[seg] for seg in self.slots])
         else:
-            slot_k, slot_q = _NO_SLOTS
-        tot_s, tot_w, m0, P0, self.mean, self.cov, F, Q, self.gow, self.ka = kernels.gauss_predict(
-            w, np.ascontiguousarray(self.mean), np.ascontiguousarray(self.cov), self.gow, self.ka, _exp_go(shapes, dt),
-            shapes.go_w, shapes.ka_w, p_stop, float(s2), float(dt), float(m.still_noise ** 2), 1.0 / m.turn_rate, ao,
-            slot_k, slot_q, q)
-        self.logw = _log(np.array([tot_s, tot_w]))
-        top = self.logw.max()
-        self.logw -= top + math.log(float(np.exp(self.logw - top).sum()))
-        if tiles is not None and tiles.n and not self.phantom:
-            self.walls(m0, P0, F, Q, tiles.world)
-            self._through_doors(dt, tiles)
-
-    def walls(self, m0, P0, F, Q, world):
-        """Walls reflect (MODEL.md 3.2, 5.2) what moves across them in this step: the sigma points
-        of where the walking component was (m0, P0: before the linear prediction F, Q) and of the
-        step's noise (the augmented unscented transform with cubature points, Saerkkae & Svensson
-        2023 alg. 8.16 / 8.11), each moved linearly; a point whose move crosses a wall ends
-        mirrored at it, its velocity too. The component is matched to the moments of the points
-        again (cross-axis covariances dropped), and the rest of the state (the tracks' offsets)
-        follows by its regression on position and velocity. Where the component already was stays
-        as it is - only the motion meets the walls (cutting the spread at a wall trapped people
-        behind it, MODEL.md 10). The weights stay: what would have crossed turns. Standing people
-        move by a centimetre in a step: not worth it."""
-        n = 8  # per axis position, velocity and their noise; both axes
-        s = math.sqrt(n)
-        # every point's move stays within this of where the component was: the shift of the mean
-        # plus s standard deviations of position, of the velocity's share and of the noise
-        (x0, y0), (x1, y1) = m0[WALK, :, X].tolist(), self.mean[WALK, :, X].tolist()
-        vx, vv = max(P0[WALK, :, X, X].tolist()), max(P0[WALK, :, V, V].tolist())
-        reach = math.hypot(x1 - x0, y1 - y0) + s * (math.sqrt(max(vx, 0.0)) + abs(F[WALK, X, V]) * math.sqrt(max(vv, 0.0))
-                                                    + math.sqrt(max(Q[WALK, X, X], 0.0)))
-        if world.clear(x0, y0, reach):
-            return
-        hit, mean, cov = kernels.wall_moves(m0[WALK], P0[WALK], F[WALK], Q[WALK], self.mean[WALK], self.cov[WALK],
-                                            world.walls, world.wall_box)
-        if hit:
-            self.mean[WALK], self.cov[WALK] = mean, cov
+            slot_k, slot_var = _NO_SLOTS
+        d, self.mean, self.cov, self.logw, self.gow, self.ka, self.a, out, r, made = kernels.sync_step(
+            np.ascontiguousarray(self.mean), np.ascontiguousarray(self.cov), self.logw, self.gow, self.ka, float(self.a),
+            step_params(m, dt), slot_k, slot_var, shapes.go, shapes.go_w, shapes.ka_w, flags, *geo, *aw,
+            *(ones if f is None else f), *sig, *rates)
+        if made:
+            away = self.away = Hidden(tiles)
+            away.region = scratch[2].copy()
+            scratch[2][:] = 0.0
+        if away is not None:
+            away.out, away.r = out, r
+        return d
 
     def in_sight(self, world, at) -> None:
         """A sensor measured this person: they are in its sight - the radar can't see through the
