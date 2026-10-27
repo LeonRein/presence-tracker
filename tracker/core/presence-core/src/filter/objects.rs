@@ -69,14 +69,14 @@ impl Objects {
     }
 
     /// In hypothesis hy, the person of group gid no longer owns seg (it ended, or it is somebody
-    /// else's in this child): its offset is marginalized out; without any live track left they go
-    /// to the tiles (MODEL.md 5.4; Tracker._release). Shared between the hypotheses through the
-    /// cache.
-    pub fn release(&mut self, world: &World, hy: &mut Hyp, gid: GroupId, seg: SegId, cache: &mut ReleaseCache) {
+    /// else's in this child): what they are now - their mixture with the offset marginalized out,
+    /// or without any live track left their density on the tiles (MODEL.md 5.4; Tracker._release;
+    /// Hyp::set_person puts it in). Shared between the hypotheses through the cache.
+    pub fn release(&mut self, world: &World, hy: &Hyp, gid: GroupId, seg: SegId, cache: &mut ReleaseCache) -> Obj {
         let id = *hy.people.get(&gid).expect("a person with tracks");
         let rest = hy.tracks.iter().any(|(&s, &o)| o == Owner::Person(gid) && s != seg);
         let key = (id, seg, rest);
-        let new = match cache.iter().find(|(k, _)| *k == key) {
+        match cache.iter().find(|(k, _)| *k == key) {
             Some(&(_, new)) => new,
             None => {
                 let new = if rest {
@@ -91,13 +91,6 @@ impl Objects {
                 };
                 cache.push((key, new));
                 new
-            }
-        };
-        match new {
-            Obj::Mixture(m) => hy.people.insert(gid, m),
-            Obj::Density(d) => {
-                hy.people.remove(&gid);
-                hy.hidden.push(d);
             }
         }
     }

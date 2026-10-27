@@ -13,7 +13,8 @@ use crate::filter::mixture::{Mixture, MixtureId, NewTrack, SegId, from_tiles, gh
 use crate::filter::objects::{Objects, ReleaseCache};
 use crate::filter::step::TileRates;
 use crate::filter::tracks::{Lost, TrackInfo, Tracks};
-use crate::filter::{Filter, NotFinite};
+use crate::filter::{Filter, GroupIds, NotFinite};
+use crate::ld2450::rates::TrackSpot;
 use crate::params::{FRAME, STILL, WALK};
 use crate::vmath::logsumexp;
 use crate::world::World;
@@ -73,9 +74,15 @@ pub struct Frame<'a> {
 
 /// How the track's start or its finding again weighs a person.
 enum Chance<'a> {
-    /// a new track: the rates of its start (or, censored, of its being there) per tile, and the
-    /// expected walkers in view per hypothesis
-    New { start: TileFactors<'a>, walkers: &'a [f64] },
+    /// a new track: the rates of its start (or, censored, of its being there) per tile, the
+    /// expected walkers in view per hypothesis, and the tracks the rates of its start on a person
+    /// with tracks see (the frame's others without those skipped and itself)
+    New {
+        start: TileFactors<'a>,
+        walkers: &'a [f64],
+        skip: Vec<SegId>,
+        spots: Vec<Vec<TrackSpot>>,
+    },
     /// found again: the chance of finding it near where it was held per tile, the log of not
     /// finding it before now, and the ghost's life since it was last measured per kind
     Again {
@@ -91,7 +98,7 @@ enum Chance<'a> {
 #[derive(Default)]
 struct Made {
     source: Option<MixtureId>,
-    attached: Vec<(Obj, (Option<MixtureId>, f64))>,
+    attached: Vec<(Obj, Option<(MixtureId, f64)>)>,
     found_sources: Vec<(MixtureId, (MixtureId, f64))>,
     released: ReleaseCache,
 }
@@ -104,7 +111,7 @@ struct Branching<'a> {
     chance: Chance<'a>,
     tracks: &'a Tracks,
     objects: &'a mut Objects,
-    next_group: &'a mut u64,
+    next_group: &'a mut GroupIds,
     made: Made,
 }
 
@@ -189,7 +196,17 @@ impl Filter {
             ),
             None => {
                 let walkers = walkers.get(frame.si, || count_walkers(hyps, objects, holders, world, frame.si));
-                (found.track, Chance::New { start, walkers })
+                let skip: Vec<SegId> = frame.skip.iter().copied().chain([found.track.seg]).collect();
+                let spots = tracks.spots_without(&skip);
+                (
+                    found.track,
+                    Chance::New {
+                        start,
+                        walkers,
+                        skip,
+                        spots,
+                    },
+                )
             }
         };
         let mut b = Branching {
@@ -315,8 +332,7 @@ impl Branching<'_> {
                     }
                     Some(Owner::Person(gid)) => {
                         let owner = *hy.people.get(&gid).expect("a person with tracks");
-                        let (new, l) = self.attach(Obj::Mixture(owner));
-                        if let Some(new) = new.filter(|_| l > f64::NEG_INFINITY) {
+                        if let Some((new, l)) = self.attach(Obj::Mixture(owner)) {
                             let mut ch = hy.child(hy.logw + pf + l);
                             ch.people.insert(gid, new);
                             out.push(ch, Category::Owner);
@@ -367,8 +383,7 @@ impl Branching<'_> {
             if cur == Some(Owner::Person(gid)) || self.measured_by_sensor(hy, gid) {
                 continue;
             }
-            let (new, l) = self.attach(Obj::Mixture(m));
-            let Some(new) = new.filter(|_| l > f64::NEG_INFINITY) else {
+            let Some((new, l)) = self.attach(Obj::Mixture(m)) else {
                 continue;
             };
             let mut ch = self.released(hy.child(hy.logw + base + l), cur);
@@ -385,24 +400,22 @@ impl Branching<'_> {
             }
         }
         for (u, mult) in counted {
-            let (new, l) = self.attach(Obj::Density(u));
-            let Some(new) = new.filter(|_| l > f64::NEG_INFINITY) else {
+            let Some((new, l)) = self.attach(Obj::Density(u)) else {
                 continue;
             };
             let mut ch = self.released(hy.child(hy.logw + base + l + (mult as f64).ln()), cur);
             let at = ch.hidden.iter().position(|&x| x == u).expect("held");
             ch.hidden.remove(at);
-            let gid = Filter::new_group(self.next_group);
+            let gid = self.next_group.next();
             ch.people.insert(gid, new);
             ch.tracks.insert(seg, Owner::Person(gid));
             out.push(ch, Category::Known);
         }
         // somebody nobody knew of (the unknown ones stay as they are: a birth is one point of the
         // Poisson process, B_GarciaFernandez2018 eq. 18-24)
-        let (new, l) = self.attach(Obj::Density(hy.unknown));
-        if let Some(new) = new.filter(|_| l > f64::NEG_INFINITY) {
+        if let Some((new, l)) = self.attach(Obj::Density(hy.unknown)) {
             let mut ch = self.released(hy.child(hy.logw + base + l), cur);
-            let gid = Filter::new_group(self.next_group);
+            let gid = self.next_group.next();
             ch.people.insert(gid, new);
             ch.tracks.insert(seg, Owner::Person(gid));
             out.push(ch, Category::New);
@@ -426,9 +439,10 @@ impl Branching<'_> {
             Some(Owner::Ghost) => {
                 ch.ghosts.remove(&seg);
             }
-            Some(Owner::Person(gid)) => self
-                .objects
-                .release(self.world, &mut ch, gid, seg, &mut self.made.released),
+            Some(Owner::Person(gid)) => {
+                let now = self.objects.release(self.world, &ch, gid, seg, &mut self.made.released);
+                ch.set_person(gid, now);
+            }
             None => {}
         }
         ch
@@ -457,7 +471,6 @@ impl Branching<'_> {
             self.track.seg,
             self.track.z,
             self.world.params.white,
-            None,
         );
         let hit = (objects.mixtures.insert(new), l);
         self.made.found_sources.push((ph, hit));
@@ -465,9 +478,10 @@ impl Branching<'_> {
     }
 
     /// The track starts (or is found) on this person: the new mixture and the log factor (once per
-    /// object). The rate of the start, or the chance of finding it there, where the person is given
-    /// z: over the posterior, int p(x) f(x) N(z | x) dx = N(z) E[f(x) | z].
-    fn attach(&mut self, obj: Obj) -> (Option<MixtureId>, f64) {
+    /// object); None if it cannot be theirs (factor 0, or no tiles). The rate of the start, or the
+    /// chance of finding it there, where the person is given z: over the posterior, int p(x) f(x)
+    /// N(z | x) dx = N(z) E[f(x) | z].
+    fn attach(&mut self, obj: Obj) -> Option<(MixtureId, f64)> {
         if let Some(&(_, hit)) = self.made.attached.iter().find(|(k, _)| *k == obj) {
             return hit;
         }
@@ -482,29 +496,28 @@ impl Branching<'_> {
                 if !new.slots.contains_key(&track.seg) {
                     new.add_track(track.seg, track.var, p.const_share);
                 }
-                let l = new.update(&mut objects.densities, track.seg, track.z, p.white, None);
+                let l = new.update(&mut objects.densities, track.seg, track.z, p.white);
                 new.in_sight(world, origin);
-                let l = if l > f64::NEG_INFINITY {
+                if l > f64::NEG_INFINITY {
                     let dlog = self.start_chance(&mut new);
-                    l + new.reweigh(dlog, 0.0)
+                    let l = l + new.reweigh(dlog, 0.0);
+                    (l > f64::NEG_INFINITY).then(|| (self.objects.mixtures.insert(new), l))
                 } else {
-                    l
-                };
-                (Some(self.objects.mixtures.insert(new)), l)
+                    None
+                }
             }
-            Obj::Density(_) if world.tiles.n == 0 => (None, f64::NEG_INFINITY),
+            Obj::Density(_) if world.tiles.n == 0 => None,
             Obj::Density(d) => {
                 let f = match &self.chance {
                     Chance::New { start, .. } => *start,
                     Chance::Again { near, .. } => TileFactors::same(near),
                 };
-                match from_tiles(world, &mut objects.densities, d, f, track) {
-                    Some((mut new, l)) => {
+                from_tiles(world, &mut objects.densities, d, f, track)
+                    .filter(|&(_, l)| l > f64::NEG_INFINITY)
+                    .map(|(mut new, l)| {
                         new.in_sight(world, origin);
-                        (Some(objects.mixtures.insert(new)), l)
-                    }
-                    None => (None, f64::NEG_INFINITY),
-                }
+                        (objects.mixtures.insert(new), l)
+                    })
             }
         };
         self.made.attached.push((obj, hit));
@@ -517,13 +530,10 @@ impl Branching<'_> {
         let (world, frame) = (self.world, self.frame);
         match &self.chance {
             Chance::Again { lost, .. } => near_mixture(world, frame.si, mix, lost.z).map(f64::ln),
-            Chance::New { .. } => {
+            Chance::New { skip, spots, .. } => {
                 let p = &world.params;
                 let (lw, ls) = (p.track_life[WALK], p.track_life[STILL]);
-                let mut skip = frame.skip.to_vec();
-                skip.push(self.track.seg);
-                let spots = self.tracks.spots_without(&skip);
-                let r = mixture_rates(world, self.tracks, &spots, frame.si, mix, &skip);
+                let r = mixture_rates(world, self.tracks, spots, frame.si, mix, skip);
                 let kappa = &world.shapes.kappa;
                 let (still, walk): (Vec<f64>, f64) = if frame.censored {
                     (

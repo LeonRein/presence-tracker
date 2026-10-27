@@ -260,6 +260,9 @@ fn flush_parts(
         }
     }
     let rounds = own.iter().map(|&(_, n, _)| n).max().unwrap_or(0).max(parts);
+    // per set of watching sensors (mostly the same in every part) the factors of no track and what
+    // of a record lasts a part
+    let mut by_set: Vec<(SensorSet, Option<TileFactorsBuf>, Vec<f64>)> = Vec::new();
     let mut out = Vec::with_capacity(rounds);
     for j in 0..rounds {
         let mut movers: Vec<(DensityId, f64)> = if j < parts {
@@ -276,11 +279,18 @@ fn flush_parts(
         let mut round = RoundFactors::new();
         if j < parts {
             let (at, sums) = &watch[j];
-            let factors = sums.as_ref().map(|r| r.no_track(kappa, dt));
-            let fade = fade(world, &world.observed(*at), dt);
+            let k = match by_set.iter().position(|(set, ..)| set == at) {
+                Some(k) => k,
+                None => {
+                    let factors = sums.as_ref().map(|r| r.no_track(kappa, dt));
+                    by_set.push((*at, factors, fade(world, &world.observed(*at), dt)));
+                    by_set.len() - 1
+                }
+            };
+            let (_, factors, fade) = &by_set[k];
             for &(entry, id) in in_view {
                 let mut d = objects.densities.get_mut(id);
-                expire(world, &mut d, dt, &fade);
+                expire(world, &mut d, dt, fade);
                 round.push((entry, Some(factors.as_ref().map_or(0.0, |f| d.weigh(f.view())))));
             }
         }

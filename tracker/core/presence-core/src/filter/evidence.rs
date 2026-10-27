@@ -96,7 +96,7 @@ impl Filter {
             }
             let objects = &mut self.objects;
             let mix = objects.mixtures.get_mut(id);
-            let dl = mix.update(&mut objects.densities, seg, z, world.params.white, None);
+            let dl = mix.update(&mut objects.densities, seg, z, world.params.white);
             mix.in_sight(world, origin);
             self.holders.book(&mut self.hyps, entry, dl);
         }
@@ -182,7 +182,10 @@ impl Filter {
                         hy.logw += logsumexp(&g.life) - before;
                     }
                 }
-                Owner::Person(gid) => self.objects.release(world, hy, gid, seg, &mut cache),
+                Owner::Person(gid) => {
+                    let now = self.objects.release(world, hy, gid, seg, &mut cache);
+                    hy.set_person(gid, now);
+                }
             }
             hy.tracks.remove(&seg);
         }

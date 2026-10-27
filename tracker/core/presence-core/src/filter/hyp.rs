@@ -4,6 +4,7 @@
 //! unknown ones. It holds indices into the filter's pools, never the objects (docs/rust-core.md 2.2).
 
 use crate::filter::densities::DensityId;
+use crate::filter::holders::Obj;
 use crate::filter::mixture::{MixtureId, SegId};
 use crate::filter::small_map::SmallMap;
 
@@ -52,6 +53,18 @@ pub struct HypKey {
 }
 
 impl Hyp {
+    /// The person of group gid is now this object: a mixture (with tracks), or a density on the
+    /// tiles (without any, among the known ones then).
+    pub fn set_person(&mut self, gid: GroupId, obj: Obj) {
+        match obj {
+            Obj::Mixture(m) => self.people.insert(gid, m),
+            Obj::Density(d) => {
+                self.people.remove(&gid);
+                self.hidden.push(d);
+            }
+        }
+    }
+
     /// The hypothesis with nobody known and the unknown ones.
     pub fn new(logw: f64, hidden: Vec<DensityId>, unknown: DensityId) -> Self {
         Self {

@@ -41,34 +41,49 @@ impl PartialEq for Holders {
 impl Holders {
     /// `mixtures`, `densities`: one more than the largest index of each (for tables by index).
     pub fn build(hyps: &[Hyp], mixtures: usize, densities: usize) -> Self {
-        let (mut by_mixture, mut by_density) = (vec![NONE; mixtures], vec![NONE; densities]);
-        let mut objects: Vec<(Obj, bool)> = Vec::new();
-        let mut refs: Vec<Vec<usize>> = Vec::new();
-        for (h, hy) in hyps.iter().enumerate() {
+        // what a hypothesis holds, and whether as a ghost's source
+        fn held(hy: &Hyp) -> impl Iterator<Item = (Obj, bool)> + '_ {
             let people = hy.people.values().map(|&m| (Obj::Mixture(m), false));
             let hidden = hy.hidden.iter().chain([&hy.unknown]).map(|&d| (Obj::Density(d), false));
             let sources = hy.ghosts.values().map(|g| (Obj::Mixture(g.source), true));
-            for (obj, source) in people.chain(hidden).chain(sources) {
+            people.chain(hidden).chain(sources)
+        }
+        let (mut by_mixture, mut by_density) = (vec![NONE; mixtures], vec![NONE; densities]);
+        let (mut objects, mut source, mut count) = (Vec::new(), Vec::new(), Vec::new());
+        // the entries in the order of first appearance, and how often each is held
+        for hy in hyps {
+            for (obj, src) in held(hy) {
                 let slot = match obj {
                     Obj::Mixture(m) => &mut by_mixture[m.index()],
                     Obj::Density(d) => &mut by_density[d.index()],
                 };
                 if *slot == NONE {
                     *slot = objects.len();
-                    objects.push((obj, source));
-                    refs.push(Vec::new());
+                    objects.push(obj);
+                    source.push(src);
+                    count.push(0);
                 }
-                refs[*slot].push(h);
+                count[*slot] += 1;
             }
         }
         let mut ptr = Vec::with_capacity(objects.len() + 1);
         ptr.push(0);
-        let mut flat = Vec::new();
-        for r in &refs {
-            flat.extend_from_slice(r);
-            ptr.push(flat.len());
+        for c in &count {
+            ptr.push(ptr[ptr.len() - 1] + c);
         }
-        let (objects, source) = objects.into_iter().unzip();
+        // then who holds them, in the order of the hypotheses
+        let mut at = ptr[..objects.len()].to_vec();
+        let mut flat = vec![0; ptr[objects.len()]];
+        for (h, hy) in hyps.iter().enumerate() {
+            for (obj, _) in held(hy) {
+                let e = match obj {
+                    Obj::Mixture(m) => by_mixture[m.index()],
+                    Obj::Density(d) => by_density[d.index()],
+                };
+                flat[at[e]] = h;
+                at[e] += 1;
+            }
+        }
         Self {
             objects,
             source,
@@ -79,8 +94,6 @@ impl Holders {
         }
     }
 
-    /// The objects by their entry; with `sources` also the sources of ghost tracks
-    /// (Tracker._objects(phantoms)).
     pub fn entries(&self, sources: bool) -> impl Iterator<Item = (usize, Obj)> + '_ {
         self.objects
             .iter()

@@ -51,7 +51,7 @@ pub struct Filter {
     /// always those of hyps: built anew wherever the hypotheses change (set_hyps)
     holders: Holders,
     tracks: Tracks,
-    next_group: u64,
+    next_group: GroupIds,
     /// log evidence of everything seen so far, and the part of it that is mass dropped by the cut
     loglik: f64,
     loglik_cut: f64,
@@ -62,6 +62,18 @@ pub struct Filter {
     /// a frame, merged, cut, a gap, a new world): what is derived from all of them, the outputs, is
     /// current while it stays (filter.Tracker._version)
     epoch: u64,
+}
+
+/// The ids of the people with tracks: each new one the next (they count on in branches that are
+/// later cut).
+#[derive(Debug)]
+struct GroupIds(u64);
+
+impl GroupIds {
+    fn next(&mut self) -> GroupId {
+        self.0 += 1;
+        GroupId(self.0 - 1)
+    }
 }
 
 /// Per sensor the expected number of walkers in its view per hypothesis, as of the last move of
@@ -106,7 +118,7 @@ impl Filter {
             objects: Objects::new(shape),
             holders: Holders::default(),
             tracks: Tracks::new(sensors),
-            next_group: 1,
+            next_group: GroupIds(1),
             loglik: 0.0,
             loglik_cut: 0.0,
             flushed: 0.0,
@@ -180,13 +192,6 @@ impl Filter {
         self.holders = Holders::build(&self.hyps, objects.mixtures.capacity(), objects.densities.capacity());
         self.objects.release_unheld(&self.holders);
         self.walkers.clear();
-    }
-
-    /// A new id for a person with tracks (they count on in branches that are later cut).
-    fn new_group(next: &mut u64) -> GroupId {
-        let gid = GroupId(*next);
-        *next += 1;
-        gid
     }
 
     /// No live tracks (Tracker._clear): from time t.

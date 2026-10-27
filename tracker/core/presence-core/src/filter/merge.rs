@@ -18,7 +18,7 @@ fn distinct<T: PartialEq + Copy>(parts: impl IntoIterator<Item = (f64, T)>) -> V
     for (w, o) in parts {
         match out.iter_mut().find(|(_, x)| *x == o) {
             Some((acc, _)) => *acc += w,
-            None => out.push((0.0 + w, o)),
+            None => out.push((0.0 + w, o)), // a sum from 0, as Python's: -0.0 becomes 0.0
         }
     }
     out
@@ -72,85 +72,28 @@ impl Filter {
         Ok(())
     }
 
-    /// Keeps the strongest hypotheses until what is dropped weighs at most hyp_mass of the whole,
-    /// and at most max_hyps of them (B_Vo2017; Tracker._cut). Each is weighed as it will be after
-    /// merging, by the sum of those alike; the kept ones stay in their order. No live track loses
-    /// an alternative altogether: of the dropped ones, the strongest that holds an alternative the
-    /// kept ones lack stays (MODEL.md 5.1). What is dropped counts in the evidence.
+    /// cut_hyps (Tracker._cut): what is dropped counts in the evidence.
     pub fn cut(&mut self, p: &Params) -> Result<(), NotFinite> {
         self.void_cache();
-        let groups = alike(&self.hyps);
-        let glw: Vec<f64> = groups
-            .iter()
-            .map(|g| logsumexp(&g.iter().map(|&h| self.hyps[h].logw).collect::<Vec<_>>()))
-            .collect();
-        // strongest first, stable (numpy's argsort(-glw, kind="stable"))
-        let mut order: Vec<usize> = (0..groups.len()).collect();
-        order.sort_by(|&a, &b| glw[b].total_cmp(&glw[a]));
-        let lw: Vec<f64> = order.iter().map(|&i| glw[i]).collect();
-        let total = logsumexp(&lw);
-        if total.is_nan() {
-            return Err(NotFinite(total));
+        let cut = cut_hyps(&mut self.hyps, p);
+        if !matches!(cut, Ok(Cut::Nothing)) {
+            self.rebuild();
         }
-        let mut chosen: Vec<usize>;
-        let mut dropped = 0.0;
-        if total == f64::NEG_INFINITY {
-            // nothing explains the data (should not happen): keep them, see normalize
-            chosen = order[..order.len().min(p.max_hyps)].to_vec();
-        } else {
-            let w: Vec<f64> = lw.iter().map(|x| (x - total).exp()).collect();
-            // from the weakest up, as long as the dropped ones together stay within hyp_mass
-            let mut acc = 0.0;
-            let within = w
-                .iter()
-                .rev()
-                .take_while(|&&x| {
-                    acc += x;
-                    acc <= p.hyp_mass
-                })
-                .count();
-            let n = (w.len() - within).max(1).min(p.max_hyps);
-            if n == w.len() {
-                return Ok(());
-            }
-            let alternatives = |i: usize| -> Vec<(SegId, bool)> {
-                groups[i]
-                    .iter()
-                    .flat_map(|&h| self.hyps[h].tracks.iter().map(|(&s, &o)| (s, o == Owner::Ghost)))
-                    .collect()
-            };
-            chosen = order[..n].to_vec();
-            let mut held: Vec<(SegId, bool)> = chosen.iter().flat_map(|&i| alternatives(i)).collect();
-            for &i in &order[n..] {
-                let new: Vec<(SegId, bool)> = alternatives(i).into_iter().filter(|a| !held.contains(a)).collect();
-                if new.iter().any(|&(s, g)| held.contains(&(s, !g))) {
-                    chosen.push(i);
-                    held.extend(new);
-                }
-            }
-            dropped = (0..w.len())
-                .filter(|&k| !chosen.contains(&order[k]))
-                .fold(0.0, |s, k| s + w[k]);
+        self.after_cut(cut?)
+    }
+
+    /// The weights normalized after a cut that dropped some (nothing explains the data: kept).
+    fn after_cut(&mut self, cut: Cut) -> Result<(), NotFinite> {
+        match cut {
+            Cut::Dropped(dropped) => self.normalize(dropped),
+            Cut::Nothing | Cut::Unexplained => Ok(()),
         }
-        let mut keep = vec![false; self.hyps.len()];
-        for &i in &chosen {
-            for &h in &groups[i] {
-                keep[h] = true;
-            }
-        }
-        let mut k = keep.iter();
-        self.hyps.retain(|_| *k.next().expect("one flag per hypothesis"));
-        self.rebuild();
-        if total == f64::NEG_INFINITY {
-            return Ok(());
-        }
-        self.normalize(dropped)
     }
 
     /// cut, then the strongest first (Tracker._prune).
     pub fn prune(&mut self, p: &Params) -> Result<(), NotFinite> {
         self.cut(p)?;
-        self.hyps.sort_by(|a, b| (-a.logw).total_cmp(&-b.logw));
+        sort_strongest_first(&mut self.hyps);
         self.rebuild();
         Ok(())
     }
@@ -162,15 +105,122 @@ impl Filter {
         self.rebuild();
     }
 
-    /// The children of a branch are the hypotheses: those alike merged first, then cut
-    /// (Tracker._take). The cut is decided on the merged weights before the mixtures are made:
-    /// what is dropped is never mixed.
+    /// The children of a branch are the hypotheses: cut, those alike merged, cut again, the
+    /// strongest first (Tracker._take: set, cut, merge, prune). The first cut is decided on the
+    /// merged weights before the mixtures are made: what is dropped is never mixed. The holders are
+    /// built once, at the end (also if a weight is not finite).
     pub fn take(&mut self, children: Vec<Hyp>, p: &Params) -> Result<(), NotFinite> {
-        self.set_hyps(children);
-        self.cut(p)?;
-        self.merge();
-        self.prune(p)
+        self.hyps = children;
+        let taken = self.take_steps(p);
+        self.rebuild();
+        taken
     }
+
+    fn take_steps(&mut self, p: &Params) -> Result<(), NotFinite> {
+        self.void_cache();
+        let cut = cut_hyps(&mut self.hyps, p)?;
+        self.after_cut(cut)?;
+        self.void_cache();
+        self.objects.merge_alike(&mut self.hyps);
+        self.void_cache();
+        let cut = cut_hyps(&mut self.hyps, p)?;
+        self.after_cut(cut)?;
+        sort_strongest_first(&mut self.hyps);
+        Ok(())
+    }
+}
+
+/// What a cut did.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Cut {
+    /// nothing to drop
+    Nothing,
+    /// dropped hypotheses of this share of the weight
+    Dropped(f64),
+    /// nothing explains the data (should not happen): the strongest max_hyps kept as they are
+    Unexplained,
+}
+
+/// The strongest first, the equal ones in their order (numpy's argsort(-logw, kind="stable")).
+fn sort_strongest_first(hyps: &mut [Hyp]) {
+    hyps.sort_by(|a, b| b.logw.total_cmp(&a.logw));
+}
+
+/// Keeps the strongest hypotheses until what is dropped weighs at most hyp_mass of the whole, and
+/// at most max_hyps of them (B_Vo2017; Tracker._cut). Each is weighed as it will be after merging,
+/// by the sum of those alike; the kept ones stay in their order. No live track loses an alternative
+/// altogether: of the dropped ones, the strongest that holds an alternative the kept ones lack
+/// stays (MODEL.md 5.1).
+fn cut_hyps(hyps: &mut Vec<Hyp>, p: &Params) -> Result<Cut, NotFinite> {
+    let groups = alike(hyps);
+    let glw: Vec<f64> = groups
+        .iter()
+        .map(|g| logsumexp(&g.iter().map(|&h| hyps[h].logw).collect::<Vec<_>>()))
+        .collect();
+    // strongest first, stable (numpy's argsort(-glw, kind="stable"))
+    let mut order: Vec<usize> = (0..groups.len()).collect();
+    order.sort_by(|&a, &b| glw[b].total_cmp(&glw[a]));
+    let lw: Vec<f64> = order.iter().map(|&i| glw[i]).collect();
+    let total = logsumexp(&lw);
+    if total.is_nan() {
+        return Err(NotFinite(total));
+    }
+    let mut chosen: Vec<usize>;
+    let mut dropped = 0.0;
+    if total == f64::NEG_INFINITY {
+        // nothing explains the data (should not happen): keep them, see normalize
+        chosen = order[..order.len().min(p.max_hyps)].to_vec();
+    } else {
+        let w: Vec<f64> = lw.iter().map(|x| (x - total).exp()).collect();
+        // from the weakest up, as long as the dropped ones together stay within hyp_mass
+        let mut acc = 0.0;
+        let within = w
+            .iter()
+            .rev()
+            .take_while(|&&x| {
+                acc += x;
+                acc <= p.hyp_mass
+            })
+            .count();
+        let n = (w.len() - within).max(1).min(p.max_hyps);
+        if n == w.len() {
+            return Ok(Cut::Nothing);
+        }
+        let alternatives = |i: usize| -> Vec<(SegId, bool)> {
+            groups[i]
+                .iter()
+                .flat_map(|&h| hyps[h].tracks.iter().map(|(&s, &o)| (s, o == Owner::Ghost)))
+                .collect()
+        };
+        chosen = order[..n].to_vec();
+        let mut held: Vec<(SegId, bool)> = chosen.iter().flat_map(|&i| alternatives(i)).collect();
+        for &i in &order[n..] {
+            let new: Vec<(SegId, bool)> = alternatives(i).into_iter().filter(|a| !held.contains(a)).collect();
+            if new.iter().any(|&(s, g)| held.contains(&(s, !g))) {
+                chosen.push(i);
+                held.extend(new);
+            }
+        }
+        dropped = (0..w.len())
+            .filter(|&k| !chosen.contains(&order[k]))
+            .fold(0.0, |s, k| s + w[k]);
+    }
+    let mut kept = vec![false; hyps.len()];
+    for &i in &chosen {
+        for &h in &groups[i] {
+            kept[h] = true;
+        }
+    }
+    let mut h = 0;
+    hyps.retain(|_| {
+        h += 1;
+        kept[h - 1]
+    });
+    Ok(if total == f64::NEG_INFINITY {
+        Cut::Unexplained
+    } else {
+        Cut::Dropped(dropped)
+    })
 }
 
 impl Objects {
@@ -192,8 +242,11 @@ impl Objects {
                 keep[h] = false;
             }
         }
-        let mut k = keep.iter();
-        hyps.retain(|_| *k.next().expect("one flag per hypothesis"));
+        let mut h = 0;
+        hyps.retain(|_| {
+            h += 1;
+            keep[h - 1]
+        });
     }
 
     fn mix_hyps(&mut self, hs: &[&Hyp]) -> Hyp {

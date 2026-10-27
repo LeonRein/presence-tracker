@@ -2,6 +2,42 @@
 
 ## Unveröffentlicht
 
+## 0.34.1 (Branch `rust-core`, nach Leons Prüfung von Phase 4, nicht live)
+
+- **Referenz aus Python 16d148f** (`core/presence-core/fixtures/ld_reference.py`, `.json.gz`, Test
+  `ld_reference.rs`): ein fester Fall in der Testwohnung (drei Hypothesen, Person mit Spur und Teil hinter der Tür,
+  bekannte Person mit gemessener Amplitude, eine überall, die Unbekannten), zwei Runden Frames zweier Sensoren mit
+  zensierten, Nullen, Stille, Zielen; logw, ka, Amplitudenstufen, Dichten, Echo-p, Gedächtnis, mus, prior_w,
+  nobody, began auf 1e-12. Dazu: Likelihood gegen numerische Integration über die Verstärkung (1e-8, zensiert 1e-5),
+  `ld_frame` (Heartbeat, IDLE, alles 0, Lücke), je Zeile der Tabelle aus Entwurf 2.0 ein Test
+  (`tests/test_learning_order.py`; Pausen: `test_pause`).
+- **`ld_weigh` neu gebaut:** Präfixbaum der Hypothesen (`Chains`: Knoten mit Vorgänger, Verhältnis, Summe danach),
+  Caches nach Struktur (`(Blatt, Eintrag)`, Echo-Normierung je Knoten) statt Float-Bits, `LdContext` statt
+  Closures, Schritte als Funktionen (`settle`, `tile_points`/`mixture_points` auf `&Densities`, `marginal`,
+  `apply` auf `&mut Objects`, `echo_factors`), Objekt → Eintrag über eine Tabelle in `Holders`
+  (`entry`, `holding`). `Standing::{Unmeasured, Measured { big }}` statt leerem `big`. Spuren bitgleich mit 0.34.0.
+- **LD-Zustand je Sensor in `SensorState`** (`ld2410/sensor.rs`: Sammlung, Frames, Gedächtnis, Echoquellen, ab
+  der Erzeugung); `ld_weigh` gibt immer `LdLearn` (mit `target_t`) zurück, ob gelernt wird, entscheidet die Hülle;
+  die Bindung gibt ein Dict.
+- **vlog/vexp in zwei Durchgängen** wie `kernels.py`, Ganzzahl ↔ Gleitkomma über 2^52 (ohne AVX-512):
+  vektorisiert in der gelinkten `.so` nachgewiesen (ymm, `vdivpd`, `vroundpd`, `vpcmpgtq`); in der rlib nicht
+  sichtbar, weil mit `lto = "fat"` erst beim Linken vektorisiert wird. Tests nahe 1 und an √2.
+- **Puffer statt Allokationen:** `Scratch` für die Likelihood-Zeilen, Spalten-logsumexp ohne Vektor; Spuren-Spots
+  je neuer Spur einmal, Faktoren je Satz wachender Sensoren einmal je Bewegung, Spots in place, `P H'` einmal je
+  Update.
+- **Eingaben geprüft:** `Params::validate`, `WorldExport::check` (Längen, Indizes, Räume), `World::from_export ->
+  Result`; nicht endliche Zeiten/Energien sind „kein Frame“; `at_least` statt `max(NaN, …)`; negative Indizes aus
+  Python ein ValueError.
+- **REVIEW_phase3 4–7, 9:** Halter einmal je `take` (zählen, dann füllen); `release -> Obj`, `Hyp::set_person`;
+  `attach -> Option<(MixtureId, f64)>` (bei −inf keine verwaiste Mischung); `with_away` für `weigh_no_track` und
+  `reweigh` (NaN in einem Faktor verschwindet dort nicht mehr still als −inf), `log_add`/`logaddexp` dokumentiert;
+  Kopien auf heißen Pfaden. Dazu `GroupIds`, toter Parameter `logf`, benannte Modellzahlen (`Profile`, `Burst`,
+  `Slants`), `CellKind`, `Mixture::weigh_amplitude`.
+- **Python:** die toten numba-LD-Kerne, `Stats.ratio`/`Likelihood`/`Echoes`/`log_censored` gelöscht, ihre Tests in
+  Rust; `_ld_stats` und `Core.ld_stats` weg.
+- **Messung:** `ab.sh 1200` 27,1 s gegen 47,8 s (0.31.1), −43 % (0.34.0: 29,8 s). Spuren aller drei Stunden
+  bitgleich mit 0.34.0 (ein BLAS-Thread). 59 Rust-, 225 Python-Tests.
+
 ## 0.34.0 (Branch `rust-core`, Phase 4 des Rust-Kerns, nicht live)
 
 - **LD2410C im Kern** (`ld2410/`, `filter/ld_weigh.rs`, `world/ld.rs`, ~1500 Zeilen): Sammeln der Frames

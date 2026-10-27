@@ -124,29 +124,23 @@ impl Tracks {
         let si = info.si;
         self.info.insert(seg, info);
         self.live[si].push(seg);
-        self.respot(si);
+        self.spots[si].push(info.spot());
     }
 
     /// Changes a track; where the rates see it follows.
     pub fn update(&mut self, seg: SegId, change: impl FnOnce(&mut TrackInfo)) {
         let info = self.info.get_mut(&seg).expect("a live track");
         change(info);
-        let si = info.si;
-        self.respot(si);
+        let at = self.live[info.si].iter().position(|&s| s == seg).expect("live");
+        self.spots[info.si][at] = info.spot();
     }
 
     /// A track ends: its last state.
     pub fn end(&mut self, seg: SegId) -> TrackInfo {
         let info = self.info.remove(&seg).expect("a live track");
-        self.live[info.si].retain(|&s| s != seg);
-        self.respot(info.si);
+        let at = self.live[info.si].iter().position(|&s| s == seg).expect("live");
+        self.live[info.si].remove(at);
+        self.spots[info.si].remove(at);
         info
-    }
-
-    fn respot(&mut self, si: usize) {
-        self.spots[si] = self.live[si]
-            .iter()
-            .map(|s| self.info.get(s).expect("a live track").spot())
-            .collect();
     }
 }

@@ -237,10 +237,22 @@ pub fn max2(a: f64, b: f64) -> f64 {
     if b > a { b } else { a }
 }
 
-/// log(exp(a) + exp(b)) by the larger one (-inf + -inf: NaN, as the Python filter).
+/// log(exp(a) + exp(b)) by the larger one, top + log(exp(a - top) + exp(b - top)) (numba's and
+/// numpy's logsumexp of two; -inf + -inf: NaN, as the Python filter; NaN stays NaN). The Python
+/// filter's other form, numpy's logaddexp (vmath::logaddexp, by log1p), differs in the last bit: each
+/// place uses the one the Python filter used there.
 pub fn log_add(a: f64, b: f64) -> f64 {
     let top = max2(a, b);
     top + ((a - top).exp() + (b - top).exp()).ln()
+}
+
+/// log_add of the components' log weights, -inf if both are.
+fn log_add_or_none(lw: [f64; 2]) -> f64 {
+    if max2(lw[0], lw[1]) > f64::NEG_INFINITY {
+        log_add(lw[0], lw[1])
+    } else {
+        f64::NEG_INFINITY
+    }
 }
 
 /// The sigma points (UNIT) of N(mean[k], diag var[k]) per mode k, with walls: those of a mode with
@@ -311,28 +323,32 @@ impl Mixture {
         }
         let ln_or_none = |x: f64| if x > 0.0 { x.ln() } else { f64::NEG_INFINITY };
         let lw = [self.logw[0] + ln_or_none(s), self.logw[1] + ln_or_none(f_walk)];
-        let comps = if max2(lw[0], lw[1]) > f64::NEG_INFINITY {
-            log_add(lw[0], lw[1])
+        self.with_away(lw, d_away, log_add_or_none)
+    }
+
+    /// The components' new log weights lw (before normalizing) and the factor d_away of the part
+    /// gone through a door: the part's new weight a, the components' weights normalized, and the
+    /// log factor of the whole person; `add` sums the two parts in the log (log_add, or logaddexp:
+    /// where the Python filter used which). Nothing left (-inf): nothing changes. NaN: the weights
+    /// are kept, the factor is NaN.
+    fn with_away(&mut self, lw: [f64; 2], d_away: f64, add: fn([f64; 2]) -> f64) -> f64 {
+        let comps = log_add_or_none(lw);
+        let total = if self.a <= 0.0 {
+            comps
         } else {
-            f64::NEG_INFINITY
-        };
-        if self.a <= 0.0 {
-            if comps > f64::NEG_INFINITY {
-                self.logw = lw.map(|l| l - comps);
+            let p0 = if self.a < 1.0 {
+                (-self.a).ln_1p() + comps
+            } else {
+                f64::NEG_INFINITY
+            };
+            let p1 = self.a.ln() + d_away;
+            let total = add([p0, p1]);
+            if total == f64::NEG_INFINITY {
+                return total;
             }
-            return comps;
-        }
-        let p0 = if self.a < 1.0 {
-            (-self.a).ln_1p() + comps
-        } else {
-            f64::NEG_INFINITY
+            self.a = (p1 - total).exp();
+            total
         };
-        let p1 = self.a.ln() + d_away;
-        if max2(p0, p1) == f64::NEG_INFINITY {
-            return f64::NEG_INFINITY;
-        }
-        let total = log_add(p0, p1);
-        self.a = (p1 - total).exp();
         if comps > f64::NEG_INFINITY {
             self.logw = lw.map(|l| l - comps);
         }
@@ -377,34 +393,7 @@ impl Mixture {
     /// normalizes (Gauss.reweigh).
     pub fn reweigh(&mut self, dlog: [f64; 2], d_away: f64) -> f64 {
         let lw = [self.logw[0] + dlog[0], self.logw[1] + dlog[1]];
-        let top = if lw[0] >= lw[1] || lw[0].is_nan() { lw[0] } else { lw[1] };
-        let comps = if top > f64::NEG_INFINITY {
-            top + (0.0 + (lw[0] - top).exp() + (lw[1] - top).exp()).ln()
-        } else {
-            f64::NEG_INFINITY
-        };
-        if self.a <= 0.0 {
-            if comps == f64::NEG_INFINITY {
-                return f64::NEG_INFINITY;
-            }
-            self.logw = lw.map(|l| l - comps);
-            return comps;
-        }
-        let p0 = if self.a < 1.0 {
-            (-self.a).ln_1p() + comps
-        } else {
-            f64::NEG_INFINITY
-        };
-        let p1 = self.a.ln() + d_away;
-        let total = logaddexp(p0, p1);
-        if total == f64::NEG_INFINITY {
-            return f64::NEG_INFINITY;
-        }
-        self.a = (p1 - total).exp();
-        if comps > f64::NEG_INFINITY {
-            self.logw = lw.map(|l| l - comps);
-        }
-        total
+        self.with_away(lw, d_away, |[p0, p1]| logaddexp(p0, p1))
     }
 
     /// The LD2410C's log factors of the standing component per level of its amplitude (A): the
@@ -419,10 +408,13 @@ impl Mixture {
     /// The levels of detectability and amplitude (K x A) times f(index), normalized if anything is
     /// left; returns their sum before.
     fn weigh_ka(&mut self, f: impl Fn(usize) -> f64) -> f64 {
-        let ka: Vec<f64> = self.ka.iter().enumerate().map(|(i, v)| v * f(i)).collect();
+        let mut ka: Vec<f64> = self.ka.iter().enumerate().map(|(i, v)| v * f(i)).collect();
         let s = pairwise_sum(&ka);
         if s > 0.0 {
-            self.ka = ka.iter().map(|v| v / s).collect();
+            for v in &mut ka {
+                *v /= s;
+            }
+            self.ka = ka;
         }
         s
     }
@@ -459,30 +451,22 @@ impl Mixture {
         }
     }
 
-    /// The Kalman update of both components with the track's position z, their weights also
-    /// multiplied by exp(logf) if given. Measured, the person is in view: the part gone through a
-    /// door is dropped and released. Returns the log of the mixture's factor, the predictive density
-    /// of z times f (Gauss.update).
-    pub fn update(
-        &mut self,
-        densities: &mut Densities,
-        seg: SegId,
-        z: Point,
-        white: f64,
-        logf: Option<[f64; 2]>,
-    ) -> f64 {
+    /// The Kalman update of both components with the track's position z. Measured, the person is in
+    /// view: the part gone through a door is dropped and released. Returns the log of the mixture's
+    /// factor, the predictive density of z (Gauss.update).
+    pub fn update(&mut self, densities: &mut Densities, seg: SegId, z: Point, white: f64) -> f64 {
         let k = self.slots.get(&seg).expect("a track the person has").index;
         let d = self.dim();
         // the track measures x + c + o: per axis H = 1 at these states
         let idx = [X, k, k + 1];
         let mut ll = [0.0; 2];
+        let mut ph = vec![0.0; d]; // P H'
         for (mode, g) in self.modes.iter_mut().enumerate() {
             for (ax, &za) in z.iter().enumerate() {
                 let (mean, cov) = g.axis_mut(ax);
-                let ph: Vec<f64> = cov
-                    .chunks_exact(d)
-                    .map(|row| idx.iter().fold(0.0, |s, &j| s + row[j]))
-                    .collect();
+                for (p, row) in ph.iter_mut().zip(cov.chunks_exact(d)) {
+                    *p = idx.iter().fold(0.0, |s, &j| s + row[j]);
+                }
                 let s = idx.iter().fold(0.0, |s, &j| s + ph[j]) + white.powf(2.0);
                 let e = za - idx.iter().fold(0.0, |s, &j| s + mean[j]);
                 ll[mode] += -0.5 * e * e / s - 0.5 * s.ln() - 0.5 * LOG2PI;
@@ -507,11 +491,7 @@ impl Mixture {
                 densities.release(away);
             }
         }
-        let dlog = match logf {
-            Some(f) => [ll[0] + f[0], ll[1] + f[1]],
-            None => ll,
-        };
-        lead + self.reweigh(dlog, 0.0)
+        lead + self.reweigh(ll, 0.0)
     }
 
     /// A sensor measured this person: they are in its sight - the radar can't see through walls
@@ -1150,7 +1130,7 @@ mod tests {
         assert_eq!(g.dim(), 4);
         let z = [0.1, -0.05];
         let before = g.modes.clone();
-        let l = g.update(&mut densities, SegId(4), z, p.white, None);
+        let l = g.update(&mut densities, SegId(4), z, p.white);
         // per axis H = [1, 0, 1, 1]; the offsets independent of x a priori
         let s = 0.01 + 0.04 + p.white.powf(2.0);
         let mut ll = [0.0; 2];
