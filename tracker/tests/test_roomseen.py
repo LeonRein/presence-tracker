@@ -119,16 +119,20 @@ def test_quelle_says_what_decided():
     config = open_plan()
     tr = Tracker(config, start=0.0)
     feed(tr, "presence-wohn", 0.0, 20.0, 2500)
+    def output(**params):  # the outputs' numbers are the world's: changed as the app does (reconfigure)
+        d = tr.config.to_dict()
+        d["params"].update(params)
+        assert tr.reconfigure(Config.from_dict(d)) is False
     for cost, filt in ((1000.0, False), (1e-3, True)):
-        config.params.light_cost = cost
+        output(light_cost=cost)
         st = tr.zone_states()["wohn"]
         assert st.occupied and st.source == ("beide" if filt else "ld2450")
         assert st.to_dict()["source"] == st.source
     # the filter alone (the rule off with seen_hold 0)
-    config.params.seen_hold = 0.0
+    output(seen_hold=0.0)
     st = tr.zone_states()["wohn"]
     assert st.occupied and st.source == "filter"
-    config.params.light_cost = 1000.0
+    output(light_cost=1000.0)
     st = tr.zone_states()["wohn"]
     assert not st.occupied and st.source is None and st.to_dict()["source"] is None
 

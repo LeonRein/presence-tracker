@@ -2,7 +2,12 @@
 //! (filtermodel.Shapes). Measured ones and assumptions are explained in filtermodel.py; here only
 //! what the core reads. A model is given as the fields that differ from these defaults.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Deserializer};
+
+mod shapes;
+pub use shapes::Shapes;
 
 /// A number of the model, also "inf", "-inf" or "nan" (JSON has no such numbers; a model may set a
 /// time to infinity, e.g. unseen_life in the tests).
@@ -41,6 +46,23 @@ pub struct Params {
     // 3.1 standing
     #[serde(deserialize_with = "real")]
     pub still_noise: f64,
+    /// how long one stands: survival (go_time / (t + go_time))^go_share, as a mixture of exponentials
+    /// matched at the stay_points (s)
+    #[serde(deserialize_with = "real")]
+    pub go_share: f64,
+    #[serde(deserialize_with = "real")]
+    pub go_time: f64,
+    pub stay_points: Vec<f64>,
+    /// 4.1 the detectability of a still person, kappa ~ Gamma(shape, shape), on a grid of this many levels
+    #[serde(deserialize_with = "real")]
+    pub kappa_shape: f64,
+    pub kappa_levels: usize,
+    /// 4.3 the LD2410C amplitude of a standing person, likewise; its normal scores' correlation with kappa
+    #[serde(deserialize_with = "real")]
+    pub ld_amp_shape: f64,
+    pub ld_amp_levels: usize,
+    #[serde(deserialize_with = "real")]
+    pub kappa_amp_corr: f64,
     #[serde(deserialize_with = "real")]
     pub kappa_switch: f64,
     // 3.2 walking
@@ -132,6 +154,9 @@ pub struct Params {
     /// a tile holding less of a person standing is weighed at its mean amplitude (filter.LD_TILE_MASS)
     #[serde(deserialize_with = "real")]
     pub ld_tile_mass: f64,
+    /// per "own<-room" how much of what the geometric sight expects an LD2410C gets from a person in
+    /// another room (measured, MODEL.md 4.3 "Blick des LD2410C"); missing: 1
+    pub ld_view: BTreeMap<String, f64>,
     /// s: the end of a gap in the data is moved as always, what lies before in leaps of `leap` s,
     /// at most `max_leaps` of them (filter.GAP_EXACT, LEAP, MAX_LEAPS)
     #[serde(deserialize_with = "real")]
@@ -170,6 +195,14 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             still_noise: 0.02,
+            go_share: 0.58,
+            go_time: 5.6,
+            stay_points: vec![86400.0, 5993.0, 416.0, 29.0, 2.0],
+            kappa_shape: 1.0,
+            kappa_levels: 5,
+            ld_amp_shape: 6.0,
+            ld_amp_levels: 9,
+            kappa_amp_corr: 0.44,
             kappa_switch: 1.0 / 600.0,
             speed: 0.85,
             speed_spread: 0.36,
@@ -229,6 +262,7 @@ impl Default for Params {
             },
             ld_echo_amps: vec![0.3, 1.0, 3.0],
             ld_tile_mass: 1e-4,
+            ld_view: BTreeMap::new(),
             gap_exact: 120.0,
             leap: 15.0,
             max_leaps: 2000,
@@ -311,6 +345,62 @@ impl Params {
     }
 }
 
+/// What only the outputs read (MODEL.md 6; filter.OUTPUT_PARAMS, roomseen.SILENT_AFTER): a change of
+/// them restarts nothing, but it is a new world (the outputs' cache is void).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OutputParams {
+    /// a second of light without anybody costs as much as this many seconds dark: occupied above
+    /// light_cost / (light_cost + 1)
+    pub light_cost: f64,
+    /// s: a room is occupied while its own LD2450 measured somebody in it this recently (0: never)
+    pub seen_hold: f64,
+    /// s: the look-ahead of "wird betreten", on above approach_cost / (approach_cost + 1)
+    pub lead_time: f64,
+    pub approach_cost: f64,
+    /// s without a frame: a room's own sensor is gone, the room silent
+    pub silent_after: f64,
+}
+
+impl OutputParams {
+    pub fn of(p: &crate::config::TrackerParams, silent_after: f64) -> Self {
+        Self {
+            light_cost: p.light_cost,
+            seen_hold: p.seen_hold,
+            lead_time: p.lead_time,
+            approach_cost: p.approach_cost,
+            silent_after,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let ok = |x: f64| x >= 0.0 && x.is_finite();
+        if [
+            self.light_cost,
+            self.seen_hold,
+            self.lead_time,
+            self.approach_cost,
+            self.silent_after,
+        ]
+        .iter()
+        .all(|&x| ok(x))
+        {
+            Ok(())
+        } else {
+            Err(format!("the outputs' numbers do not fit: {self:?}"))
+        }
+    }
+
+    /// The threshold of P(somebody there) for occupied (MODEL.md 6: the Bayes decision).
+    pub fn occupied_above(&self) -> f64 {
+        self.light_cost / (self.light_cost + 1.0)
+    }
+
+    /// The threshold of p_enter for "wird betreten".
+    pub fn entering_above(&self) -> f64 {
+        self.approach_cost / (self.approach_cost + 1.0)
+    }
+}
+
 /// What a person puts into a kind of cell of the LD2410C (MODEL.md 4.3, measured 6.10.): a r^-n
 /// times the main lobe, a Gaussian of width sigma centred delta behind the person, and beyond the
 /// centre the tail mixed in by `tail`, falling off over ell (m). Read as the model's list.
@@ -351,48 +441,6 @@ pub struct Slants {
     pub from: f64,
     pub to: f64,
     pub step: f64,
-}
-
-/// How long a stay lasts and how well it is seen (filtermodel.Shapes): every stay draws its rate of
-/// getting up go_l with weight go_w_l (L kinds), its detectability kappa_k with kappa_w_k (K
-/// levels), and with it the LD2410C amplitude (A levels; ka_w the joint prior, K x A).
-#[derive(Debug)]
-#[cfg_attr(test, derive(serde::Deserialize))]
-pub struct Shapes {
-    pub go: Vec<f64>,
-    pub go_w: Vec<f64>,
-    /// the kinds of the stays going on at a random moment (longer ones more likely)
-    pub go_w_ongoing: Vec<f64>,
-    pub kappa: Vec<f64>,
-    pub kappa_w: Vec<f64>,
-    /// the levels of the LD2410C amplitude g (A)
-    pub amp: Vec<f64>,
-    pub ka_w: Vec<f64>,
-    /// P(level of the amplitude | detectability), K x A
-    pub amp_given_kappa: Vec<f64>,
-}
-
-impl Shapes {
-    pub fn kinds(&self) -> usize {
-        self.go.len()
-    }
-
-    pub fn levels(&self) -> usize {
-        self.kappa.len()
-    }
-
-    /// levels of the LD2410C amplitude (A)
-    pub fn amps(&self) -> usize {
-        self.ka_w.len() / self.kappa.len()
-    }
-
-    /// The prior of a stay's kind and detectability, L x K (independent a priori; Shapes.stay_prior).
-    pub fn stay_prior(&self, ongoing: bool) -> Vec<f64> {
-        let go_w = if ongoing { &self.go_w_ongoing } else { &self.go_w };
-        go_w.iter()
-            .flat_map(|&g| self.kappa_w.iter().map(move |&k| g * k))
-            .collect()
-    }
 }
 
 #[cfg(test)]

@@ -2,29 +2,33 @@
 //! sensors' sight, the model's numbers. Built once, unchanged until the configuration changes; every
 //! step borrows it.
 
+mod build;
 pub mod ld;
-pub mod plan;
 pub mod raster;
 pub mod sight;
+pub mod targets;
 pub mod tiles;
 
 pub use ld::{LdPlace, LdSight, LdTiles};
-pub use plan::{Plan, PlanExport, Room, SensorPlan};
 pub use raster::{CELL, Grid, Raster};
 pub use sight::Sight;
+pub use targets::EntryTargets;
 pub use tiles::{DoorTile, POINT, Tiles};
 
+use crate::config::Config;
 use crate::filter::densities::DensityShape;
 use crate::geometry::{Point, Walls};
 use crate::ld2410::likelihood::Likelihood;
 use crate::ld2450::rates::RateModel;
-use crate::params::{Params, Shapes};
+use crate::params::{OutputParams, Params, Shapes};
+use crate::plan::Plan;
 use crate::sensors::SensorSet;
 use crate::vmath::pairwise_sum;
 
 #[derive(Debug)]
 pub struct World {
     pub params: Params,
+    pub outputs: OutputParams,
     pub shapes: Shapes,
     pub rates: RateModel,
     pub raster: Raster,
@@ -41,6 +45,8 @@ pub struct World {
     /// the LD2410C's likelihood (its tables are built once)
     pub ld_lik: Likelihood,
     pub plan: Plan,
+    /// the zones of "wird betreten"
+    pub targets: EntryTargets,
 }
 
 /// What the Python tracker built (docs/rust-core.md 6): the world handed over while the build is
@@ -57,8 +63,6 @@ pub struct WorldExport {
     pub sensors: Vec<SensorExport>,
     /// per cell its room, the last index for none
     pub rooms: Vec<f64>,
-    #[cfg_attr(test, serde(skip))]
-    pub plan: PlanExport,
 }
 
 /// A sensor as the Python tracker built it: where it is, where its sight lines start, its sight per
@@ -89,7 +93,6 @@ impl WorldExport {
     /// range, each cell's room one of the rooms of a sensor's view (Err names what does not).
     pub fn check(&self) -> Result<(), String> {
         self.params.validate()?;
-        Plan::check(&self.plan, &self.tiles, self.sensors.len())?;
         let cells = self.raster.nx * self.raster.ny;
         let (t, n) = (&self.tiles, self.tiles.n);
         let below = |idx: &[usize], top: usize| idx.iter().all(|&i| i < top);
@@ -127,6 +130,10 @@ impl WorldExport {
                 t.door_tiles.iter().all(|d| d.rates.len() == t.regions + 1),
             ),
             (
+                "room, region_start",
+                t.room.len() == n && t.region_start.len() == t.regions * t.ages,
+            ),
+            (
                 "points",
                 t.point_tile.len() == t.points.len() && below(&t.point_tile, n) && t.point_count.len() == n,
             ),
@@ -161,9 +168,66 @@ impl WorldExport {
 }
 
 impl World {
-    /// The world of a checked export (WorldExport::check).
-    pub fn from_export(e: WorldExport) -> Result<Self, String> {
+    /// The world of a configuration (world.World, tiling.Tiling, the sensors' sight; MODEL.md 2, 4, 5.3):
+    /// built here from the plan, in this order, nothing changed afterwards. `silent_after`: s without a
+    /// frame until a room's own sensor counts as gone (roomseen.SILENT_AFTER).
+    pub fn build(config: &Config, params: Params, silent_after: f64) -> Result<Self, String> {
+        params.validate()?;
+        let outputs = OutputParams::of(&config.params, silent_after);
+        outputs.validate()?;
+        let plan = Plan::new(config);
+        let raster = build::raster_of(config);
+        let labels = build::labels_of(&plan, &raster);
+        let rooms = Grid::new(raster, build::rooms_of(&plan, &raster, &labels));
+        let walls = Walls::new(plan.walls.iter().map(|&[a, b]| [a[0], a[1], b[0], b[1]]).collect());
+        let wall_dist = Grid::new(raster, build::wall_dist(&raster, &plan.walls));
+        let tiles = Tiles::build(&plan, raster, &labels, rooms.values(), &walls, &params, &config.params);
+        let shapes = Shapes::new(&params);
+        let rates = RateModel::new(&params);
+        let built = build::Built {
+            config,
+            params: &params,
+            plan: &plan,
+            raster,
+            labels: &labels,
+            rooms: &rooms,
+            walls: &walls,
+            tiles: &tiles,
+        };
+        let (mut sights, ld): (Vec<Sight>, Vec<LdSight>) =
+            config.sensors.iter().map(|s| build::sensor(&built, s)).unzip();
+        for s in &mut sights {
+            s.set_rates(&rates, &tiles);
+        }
+        let targets = EntryTargets::new(&plan, raster, &rooms, &tiles);
+        Ok(Self {
+            ld_lik: Likelihood::new(&params),
+            params,
+            outputs,
+            shapes,
+            rates,
+            raster,
+            walls,
+            wall_dist,
+            tiles,
+            sights,
+            ld,
+            rooms,
+            plan,
+            targets,
+        })
+    }
+
+    /// The world of a checked export (the aid that checks the build against Python's, docs/rust-core.md
+    /// 6): the plan from the configuration, the rest as Python built it.
+    pub fn from_export(e: WorldExport, config: &Config, silent_after: f64) -> Result<Self, String> {
         e.check()?;
+        let outputs = OutputParams::of(&config.params, silent_after);
+        outputs.validate()?;
+        let plan = Plan::new(config);
+        if plan.sensors.len() != e.sensors.len() || e.tiles.room.iter().flatten().any(|&k| k >= plan.rooms.len()) {
+            return Err("the export does not fit the configuration".into());
+        }
         let rates = RateModel::new(&e.params);
         let raster = e.raster;
         let (sights, ld) = e
@@ -188,11 +252,12 @@ impl World {
                 (s, ld)
             })
             .unzip();
-        let ld_lik = Likelihood::new(&e.params);
         let rooms = Grid::new(raster, e.rooms);
-        let plan = Plan::new(e.plan, raster, &rooms, &e.tiles);
+        let targets = EntryTargets::new(&plan, raster, &rooms, &e.tiles);
         Ok(Self {
+            ld_lik: Likelihood::new(&e.params),
             params: e.params,
+            outputs,
             shapes: e.shapes,
             rates,
             raster,
@@ -202,8 +267,8 @@ impl World {
             sights,
             ld,
             rooms,
-            ld_lik,
             plan,
+            targets,
         })
     }
 

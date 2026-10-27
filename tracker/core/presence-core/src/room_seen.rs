@@ -14,7 +14,7 @@
 //! goes on over a new plan.
 
 use crate::geometry::Point;
-use crate::world::Plan;
+use crate::plan::Plan;
 
 #[derive(Debug, Default)]
 pub struct RoomSeen {
@@ -113,7 +113,7 @@ impl RoomSeen {
 mod tests {
     use super::*;
     use crate::geometry::Shape;
-    use crate::world::{Room, SensorPlan, plan::EntryTargets};
+    use crate::plan::{Room, SensorPlan};
 
     /// Two rooms without a wall between them (test_roomseen.open_plan): wohn 6 x 5 m, ess 4 x 5 m
     /// right of it; sensor 0 wohn's, sensor 1 ess's, sensor 2 nobody's.
@@ -130,9 +130,13 @@ mod tests {
         Plan {
             rooms: vec![room("wohn", 0.0, 6.0), room("ess", 6.0, 10.0)],
             sensors: vec![sensor("w", Some(0)), sensor("e", Some(1)), sensor("x", None)],
-            tile_room: Vec::new(),
-            region_start: Vec::new(),
-            targets: EntryTargets::default(),
+            walls: Vec::new(),
+            regions: Vec::new(),
+            portals: Vec::new(),
+            closed_rooms: Vec::new(),
+            all_rooms: Vec::new(),
+            zones: Vec::new(),
+            areas: Vec::new(),
         }
     }
 

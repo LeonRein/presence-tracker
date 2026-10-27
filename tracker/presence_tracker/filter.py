@@ -21,6 +21,7 @@ import binascii
 import itertools
 import json
 import math
+import os
 import zlib
 
 import numpy as np
@@ -57,6 +58,10 @@ def _core(call, *args):
 
 __all__ = ["Model", "Tracker"]
 
+# "python": the core runs in the world this shell built (its export), not in its own - the aid that checks
+# the core's build (docs/rust-core.md 6; rust-port/cmpworld.py), never in the app
+WORLD = os.environ.get("PT_WORLD", "core")
+
 MAX_STEP = 0.2  # s: motion is cut into parts no longer than this
 MOUNT_RADIUS = 0.3  # m: targets this close to a sensor come from its mount
 GIVE_UP = 0.01  # a known person who exists with less probability (wherever they are: refuted, or where
@@ -66,8 +71,6 @@ GIVE_UP = 0.01  # a known person who exists with less probability (wherever they
 RECYCLE_EVERY = 1.0  # s
 LD_TILE_MASS = 1e-4  # persons: a tile holding less of a person (or of the unknown ones) standing is weighed
                      # by the LD2410C at its mean amplitude, not level by level (_ld_split; MODEL.md 4.3)
-ENTER_MIN_WALK = 0.02  # "wird betreten" (MODEL.md 6): a person walking with less probability can raise no
-                       # zone's p_enter by more than this; not moved on
 # what only the outputs (MODEL.md 6) or the display read: a change restarts nothing
 OUTPUT_PARAMS = ("target_threshold", "target_thresholds", "light_cost", "seen_hold", "approach_cost", "lead_time",
                  "ld2410_hold")
@@ -152,16 +155,15 @@ class _Seen:
         """The rooms with an own sensor in use: these may be silent (Home Assistant: their own availability)."""
         return {r for r, w in zip(self._tr.rooms, self._tr._c.watched()) if w}
 
-    def silent(self, now: float, start: float | None, limit: float | None = None) -> set:
-        """The rooms whose own sensors in use all sent no frame for more than limit s (default
-        SILENT_AFTER), counted from start for one that sent nothing (None: not started, nothing silent)."""
-        limit = roomseen.SILENT_AFTER if limit is None else limit
-        return {r for r, q in zip(self._tr.rooms, self._tr._c.silent(now, start, float(limit))) if q}
+    def silent(self, now: float, start: float | None) -> set:
+        """The rooms whose own sensors in use all sent no frame for more than roomseen.SILENT_AFTER s
+        (as it was when the world was built), counted from start for one that sent nothing (None: not
+        started, nothing silent)."""
+        return {r for r, q in zip(self._tr.rooms, self._tr._c.silent(now, start)) if q}
 
-    def online(self, sensor_id: str, now: float, start: float | None, limit: float | None = None) -> bool:
-        """The sensor sent a frame within the last limit s (the web UI's "online" too)."""
-        limit = roomseen.SILENT_AFTER if limit is None else limit
-        return self._tr._c.online(sensor_id, now, start, float(limit))
+    def online(self, sensor_id: str, now: float, start: float | None) -> bool:
+        """The sensor sent a frame lately (the web UI's "online" too)."""
+        return self._tr._c.online(sensor_id, now, start)
 
 
 class Tracker:
@@ -220,8 +222,15 @@ class Tracker:
             self._g(si, np.zeros((1, 2)))
         self.dest_geo = destination.Geometry(self)
         loglik = self._c.loglik if self._c is not None else (0.0, 0.0)  # the evidence goes on over a rebuild
-        self._c = _core(presence_core.Core, self._export())
+        self._c = _core(presence_core.Core, *self._world())
         self._c.loglik = loglik
+        # the core built its own world: the shell's (still read by what is not ported yet) must be the same
+        rooms, places, areas, own = self._c.names()
+        if (rooms != self.rooms or places != self.world.places
+                or self._c.shape() != (self.tiles.n, self.tiles.R, self.tiles.A)):
+            raise CoreError(f"the core's plan {rooms, places, self._c.shape()} is not the shell's")
+        self._own = {sid: r for sid, r in zip(self.sensors, own) if r is not None}
+        self._entry_ids = rooms + areas
         if old is not None:  # what the rooms' own LD2450s saw goes on
             self._c.adopt_seen(old)
         for si, sid in enumerate(self.sensors):
@@ -231,14 +240,19 @@ class Tracker:
         self._mirror = None
         self._out_cache = {}
 
-    def _export(self) -> dict:
-        """The world as this tracker built it, for the core (docs/rust-core.md 6: the WorldExport,
-        until the build is in Rust): the model, the shapes, the raster and walls, the tiles, per
-        sensor where it is and its sight."""
-        tl, w, m, sh = self.tiles, self.world, self.m, self.shapes
+    def _world(self) -> tuple:
+        """What the core builds its world of (docs/rust-core.md 1): the configuration and the model as
+        JSON, roomseen.SILENT_AFTER; with PT_WORLD=python also the world as this shell built it."""
+        return (json.dumps(self.config.to_dict()), self._model(), float(roomseen.SILENT_AFTER),
+                self._export() if WORLD == "python" else None)
+
+    def _model(self) -> str:
+        """The model's numbers as JSON, with the filter's constants (params.rs)."""
+        m = self.m
         names = ("still_noise", "kappa_switch", "speed", "speed_spread", "turn_rate", "walk_length", "arrive_rate",
                  "guest_rate", "forget_rate", "find_radius", "res_range", "res_cross", "const_share", "tau",
-                 "unseen_life", "white", "pos_every", "find_clutter", "ghost_echo", "hyp_mass", "start_unknown")
+                 "unseen_life", "white", "pos_every", "find_clutter", "ghost_echo", "hyp_mass", "start_unknown",
+                 "go_share", "go_time", "kappa_shape", "ld_amp_shape", "kappa_amp_corr")
         # JSON has no infinity: such numbers go as "inf", "-inf", "nan" (params.rs)
         params = {k: (v if math.isfinite(v) else str(v)) for k in names for v in [float(getattr(m, k))]}
         params.update(acquire=[[float(x) for x in a] for a in m.acquire], track_life=[float(x) for x in m.track_life],
@@ -252,7 +266,16 @@ class Tracker:
                       ld_every=float(m.ld_every), ld_frame=float(m.ld_frame), ld_memory=float(m.ld_memory),
                       ld_echo_life=float(m.ld_echo_life), ld_echo_stages=int(m.ld_echo_stages),
                       ld_echo_ranges=[float(x) for x in m.ld_echo_ranges], ld_echo_amps=[float(x) for x in m.ld_echo_amps],
-                      ld_tile_mass=LD_TILE_MASS)
+                      ld_tile_mass=LD_TILE_MASS, stay_points=[float(x) for x in m.stay_points],
+                      kappa_levels=int(m.kappa_levels), ld_amp_levels=int(m.ld_amp_levels),
+                      ld_view={str(k): float(v) for k, v in (m.ld_view or {}).items()})
+        return json.dumps(params)
+
+    def _export(self) -> dict:
+        """The world as this shell built it (docs/rust-core.md 6: the WorldExport, the aid that checks
+        the core's build): the model, the shapes, the raster and walls, the tiles, per sensor where it is
+        and its sight."""
+        tl, w, sh = self.tiles, self.world, self.shapes
 
         def f(a):
             return np.ascontiguousarray(a, dtype=float)
@@ -261,7 +284,7 @@ class Tracker:
             return np.ascontiguousarray(a, dtype=np.int64)
         d = tl.door_tiles
         return dict(
-            params=json.dumps(params), go=f(sh.go), go_w=f(sh.go_w), go_w_ongoing=f(sh.go_w_ongoing), kappa=f(sh.kappa),
+            params=self._model(), go=f(sh.go), go_w=f(sh.go_w), go_w_ongoing=f(sh.go_w_ongoing), kappa=f(sh.kappa),
             kappa_w=f(sh.kappa_w), amp=f(sh.amp), ka_w=f(sh.ka_w), amp_given_kappa=f(sh.amp_given_kappa), x0=float(w.x0),
             y0=float(w.y0), nx=int(w.nx), ny=int(w.ny), walls=f(w.walls), wall_dist=f(w.wall_grid), n=int(tl.n), R=int(tl.R),
             A=int(tl.A), tick=float(tl.tick), walk_t=f(tl.T_walk_t), into_t=f(tl.T_in_t), centers=f(tl.centers),
@@ -270,27 +293,8 @@ class Tracker:
             door_list=i(tl.door_list), exits=i(tl.exits), entries=i(tl.entry_idx), region_rates=f(tl.region_rates()),
             widths=f(tl.widths), points=f(tl.points), point_tile=i(tl.point_tile), point_count=f(tl.point_count),
             sensors=[self._export_sensor(si) for si in range(len(self.sensors))],
-            rooms=f(np.where(self.room_of >= 0, self.room_of, len(self.rooms))), plan=self._export_plan())
-
-    def _export_plan(self) -> dict:
-        """What the outputs need of the plan (world/plan.rs, until the plan is built in the core): the
-        observed rooms with their outlines, per sensor its own room (roomseen.own_room) and whether it is
-        in use, the areas' outlines (the zones of "wird betreten" are the rooms, then the areas), per
-        tile its room, per region the age of a stay seen at a random time."""
-        def outline(z):
-            centre = None if z.center is None else tuple(map(float, z.center))
-            return z.shape, [tuple(map(float, q)) for q in z.points], centre, float(z.radius)
-        rooms = self.config.observed_rooms()
-        areas = self.config.home_zones("area")
-        index = {z.id: k for k, z in enumerate(rooms)}
-        self._own = {s.id: own for s in self.config.sensors for own in [roomseen.own_room(s, rooms)] if own is not None}
-        self._entry_ids = [z.id for z in rooms] + [z.id for z in areas]
-        tl = self.tiles
-        return dict(rooms=[(z.id, outline(z)) for z in rooms],
-                    sensors=[(s.id, index.get(self._own.get(s.id)), bool(s.enabled and s.placed))
-                             for s in self.config.sensors],
-                    areas=[outline(z) for z in areas], tile_room=np.ascontiguousarray(tl.room, dtype=np.int64),
-                    region_start=np.ascontiguousarray([tl.region_start(r) for r in range(tl.R)], dtype=float).reshape(-1))
+            rooms=f(np.where(self.room_of >= 0, self.room_of, len(self.rooms))), tile_room=i(tl.room),
+            region_start=f([tl.region_start(r) for r in range(tl.R)]).reshape(-1), generator=f(tl.Q))
 
     def _export_sensor(self, si: int) -> dict:
         """A sensor for the core: where it is, its sight, how well it tests a person per tile; its
@@ -464,7 +468,7 @@ class Tracker:
             return None if a is None else np.ascontiguousarray(a, dtype=float)
         dens = [(f(o.walk), f(o.still), f(o.region), float(o.out), float(o.r), type(o) is Undetected, f(o._amp))
                 for o in objs]
-        if not self._call("restore", self.now, dens, hyps):
+        if self._call("restore", self.now, dens, hyps) is not None:  # what does not fit
             return False
         self._forget()
         self.started_from = state
@@ -480,8 +484,6 @@ class Tracker:
         what the sensors placed could have tested lasts (in the core)."""
         if gap <= 0:
             return
-        if gap > GAP_EXACT and not self._c.has_walk_end():
-            _core(self._c.set_walk_end, np.ascontiguousarray(self.tiles.walk_end(), dtype=float))
         # the sensors were there, only the app was not watching: what they could have tested lasts
         placed = [si for si, s in enumerate(self.config.sensors) if s.enabled and s.placed]
         self._call("predict_gap", gap, placed)
@@ -553,7 +555,7 @@ class Tracker:
             if sid in self.runtime:
                 self.runtime[sid].last_frame = -math.inf  # the next frame is a start (_evidence)
             self._call("ld_reset", si)
-        if changed and self._h:
+        if changed and len(self._call("hyp_weights")):
             self._merge()
             self._prune()
             self._normalize()
@@ -562,7 +564,7 @@ class Tracker:
         self.tiles.g, self.tiles.dist, self.tiles._observed = {}, {}, {}
         for si in range(len(self.sensors)):
             self._g(si, np.zeros((1, 2)))
-        self._call("set_world", self._export())  # the sensors' sight anew, what is known stays
+        self._call("set_world", *self._world())  # the sensors' sight anew, what is known stays
         self._sent = None
 
     def use_ghost_map(self, gm) -> bool:
@@ -1077,7 +1079,7 @@ class Tracker:
         their id in the display (persons(); None if not in the most probable hypothesis). In the core,
         once per move of everybody or event."""
         return {z: {"p": p, "eta": eta, "distance": dist, "person": person}
-                for z, (p, dist, eta, person) in zip(self._entry_ids, self._call("entering", float(self.p.lead_time)))}
+                for z, (p, dist, eta, person) in zip(self._entry_ids, self._call("entering"))}
 
     # ------------------------------------------------------- "Ziel" (MODEL.md 6)
 
@@ -1110,14 +1112,13 @@ class Tracker:
     def _target_outputs(self) -> dict:
         geo, dm = self.dest_geo, self.dest_map
         enter = self.entering()
-        p = self.p
-        c_v = p.approach_cost / (p.approach_cost + 1.0)
+        c_v = self._c.thresholds()[1]  # "wird betreten"'s
         K = len(self.rooms)
         prior = self.m.dest_prior_walks
         found, held, best = self._call("walkers")  # the people with tracks, per hypothesis those it holds
         walkers = {}  # walker -> (P(walking), room, space, f (C,), n, x, y, vx, vy)
         for i, (pw, x, y, vx, vy) in enumerate(found):
-            if pw < ENTER_MIN_WALK or math.hypot(vx, vy) < destination.MIN_SPEED:
+            if math.hypot(vx, vy) < destination.MIN_SPEED:
                 continue
             near = geo.around(x, y)
             if near is None:
@@ -1187,8 +1188,7 @@ class Tracker:
         above the threshold c = light_cost / (light_cost + 1), or the room's own LD2450 measured
         somebody in it within the last seen_hold s (roomseen.py). source: "filter", "ld2450", "beide"
         (both), None if not occupied. Only an output: reads the filter, changes nothing in it."""
-        p = self.p
-        sources = self._call("occupancy", self.now, float(p.light_cost), float(p.seen_hold))
+        sources = self._call("occupancy", self.now)
         return {z: (s is not None, s) for z, s in zip(self.rooms, sources)}
 
     def zone_states(self) -> dict:
@@ -1200,62 +1200,23 @@ class Tracker:
         (MODEL.md 6). An observed room is also occupied while its own LD2450 measures somebody in it
         (occupancy()); its count is then at least 1, and the house's too. A room whose own sensors in
         use all went silent (Tracker.seen.silent) is not available: no data, Home Assistant gets
-        "unavailable" instead of its state (ha.py); the state itself is computed as always."""
+        "unavailable" instead of its state (ha.py); the state itself is computed as always. The numbers
+        are the core's (zone_numbers); here they become ZoneStates, with "Ziel" (until it is in Rust)."""
         from .zones import ZoneState
-        p = self.p
-        c = p.light_cost / (p.light_cost + 1.0)
+        zones, (count, moving, still) = self._call("zone_numbers", self.now, self.start)
+        c_enter = self._c.thresholds()[1]
         states = {}
-        region_of = {room: rid for rid, r in self.config.regions.items() for room in r["rooms"]}
-        counts = self.count_distribution()
-        places = self.place_distribution()
-        occupancy = self.occupancy()
-        raised = False  # a count raised to 1 by the room's own LD2450
-        for z in self.config.home_zones("room"):  # the stairwell is outside: no state (MODEL.md 6)
-            st = ZoneState()
-            rid = region_of.get(z.id)
-            if rid is None:
-                if z.id in counts:
-                    st.count = int(np.argmax(counts[z.id]))
-                    st.probability = 1 - float(counts[z.id][0])
-                    st.decided, st.source = occupancy[z.id]
-                    if st.source in ("ld2450", "beide") and st.count == 0:
-                        st.count, raised = 1, True
-            else:
-                dist = places.get(rid, [1.0])
-                st.probability = 1 - float(dist[0])
-                if len(self.config.regions[rid]["rooms"]) == 1:
-                    st.count = int(np.argmax(dist))
-                    st.decided = st.probability > c
-                    st.source = "filter" if st.decided else None
-            states[z.id] = st
-        total = ZoneState()
-        zones = self.config.home_zones("room", "area")
-        for z in zones:
-            states.setdefault(z.id, ZoneState())
-        total.count = max(int(np.argmax(places["_house"])), int(raised))
-        for d in self.persons():
-            if d["x"] is None:
-                continue
-            x, y, vx, vy = d["x"], d["y"], d["vx"], d["vy"]
-            moving = not d["lost"] and d["walk"] > 0.5 and math.hypot(vx, vy) > 0.15
-            total.moving += moving
-            total.still += not moving
-            for z in zones:
-                st = states[z.id]
-                if z.kind == "area" and z.contains(x, y):
-                    st.count += 1
-                if z.contains(x, y):
-                    st.moving += moving
-                    st.still += not moving
-        c_enter = p.approach_cost / (p.approach_cost + 1.0)
-        for zid, e in self.entering().items():
-            st = states.get(zid)
-            if st is None:
-                continue
-            st.p_enter = e["p"]
-            st.approaching = e["p"] > c_enter
-            st.c_enter = c_enter
-            st.eta, st.distance, st.person = e["eta"], e["distance"], e["person"]
+        for zid, n, prob, decided, mov, sti, enter, approaching, available in zones:
+            st = ZoneState(count=n, moving=mov, still=sti, probability=prob, available=available)
+            if decided is not None:
+                st.decided, st.source = decided
+            if enter is not None:
+                st.p_enter, st.distance, st.eta, st.person = enter
+                st.approaching, st.c_enter = approaching, c_enter
+            states[zid] = st
+        # the rooms first, then the areas (as Home Assistant and the display have them)
+        kind = {z.id: z.kind for z in self.config.zones}
+        states = {z: states[z] for z in sorted(states, key=lambda z: kind[z] != "room")}
         for zid, e in self.targets().items():
             st = states.get(zid)
             if st is None:
@@ -1264,13 +1225,7 @@ class Tracker:
             st.c_target = self.threshold(zid)
             st.p_target, st.target_weight, st.target_walks = e["p"], e["weight"], e["walks"]
             st.target_from, st.target_distance, st.target_eta, st.target_person = e["from"], e["distance"], e["eta"], e["person"]
-        for st in (*states.values(), total):
-            st.moving = min(st.moving, st.count)
-            st.still = min(st.still, st.count - st.moving)
-        for zid in self.seen.silent(self.now, self.start):
-            if zid in states:
-                states[zid].available = False
-        states["_total"] = total
+        states["_total"] = ZoneState(count=count, moving=moving, still=still)
         return states
 
     def snapshot(self) -> dict:

@@ -7,24 +7,23 @@
 use numpy::{PyArray1, PyArrayDyn, PyArrayMethods, PyReadonlyArrayDyn};
 use pyo3::exceptions::{PyFloatingPointError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 
+use presence_core::config::Config;
 use presence_core::filter::branch::{Found, Frame};
 use presence_core::filter::densities::{Amp, DensityData, DensityShape, Kind};
 use presence_core::filter::hyp::Owner;
 use presence_core::filter::mixture::{NewTrack, SegId};
 use presence_core::filter::pool::PoolId;
 use presence_core::filter::{NotFinite, PeopleState, Start};
-use presence_core::geometry::{Point, Shape};
+use presence_core::geometry::Point;
 use presence_core::ld2410::CELLS;
 use presence_core::ld2410::sensor::LdCollect;
 use presence_core::outputs::Source;
 use presence_core::params::{LostKind, Params, Shapes};
 use presence_core::sensors::SensorSet;
 use presence_core::tracker::{TrackEvents, Tracker};
-use presence_core::world::{
-    DoorTile, LdExport, LdTiles, PlanExport, Raster, Room, SensorExport, SensorPlan, Tiles, World, WorldExport,
-};
+use presence_core::world::{DoorTile, LdExport, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
 
 fn item<'py>(d: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
     d.get_item(key)?
@@ -52,8 +51,34 @@ fn points(v: &[f64]) -> Vec<[f64; 2]> {
     v.as_chunks::<2>().0.to_vec()
 }
 
+/// Indices, -1 for none.
+fn ints_or_none(d: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<Option<usize>>> {
+    let a: PyReadonlyArrayDyn<'_, i64> = item(d, key)?.extract()?;
+    Ok(a.as_slice()?.iter().map(|&k| usize::try_from(k).ok()).collect())
+}
+
+/// The configuration (the JSON of model.Config.to_dict()).
+fn config_from(json: &str) -> PyResult<Config> {
+    Config::from_json(json).map_err(PyValueError::new_err)
+}
+
+/// The model (the JSON of filtermodel.Model's fields and filter.py's constants).
+fn params_from(json: &str) -> PyResult<Params> {
+    Params::from_json(json).map_err(|err| PyValueError::new_err(err.to_string()))
+}
+
+/// The world: built here from the configuration and the model, or (the aid that checks the build,
+/// docs/rust-core.md 6) as the Python tracker built it.
+fn world_of(config: &str, model: &str, silent_after: f64, export: Option<&Bound<'_, PyDict>>) -> PyResult<World> {
+    let config = config_from(config)?;
+    match export {
+        None => World::build(&config, params_from(model)?, silent_after).map_err(PyValueError::new_err),
+        Some(e) => World::from_export(export_from(e)?, &config, silent_after).map_err(PyValueError::new_err),
+    }
+}
+
 /// The world as the Python tracker built it (tiling.Tiling, filter._grid, filtermodel).
-fn world_from(e: &Bound<'_, PyDict>) -> PyResult<World> {
+fn export_from(e: &Bound<'_, PyDict>) -> PyResult<WorldExport> {
     let params =
         Params::from_json(&number::<String>(e, "params")?).map_err(|err| PyValueError::new_err(err.to_string()))?;
     let shapes = Shapes {
@@ -110,6 +135,9 @@ fn world_from(e: &Bound<'_, PyDict>) -> PyResult<World> {
         point_tile: ints(e, "point_tile")?,
         point_count: floats(e, "point_count")?,
         walk_end: Vec::new(),
+        room: ints_or_none(e, "tile_room")?,
+        region_start: floats(e, "region_start")?,
+        generator: floats(e, "generator")?,
     };
     let sensors = item(e, "sensors")?
         .try_iter()?
@@ -124,48 +152,8 @@ fn world_from(e: &Bound<'_, PyDict>) -> PyResult<World> {
         tiles,
         sensors,
         rooms: floats(e, "rooms")?,
-        plan: plan_from(&item(e, "plan")?.cast_into::<PyDict>()?)?,
     };
-    World::from_export(export).map_err(PyValueError::new_err)
-}
-
-/// A zone's outline: (kind, points, centre, radius) as model.ZoneConfig holds it.
-fn shape_from(z: (String, Vec<Point>, Option<Point>, f64)) -> PyResult<Shape> {
-    let (kind, points, centre, radius) = z;
-    match (kind.as_str(), points.as_slice(), centre) {
-        ("rect", &[a, b], _) => Ok(Shape::rect(a, b)),
-        ("circle", _, Some(center)) => Ok(Shape::Circle { center, radius }),
-        ("rect" | "circle", _, _) => Err(PyValueError::new_err(format!("a {kind} without its corners or centre"))),
-        _ => Ok(Shape::polygon(points)),
-    }
-}
-
-/// What the outputs need of the plan (world::PlanExport): the observed rooms (id, outline), per
-/// sensor (id, own room, in use), the areas' outlines, per tile its room (-1: none), region_start.
-fn plan_from(d: &Bound<'_, PyDict>) -> PyResult<PlanExport> {
-    type Zone = (String, Vec<Point>, Option<Point>, f64);
-    let rooms: Vec<(String, Zone)> = number(d, "rooms")?;
-    let sensors: Vec<(String, Option<usize>, bool)> = number(d, "sensors")?;
-    let areas: Vec<Zone> = number(d, "areas")?;
-    let tile_room: PyReadonlyArrayDyn<'_, i64> = item(d, "tile_room")?.extract()?;
-    Ok(PlanExport {
-        rooms: rooms
-            .into_iter()
-            .map(|(id, z)| {
-                Ok(Room {
-                    id,
-                    shape: shape_from(z)?,
-                })
-            })
-            .collect::<PyResult<_>>()?,
-        sensors: sensors
-            .into_iter()
-            .map(|(id, own_room, in_use)| SensorPlan { id, own_room, in_use })
-            .collect(),
-        areas: areas.into_iter().map(shape_from).collect::<PyResult<_>>()?,
-        tile_room: tile_room.as_slice()?.iter().map(|&k| usize::try_from(k).ok()).collect(),
-        region_start: floats(d, "region_start")?,
-    })
+    Ok(export)
 }
 
 /// A sensor of the world's export: where it is and its sight; its LD2410C's axis, height above a
@@ -315,28 +303,48 @@ impl Core {
 #[allow(clippy::needless_pass_by_value)]
 #[pymethods]
 impl Core {
+    /// A tracker in the world of a configuration and model (JSON); `silent_after`: s until a room's
+    /// own sensor counts as gone. With `export`: in the world the Python tracker built (the check aid).
     #[new]
-    fn new(export: &Bound<'_, PyDict>) -> PyResult<Self> {
+    #[pyo3(signature = (config, model, silent_after, export=None))]
+    fn new(
+        py: Python<'_>,
+        config: &str,
+        model: &str,
+        silent_after: f64,
+        export: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        let world = match export {
+            Some(_) => world_of(config, model, silent_after, export)?,
+            None => py.detach(|| {
+                World::build(&config_from(config)?, params_from(model)?, silent_after).map_err(PyValueError::new_err)
+            })?,
+        };
         Ok(Self {
-            tracker: Tracker::new(world_from(export)?),
+            tracker: Tracker::new(world),
             serial: 0,
         })
     }
 
-    /// A rebuilt world on the same tiles (sensors recalibrated): what is known stays.
-    fn set_world(&mut self, export: &Bound<'_, PyDict>) -> PyResult<()> {
-        self.tracker.set_world(world_from(export)?);
+    /// A world rebuilt on the same tiles (sensors recalibrated, outputs' numbers changed): what is
+    /// known stays.
+    #[pyo3(signature = (config, model, silent_after, export=None))]
+    fn set_world(
+        &mut self,
+        config: &str,
+        model: &str,
+        silent_after: f64,
+        export: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        self.tracker.set_world(world_of(config, model, silent_after, export)?);
         self.changed();
         Ok(())
     }
 
-    fn has_walk_end(&self) -> bool {
-        !self.tracker.world().tiles.walk_end.is_empty()
-    }
-
-    fn set_walk_end(&mut self, walk_end: PyReadonlyArrayDyn<'_, f64>) -> PyResult<()> {
-        self.tracker.set_walk_end(floats_of(&walk_end)?);
-        Ok(())
+    /// (tiles, regions, ages) of the world: the shell's own tiles must be the same.
+    fn shape(&self) -> (usize, usize, usize) {
+        let t = &self.tracker.world().tiles;
+        (t.n, t.regions, t.ages)
     }
 
     /// Per sensor whether its frames count and when its last frame came.
@@ -707,28 +715,32 @@ impl Core {
     // ---------------------------------------------------------------- starts
 
     /// Start over at t (Tracker::reset_people): nothing known (people None), or known people at
-    /// these places (a place's index, None: anywhere) and nobody unknown.
+    /// these places (a place's index, None: anywhere) and nobody unknown; ValueError for a place there
+    /// is not.
     #[pyo3(signature = (t, people=None))]
-    fn reset_people(&mut self, t: f64, people: Option<Vec<Option<usize>>>) {
+    fn reset_people(&mut self, t: f64, people: Option<Vec<Option<usize>>>) -> PyResult<()> {
         let people: Option<Vec<Start>> =
             people.map(|v| v.into_iter().map(|p| p.map_or(Start::Anywhere, Start::Place)).collect());
-        self.tracker.reset_people(t, people.as_deref());
+        self.tracker
+            .reset_people(t, people.as_deref())
+            .map_err(PyValueError::new_err)?;
         self.changed();
+        Ok(())
     }
 
     /// Start over at t from a saved state the shell decoded (Tracker::restore): the densities and per
-    /// hypothesis (logw, people, unknown) as indices into them. False, and nothing changed, if it
-    /// does not fit.
+    /// hypothesis (logw, people, unknown) as indices into them. What does not fit (None: it fits; then
+    /// nothing changed).
     fn restore(
         &mut self,
         t: f64,
         densities: Vec<DensityIn<'_>>,
         hyps: Vec<(f64, Vec<usize>, usize)>,
-    ) -> PyResult<bool> {
+    ) -> PyResult<Option<String>> {
         let densities = densities.iter().map(density_in).collect::<PyResult<_>>()?;
-        let ok = self.tracker.restore(t, PeopleState { hyps, densities }).is_ok();
+        let refused = self.tracker.restore(t, PeopleState { hyps, densities }).err();
         self.changed();
-        Ok(ok)
+        Ok(refused)
     }
 
     /// Every hypothesis' weight NaN: the shell's test of a failing model.
@@ -761,22 +773,20 @@ impl Core {
         Ok(rows.into_pyobject(py)?.into_any())
     }
 
-    /// Per zone (the observed rooms, then the areas) "wird betreten" for the look-ahead lead_time:
-    /// (p, distance, eta, person).
+    /// Per zone (the observed rooms, then the areas) "wird betreten": (p, distance, eta, person).
     #[allow(clippy::type_complexity)]
-    fn entering(&mut self, py: Python<'_>, lead_time: f64) -> Vec<(f64, Option<f64>, Option<f64>, Option<usize>)> {
+    fn entering(&mut self, py: Python<'_>) -> Vec<(f64, Option<f64>, Option<f64>, Option<usize>)> {
         let tracker = &mut self.tracker;
-        py.detach(|| tracker.entering(lead_time))
+        py.detach(|| tracker.entering())
             .iter()
             .map(|e| (e.p, e.distance, e.eta, e.person))
             .collect()
     }
 
-    /// Per observed room what decided it occupied at now ("filter", "ld2450", "beide"), None: not -
-    /// by the cost of the light, or the room's own LD2450 within the last seen_hold s.
-    fn occupancy(&mut self, now: f64, light_cost: f64, seen_hold: f64) -> Vec<Option<&'static str>> {
+    /// Per observed room what decided it occupied at now ("filter", "ld2450", "beide"), None: not.
+    fn occupancy(&mut self, now: f64) -> Vec<Option<&'static str>> {
         self.tracker
-            .occupancy(now, light_cost, seen_hold)
+            .occupancy(now)
             .into_iter()
             .map(|s| s.map(source_name))
             .collect()
@@ -807,8 +817,8 @@ impl Core {
             .collect()
     }
 
-    /// The people with tracks who are no ghost's source, (P(walking), x, y, vx, vy); per hypothesis
-    /// the walkers it holds with their place among its people; the most probable hypothesis.
+    /// The people with tracks walking with P(walking) >= ENTER_MIN_WALK, (P(walking), x, y, vx, vy); per
+    /// hypothesis the walkers it holds with their place among its people; the most probable hypothesis.
     #[allow(clippy::type_complexity)]
     fn walkers(&self) -> (Vec<(f64, f64, f64, f64, f64)>, Vec<Vec<(usize, usize)>>, usize) {
         let found = self.tracker.walkers();
@@ -817,7 +827,49 @@ impl Core {
             .iter()
             .map(|w| (w.walking, w.at[0], w.at[1], w.velocity[0], w.velocity[1]))
             .collect();
-        (walkers, found.held, found.best)
+        let held = found
+            .held
+            .iter()
+            .map(|h| h.iter().map(|x| (x.walker, x.place)).collect())
+            .collect();
+        (walkers, held, found.best)
+    }
+
+    /// The thresholds of the outputs: of P(somebody there) for occupied, of p_enter for "wird betreten".
+    fn thresholds(&self) -> (f64, f64) {
+        let o = &self.tracker.world().outputs;
+        (o.occupied_above(), o.entering_above())
+    }
+
+    /// Per zone of the home (in the plan's order: the configuration's) its id and numbers - count,
+    /// probability, decided (None: no decision; else (occupied, source)), moving, still, entering
+    /// (p, distance, eta, person), approaching, available -, and the house's (count, moving, still).
+    #[allow(clippy::type_complexity)]
+    fn zone_numbers<'py>(
+        &mut self,
+        py: Python<'py>,
+        now: f64,
+        start: Option<f64>,
+    ) -> PyResult<(Bound<'py, PyList>, (usize, usize, usize))> {
+        let tracker = &mut self.tracker;
+        let (zones, house) = py.detach(|| tracker.zone_numbers(now, start));
+        let out = PyList::empty(py);
+        for (z, n) in self.tracker.world().plan.zones.iter().zip(&zones) {
+            let decided = n.decided.map(|s| (s.is_some(), s.map(source_name)));
+            let entering = n.entering.map(|e| (e.p, e.distance, e.eta, e.person));
+            out.append((
+                z.id.as_str(),
+                n.count,
+                n.probability,
+                decided,
+                n.moving,
+                n.still,
+                entering,
+                n.approaching,
+                n.available,
+            ))?;
+        }
+        Ok((out, (house.count, house.moving, house.still)))
     }
 
     /// A frame of the sensor with this id at t, whatever is in it.
@@ -831,15 +883,37 @@ impl Core {
         self.tracker.seen_frame(si, t, &measured);
     }
 
-    /// Whether the sensor with this id sent a frame within the last limit s (start: the model's,
-    /// None: not started).
-    fn online(&self, id: &str, now: f64, start: Option<f64>, limit: f64) -> bool {
-        self.tracker.seen().online(id, now, start, limit)
+    /// Whether the sensor with this id sent a frame lately (start: the model's, None: not started).
+    fn online(&self, id: &str, now: f64, start: Option<f64>) -> bool {
+        self.tracker.online(id, now, start)
     }
 
-    /// Per observed room whether its own sensors in use all sent nothing for more than limit s.
-    fn silent(&self, now: f64, start: Option<f64>, limit: f64) -> Vec<bool> {
-        self.tracker.silent(now, start, limit)
+    /// Per observed room whether its own sensors in use all went silent.
+    fn silent(&self, now: f64, start: Option<f64>) -> Vec<bool> {
+        self.tracker.silent(now, start)
+    }
+
+    /// The names of the plan: the observed rooms, the places (observed, regions, outside), the areas,
+    /// per sensor its own room (None: none).
+    #[allow(clippy::type_complexity)]
+    fn names(&self) -> (Vec<String>, Vec<String>, Vec<String>, Vec<Option<String>>) {
+        let p = &self.tracker.world().plan;
+        let places = std::iter::once("observed".to_string())
+            .chain(p.regions.iter().map(|r| r.id.clone()))
+            .chain(["outside".to_string()])
+            .collect();
+        let areas = p
+            .zones
+            .iter()
+            .filter(|z| z.kind == presence_core::config::ZoneKind::Area)
+            .map(|z| z.id.clone())
+            .collect();
+        let own = p
+            .sensors
+            .iter()
+            .map(|s| s.own_room.map(|k| p.rooms[k].id.clone()))
+            .collect();
+        (p.rooms.iter().map(|r| r.id.clone()).collect(), places, areas, own)
     }
 
     /// Per room id the last time its own LD2450 measured somebody in it.
@@ -851,4 +925,142 @@ impl Core {
     fn watched(&self) -> Vec<bool> {
         self.tracker.watched()
     }
+}
+
+/// The world the core builds of a configuration and model (JSON), as a dict in the format of the
+/// Python tracker's `_export()` (and the plan): for the aid that checks the build against Python's
+/// (rust-port/cmpworld.py).
+#[pyfunction]
+pub fn build_export<'py>(
+    py: Python<'py>,
+    config: &str,
+    model: &str,
+    silent_after: f64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let w = world_of(config, model, silent_after, None)?;
+    let (t, sh) = (&w.tiles, &w.shapes);
+    let flat = |v: &[[f64; 2]]| -> Vec<f64> { v.iter().flatten().copied().collect() };
+    let d = PyDict::new(py);
+    let a = |v: &[f64]| array(py, v, &[v.len()]);
+    d.set_item("x0", w.raster.x0)?;
+    d.set_item("y0", w.raster.y0)?;
+    d.set_item("nx", w.raster.nx)?;
+    d.set_item("ny", w.raster.ny)?;
+    d.set_item(
+        "walls",
+        a(&w.plan
+            .walls
+            .iter()
+            .flat_map(|s| [s[0][0], s[0][1], s[1][0], s[1][1]])
+            .collect::<Vec<_>>())?,
+    )?;
+    d.set_item("wall_dist", a(w.wall_dist.values())?)?;
+    d.set_item("rooms", a(w.rooms.values())?)?;
+    for (k, v) in [
+        ("go", &sh.go),
+        ("go_w", &sh.go_w),
+        ("go_w_ongoing", &sh.go_w_ongoing),
+        ("kappa", &sh.kappa),
+        ("kappa_w", &sh.kappa_w),
+        ("amp", &sh.amp),
+        ("ka_w", &sh.ka_w),
+        ("amp_given_kappa", &sh.amp_given_kappa),
+    ] {
+        d.set_item(k, a(v)?)?;
+    }
+    d.set_item("n", t.n)?;
+    d.set_item("R", t.regions)?;
+    d.set_item("A", t.ages)?;
+    d.set_item("centers", a(&flat(&t.centers))?)?;
+    d.set_item("tile_var", a(&flat(&t.var))?)?;
+    d.set_item("area", a(&t.area)?)?;
+    d.set_item("fine", t.fine.clone())?;
+    d.set_item("walk_t", a(&t.walk_t)?)?;
+    d.set_item("into_t", a(&t.into_t)?)?;
+    d.set_item("generator", a(&t.generator)?)?;
+    d.set_item(
+        "door_rates",
+        a(&t.door_tiles
+            .iter()
+            .flat_map(|x| x.rates.iter().copied())
+            .collect::<Vec<_>>())?,
+    )?;
+    d.set_item("region_doors", t.region_doors.clone())?;
+    d.set_item("exits", t.exits.clone())?;
+    d.set_item("entries", t.entries.clone())?;
+    d.set_item("region_rates", a(&t.region_rates)?)?;
+    d.set_item("region_start", a(&t.region_start)?)?;
+    d.set_item("widths", a(&t.widths)?)?;
+    d.set_item("points", a(&flat(&t.points))?)?;
+    d.set_item("point_tile", t.point_tile.clone())?;
+    d.set_item(
+        "tile_room",
+        t.room.iter().map(|r| r.map_or(-1, |k| k as i64)).collect::<Vec<_>>(),
+    )?;
+    let sensors = PyList::empty(py);
+    for (s, ld) in w.sights.iter().zip(&w.ld) {
+        let e = PyDict::new(py);
+        e.set_item("grid", a(s.grid.values())?)?;
+        e.set_item("observed", a(&s.observed)?)?;
+        e.set_item("ld_los", a(ld.los.values())?)?;
+        e.set_item("ld_view", ld.view.as_ref().map(|v| a(v)).transpose()?)?;
+        e.set_item("ld_idx", ld.tiles.idx.clone())?;
+        e.set_item(
+            "ld_still",
+            a(&ld.tiles.still.iter().flatten().copied().collect::<Vec<_>>())?,
+        )?;
+        e.set_item(
+            "ld_walk",
+            a(&ld.tiles.walk.iter().flatten().copied().collect::<Vec<_>>())?,
+        )?;
+        sensors.append(e)?;
+    }
+    d.set_item("sensors", sensors)?;
+    let p = &w.plan;
+    d.set_item(
+        "regions",
+        p.regions
+            .iter()
+            .map(|r| (r.id.clone(), r.name.clone(), r.rooms.clone(), r.exits))
+            .collect::<Vec<_>>(),
+    )?;
+    d.set_item(
+        "observed_rooms",
+        p.rooms.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+    )?;
+    d.set_item(
+        "own_rooms",
+        p.sensors
+            .iter()
+            .map(|s| s.own_room.map(|k| p.rooms[k].id.clone()))
+            .collect::<Vec<_>>(),
+    )?;
+    d.set_item(
+        "portals",
+        p.portals
+            .iter()
+            .map(|q| (q.place, q.watch[0], q.watch[1]))
+            .collect::<Vec<_>>(),
+    )?;
+    d.set_item("closed_rooms", p.closed_rooms.len())?;
+    Ok(d)
+}
+
+/// Per point whether a target of sensor si there is a reflection (Plan::hidden; the aid that checks
+/// the plan against model.Config.hidden): `us` the unit vectors from the sensor to the points. (PyO3
+/// extracts the arguments as owned values.)
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+pub fn hidden_at(config: &str, si: usize, points: Vec<Point>, us: Vec<Point>, margin: f64) -> PyResult<Vec<bool>> {
+    let config = config_from(config)?;
+    let plan = presence_core::plan::Plan::new(&config);
+    let s = config
+        .sensors
+        .get(si)
+        .ok_or_else(|| PyValueError::new_err("no such sensor"))?;
+    Ok(points
+        .iter()
+        .zip(&us)
+        .map(|(&p, &u)| plan.hidden(&config, s, p, u, margin))
+        .collect())
 }

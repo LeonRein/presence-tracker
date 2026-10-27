@@ -19,14 +19,14 @@ pub enum Start {
 
 /// Standing in view anywhere alike, the stay seen at a random time, times `share` (the prior of a
 /// stay's kind and detectability, hidden.Hidden.anywhere / at_place), in numpy's order.
-fn standing_anywhere(d: &mut DensityMut, world: &World, share: Option<f64>) {
+fn standing_anywhere(d: &mut DensityMut, world: &World, share: f64) {
     let (tiles, shapes) = (&world.tiles, &world.shapes);
     let total = pairwise_sum(&tiles.area);
     let levels = shapes.kappa_w.len();
     for (l, &go) in shapes.go_w_ongoing.iter().enumerate() {
         for (k, &kappa) in shapes.kappa_w.iter().enumerate() {
             let prior = go * kappa;
-            let p = share.map_or(prior, |s| s * prior);
+            let p = share * prior;
             let row = (l * levels + k) * tiles.n;
             for (x, &a) in d.still[row..row + tiles.n].iter_mut().zip(&tiles.area) {
                 *x += p * (a / total);
@@ -43,7 +43,7 @@ fn anywhere(densities: &mut Densities, world: &World, kind: Kind, people: f64) -
     let mut d = densities.get_mut(id);
     let (view, mut regions) = (1.0 / 3.0, 1.0 / 3.0);
     if world.tiles.n > 0 {
-        standing_anywhere(&mut d, world, Some(view));
+        standing_anywhere(&mut d, world, view);
     } else {
         regions += view;
     }
@@ -51,7 +51,7 @@ fn anywhere(densities: &mut Densities, world: &World, kind: Kind, people: f64) -
     for (stays, start) in d
         .region
         .chunks_mut(ages.max(1))
-        .zip(world.plan.region_start.chunks(ages.max(1)))
+        .zip(world.tiles.region_start.chunks(ages.max(1)))
     {
         for (x, &s) in stays.iter_mut().zip(start) {
             *x = regions / count as f64 * s;
@@ -73,22 +73,29 @@ fn at_place(densities: &mut Densities, world: &World, place: usize) -> DensityId
     let mut d = densities.get_mut(id);
     let (regions, ages) = (world.tiles.regions, world.tiles.ages);
     if place == 0 && world.tiles.n > 0 {
-        standing_anywhere(&mut d, world, None);
-    } else if place == 0 || place > regions || regions == 0 {
+        // 1 x the prior: the same numbers as the prior alone
+        standing_anywhere(&mut d, world, 1.0);
+    } else if place == 0 || place == regions + 1 {
+        // in view without tiles, or outside
         *d.out = 1.0;
     } else {
         let r = place - 1;
-        d.region[r * ages..][..ages].copy_from_slice(&world.plan.region_start[r * ages..][..ages]);
+        d.region[r * ages..][..ages].copy_from_slice(&world.tiles.region_start[r * ages..][..ages]);
     }
     d.normalize();
     id
 }
 
+/// A saved state that fits a filter of its shape (PeopleState::check): only such a one is restored.
+#[derive(Debug)]
+pub struct CheckedState(PeopleState);
+
 impl PeopleState {
-    /// Whether the state fits a filter of this shape: hypotheses with finite weights, their people
-    /// persons and their unknown ones intensities, the arrays as long as the shape says (Err names what
-    /// does not).
-    pub fn check(&self, shape: &DensityShape) -> Result<(), String> {
+    /// The state if it fits a filter of this shape: hypotheses with finite weights, their people persons
+    /// and their unknown ones intensities, the arrays as long as the shape says, every mass finite and
+    /// not negative, r in [0, 1], a person who exists somewhere (Hidden.from_dict; Err names what does
+    /// not fit).
+    pub fn check(self, shape: &DensityShape) -> Result<CheckedState, String> {
         let kind = |i: usize| self.densities.get(i).map(|d| d.kind);
         let fits = |d: &DensityData| {
             d.walk.len() == shape.tiles
@@ -97,6 +104,19 @@ impl PeopleState {
                 && d.amp
                     .as_ref()
                     .is_none_or(|a| a.levels.len() == shape.amp_len() && a.keep.is_none())
+        };
+        // masses finite and not negative; a person exists with r in [0, 1] and is somewhere if at all
+        let sound = |d: &DensityData| {
+            let masses = || d.walk.iter().chain(&d.still).chain(&d.region).chain([&d.out]);
+            let amp = d
+                .amp
+                .as_ref()
+                .is_none_or(|a| a.levels.iter().all(|v| v.is_finite() && *v >= 0.0));
+            let total: f64 = masses().sum();
+            masses().all(|v| v.is_finite() && *v >= 0.0)
+                && amp
+                && (0.0..=1.0).contains(&d.r)
+                && (d.kind == Kind::Intensity || total > 0.0 || d.r == 0.0)
         };
         if self.hyps.is_empty() {
             Err("no hypotheses".into())
@@ -108,8 +128,10 @@ impl PeopleState {
             Err("a person that is no density of one, or unknown ones that are none".into())
         } else if !self.densities.iter().all(fits) {
             Err("a density that does not fit the tiles".into())
+        } else if !self.densities.iter().all(sound) {
+            Err("a density that is no density".into())
         } else {
-            Ok(())
+            Ok(CheckedState(self))
         }
     }
 }
@@ -118,7 +140,8 @@ impl Filter {
     /// Start over (Tracker.reset_people): nothing known about the people - no known people, the
     /// unknown ones anywhere (start_unknown of them expected, MODEL.md 5.3) -, or known people at
     /// these places and nobody unknown. Clear first (Tracker::clear).
-    pub fn start_over(&mut self, world: &World, people: Option<&[Start]>) {
+    /// The places are places of the world (Tracker::reset_people checks).
+    pub(crate) fn start_over(&mut self, world: &World, people: Option<&[Start]>) {
         let densities = &mut self.objects.densities;
         let (hidden, unknown) = match people {
             None => {
@@ -141,9 +164,9 @@ impl Filter {
         self.set_hyps(vec![Hyp::new(0.0, hidden, unknown)]);
     }
 
-    /// Start from a saved state, checked (PeopleState::check), its weights normalized (Tracker.
-    /// restore_people). Clear first (Tracker::clear).
-    pub fn restore(&mut self, state: PeopleState) {
+    /// Start from a checked saved state, its weights normalized (Tracker.restore_people). Clear first
+    /// (Tracker::clear).
+    pub(crate) fn restore(&mut self, CheckedState(state): CheckedState) {
         let total = logsumexp(&state.hyps.iter().map(|&(logw, _, _)| logw).collect::<Vec<_>>());
         let ids: Vec<DensityId> = state
             .densities
@@ -232,13 +255,25 @@ mod tests {
         ] {
             assert!(bad.check(&shape).is_err(), "{what}");
         }
-        let mut short = state(hyps);
-        short.densities[0].walk.pop();
-        assert!(short.check(&shape).is_err(), "a density that does not fit");
+        let spoil = |what: &str, f: &dyn Fn(&mut DensityData)| {
+            let mut bad = state(hyps.clone());
+            f(&mut bad.densities[0]);
+            assert!(bad.check(&shape).is_err(), "{what}");
+        };
+        spoil("a density that does not fit", &|d| {
+            d.walk.pop();
+        });
+        spoil("a mass that is no number", &|d| d.still[3] = f64::NAN);
+        spoil("a negative mass", &|d| d.out = -0.1);
+        spoil("r above 1", &|d| d.r = 1.5);
+        spoil("a person nowhere", &|d| {
+            d.still.fill(0.0);
+            d.walk.fill(0.0);
+            d.out = 0.0;
+        });
         // what fits: the weights normalized
         let ok = state(vec![(logw + 3.0, people, unknown), (logw + 3.0, Vec::new(), unknown)]);
-        ok.check(&shape).expect("fits");
-        f.restore(ok);
+        f.restore(ok.check(&shape).expect("fits"));
         assert!(f.hyps().iter().all(|h| (h.logw + 2f64.ln()).abs() < 1e-15));
     }
 }

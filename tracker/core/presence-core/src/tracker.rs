@@ -11,7 +11,9 @@ use crate::filter::{Filter, NotFinite, PeopleState, Start};
 use crate::geometry::Point;
 use crate::ld2410::CELLS;
 use crate::ld2410::sensor::LdCollect;
-use crate::outputs::{self, Cloud, Distributions, Entering, OutputCache, Person, Source};
+use crate::outputs::{
+    self, Cloud, Distributions, Entering, HouseNumbers, OutputCache, Person, Source, ZoneInputs, ZoneNumbers,
+};
 use crate::params::LostKind;
 use crate::room_seen::RoomSeen;
 use crate::sensors::{SensorSet, SensorState};
@@ -33,25 +35,6 @@ pub struct Tracker {
     sensors: Vec<SensorState>,
     seen: RoomSeen,
     outputs: OutputCache,
-}
-
-/// A person with a track (filter.Tracker._target_outputs, until the destination map is in Rust):
-/// P(walking) without the part gone through a door, where the walking component is and its velocity.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Walker {
-    pub walking: f64,
-    pub at: Point,
-    pub velocity: Point,
-}
-
-/// The people with tracks who are no ghost's source, each once in the order of the holders.
-#[derive(Debug)]
-pub struct Walkers {
-    pub walkers: Vec<Walker>,
-    /// per hypothesis the walkers it holds, with their place among its people
-    pub held: Vec<Vec<(usize, usize)>>,
-    /// the most probable hypothesis
-    pub best: usize,
 }
 
 impl Tracker {
@@ -105,11 +88,6 @@ impl Tracker {
         std::mem::take(&mut self.seen)
     }
 
-    /// Where a walk that begins in a tile ends, (n + R + 1) x n (for leaps over a gap).
-    pub fn set_walk_end(&mut self, walk_end: Vec<f64>) {
-        self.world.tiles.walk_end = walk_end;
-    }
-
     /// Per sensor whether its frames count and when its last frame came (the shell's runtime).
     pub fn set_sensors(&mut self, state: &[(bool, f64)]) {
         for (s, &(active, last_frame)) in self.sensors.iter_mut().zip(state) {
@@ -136,16 +114,25 @@ impl Tracker {
     }
 
     /// Start over at t (Tracker.reset_people): nothing known about the people, or known people at
-    /// these places and nobody unknown.
-    pub fn reset_people(&mut self, t: f64, people: Option<&[Start]>) {
+    /// these places and nobody unknown; Err, and nothing changed, for a place there is not.
+    pub fn reset_people(&mut self, t: f64, people: Option<&[Start]>) -> Result<(), String> {
+        let places = self.world.plan.places();
+        if people
+            .into_iter()
+            .flatten()
+            .any(|s| matches!(s, Start::Place(p) if *p >= places))
+        {
+            return Err("a place there is not".into());
+        }
         self.clear(t);
         self.filter.start_over(&self.world, people);
+        Ok(())
     }
 
     /// Start over at t from a saved state (Tracker.restore_people); Err, and nothing changed, if it
     /// does not fit.
     pub fn restore(&mut self, t: f64, state: PeopleState) -> Result<(), String> {
-        state.check(&self.world.density_shape())?;
+        let state = state.check(&self.world.density_shape())?;
         self.clear(t);
         self.filter.restore(state);
         Ok(())
@@ -228,6 +215,11 @@ impl Tracker {
 
     /// Everybody moves on over a gap in the data; the sensors placed could have tested them.
     pub fn predict_gap(&mut self, gap: f64, placed: SensorSet) {
+        // where walks end, for the leaps of a long gap: once, when first needed (Tiling.walk_end)
+        let tiles = &self.world.tiles;
+        if gap > self.world.params.gap_exact && tiles.walk_end.is_empty() {
+            self.world.tiles.walk_end = tiles.compute_walk_end(&self.world.params);
+        }
         self.filter.predict_gap(&self.world, placed, gap);
     }
 
@@ -284,6 +276,7 @@ impl Tracker {
     }
 
     /// Spoils every hypothesis' weight (NaN): what the app does then (the shell's test).
+    #[doc(hidden)]
     pub fn spoil_weights_for_test(&mut self) {
         self.filter.spoil_weights_for_test();
     }
@@ -308,21 +301,22 @@ impl Tracker {
         cache.places.get_or_insert_with(|| outputs::place_distribution(filter))
     }
 
-    /// "wird betreten" per zone of the plan's targets for the look-ahead lead_time (s); once per epoch
-    /// (Tracker.entering).
-    pub fn entering(&mut self, lead_time: f64) -> &[Entering] {
+    /// "wird betreten" per zone of the world's targets; once per epoch (Tracker.entering). Its
+    /// look-ahead is the world's: a new one comes with a new world, and that voids the cache.
+    pub fn entering(&mut self) -> &[Entering] {
         let (filter, world) = (&self.filter, &self.world);
         let cache = self.outputs.at(filter.epoch());
         cache
             .entering
-            .get_or_insert_with(|| outputs::entering(filter, world, lead_time))
+            .get_or_insert_with(|| outputs::entering(filter, world, world.outputs.lead_time))
     }
 
     /// Per observed room whether it is occupied at `now` and by what (Tracker.occupancy): the
     /// filter by the cost of the light, or its own LD2450 within the last seen_hold s.
-    pub fn occupancy(&mut self, now: f64, light_cost: f64, seen_hold: f64) -> Vec<Option<Source>> {
-        let seen = self.seen.seen(&self.world.plan, now, seen_hold);
-        outputs::occupancy(self.count_distribution(), &seen, light_cost)
+    pub fn occupancy(&mut self, now: f64) -> Vec<Option<Source>> {
+        let o = self.world.outputs;
+        let seen = self.seen.seen(&self.world.plan, now, o.seen_hold);
+        outputs::occupancy(self.count_distribution(), &seen, o.light_cost)
     }
 
     /// The known people of the most probable hypothesis for the display (Tracker.persons).
@@ -335,45 +329,35 @@ impl Tracker {
         outputs::clouds(&self.filter, &self.world)
     }
 
-    /// The people with tracks, for the shell's "Ziel" until the destination map is in Rust.
-    pub fn walkers(&self) -> Walkers {
-        use crate::filter::holders::Obj;
-        use crate::params::WALK;
-        let (objects, holders) = (self.filter.objects(), self.filter.holders());
-        let mut index = vec![None; holders.len()];
-        let mut walkers = Vec::new();
-        for (e, obj) in holders.entries(false) {
-            let Obj::Mixture(m) = obj else { continue };
-            let mix = objects.mixtures().get(m);
-            if mix.phantom {
-                continue;
-            }
-            let walking = &mix.modes[WALK];
-            let d = walking.dim();
-            index[e] = Some(walkers.len());
-            walkers.push(Walker {
-                walking: mix.weights()[WALK] * (1.0 - mix.a),
-                at: walking.pos(),
-                velocity: [walking.mean[1], walking.mean[d + 1]],
-            });
-        }
-        let held = self
-            .filter
-            .hyps()
-            .iter()
-            .map(|hy| {
-                hy.people
-                    .values()
-                    .enumerate()
-                    .filter_map(|(k, &m)| index[holders.entry(Obj::Mixture(m))].map(|w| (w, k)))
-                    .collect()
-            })
-            .collect();
-        Walkers {
-            walkers,
-            held,
-            best: outputs::most_probable(&self.filter),
-        }
+    /// The people with tracks who walk, for the shell's "Ziel" until the destination map is in Rust.
+    pub fn walkers(&self) -> outputs::Walkers {
+        outputs::walkers(&self.filter)
+    }
+
+    /// The numbers of the zones of the home and of the house at `now` (Tracker.zone_states); `start`
+    /// the model's (None: not started, nothing silent).
+    pub fn zone_numbers(&mut self, now: f64, start: Option<f64>) -> (Vec<ZoneNumbers>, HouseNumbers) {
+        let occupancy = self.occupancy(now);
+        let silent = self.silent(now, start);
+        let (filter, world) = (&self.filter, &self.world);
+        let persons = outputs::persons(filter, world);
+        let cache = self.outputs.at(filter.epoch());
+        let counts = &*cache
+            .counts
+            .get_or_insert_with(|| outputs::count_distribution(filter, world));
+        let places = &*cache.places.get_or_insert_with(|| outputs::place_distribution(filter));
+        let entering = &*cache
+            .entering
+            .get_or_insert_with(|| outputs::entering(filter, world, world.outputs.lead_time));
+        let inputs = ZoneInputs {
+            counts,
+            places,
+            entering,
+            occupancy: &occupancy,
+            silent: &silent,
+            persons: &persons,
+        };
+        outputs::zone_numbers(world, &inputs)
     }
 
     /// A frame of the sensor with this id at t, whatever is in it (also of a sensor the plan lacks).
@@ -391,9 +375,15 @@ impl Tracker {
         &self.seen
     }
 
-    /// Per observed room whether its own sensors all sent nothing for more than `limit` s.
-    pub fn silent(&self, now: f64, start: Option<f64>, limit: f64) -> Vec<bool> {
-        self.seen.silent(&self.world.plan, now, start, limit)
+    /// Per observed room whether its own sensors all went silent (the world's silent_after).
+    pub fn silent(&self, now: f64, start: Option<f64>) -> Vec<bool> {
+        self.seen
+            .silent(&self.world.plan, now, start, self.world.outputs.silent_after)
+    }
+
+    /// Whether the sensor with this id sent a frame lately (the world's silent_after).
+    pub fn online(&self, id: &str, now: f64, start: Option<f64>) -> bool {
+        self.seen.online(id, now, start, self.world.outputs.silent_after)
     }
 
     /// Per observed room whether it has an own sensor in use.

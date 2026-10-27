@@ -2,6 +2,43 @@
 
 ## Unveröffentlicht
 
+## 0.36.0 (Branch `rust-core`, Phase 6 des Rust-Kerns, nicht live)
+
+- **Der Kern baut seine Welt selbst** aus der Konfiguration (`config.rs`: serde von `Config.to_dict()`) und dem
+  Modell (alle Felder als JSON): Plan (`plan.rs`: Sichtstücke ohne Türöffnungen, Regionen mit offen/Ausgängen,
+  Pforten, beobachtete Räume ≥ 60 %, eigener Raum je Sensor, Heim-Zonen, die Regel „Reflexion“ `hidden`),
+  Raster der Orte und Räume, Wandabstand, Kacheln (`Tiles::build`: Schlüssel wie `np.unique`, Stützpunkte, Ränder,
+  Türraten, Generator, eine Gehstunde über `linalg::expm`, `walk_end` mit faer-LU erst bei Bedarf im Kern),
+  Aufenthalte in Regionen, Sicht je Sensor (Sensorkarte als float32 wie `SensorModel`, Verbreiterung über
+  `reach`), LD2410C-Sichtlinie, -Blick und -Kacheln, observed; `Shapes::new` (Aufenthaltsmischung,
+  Gamma-Gitter, Gauß-Kopula). CPythons `math.hypot` nachgebaut (`vmath::py_hypot`, weicht in 13 % der Fälle von
+  libm ab und entscheidet Sichtfeld und Kreise), ebenso `NormalDist.inv_cdf` (AS241) – beide bitgleich getestet.
+- **Bau gegen Python:** `rust-port/cmpworld.py` und `tests/test_core_build.py` (alle Konfigurationen der Tests,
+  devdata und mit `PT_CONFIGS` die privaten, 23): Plan, Raster, Kacheln, Stützpunkte, Generator, Sicht je Sensor
+  und LD2410C-Kacheln **bitgleich**, `hidden` auf einem Punktgitter gleich; nur über BLAS gerechnet weicht ab: die
+  Gehmatrix (`expm`, ≤ 2,8e-15), der Wandabstand in 30 von 13104 Zellen (2e-16), Kopula und Aufenthaltsraten
+  (≤ 2e-15 relativ). Der Export bleibt als Prüfhilfe: `PT_WORLD=python` lässt den Kern in Pythons Welt rechnen.
+  Python baut seine Welt noch für Zielkarte, Formate, Oberfläche und Tests (bis Phase 8/9); beim Bau prüft die
+  Hülle, dass Räume, Orte und Kachelform beider gleich sind.
+- **M1:** Ausgabeparameter (`light_cost`, `seen_hold`, `lead_time`, `approach_cost`, `SILENT_AFTER`) in der Welt;
+  ihre Änderung ist eine neue Welt und leert den Cache. `test_filter`/`test_roomseen` ändern sie über
+  `reconfigure` statt direkt in `config.params`.
+- **M2:** `zone_numbers` im Kern (Schwelle der Regionen, Anhebung durch den eigenen LD2450, bewegt/ruhig,
+  approaching, verfügbar); `zone_states` formt nur noch und füllt „Ziel“; die doppelten Schwellen und
+  `ENTER_MIN_WALK` in Python entfallen (`walkers()` filtert im Kern, `Core.thresholds()`). bewegt/ruhig aus den
+  ungerundeten Personen (in einer von 3367 Sekunden anders als 0.35.0).
+- **M3/M4:** fester Testfall (zwei Hypothesen, Mischung mit a/away, Person mit r = 0,4; Zählungen, Orte,
+  Anzeige, Wolke von Hand) und dichteste Kachel; `PeopleState::check -> CheckedState` (endlich, ≥ 0, r ∈ [0, 1],
+  eine Person ist irgendwo), `Filter::restore(CheckedState)` crate-intern; `Core.restore` gibt die Meldung.
+- **Niedrig:** `mean_of`, `standing_anywhere(f64)`, Tabelle Eintrag → Gehender in `entering`, `walkers` mit
+  `Walker`/`Held` in `outputs.rs`, Sichtbarkeit, `occupancy` über die Raumzeilen, Umrisse streng (`polygon`
+  ausdrücklich), `Start::Place` außerhalb ein Fehler, `poisson_cut` begrenzt, `load`-Test gelöscht.
+- **Prüfung:** Spuren mit Pythons Welt bitgleich mit 0.35.0 (numpy wie auf inge; außer den bekannten Feldern von
+  *wird betreten*). Mit eigener Welt: 7.10. ≤ 2e-16; 10.10. Rundung (3e-12 bis 600 s, 2e-8 bis 1300 s), kippt
+  bei 1305 s wie alle Phasen und das gestörte 0.31.1 (844 Raum-Sekunden); 8.10. kippt bei 462 s (dieselbe
+  Entscheidung wie in Phase 3, 459 s), 8 Raum-Sekunden. `ab.sh 1200` 20,8 s gegen 48,1 s (0.31.1), −57 %.
+  Weltbau im Kern 1,1 s CPU. 79 Rust-, 271 Python-Tests.
+
 ## 0.35.0 (Branch `rust-core`, Phase 5 des Rust-Kerns, nicht live)
 
 - **Die Ausgaben im Kern** (`core/presence-core/src/outputs.rs`, MODEL.md 6): Zähl- und Ortsverteilungen (je

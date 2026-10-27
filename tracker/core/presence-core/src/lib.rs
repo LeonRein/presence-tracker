@@ -2,13 +2,16 @@
 //! clock (every time is an argument), no threads, nothing random. docs/rust-core.md describes the
 //! data model and the cut to the Python shell.
 
+pub mod config;
 pub mod filter;
 pub mod geometry;
 pub mod ld2410;
 pub mod ld2450;
+pub mod linalg;
 pub mod motion;
 pub mod outputs;
 pub mod params;
+pub mod plan;
 pub mod room_seen;
 pub mod sensors;
 pub mod tracker;

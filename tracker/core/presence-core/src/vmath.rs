@@ -202,6 +202,70 @@ pub fn lgamma(x: f64) -> f64 {
     libm::lgamma(x)
 }
 
+/// sqrt(x^2 + y^2) as CPython's math.hypot computes it (Modules/mathmodule.c, vector_norm: scaled to
+/// the largest, the squares summed exactly in two parts, one Newton step): libm's hypot differs from it
+/// in the last bit for 13 % of the arguments, and the plan decides with it (fields of view, circles,
+/// the sides of a door).
+pub fn py_hypot(x: f64, y: f64) -> f64 {
+    let (x, y) = (x.abs(), y.abs());
+    if x.is_infinite() || y.is_infinite() {
+        return f64::INFINITY;
+    }
+    if x.is_nan() || y.is_nan() {
+        return f64::NAN;
+    }
+    norm(&mut [x, y], x.max(y))
+}
+
+/// math.dist of two points (the same norm of the differences).
+pub fn py_dist(a: [f64; 2], b: [f64; 2]) -> f64 {
+    py_hypot(a[0] - b[0], a[1] - b[1])
+}
+
+/// CPython's vector_norm of non-negative finite numbers, `max` the largest.
+fn norm(v: &mut [f64; 2], max: f64) -> f64 {
+    if max == 0.0 {
+        return max;
+    }
+    let (_, max_e) = libm::frexp(max);
+    if max_e < -1023 {
+        // subnormals: scaled up first
+        for x in v.iter_mut() {
+            *x /= f64::MIN_POSITIVE;
+        }
+        return f64::MIN_POSITIVE * norm(v, max / f64::MIN_POSITIVE);
+    }
+    let scale = libm::ldexp(1.0, -max_e);
+    // a product and a sum each as a double plus its exact rounding error (Dekker, Shewchuk)
+    let mul = |a: f64, b: f64| {
+        let hi = a * b;
+        (hi, a.mul_add(b, -hi))
+    };
+    let fast_sum = |a: f64, b: f64| {
+        let hi = a + b;
+        (hi, b - (hi - a))
+    };
+    let (mut csum, mut frac1, mut frac2) = (1.0, 0.0, 0.0);
+    for &x in v.iter() {
+        let x = x * scale;
+        let (hi, lo) = mul(x, x);
+        let (sum, err) = fast_sum(csum, hi);
+        csum = sum;
+        frac1 += lo;
+        frac2 += err;
+    }
+    let mut h = (csum - 1.0 + (frac1 + frac2)).sqrt();
+    // the residual of h^2 against the sum, for one differential correction
+    let (hi, lo) = mul(-h, h);
+    let (sum, err) = fast_sum(csum, hi);
+    csum = sum;
+    frac1 += lo;
+    frac2 += err;
+    let x = csum - 1.0 + (frac1 + frac2);
+    h += x / (2.0 * h);
+    h / scale
+}
+
 /// log k! for k < n as the outputs take them (filter._lgamma_table: CPython's math.lgamma(k + 1),
 /// its own Lanczos sum, which differs from libm's lgamma in the last bit for 690 of the first 2000).
 pub fn log_factorials(n: usize) -> Vec<f64> {
@@ -212,7 +276,7 @@ pub fn log_factorials(n: usize) -> Vec<f64> {
 /// terms (Boost's; Godfrey's coefficients), the sum as a rational function in x (in 1/x from 5 on).
 /// The constants as CPython quotes them.
 #[allow(clippy::excessive_precision)]
-fn lanczos_lgamma(x: f64) -> f64 {
+pub(crate) fn lanczos_lgamma(x: f64) -> f64 {
     const G: f64 = 6.024680040776729583740234375;
     const NUM: [f64; 13] = [
         23531376880.410759688572007674451636754734846804940,
@@ -276,6 +340,7 @@ fn lanczos_lgamma(x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::hexf;
 
     #[test]
     fn small_sums_run_in_a_row() {
@@ -417,12 +482,43 @@ mod tests {
         }
     }
 
-    /// A number written as Python's float.hex().
-    fn hexf(s: &str) -> f64 {
-        let (mant, exp) = s.trim_start_matches("0x").split_once('p').expect("p");
-        let (int, frac) = mant.split_once('.').expect(".");
-        let digits = u64::from_str_radix(&format!("{int}{frac}"), 16).expect("hex");
-        let e: i32 = exp.parse().expect("exponent");
-        digits as f64 * 2f64.powi(e - 4 * frac.len() as i32)
+    #[test]
+    fn hypot_is_cpythons_bit_for_bit() {
+        // (x, y, math.hypot(x, y)) of CPython 3.13, as float.hex()
+        let cases = [
+            ("-0x1.68ca5e0d58b24p+1", "-0x1.6587cb4d766c8p+2", "0x1.90767afd71980p+2"),
+            ("0x1.351d220c5c7fcp+1", "-0x1.b5d34316e07c0p+2", "0x1.d04dfb73a2b4ap+2"),
+            ("0x1.25f2046063a00p-1", "-0x1.1311b06ace67cp+1", "0x1.1cb751a4c7515p+1"),
+            ("-0x1.c49bee0b8ed14p+2", "0x1.e74ee6deceb80p-4", "0x1.c4ac53169cc8ap+2"),
+            ("-0x1.d99abcf4ffae6p+2", "-0x1.0fc98b29e5570p+0", "0x1.de742591b1421p+2"),
+            ("-0x1.b877d1e131f48p+2", "-0x1.a31c20b97748ap+2", "0x1.30001ff961b9ep+3"),
+            ("-0x1.352b5de1bc450p+0", "0x1.4eb252c860c96p+2", "0x1.57815cae60754p+2"),
+            ("-0x1.813a0f06b9f7ep+2", "-0x1.1b673eaf47a68p+2", "0x1.de3e6844eddaep+2"),
+            ("0x1.04fbb5953f48cp+1", "0x1.ca743687eb186p+2", "0x1.dca9db3a9130dp+2"),
+            ("0x1.3bd04d2bcc158p+0", "-0x1.a7325fe69c3b0p+0", "0x1.080608edf996bp+1"),
+            ("0x1.e7af6b1c4c68cp+2", "-0x1.d04ca138bf348p+2", "0x1.50adcd0eda36fp+3"),
+            ("0x1.6f125b110bdf4p+2", "-0x1.aee15394b34dcp+1", "0x1.a99fd3da0218fp+2"),
+            ("0x1.8000000000000p+1", "0x1.0000000000000p+2", "0x1.4000000000000p+2"),
+            (
+                "0x1.56e1fc2f8f359p-997",
+                "0x1.56e1fc2f8f359p-997",
+                "0x1.e4e8d12762225p-997",
+            ),
+            ("0x0.0p+0", "-0x1.4000000000000p+1", "0x1.4000000000000p+1"),
+            (
+                "0x1.4e718d7d7625ap+664",
+                "0x1.9155103027606p+662",
+                "0x1.5d2b5969a98dap+664",
+            ),
+            ("0x0.0000000000001p-1022", "0x0.0p+0", "0x0.0000000000001p-1022"),
+        ];
+        for (x, y, want) in cases {
+            assert_eq!(
+                py_hypot(hexf(x), hexf(y)).to_bits(),
+                hexf(want).to_bits(),
+                "hypot({x}, {y})"
+            );
+        }
+        assert!(py_hypot(f64::NAN, f64::INFINITY).is_infinite() && py_hypot(f64::NAN, 1.0).is_nan());
     }
 }

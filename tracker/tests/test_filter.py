@@ -183,7 +183,9 @@ def test_occupied_is_the_cheaper_decision_on_the_probability():
     p = 1 - crowd.count_distribution()["wohn"][0]
     assert 0.2 < p < 0.8
     for cost, occupied in ((0.1, True), (10.0, False)):
-        config.params.light_cost = cost
+        d = crowd.config.to_dict()
+        d["params"]["light_cost"] = cost
+        assert crowd.reconfigure(Config.from_dict(d)) is False  # an output only: nothing starts over
         st = crowd.zone_states()["wohn"]
         assert st.probability == p and st.occupied is occupied
 
