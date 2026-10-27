@@ -113,7 +113,7 @@ class Model:
                      # comes, fall when one leaves; measured on two cases, then capped at 100)
     # background per sensor and cell, learned by the app (ld2410.Background): prior = the measured
     # means without anybody (moving gate 0, gate 1, gates 2-8, still), its weight, forgetting
-    # echo sources: energy that is no person's (ld2410.Echoes). How often they begin is learned per
+    # echo sources: energy that is no person's (presence-core ld2410/echoes.rs). How often they begin is learned per
     # sensor with the background (measured on the empty night 6./7.10.: kitchen 3.6 per hour, the
     # other sensors none in 3.3 h); prior one per 3 h with the weight of 3 h (assumed). They live
     # Erlang(stages) with this mean (kitchen: median 10 s, mean 15 s, up to 59 s), with the profile

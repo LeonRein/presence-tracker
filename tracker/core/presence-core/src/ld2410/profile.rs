@@ -12,18 +12,18 @@ pub fn expected(p: &Params, mode: usize, angle: f64, slant: f64, sight: f64) -> 
     let v = ((none - angle) / (none - full)).clamp(0.0, 1.0) * sight;
     let r = if slant < 0.3 { 0.3 } else { slant };
     let (pm, ps) = (&p.ld_moving[mode], &p.ld_still[mode]);
-    let (wm, ws) = (r.powf(-pm[1]), r.powf(-ps[1]));
+    let (wm, ws) = (r.powf(-pm.n), r.powf(-ps.n));
     std::array::from_fn(|c| {
         let (q, w) = if c < MOVING { (pm, wm) } else { (ps, ws) };
-        let d = centre(c) - r - q[2];
-        let t = d / q[3];
+        let d = centre(c) - r - q.delta;
+        let t = d / q.sigma;
         let main = (-0.5 * (t * t)).exp();
         let k = if d <= 0.0 {
             main
         } else {
-            (1.0 - q[4]) * main + q[4] * (-d / q[5]).exp()
+            (1.0 - q.tail) * main + q.tail * (-d / q.ell).exp()
         };
-        v * (q[0] * w * k)
+        v * (q.a * w * k)
     })
 }
 

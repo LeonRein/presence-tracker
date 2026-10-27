@@ -66,8 +66,11 @@ pub fn logaddexp(x: f64, y: f64) -> f64 {
     }
 }
 
-// fdlibm e_log.c and e_exp.c (Sun Microsystems 1993; the same polynomials as glibc's old ieee754
-// routines): error below 1 ulp (kernels.vlog, vexp)
+// The logarithm and the exponential of kernels.vlog and vexp: fdlibm's polynomials (e_log.c and
+// e_exp.c, Sun Microsystems 1993) with a simpler reduction - the mantissa into [sqrt(2)/2, sqrt(2)),
+// none of fdlibm's special cases near 1 - below 1 ulp (tested). Over a slice in two passes as
+// kernels.py: first every number without a branch (the loop vectorizes), then the few that are no
+// positive normal number (log) or beyond -708..709 (exp) by libm.
 /// The constants as fdlibm publishes them (more digits than a double holds: quoted, not rounded).
 #[allow(clippy::excessive_precision)]
 mod fdlibm {
@@ -91,23 +94,27 @@ mod fdlibm {
 }
 use fdlibm::*;
 
-/// log(x) of a positive normal number by fdlibm's polynomial (vectorizable, below 1 ulp); what is
-/// no positive normal number (0, subnormal, negative, inf, NaN) by libm (kernels.vlog).
-pub fn vlog1(x: f64) -> f64 {
-    if !(TINY..f64::INFINITY).contains(&x) {
-        return if x > 0.0 {
-            x.ln()
-        } else if x == 0.0 {
-            f64::NEG_INFINITY
-        } else {
-            f64::NAN
-        };
-    }
-    let b = x.to_bits() as i64;
+/// 2^52: a double below it plus this holds the integer in its mantissa (exact both ways, and
+/// without AVX-512's conversions between packed integers and doubles).
+const TWO52: f64 = 4_503_599_627_370_496.0;
+
+fn log_normal(x: f64) -> bool {
+    (TINY..f64::INFINITY).contains(&x)
+}
+
+fn exp_normal(x: f64) -> bool {
+    x > -708.0 && x < 709.0
+}
+
+/// log x for a positive normal number, without a branch (anything else gives a wrong number).
+#[inline(always)]
+fn log_poly(x: f64) -> f64 {
+    let b = x.to_bits();
     let frac = b & 0x000f_ffff_ffff_ffff;
-    let big = i64::from(frac > 0x6_a09e_667f_3bcd); // the mantissa above sqrt(2): halved, the exponent + 1
-    let m = f64::from_bits(((frac | 0x3ff0_0000_0000_0000) - (big << 52)) as u64);
-    let e = (((b >> 52) & 0x7ff) - 1023 + big) as f64;
+    let big = u64::from(frac > 0x6_a09e_667f_3bcd); // the mantissa above sqrt(2): halved, the exponent + 1
+    let m = f64::from_bits((frac | 0x3ff0_0000_0000_0000) - (big << 52));
+    // the exponent ((b >> 52) & 0x7ff) - 1023 + big, as a double
+    let e = f64::from_bits(TWO52.to_bits() | (((b >> 52) & 0x7ff) + big)) - (TWO52 + 1023.0);
     let f = m - 1.0;
     let s = f / (2.0 + f);
     let z = s * s;
@@ -118,12 +125,9 @@ pub fn vlog1(x: f64) -> f64 {
     e * LN2_HI - ((hfsq - (s * (hfsq + (t2 + t1)) + e * LN2_LO)) - f)
 }
 
-/// exp(x) by fdlibm's polynomial within -708..709; beyond (underflow, overflow, inf, NaN) by libm
-/// (kernels.vexp).
-pub fn vexp1(x: f64) -> f64 {
-    if !(x > -708.0 && x < 709.0) {
-        return x.exp();
-    }
+/// exp x within -708..709, without a branch (beyond it a wrong number).
+#[inline(always)]
+fn exp_poly(x: f64) -> f64 {
     let k = (x * INV_LN2 + 0.5).floor();
     let hi = x - k * LN2_HI;
     let lo = k * LN2_LO;
@@ -131,21 +135,66 @@ pub fn vexp1(x: f64) -> f64 {
     let t = r * r;
     let c = r - t * (P1 + t * (P2 + t * (P3 + t * (P4 + t * P5))));
     let y = 1.0 - ((lo - (r * c) / (2.0 - c)) - hi);
-    f64::from_bits((y.to_bits() as i64 + ((k as i64) << 52)) as u64)
+    // k as an integer (|k| < 1100) shifted into the exponent
+    let kb = (k + 1.5 * TWO52).to_bits().wrapping_sub((1.5 * TWO52).to_bits());
+    f64::from_bits(y.to_bits().wrapping_add(kb << 52))
+}
+
+/// log x (kernels.vlog): what is no positive normal number (0, subnormal, negative, inf, NaN) by libm.
+pub fn vlog1(x: f64) -> f64 {
+    if log_normal(x) {
+        log_poly(x)
+    } else if x > 0.0 {
+        x.ln()
+    } else if x == 0.0 {
+        f64::NEG_INFINITY
+    } else {
+        f64::NAN
+    }
+}
+
+/// exp x (kernels.vexp): beyond -708..709 (underflow, overflow, inf, NaN) by libm.
+pub fn vexp1(x: f64) -> f64 {
+    if exp_normal(x) { exp_poly(x) } else { x.exp() }
 }
 
 /// log of each, in place (vlog1).
+#[inline(never)]
 pub fn vlog(x: &mut [f64]) {
-    for v in x {
-        *v = vlog1(*v);
+    let odd = x.iter().filter(|&&v| !log_normal(v)).count(); // usually none
+    let odd: Vec<(usize, f64)> = if odd == 0 {
+        Vec::new()
+    } else {
+        x.iter().copied().enumerate().filter(|&(_, v)| !log_normal(v)).collect()
+    };
+    for v in x.iter_mut() {
+        *v = log_poly(*v);
+    }
+    for (i, v) in odd {
+        x[i] = vlog1(v);
     }
 }
 
 /// exp of each, in place (vexp1).
+#[inline(never)]
 pub fn vexp(x: &mut [f64]) {
-    for v in x {
-        *v = vexp1(*v);
+    let odd = x.iter().filter(|&&v| !exp_normal(v)).count(); // usually none
+    let odd: Vec<(usize, f64)> = if odd == 0 {
+        Vec::new()
+    } else {
+        x.iter().copied().enumerate().filter(|&(_, v)| !exp_normal(v)).collect()
+    };
+    for v in x.iter_mut() {
+        *v = exp_poly(*v);
     }
+    for (i, v) in odd {
+        x[i] = vexp1(v);
+    }
+}
+
+/// The larger of x and lo, NaN staying NaN (numpy's maximum; f64::max would give lo).
+pub fn at_least(x: f64, lo: f64) -> f64 {
+    if x.is_nan() { x } else { x.max(lo) }
 }
 
 /// log Gamma(x) (math.lgamma; libm's: CPython's own may differ in the last bit).
@@ -216,5 +265,48 @@ mod tests {
         assert!(vexp1(f64::NAN).is_nan());
         assert_eq!(vexp1(710.0), f64::INFINITY);
         assert_eq!(vexp1(-746.0), 0.0);
+        // near 1, and on both sides of the mantissa's threshold sqrt(2)
+        let at = |bits: u64| f64::from_bits(bits);
+        let sqrt2 = 0x3ff6_a09e_667f_3bcd_u64;
+        let near: Vec<f64> = (0..64u64)
+            .flat_map(|k| {
+                [
+                    at(1f64.to_bits() + k),
+                    at(1f64.to_bits() - k),
+                    at(sqrt2 + k),
+                    at(sqrt2 - k),
+                ]
+            })
+            .chain((0..64).map(|k| at(sqrt2 + (k << 40))))
+            .collect();
+        for &x in &near {
+            assert!((vlog1(x) - x.ln()).abs() <= ulp(x.ln()).max(f64::MIN_POSITIVE), "{x}");
+        }
+    }
+
+    #[test]
+    fn over_a_slice_as_one_by_one() {
+        let mut rng = crate::testing::Rng::new(16);
+        let mut x: Vec<f64> = (0..999).map(|_| rng.range(-800.0, 800.0)).collect();
+        x.extend([
+            0.0,
+            -0.0,
+            -1.0,
+            5e-324,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            709.5,
+            -708.5,
+            1.0,
+        ]);
+        let mut e = x.clone();
+        vexp(&mut e);
+        let mut l = x.clone();
+        vlog(&mut l);
+        for (i, &v) in x.iter().enumerate() {
+            assert_eq!(e[i].to_bits(), vexp1(v).to_bits(), "exp {v}");
+            assert_eq!(l[i].to_bits(), vlog1(v).to_bits(), "log {v}");
+        }
     }
 }

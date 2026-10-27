@@ -12,11 +12,10 @@ import threading
 import time
 
 import aiohttp
-import numpy as np
 import pytest
 from aiohttp import web
 
-from presence_tracker import app as app_module, filter as filter_module, kernels, ld2410
+from presence_tracker import app as app_module, filter as filter_module
 from presence_tracker.app import App
 from presence_tracker.filter import Tracker
 from presence_tracker.ha import AVAILABILITY
@@ -358,18 +357,6 @@ def test_a_panic_of_the_rust_core_is_a_model_failure(tmp_path, monkeypatch, capl
     assert app.tracker is not tracker and "the Rust core failed: a bug in the core" in caplog.text
     with pytest.raises(filter_module.CoreError):
         filter_module._core(core.panic_for_test, "again")
-
-
-def test_the_ld2410_factor_of_a_person_all_in_view_never_takes_log_0():
-    """All of a person in an LD2410C's view (masses summing to 1) and every ratio below e^-745: until
-    now math.log(0), the error that stopped 0.9.3 ("math domain error")."""
-    m = np.array([0.5, 0.5])
-    lr, log_f, _ = kernels.ld_ratio_tail(np.array([-1000.0, -2000.0]), m, np.zeros((2, 16)), False, ld2410.LOG_CAP)
-    assert math.isclose(log_f, -1000.0 + math.log(0.5), rel_tol=1e-12)
-    # the usual case as before
-    lr, log_f, _ = kernels.ld_ratio_tail(np.array([1.0, -1.0]), np.array([0.3, 0.2]), np.zeros((2, 16)), False,
-                                         ld2410.LOG_CAP)
-    assert math.isclose(log_f, math.log(0.5 + 0.3 * math.e + 0.2 / math.e))
 
 
 class FakeMqtt:

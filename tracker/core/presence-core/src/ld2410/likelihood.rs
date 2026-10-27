@@ -6,7 +6,7 @@
 
 use super::{CAP, CELLS, MOVING, cell_values};
 use crate::params::Params;
-use crate::vmath::{lgamma, pairwise_sum, vexp, vexp1, vlog, vlog1};
+use crate::vmath::{at_least, lgamma, pairwise_sum, vexp, vexp1, vlog, vlog1};
 
 /// The number of points of the grid of log mean energies for the censored cells.
 const GRID_POINTS: usize = 4001;
@@ -109,12 +109,20 @@ impl Censored {
     }
 }
 
-/// A kind of cell (moving, still) and the prior of its block's common gain: two components
-/// (log weight + k log rate - lgamma k, shape k, rate r).
+/// A component of the prior of a block's common gain: 1/u ~ Gamma(shape, rate), with
+/// c = log weight + shape log rate - lgamma shape.
+#[derive(Debug, Clone, Copy)]
+struct Gain {
+    c: f64,
+    shape: f64,
+    rate: f64,
+}
+
+/// A kind of cell (moving, still) and the prior of its block's common gain: usual and bursts.
 #[derive(Debug)]
-struct Kind {
+struct CellKind {
     cells: std::ops::Range<usize>,
-    comps: [(f64, f64, f64); 2],
+    gain: [Gain; 2],
 }
 
 /// The numbers of the energies' likelihood (ld2410.Likelihood).
@@ -122,20 +130,24 @@ struct Kind {
 pub struct Likelihood {
     pub alpha: [f64; CELLS],
     pub tau: [f64; CELLS],
-    kinds: [Kind; 2],
+    kinds: [CellKind; 2],
     censored: Censored,
 }
 
 impl Likelihood {
     pub fn new(p: &Params) -> Self {
         let alpha = cell_values(p.ld_shape[0], p.ld_shape[1]);
-        let [bk, bu, bw] = p.ld_burst;
-        let br = bk * bu;
-        let kind = |cells, k: f64| Kind {
+        let burst = p.ld_burst;
+        let gain = |w: f64, shape: f64, rate: f64| Gain {
+            c: w.ln() + shape * rate.ln() - lgamma(shape),
+            shape,
+            rate,
+        };
+        let kind = |cells, k: f64| CellKind {
             cells,
-            comps: [
-                ((1.0 - bw).ln() + k * k.ln() - lgamma(k), k, k),
-                (bw.ln() + bk * br.ln() - lgamma(bk), bk, br),
+            gain: [
+                gain(1.0 - burst.weight, k, k),
+                gain(burst.weight, burst.shape, burst.shape * burst.gain),
             ],
         };
         Self {
@@ -161,12 +173,19 @@ pub struct Stats {
     pub t_cens: [f64; CELLS],
 }
 
-/// A kind of cell the frames looked at: its cells, and per component of its gain's prior the rate
-/// r, c + lgamma(N + k) and N + k (N the looks).
+/// A component of a gain's prior given N looks: the rate r, c + lgamma(N + k), N + k.
+#[derive(Debug, Clone, Copy)]
+struct Posterior {
+    rate: f64,
+    c: f64,
+    n: f64,
+}
+
+/// A kind of cell the frames looked at: its cells, and its gain's prior given the looks.
 #[derive(Debug)]
 struct Looked {
     cells: std::ops::Range<usize>,
-    comps: [(f64, f64, f64); 2],
+    gain: [Posterior; 2],
 }
 
 /// What the likelihood takes from the frames, once for all the means asked about (Stats._prepared).
@@ -190,7 +209,7 @@ impl Stats {
         self.t_target += dt * if target { 1.0 } else { 0.0 };
         for (c, &x) in e.iter().enumerate() {
             let cens = x >= CAP;
-            let ee = x.max(0.5); // integer energies: 0 as half a unit
+            let ee = at_least(x, 0.5); // integer energies: 0 as half a unit
             self.t_unc[c] += dt * if cens { 0.0 } else { 1.0 };
             self.t_e[c] += dt * if cens { 0.0 } else { ee };
             self.t_le[c] += dt * if cens { 0.0 } else { ee.ln() };
@@ -208,7 +227,11 @@ impl Stats {
                 let n = pairwise_sum(&look[kind.cells.clone()]);
                 (n > 0.0).then(|| Looked {
                     cells: kind.cells.clone(),
-                    comps: kind.comps.map(|(c, k, r)| (r, c + lgamma(n + k), n + k)),
+                    gain: kind.gain.map(|g| Posterior {
+                        rate: g.rate,
+                        c: g.c + lgamma(n + g.shape),
+                        n: n + g.shape,
+                    }),
                 })
             })
             .collect();
@@ -226,37 +249,63 @@ impl Stats {
     }
 }
 
+/// The buffers of the likelihood's rows, kept from call to call (one per weighing).
+#[derive(Debug, Default)]
+pub struct Scratch {
+    mu: Vec<f64>,
+    lm: Vec<f64>,
+    out: Vec<f64>,
+    a: Vec<f64>,
+    t0: Vec<f64>,
+    t1: Vec<f64>,
+    top: Vec<f64>,
+    e: Vec<f64>,
+}
+
 impl Prepared<'_> {
     /// The part of the tempered log-likelihood that depends on the means (Stats._mu_part,
-    /// kernels._ld_cols): mu by cell, `mu[c * k + i]` the mean of cell c in row i; per row -sum
-    /// log(mu) x looks, per kind of cell log sum_c exp(c + lgamma(N + k) - (N + k) log(r + A)), A the
-    /// sum of alpha x energy / mean over its cells, and the censored cells. Cell by cell over all
-    /// rows: the loops over the rows vectorize.
-    pub fn mu_part(&self, mu: &[f64], k: usize) -> Vec<f64> {
-        let mut lm = mu.to_vec();
-        vlog(&mut lm);
-        let mut out = vec![0.0; k];
+    /// kernels._ld_cols), per row into `scratch.out`: mu by cell (`scratch.mu`, `mu[c * k + i]` the
+    /// mean of cell c in row i); per row -sum log(mu) x looks, per kind of cell log sum_c exp(c +
+    /// lgamma(N + k) - (N + k) log(r + A)), A the sum of alpha x energy / mean over its cells, and
+    /// the censored cells. Cell by cell over all rows: the loops over the rows vectorize.
+    fn mu_part(&self, scratch: &mut Scratch, k: usize) {
+        let Scratch {
+            mu,
+            lm,
+            out,
+            a,
+            t0,
+            t1,
+            top,
+            ..
+        } = scratch;
+        lm.clone_from(mu);
+        vlog(lm);
+        out.clear();
+        out.resize(k, 0.0);
         for c in 0..CELLS {
             for (o, l) in out.iter_mut().zip(&lm[c * k..][..k]) {
                 *o -= l * self.look[c];
             }
         }
-        let (mut a, mut t0, mut t1, mut top) = (vec![0.0; k], vec![0.0; k], vec![0.0; k], vec![0.0; k]);
-        for Looked { cells, comps } in &self.kinds {
+        for buf in [&mut *a, &mut *t0, &mut *t1, &mut *top] {
+            buf.resize(k, 0.0);
+        }
+        for Looked { cells, gain } in &self.kinds {
             a.fill(0.0);
             for c in cells.clone() {
                 for (x, m) in a.iter_mut().zip(&mu[c * k..][..k]) {
                     *x += self.ae[c] / m;
                 }
             }
-            let [(r0, c0, n0), (r1, c1, n1)] = *comps;
+            let [g0, g1] = *gain;
             for i in 0..k {
-                let (x, y) = (c0 - n0 * vlog1(r0 + a[i]), c1 - n1 * vlog1(r1 + a[i]));
+                let (x, y) = (g0.c - g0.n * vlog1(g0.rate + a[i]), g1.c - g1.n * vlog1(g1.rate + a[i]));
                 let m = if x.is_nan() || (!y.is_nan() && x >= y) { x } else { y }; // NaN wins
                 (top[i], t0[i], t1[i]) = (m, x - m, y - m);
             }
-            vexp(&mut t0);
-            vexp(&mut t1);
+            vexp(&mut t0[..k]);
+            vexp(&mut t1[..k]);
             for i in 0..k {
                 out[i] += top[i] + vlog1(t0[i] + t1[i]);
             }
@@ -268,7 +317,6 @@ impl Prepared<'_> {
                 out[i] += censored.at(fp, mu[c * k + i], lm[c * k + i]) * w;
             }
         }
-        out
     }
 
     /// The tempered log-likelihood of the frames given the means mu (16) (Stats.loglik).
@@ -280,7 +328,12 @@ impl Prepared<'_> {
                 (stats.t_unc[c] * (a * a.ln() - lgamma(a)) + (a - 1.0) * stats.t_le[c]) / lik.tau[c]
             })
             .collect();
-        pairwise_sum(&terms) + self.mu_part(mu, 1)[0]
+        let mut scratch = Scratch {
+            mu: mu.to_vec(),
+            ..Scratch::default()
+        };
+        self.mu_part(&mut scratch, 1);
+        pairwise_sum(&terms) + scratch.out[0]
     }
 
     /// Masses m (k) putting S (k x 16) on top of the means mu0 (kernels.ld_ratio): the log
@@ -288,22 +341,37 @@ impl Prepared<'_> {
     /// the log of the normalizer - the factor of the whole person, or for the unknown ones
     /// (intensity) log((1 + int lambda L) / (1 + Lambda)): at most one of them in view - and what
     /// they put in afterwards (16).
-    pub fn ratio(&self, m: &[f64], s: &[[f64; CELLS]], mu0: &[f64; CELLS], intensity: bool) -> Ratio {
-        let with: Vec<usize> = (0..m.len()).filter(|&i| m[i] > 0.0).collect();
-        let n = with.len();
-        let mut mu = vec![0.0; CELLS * (n + 1)];
+    pub fn ratio(
+        &self,
+        scratch: &mut Scratch,
+        m: &[f64],
+        s: &[[f64; CELLS]],
+        mu0: &[f64; CELLS],
+        intensity: bool,
+    ) -> Ratio {
+        let n = m.iter().filter(|&&x| x > 0.0).count();
+        scratch.mu.clear();
+        scratch.mu.resize(CELLS * (n + 1), 0.0);
         for c in 0..CELLS {
-            for (j, &i) in with.iter().enumerate() {
-                mu[c * (n + 1) + j] = mu0[c] + s[i][c];
+            let row = &mut scratch.mu[c * (n + 1)..][..n + 1];
+            for (x, (si, _)) in row.iter_mut().zip(s.iter().zip(m).filter(|(_, mi)| **mi > 0.0)) {
+                *x = mu0[c] + si[c];
             }
-            mu[c * (n + 1) + n] = mu0[c];
+            row[n] = mu0[c];
         }
-        let both = self.mu_part(&mu, n + 1);
+        self.mu_part(scratch, n + 1);
+        let both = &scratch.out;
         let mut ratios = vec![-super::LOG_CAP; m.len()];
-        for (j, &i) in with.iter().enumerate() {
-            ratios[i] = both[j] - both[n];
+        for (x, j) in ratios
+            .iter_mut()
+            .zip(m)
+            .filter(|(_, mi)| **mi > 0.0)
+            .map(|(x, _)| x)
+            .zip(0..)
+        {
+            *x = both[j] - both[n];
         }
-        ratio_tail(ratios, m, s, intensity)
+        ratio_tail(ratios, m, s, intensity, &mut scratch.e)
     }
 }
 
@@ -318,7 +386,7 @@ pub struct Ratio {
 
 /// kernels.ld_ratio_tail: the ratios capped at LOG_CAP (NaN wins), the normalizer, and sum_i m_i
 /// exp(lr_i - norm) S_i.
-fn ratio_tail(mut lr: Vec<f64>, m: &[f64], s: &[[f64; CELLS]], intensity: bool) -> Ratio {
+fn ratio_tail(mut lr: Vec<f64>, m: &[f64], s: &[[f64; CELLS]], intensity: bool, e: &mut Vec<f64>) -> Ratio {
     let cap = super::LOG_CAP;
     let mut top = f64::NEG_INFINITY;
     let mut nan = false;
@@ -339,9 +407,10 @@ fn ratio_tail(mut lr: Vec<f64>, m: &[f64], s: &[[f64; CELLS]], intensity: bool) 
     } else if top < 0.0 {
         top = 0.0;
     }
-    let mut e: Vec<f64> = lr.iter().map(|x| x - top).collect();
-    vexp(&mut e);
-    let inside = m.iter().zip(&e).fold(0.0, |acc, (mi, ei)| acc + mi * ei);
+    e.clear();
+    e.extend(lr.iter().map(|x| x - top));
+    vexp(e);
+    let inside = m.iter().zip(e.iter()).fold(0.0, |acc, (mi, ei)| acc + mi * ei);
     let norm = if intensity {
         top + ((-top).exp() + inside).ln() - msum.ln_1p()
     } else {
@@ -374,7 +443,7 @@ fn ratio_tail(mut lr: Vec<f64>, m: &[f64], s: &[[f64; CELLS]], intensity: bool) 
         *ei = vexp1(x - norm);
     }
     let mut post = [0.0; CELLS];
-    for ((mi, ei), si) in m.iter().zip(&e).zip(s) {
+    for ((mi, ei), si) in m.iter().zip(e.iter()).zip(s) {
         let wi = mi * ei;
         for (p, x) in post.iter_mut().zip(si) {
             *p += wi * x;
@@ -460,7 +529,7 @@ mod tests {
                 })
                 .collect();
             let intensity = trial % 3 == 0;
-            let r = prep.ratio(&m, &s, &mu0, intensity);
+            let r = prep.ratio(&mut Scratch::default(), &m, &s, &mu0, intensity);
             let ll0 = prep.loglik(&st, &mu0);
             for i in 0..k {
                 if m[i] > 0.0 {
@@ -487,23 +556,97 @@ mod tests {
         }
     }
 
+    /// The prior background of ld2410.prior.
+    const PRIOR: [f64; CELLS] = [
+        13.0, 9.0, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0,
+    ];
+
+    /// n frames of 0.09 s with the energies e capped.
+    fn frames(e: &[f64; CELLS], n: usize) -> Stats {
+        let mut st = Stats::default();
+        let e = e.map(|x| x.min(100.0));
+        for _ in 0..n {
+            st.add(&e, 0.09, false);
+        }
+        st
+    }
+
+    /// log L(mu1) - log L(mu0) (Stats.log_ratio).
+    fn log_ratio(lik: &Likelihood, st: &Stats, mu1: &[f64; CELLS], mu0: &[f64; CELLS]) -> f64 {
+        let prep = st.prepare(lik);
+        prep.loglik(st, mu1) - prep.loglik(st, mu0)
+    }
+
     #[test]
     fn a_person_explains_what_the_background_does_not() {
-        // test_ld2410: frames with more energy near a gate favour a person there
+        // test_ld2410: 10 s of frames, they count by their correlation time (MODEL.md 4.3)
         let p = Params::default();
         let lik = Likelihood::new(&p);
-        let b = [
-            13.0, 9.0, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0,
+        let b = PRIOR;
+        let person = super::super::profile::expected(&p, crate::params::STILL, 0.0, 2.0, 1.0);
+        let with: [f64; CELLS] = std::array::from_fn(|c| b[c] + person[c]);
+        assert!(log_ratio(&lik, &frames(&with, 110), &with, &b) > 5.0);
+        assert!(log_ratio(&lik, &frames(&b, 110), &with, &b) < -5.0);
+        // the same excess in every gate of a kind is the common gain, not somebody
+        let far = super::super::profile::expected(&p, crate::params::STILL, 0.0, 5.5, 1.0);
+        let uniform = b.map(|x| 1.5 * x);
+        let there: [f64; CELLS] = std::array::from_fn(|c| b[c] + far[c]);
+        assert!(log_ratio(&lik, &frames(&uniform, 110), &there, &b) < 1.0);
+    }
+
+    #[test]
+    fn the_amplitude_grid_carries_a_weak_reflector() {
+        // test_ld2410 (MODEL.md 4.3): a person giving back a third of the profile (7.10. 22:12, Bad)
+        // is explained by a low amplitude, not by the mean one; the grid and its prior mass per cell
+        // of filtermodel.Shapes
+        let amp = [
+            0.20706513064584572,
+            0.2994790765419169,
+            0.40251942333763985,
+            0.5401115683948937,
+            0.7231709221427172,
+            0.965436006366314,
+            1.2839010492633798,
+            1.700062508468409,
+            2.2833850758714704,
         ];
-        let person = super::super::profile::expected(&p, crate::params::STILL, 0.0, 2.2, 1.0);
-        let mut st = Stats::default();
-        let e: [f64; CELLS] = std::array::from_fn(|c| (b[c] + person[c]).round().min(100.0));
-        for _ in 0..20 {
-            st.add(&e, 0.1, false);
-        }
-        let prep = st.prepare(&lik);
-        let mu: [f64; CELLS] = std::array::from_fn(|c| b[c] + person[c]);
-        assert!(prep.loglik(&st, &mu) > prep.loglik(&st, &b) + 5.0);
+        let w = [
+            0.0043779612552276555,
+            0.012810939634038468,
+            0.04137409372931396,
+            0.10770102862305887,
+            0.2106563056807754,
+            0.2815908551173566,
+            0.22785168997043798,
+            0.0956287125712516,
+            0.018008413418539475,
+        ];
+        let p = Params::default();
+        let lik = Likelihood::new(&p);
+        let b = PRIOR;
+        let person = super::super::profile::expected(&p, crate::params::STILL, 0.0, 1.8, 1.0);
+        let st = frames(&std::array::from_fn(|c| b[c] + 0.3 * person[c]), 330); // 30 s
+        let lr: Vec<f64> = amp
+            .iter()
+            .map(|g| log_ratio(&lik, &st, &std::array::from_fn(|c| b[c] + g * person[c]), &b))
+            .collect();
+        let top = lr.iter().fold(f64::NEG_INFINITY, |a, &x| a.max(x));
+        let post: Vec<f64> = w.iter().zip(&lr).map(|(w, l)| w * (l - top).exp()).collect();
+        let mean = post.iter().zip(&amp).map(|(p, g)| p * g).sum::<f64>() / post.iter().sum::<f64>();
+        assert!(mean < 0.45, "{mean}");
+    }
+
+    #[test]
+    fn the_factor_of_a_person_all_in_view_never_takes_log_0() {
+        // test_robust: all of a person in view (masses summing to 1) and every ratio below e^-745:
+        // until 0.9.3 math.log(0) ("math domain error")
+        let s = [[0.0; CELLS]; 2];
+        let r = ratio_tail(vec![-1000.0, -2000.0], &[0.5, 0.5], &s, false, &mut Vec::new());
+        assert!((r.norm - (-1000.0 + 0.5f64.ln())).abs() < 1e-12 * 1000.0);
+        // the usual case as before
+        let r = ratio_tail(vec![1.0, -1.0], &[0.3, 0.2], &s, false, &mut Vec::new());
+        let e = std::f64::consts::E;
+        assert!((r.norm - (0.5 + 0.3 * e + 0.2 / e).ln()).abs() < 1e-15);
     }
 
     /// log of the integral of exp(g(s)) over s, g given on a uniform grid with step h (Simpson).
@@ -533,7 +676,11 @@ mod tests {
         // over log v; a censored cell P(energy >= CAP) integrated numerically over the energy
         let p = Params::default();
         let lik = Likelihood::new(&p);
-        let [bk, bu, bw] = p.ld_burst;
+        let crate::params::Burst {
+            shape: bk,
+            gain: bu,
+            weight: bw,
+        } = p.ld_burst;
         let mut rng = Rng::new(5);
         for trial in 0..8 {
             let mut st = Stats::default();

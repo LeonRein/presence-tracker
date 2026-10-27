@@ -15,7 +15,8 @@ use crate::filter::mirror::{MirrorHyp, MirrorMixture, MirrorState};
 use crate::filter::mixture::{Kalman, Mixture, SegId, Slot};
 use crate::filter::tracks::TrackInfo;
 use crate::ld2410::CELLS;
-use crate::tracker::{LdCollect, Tracker};
+use crate::ld2410::sensor::LdCollect;
+use crate::tracker::Tracker;
 use crate::world::{World, WorldExport};
 
 const TOL: f64 = 1e-12;
@@ -150,7 +151,7 @@ fn hyp(h: &Value) -> MirrorHyp {
 /// The tracker in the fixture's world with its state at the start.
 fn start(fx: &Value) -> Tracker {
     let export: WorldExport = serde_json::from_value(fx["world"].clone()).expect("the world");
-    let mut tracker = Tracker::new(World::from_export(export));
+    let mut tracker = Tracker::new(World::from_export(export).expect("a world"));
     let st = &fx["start"];
     for t in st["tracks"].as_array().expect("tracks") {
         let pt = |v: &Value| -> [f64; 2] { fs(v).try_into().expect("a point") };
@@ -288,8 +289,8 @@ fn the_ld2410c_weighs_as_the_python_filter() {
         for w in weighed {
             let si = w["si"].as_u64().expect("si") as usize;
             let at = format!("round {r}, sensor {si}");
-            let (learned, _) = tracker
-                .ld_weigh(si, &cells(&w["b"]), f(&w["rate"]), true)
+            let learned = tracker
+                .ld_weigh(si, &cells(&w["b"]), f(&w["rate"]))
                 .expect("finite")
                 .expect("frames");
             let want = &w["learned"];
@@ -307,9 +308,9 @@ fn the_ld2410c_weighs_as_the_python_filter() {
                     f(&want["time"]),
                 ],
             );
-            let (memory, echo) = tracker.filter().ld_memory_echo(si);
-            near(&format!("{at} memory"), memory.expect("weighed"), &fs(&w["memory"]));
-            near(&format!("{at} echo sources"), echo.expect("weighed"), &fs(&w["echo"]));
+            let ld = tracker.ld_sensor(si);
+            near(&format!("{at} memory"), &ld.memory.expect("weighed"), &fs(&w["memory"]));
+            near(&format!("{at} echo sources"), ld.echoes.probs(), &fs(&w["echo"]));
         }
         near_state(r, tracker.filter(), &round["state"]);
     }

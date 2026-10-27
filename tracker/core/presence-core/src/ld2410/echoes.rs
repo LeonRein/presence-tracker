@@ -6,7 +6,7 @@
 
 use super::CELLS;
 use super::profile::expected;
-use crate::params::{Params, STILL};
+use crate::params::{Params, STILL, Slants};
 use crate::vmath::{nan_max, pairwise_sum};
 
 #[derive(Debug, Clone)]
@@ -16,7 +16,7 @@ pub struct Echoes {
     /// stages
     k: usize,
     /// [off, (stage, source) ...]
-    pub p: Vec<f64>,
+    p: Vec<f64>,
     /// per source what began in the last step, and the first stage after it (for learning the rate)
     fresh: f64,
     first: Vec<f64>,
@@ -24,7 +24,7 @@ pub struct Echoes {
 
 impl Echoes {
     pub fn new(p: &Params) -> Self {
-        let [lo, hi, step] = p.ld_echo_ranges;
+        let Slants { from: lo, to: hi, step } = p.ld_echo_ranges;
         // numpy's arange(lo, hi + 1e-9, step)
         let n = ((hi + 1e-9 - lo) / step).ceil() as usize;
         let profiles: Vec<[f64; CELLS]> = (0..n)
@@ -106,6 +106,11 @@ impl Echoes {
         let off = self.p[0] * (-top).exp();
         let z = off + pairwise_sum(&on);
         self.p = std::iter::once(off).chain(on).map(|x| x / z).collect();
+    }
+
+    /// The probabilities of off, and of each (stage, source) on.
+    pub fn probs(&self) -> &[f64] {
+        &self.p
     }
 
     /// P(no source is on)

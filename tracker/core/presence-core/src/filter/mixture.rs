@@ -13,7 +13,7 @@ use crate::filter::pool::PoolId;
 use crate::filter::small_map::SmallMap;
 use crate::geometry::Point;
 use crate::params::{Params, STILL, Shapes, WALK};
-use crate::vmath::{logaddexp, pairwise_sum};
+use crate::vmath::{logaddexp, nan_max, pairwise_sum};
 use crate::world::World;
 
 /// log(2 pi) (gauss.LOG2PI)
@@ -407,16 +407,32 @@ impl Mixture {
         total
     }
 
+    /// The LD2410C's log factors of the standing component per level of its amplitude (A): the
+    /// levels' probabilities change; returns the component's log factor (MODEL.md 4.3, _ld_apply).
+    pub fn weigh_amplitude(&mut self, logf: &[f64]) -> f64 {
+        let top = nan_max(logf);
+        let f: Vec<f64> = logf.iter().map(|x| (x - top).exp()).collect();
+        let s = self.weigh_ka(|i| f[i % f.len()]);
+        if s > 0.0 { top + s.ln() } else { f64::NEG_INFINITY }
+    }
+
+    /// The levels of detectability and amplitude (K x A) times f(index), normalized if anything is
+    /// left; returns their sum before.
+    fn weigh_ka(&mut self, f: impl Fn(usize) -> f64) -> f64 {
+        let ka: Vec<f64> = self.ka.iter().enumerate().map(|(i, v)| v * f(i)).collect();
+        let s = pairwise_sum(&ka);
+        if s > 0.0 {
+            self.ka = ka.iter().map(|v| v / s).collect();
+        }
+        s
+    }
+
     /// A likelihood that depends on the standing component's detectability, f_still per level
     /// (and f_walk for the walking one): updates the levels' probabilities and returns the log
     /// factor per component, for reweigh (Gauss.kappa_weigh).
     pub fn kappa_weigh(&mut self, f_still: &[f64], f_walk: f64) -> [f64; 2] {
         let amps = self.ka.len() / f_still.len();
-        let ka: Vec<f64> = self.ka.iter().enumerate().map(|(i, v)| v * f_still[i / amps]).collect();
-        let s = pairwise_sum(&ka);
-        if s > 0.0 {
-            self.ka = ka.iter().map(|v| v / s).collect();
-        }
+        let s = self.weigh_ka(|i| f_still[i / amps]);
         let ln = |x: f64| if x > 0.0 { x.ln() } else { f64::NEG_INFINITY };
         [ln(s), ln(f_walk)]
     }

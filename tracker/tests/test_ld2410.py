@@ -1,7 +1,5 @@
 """The LD2410C's energy model (ld2410.py, MODEL.md 4.3)."""
 
-import math
-
 import numpy as np
 
 from presence_tracker import ld2410
@@ -11,14 +9,6 @@ from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
-
-
-def test_upper_incomplete_gamma():
-    for a in (1.6, 2.0, 2.5, 3.0):
-        for x in (0.1, 1.0, 3.0, 3.6, 10.0, 50.0):
-            t = np.linspace(x, x + 200, 400001)
-            q = np.trapezoid(t ** (a - 1) * np.exp(-t), t) / math.gamma(a)
-            assert abs(float(ld2410.log_gammaq(a, x)) - math.log(q)) < 1e-4
 
 
 def test_the_profile_peaks_at_the_persons_gate_and_falls_with_distance():
@@ -39,26 +29,11 @@ def _stats(e, n=11, dt=0.09):
     return st
 
 
-def test_a_person_explains_what_the_background_does_not():
-    m = Model()
-    lik = ld2410.Likelihood(m)
-    b = ld2410.prior(m)
-    S = ld2410.expected(m, [0], [2.0], [True])[STILL][0]
-    # 10 s of frames: they count by their correlation time (MODEL.md 4.3), 1 s would say little
-    with_person = _stats(np.minimum(b + S, 100), n=110)
-    empty = _stats(b, n=110)
-    assert with_person.log_ratio((b + S)[None, :], b, lik)[0] > 5
-    assert empty.log_ratio((b + S)[None, :], b, lik)[0] < -5
-    # the same excess in every gate of a kind is the common gain, not somebody
-    uniform = _stats(1.5 * b, n=110)
-    far = ld2410.expected(m, [0], [5.5], [True])[STILL][0]
-    assert uniform.log_ratio((b + far)[None, :], b, lik)[0] < 1.0
-
-
-def test_the_amplitude_grid_carries_a_weak_reflector():
+def test_the_amplitude_grid_is_the_prior_on_a_grid_in_log_g():
     # MODEL.md 4.3: the posterior of a stay's amplitude g on a grid in log g with the prior's mass per
     # cell. The quadrature's lowest node was 0.58: a person giving back a third of the profile (7.10.
-    # 22:12, Bad) was explained worse than an echo source at its level 0.3.
+    # 22:12, Bad) was explained worse than an echo source at its level 0.3 (that it now carries one:
+    # likelihood.rs, the_amplitude_grid_carries_a_weak_reflector, with these numbers)
     from presence_tracker.filtermodel import Shapes
     m = Model()
     sh = Shapes(m)
@@ -66,14 +41,6 @@ def test_the_amplitude_grid_carries_a_weak_reflector():
     assert abs(float(w @ amp) - 1.0) < 1e-6
     assert abs(float(w @ (amp - 1) ** 2) - 1 / m.ld_amp_shape) < 0.02  # Gamma(6, 6): variance 1/6
     assert amp.min() < 0.3 and amp.max() > 2.0
-    lik = ld2410.Likelihood(m)
-    b = ld2410.prior(m)
-    S = ld2410.expected(m, [0], [1.8], [True])[STILL][0]
-    st = _stats(np.minimum(b + 0.3 * S, 100), n=330)  # 30 s
-    lr = st.log_ratio(b[None, :] + amp[:, None] * S[None, :], b, lik)
-    post = w * np.exp(lr - lr.max())
-    post /= post.sum()
-    assert float(post @ amp) < 0.45
 
 
 def test_the_background_is_learned_per_sensor_and_starts_over_when_moved(tmp_path):
@@ -105,22 +72,6 @@ def test_a_learned_part_without_its_time_is_dropped_on_load():
                   "num_a": {"a": cells}, "den_a": {"a": 5.0}, "quiet": {"a": 1.0}, "echoes": {"a": 0.1}})
     assert set(bg.num) == set(bg.den) == {"b"} and set(bg.num_a) == set(bg.den_a) == {"a"}
     assert np.all(np.isfinite(bg.b("a"))) and np.all(np.isfinite(bg.b("b")))
-
-
-def test_echo_sources_begin_live_end_and_are_counted():
-    m = Model()
-    e = ld2410.Echoes(m)
-    e.predict(1.0, m, 0.001)
-    assert abs(e.on() - 0.001) < 1e-6
-    e.weigh(np.full(len(e.p) - 1, 5.0))  # the energies fit any source much better than none
-    assert e.on() > 0.1
-    assert abs(e.began() - e.on()) < 1e-9  # all of it began just now
-    for _ in range(int(10 * m.ld_echo_life)):
-        e.predict(1.0, m, 0.0)
-    assert e.on() < 0.01  # and it ends
-    bg = ld2410.Background(ld2410.prior(m), m.ld_prior_time, m.ld_forget, 1e-4, 3600.0)
-    bg.learn_echoes("a", 10.0, 1e-4, 1.0, 3600.0)
-    assert abs(bg.rate("a") - (0.36 + 10) / 7200) < 1e-9
 
 
 def test_all_energies_0_are_no_measurement():

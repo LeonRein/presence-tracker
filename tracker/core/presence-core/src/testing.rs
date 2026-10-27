@@ -41,20 +41,25 @@ use crate::geometry::Point;
 use crate::ld2410::{FLOOR, profile::expected};
 use crate::params::{Params, Shapes};
 use crate::params::{STILL, WALK};
-use crate::world::{CELL, LdExport, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
+use crate::world::{CELL, Grid, LdExport, LdPlace, LdSight, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
 
 /// What a person at each tile's centre puts into an LD2410C at `at` looking along `axis` (1.5 m
 /// above a person's height: dh2 0.64), the tiles it sees.
-fn ld_tiles(at: Point, axis: Point, centers: &[Point]) -> LdTiles {
+fn ld_tiles(raster: Raster, at: Point, axis: Point, centers: &[Point]) -> LdTiles {
     let p = Params::default();
+    let everywhere = |v: f64| Grid::new(raster, vec![v; raster.cells()]);
+    let ld = LdSight {
+        at,
+        axis,
+        dh2: 0.64,
+        los: everywhere(1.0),
+        view: None,
+        tiles: LdTiles::default(),
+    };
+    let rooms = everywhere(0.0);
     let mut out = LdTiles::default();
     for (c, &q) in centers.iter().enumerate() {
-        let (dx, dy) = (q[0] - at[0], q[1] - at[1]);
-        let ahead = dx * axis[0] + dy * axis[1];
-        let side = dx * axis[1] - dy * axis[0];
-        let angle = side.atan2(ahead.max(1e-9)).abs().to_degrees();
-        let slant = (dx * dx + dy * dy + 0.64).sqrt();
-        let sight = if ahead > 0.0 { 1.0 } else { 0.0 };
+        let LdPlace { angle, slant, sight } = ld.place(q, &rooms);
         let (still, walk) = (
             expected(&p, STILL, angle, slant, sight),
             expected(&p, WALK, angle, slant, sight),
@@ -98,6 +103,11 @@ fn segment_distance(p: Point, [x0, y0, x1, y1]: [f64; 4]) -> f64 {
 /// The room of test_filter.flat_config without its doors: 6 x 5 m with walls around, square tiles
 /// of TILE m nobody walks between, two sensors in the bottom corners that see the whole room.
 pub fn flat() -> World {
+    World::from_export(flat_export()).expect("the test world fits")
+}
+
+/// The export of `flat`.
+pub fn flat_export() -> WorldExport {
     let raster = Raster {
         x0: -0.5,
         y0: -0.5,
@@ -174,7 +184,7 @@ pub fn flat() -> World {
         point_count,
         walk_end: Vec::new(),
     };
-    World::from_export(WorldExport {
+    WorldExport {
         params: Params::default(),
         shapes: shapes(),
         raster,
@@ -197,11 +207,11 @@ pub fn flat() -> World {
                     dh2: 0.8f64.powi(2),
                     los: sight.clone(), // as the LD2450's
                     view: None,
-                    tiles: ld_tiles(at, axis, &tile_centers),
+                    tiles: ld_tiles(raster, at, axis, &tile_centers),
                 },
             }
         })
         .into(),
         rooms: vec![0.0; raster.cells()],
-    })
+    }
 }

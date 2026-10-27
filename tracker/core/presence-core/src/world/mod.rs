@@ -79,8 +79,85 @@ pub struct LdExport {
     pub tiles: LdTiles,
 }
 
+impl WorldExport {
+    /// Whether the export fits together: the model's numbers, the arrays' lengths, the indices in
+    /// range, each cell's room one of the rooms of a sensor's view (Err names what does not).
+    pub fn check(&self) -> Result<(), String> {
+        self.params.validate()?;
+        let cells = self.raster.nx * self.raster.ny;
+        let (t, n) = (&self.tiles, self.tiles.n);
+        let below = |idx: &[usize], top: usize| idx.iter().all(|&i| i < top);
+        let room = |x: f64| x >= 0.0 && x.fract() == 0.0;
+        let mut bad: Vec<String> = [
+            ("the raster", cells > 0),
+            (
+                "wall_dist, rooms",
+                self.wall_dist.len() == cells && self.rooms.len() == cells,
+            ),
+            ("the rooms", self.rooms.iter().all(|&x| room(x))),
+            (
+                "the tiles",
+                [t.centers.len(), t.var.len(), t.area.len()].iter().all(|&k| k == n),
+            ),
+            ("fine", t.fine.len() == t.fine_xy.len() && below(&t.fine, n)),
+            (
+                "walk_t, into_t",
+                t.walk_t.len() == n * n && t.into_t.len() == n * (t.regions + 1),
+            ),
+            (
+                "the regions",
+                t.region_doors.len() == t.regions && t.exits.len() == t.regions,
+            ),
+            (
+                "region_rates, widths",
+                t.region_rates.len() == t.regions * t.ages && t.widths.len() == t.ages,
+            ),
+            (
+                "region_doors, entries",
+                t.region_doors.iter().all(|d| below(d, n)) && below(&t.entries, n),
+            ),
+            (
+                "door_tiles",
+                t.door_tiles.iter().all(|d| d.rates.len() == t.regions + 1),
+            ),
+            (
+                "points",
+                t.point_tile.len() == t.points.len() && below(&t.point_tile, n) && t.point_count.len() == n,
+            ),
+        ]
+        .into_iter()
+        .filter(|&(_, ok)| !ok)
+        .map(|(what, _)| what.to_string())
+        .collect();
+        for (si, s) in self.sensors.iter().enumerate() {
+            let ld = &s.ld;
+            let tiles = &ld.tiles;
+            let ok = s.grid.len() == cells
+                && s.observed.len() == n
+                && ld.los.len() == cells
+                && below(&tiles.idx, n)
+                && tiles.still.len() == tiles.idx.len()
+                && tiles.walk.len() == tiles.idx.len()
+                && ld
+                    .view
+                    .as_ref()
+                    .is_none_or(|v| self.rooms.iter().all(|&x| (x as usize) < v.len()));
+            if !ok {
+                bad.push(format!("sensor {si}"));
+            }
+        }
+        if bad.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("the world's export does not fit together: {}", bad.join(", ")))
+        }
+    }
+}
+
 impl World {
-    pub fn from_export(e: WorldExport) -> Self {
+    /// The world of a checked export (WorldExport::check).
+    pub fn from_export(e: WorldExport) -> Result<Self, String> {
+        e.check()?;
         let rates = RateModel::new(&e.params);
         let raster = e.raster;
         let (sights, ld) = e
@@ -106,7 +183,7 @@ impl World {
             })
             .unzip();
         let ld_lik = Likelihood::new(&e.params);
-        Self {
+        Ok(Self {
             params: e.params,
             shapes: e.shapes,
             rates,
@@ -118,7 +195,7 @@ impl World {
             ld,
             rooms: Grid::new(raster, e.rooms),
             ld_lik,
-        }
+        })
     }
 
     /// The shape of a density over these tiles.
@@ -201,5 +278,23 @@ impl World {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing;
+
+    #[test]
+    fn an_export_that_does_not_fit_together_is_refused() {
+        assert!(testing::flat_export().check().is_ok());
+        let mut e = testing::flat_export();
+        e.rooms[3] = -1.0;
+        e.sensors[1].ld.tiles.idx[0] = e.tiles.n;
+        let err = e.check().expect_err("does not fit");
+        assert!(err.contains("the rooms") && err.contains("sensor 1"), "{err}");
+        let mut e = testing::flat_export();
+        e.params.ld_memory = 0.0;
+        assert!(e.check().expect_err("no model").contains("ld_memory"));
     }
 }

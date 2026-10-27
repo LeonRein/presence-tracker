@@ -7,6 +7,7 @@
 pub mod echoes;
 pub mod likelihood;
 pub mod profile;
+pub mod sensor;
 
 /// m: a gate's depth
 pub const GATE: f64 = 0.75;

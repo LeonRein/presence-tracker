@@ -101,17 +101,16 @@ pub struct Params {
     /// s: motion is cut into parts no longer than this (filter.MAX_STEP)
     #[serde(deserialize_with = "real")]
     pub max_step: f64,
-    // 4.3 the LD2410C: per mode [STILL, WALK] the profile (A, n, delta, sigma, tail, ell) of the
-    // moving and the still cells, the beam (degrees: full, none), the Gamma shape and the
-    // correlation time (moving, still), the common gain's prior (moving, still) and bursts (shape,
-    // gain, weight)
-    pub ld_moving: [[f64; 6]; 2],
-    pub ld_still: [[f64; 6]; 2],
+    // 4.3 the LD2410C: per mode [STILL, WALK] the profile of the moving and the still cells, the
+    // beam (degrees: full, none), the Gamma shape and the correlation time (moving, still), the
+    // common gain's prior (moving, still) and its bursts
+    pub ld_moving: [Profile; 2],
+    pub ld_still: [Profile; 2],
     pub ld_beam: [f64; 2],
     pub ld_shape: [f64; 2],
     pub ld_tau: [f64; 2],
     pub ld_gain: [f64; 2],
-    pub ld_burst: [f64; 3],
+    pub ld_burst: Burst,
     /// s: the energies are weighed this often
     #[serde(deserialize_with = "real")]
     pub ld_every: f64,
@@ -125,7 +124,7 @@ pub struct Params {
     #[serde(deserialize_with = "real")]
     pub ld_echo_life: f64,
     pub ld_echo_stages: usize,
-    pub ld_echo_ranges: [f64; 3],
+    pub ld_echo_ranges: Slants,
     pub ld_echo_amps: Vec<f64>,
     /// a tile holding less of a person standing is weighed at its mean amplitude (filter.LD_TILE_MASS)
     #[serde(deserialize_with = "real")]
@@ -198,24 +197,32 @@ impl Default for Params {
             give_up: 0.01,
             max_step: 0.2,
             ld_moving: [
-                [63.0, 2.52, 0.41, 0.55, 0.27, 1.34],
-                [159.4, 2.16, 0.41, 0.57, 0.47, 1.26],
+                Profile::new([63.0, 2.52, 0.41, 0.55, 0.27, 1.34]),
+                Profile::new([159.4, 2.16, 0.41, 0.57, 0.47, 1.26]),
             ],
             ld_still: [
-                [574.0, 2.03, 0.19, 0.77, 0.40, 1.70],
-                [949.0, 2.19, 0.58, 1.44, 1.00, 1.25],
+                Profile::new([574.0, 2.03, 0.19, 0.77, 0.40, 1.70]),
+                Profile::new([949.0, 2.19, 0.58, 1.44, 1.00, 1.25]),
             ],
             ld_beam: [50.0, 70.0],
             ld_shape: [2.5, 2.0],
             ld_tau: [4.0, 13.0],
             ld_gain: [16.0, 50.0],
-            ld_burst: [4.0, 2.5, 0.02],
+            ld_burst: Burst {
+                shape: 4.0,
+                gain: 2.5,
+                weight: 0.02,
+            },
             ld_every: 1.0,
             ld_frame: 0.089,
             ld_memory: 2.0,
             ld_echo_life: 20.0,
             ld_echo_stages: 2,
-            ld_echo_ranges: [0.75, 6.5, 0.5],
+            ld_echo_ranges: Slants {
+                from: 0.75,
+                to: 6.5,
+                step: 0.5,
+            },
             ld_echo_amps: vec![0.3, 1.0, 3.0],
             ld_tile_mass: 1e-4,
             gap_exact: 120.0,
@@ -232,6 +239,59 @@ impl Params {
         serde_json::from_str(json)
     }
 
+    /// Whether the numbers make a model: what divides, counts or is a probability in range (a step
+    /// of 0 in the echo sources' slants would make endless sources, an ld_memory of 0 NaN).
+    pub fn validate(&self) -> Result<(), String> {
+        let positive = [
+            ("ld_every", self.ld_every),
+            ("ld_frame", self.ld_frame),
+            ("ld_memory", self.ld_memory),
+            ("ld_echo_life", self.ld_echo_life),
+            ("max_step", self.max_step),
+            ("speed", self.speed),
+            ("walk_length", self.walk_length),
+            ("ld_shape", self.ld_shape[0].min(self.ld_shape[1])),
+            ("ld_tau", self.ld_tau[0].min(self.ld_tau[1])),
+            ("ld_gain", self.ld_gain[0].min(self.ld_gain[1])),
+            ("ld_burst.shape", self.ld_burst.shape),
+            ("ld_burst.gain", self.ld_burst.gain),
+            ("ld_echo_ranges.from", self.ld_echo_ranges.from),
+            ("ld_echo_ranges.step", self.ld_echo_ranges.step),
+        ];
+        let profiles = self.ld_moving.iter().chain(&self.ld_still);
+        let checks = positive
+            .iter()
+            .map(|&(name, x)| (name, x > 0.0 && x.is_finite()))
+            .chain([
+                (
+                    "ld_burst.weight",
+                    self.ld_burst.weight > 0.0 && self.ld_burst.weight < 1.0,
+                ),
+                ("ld_beam", self.ld_beam[0] < self.ld_beam[1]),
+                ("ld_echo_ranges.to", self.ld_echo_ranges.to >= self.ld_echo_ranges.from),
+                ("ld_echo_stages", self.ld_echo_stages >= 1),
+                (
+                    "ld_echo_amps",
+                    !self.ld_echo_amps.is_empty() && self.ld_echo_amps.iter().all(|&a| a > 0.0),
+                ),
+                ("ld_tile_mass", self.ld_tile_mass >= 0.0),
+                ("give_up", (0.0..=1.0).contains(&self.give_up)),
+                ("max_hyps", self.max_hyps >= 1),
+                (
+                    "ld_moving, ld_still",
+                    profiles
+                        .clone()
+                        .all(|q| q.sigma > 0.0 && q.ell > 0.0 && (0.0..=1.0).contains(&q.tail)),
+                ),
+            ]);
+        let bad: Vec<&str> = checks.filter(|&(_, ok)| !ok).map(|(name, _)| name).collect();
+        if bad.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("the model's numbers do not fit: {}", bad.join(", ")))
+        }
+    }
+
     /// 1/s at which walkers stop: the mean walk is walk_length long (MODEL.md 3.2).
     pub fn stop_rate(&self) -> f64 {
         self.speed / self.walk_length
@@ -241,6 +301,48 @@ impl Params {
     pub fn walk_var(&self) -> f64 {
         0.5 * (self.speed.powf(2.0) + self.speed_spread.powf(2.0))
     }
+}
+
+/// What a person puts into a kind of cell of the LD2410C (MODEL.md 4.3, measured 6.10.): a r^-n
+/// times the main lobe, a Gaussian of width sigma centred delta behind the person, and beyond the
+/// centre the tail mixed in by `tail`, falling off over ell (m). Read as the model's list.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct Profile {
+    pub a: f64,
+    pub n: f64,
+    pub delta: f64,
+    pub sigma: f64,
+    pub tail: f64,
+    pub ell: f64,
+}
+
+impl Profile {
+    pub const fn new([a, n, delta, sigma, tail, ell]: [f64; 6]) -> Self {
+        Self {
+            a,
+            n,
+            delta,
+            sigma,
+            tail,
+            ell,
+        }
+    }
+}
+
+/// The bursts of the LD2410C's common gain: 1/u ~ Gamma(shape, rate shape x gain) with this weight.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct Burst {
+    pub shape: f64,
+    pub gain: f64,
+    pub weight: f64,
+}
+
+/// The slants (m) of the echo sources: from, to (with it), step.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct Slants {
+    pub from: f64,
+    pub to: f64,
+    pub step: f64,
 }
 
 /// How long a stay lasts and how well it is seen (filtermodel.Shapes): every stay draws its rate of
@@ -296,6 +398,23 @@ mod tests {
         assert_eq!(p.white, 0.1);
         assert_eq!(p.speed, Params::default().speed);
         assert!(Params::from_json(r#"{"white": "much"}"#).is_err());
+    }
+
+    #[test]
+    fn numbers_that_make_no_model_are_refused() {
+        assert!(Params::default().validate().is_ok());
+        let p = Params::from_json(r#"{"ld_echo_ranges": [0.75, 6.5, 0.0], "ld_memory": 0.0}"#).expect("read");
+        let err = p.validate().expect_err("no model");
+        assert!(
+            err.contains("ld_memory") && err.contains("ld_echo_ranges.step"),
+            "{err}"
+        );
+        assert!(
+            Params::from_json(r#"{"ld_frame": "nan"}"#)
+                .expect("read")
+                .validate()
+                .is_err()
+        );
     }
 
     #[test]

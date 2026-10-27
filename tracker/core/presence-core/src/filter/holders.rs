@@ -16,19 +16,31 @@ pub enum Obj {
     Density(DensityId),
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default)]
 pub struct Holders {
     objects: Vec<Obj>,
     /// the source of a ghost track (not a person)
     source: Vec<bool>,
     ptr: Vec<usize>,
     hyps: Vec<usize>,
+    /// per mixture and density (by its index) its entry, NONE if nobody holds it
+    by_mixture: Vec<usize>,
+    by_density: Vec<usize>,
+}
+
+const NONE: usize = usize::MAX;
+
+/// The same objects held by the same hypotheses (the tables by index follow from them; their length
+/// is the pools' capacity when built).
+impl PartialEq for Holders {
+    fn eq(&self, other: &Self) -> bool {
+        (&self.objects, &self.source, &self.ptr, &self.hyps) == (&other.objects, &other.source, &other.ptr, &other.hyps)
+    }
 }
 
 impl Holders {
     /// `mixtures`, `densities`: one more than the largest index of each (for tables by index).
     pub fn build(hyps: &[Hyp], mixtures: usize, densities: usize) -> Self {
-        const NONE: usize = usize::MAX;
         let (mut by_mixture, mut by_density) = (vec![NONE; mixtures], vec![NONE; densities]);
         let mut objects: Vec<(Obj, bool)> = Vec::new();
         let mut refs: Vec<Vec<usize>> = Vec::new();
@@ -62,6 +74,8 @@ impl Holders {
             source,
             ptr,
             hyps: flat,
+            by_mixture,
+            by_density,
         }
     }
 
@@ -76,6 +90,25 @@ impl Holders {
     }
 
     /// The hypotheses holding an entry's object, as often as they hold it.
+    /// The entry of an object a hypothesis holds.
+    pub fn entry(&self, obj: Obj) -> usize {
+        let e = match obj {
+            Obj::Mixture(m) => self.by_mixture.get(m.index()),
+            Obj::Density(d) => self.by_density.get(d.index()),
+        };
+        e.copied().filter(|&e| e != NONE).expect("held")
+    }
+
+    /// The hypotheses holding an entry, each once, in their order (`refs` are sorted: the
+    /// hypotheses are gone through in order).
+    pub fn holding(&self, entry: usize) -> impl Iterator<Item = usize> + '_ {
+        let refs = self.refs(entry);
+        refs.iter()
+            .enumerate()
+            .filter(move |&(i, h)| i == 0 || refs[i - 1] != *h)
+            .map(|(_, &h)| h)
+    }
+
     pub fn refs(&self, entry: usize) -> &[usize] {
         &self.hyps[self.ptr[entry]..self.ptr[entry + 1]]
     }
@@ -121,6 +154,9 @@ mod tests {
                 (Obj::Mixture(m(1)), vec![1]),
             ]
         );
+        assert_eq!(h.entry(Obj::Density(d(4))), 3);
+        assert_eq!(h.holding(1).collect::<Vec<_>>(), vec![0], "each hypothesis once");
+        assert_eq!(h.holding(0).collect::<Vec<_>>(), vec![0, 1]);
         assert_eq!(h.entries(false).count(), 4);
         let mut hyps = [Hyp::new(0.0, Vec::new(), d(0)), Hyp::new(1.0, Vec::new(), d(0))];
         h.book(&mut hyps, 1, 0.5);

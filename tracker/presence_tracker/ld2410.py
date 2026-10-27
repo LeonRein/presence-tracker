@@ -16,7 +16,6 @@ import os
 
 import numpy as np
 
-from . import kernels
 from .filtermodel import STILL, WALK
 from .model import remounted
 
@@ -59,25 +58,6 @@ def expected(m, angle, slant, sight) -> tuple:
     return out[0], out[1]
 
 
-def expected_rows(m, angle, slant, sight, modes) -> np.ndarray:
-    """expected's row of mode modes[j] for each point j (k, 16): the same numbers (the arithmetic in
-    compiled loops, numpy's exponentials and powers as before), for a person's components, each
-    with its own mode."""
-    angle = np.asarray(angle, dtype=float).reshape(-1)
-    slant = np.asarray(slant, dtype=float).reshape(-1)
-    sight = np.asarray(sight, dtype=float).reshape(-1)
-    pm = np.array([m.ld_moving[mode] for mode in modes], dtype=float)
-    ps = np.array([m.ld_still[mode] for mode in modes], dtype=float)
-    full, none = m.ld_beam
-    v, r, D, args = kernels.ld_profile_args(angle, slant, sight, pm, ps, CENTRE, 9, float(full), float(none))
-    pw = np.empty((len(r), 2))
-    for j in range(len(r)):  # r^-n as _profile takes it (numpy's power of an array by a number)
-        rj = r[j:j + 1, None]
-        pw[j, 0] = (rj ** (-m.ld_moving[modes[j]][1]))[0, 0]
-        pw[j, 1] = (rj ** (-m.ld_still[modes[j]][1]))[0, 0]
-    return kernels.ld_profile_rows(v, D, np.exp(args), pw, pm, ps, 9)
-
-
 def log_gammaq(a, x) -> np.ndarray:
     """log of the regularized upper incomplete gamma function Q(a, x), x >= 0, a and x broadcast
     (Numerical Recipes 6.2: the series for x < a + 1, the continued fraction (Lentz) above)."""
@@ -113,42 +93,6 @@ def log_gammaq(a, x) -> np.ndarray:
     return out
 
 
-_GRID = np.linspace(math.log(0.05), math.log(1e5), 4001)  # log mean energy
-_TABLES = {}
-
-
-def log_censored(alpha: np.ndarray, mu: np.ndarray) -> np.ndarray:
-    """log P(energy >= CAP) for Gamma(alpha, mean mu): log_gammaq on a fine grid of log mu,
-    interpolated (alpha takes one value per kind of cell)."""
-    out = np.empty(np.broadcast(alpha, mu).shape)
-    alpha = np.broadcast_to(alpha, out.shape)
-    mu = np.broadcast_to(mu, out.shape)
-    lm = np.log(np.maximum(mu, 1e-300))
-    for a in np.unique(alpha):
-        tab = _TABLES.get(float(a))
-        if tab is None:
-            tab = _TABLES[float(a)] = log_gammaq(a, CAP * a / np.exp(_GRID))
-        k = alpha == a
-        out[k] = np.interp(lm[k], _GRID, tab)
-    return out
-
-
-_BY_ALPHA = {}
-
-
-def _censored_tables(alpha: np.ndarray) -> tuple:
-    """For kernels.ld_censored: per cell the row of its table of log P(energy >= CAP) on _GRID
-    (log_censored's), and the tables (one per value of alpha)."""
-    key = alpha.tobytes()
-    hit = _BY_ALPHA.get(key)
-    if hit is None:
-        values = sorted(set(alpha.tolist()))
-        log_censored(np.array(values), np.ones(len(values)))  # fills _TABLES
-        hit = _BY_ALPHA[key] = (np.array([values.index(a) for a in alpha.tolist()], dtype=np.int64),
-                                np.stack([_TABLES[float(v)] for v in values]))
-    return hit
-
-
 def _lgamma(a: np.ndarray) -> np.ndarray:
     return np.vectorize(math.lgamma, otypes=[float])(a) if a.size else a
 
@@ -180,140 +124,6 @@ class Stats:
         self.t_e += dt * np.where(cens, 0.0, ee)
         self.t_le += dt * np.where(cens, 0.0, np.log(ee))
         self.t_cens += dt * cens
-
-    def _prepared(self, lik: "Likelihood") -> tuple:
-        """What kernels.ld_rows / ld_ratio take from these frames and lik (after the means), computed
-        once for all the means they are asked about: alpha x looks per cell; the kinds of cell with
-        looks (N > 0) - their cells klo..khi, their components' r, c + lgamma(N + k) and N + k -;
-        alpha x energy per cell; the censored cells, their rows of the tables and weights."""
-        p = self._prep
-        if p is not None and p[0] is lik:
-            return p[1]
-        a, tau = lik.alpha, lik.tau
-        look = a * self.t_unc / tau  # alpha x looks per cell
-        ae = a * self.t_e / tau
-        lo, hi, r, cl, nk = [], [], [], [], []
-        for cs, comps in lik.kinds:
-            N = float(look[cs].sum())
-            if N <= 0:
-                continue
-            assert len(comps) == 2  # kernels._ld_cols
-            lo.append(cs.start)
-            hi.append(cs.stop)
-            for c, k, rr in comps:
-                r.append(rr)
-                cl.append(c + math.lgamma(N + k))
-                nk.append(N + k)
-        c = np.flatnonzero(self.t_cens > 0)
-        if len(c):
-            rows, tables = _censored_tables(a)
-            cens = (c.astype(np.int64), rows[c], tables, self.t_cens[c] / tau[c])
-        else:
-            cens = (np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64), np.zeros((1, len(_GRID))), np.zeros(0))
-        args = (look, np.array(lo, dtype=np.int64), np.array(hi, dtype=np.int64), ae, np.array(r, dtype=float).reshape(-1, 2),
-                np.array(cl, dtype=float), np.array(nk, dtype=float), *cens[:3], _GRID, cens[3])
-        self._prep = (lik, args)
-        return args
-
-    def _mu_part(self, mu: np.ndarray, lik: "Likelihood") -> np.ndarray:
-        """The part of the tempered log-likelihood that depends on the means mu (k, 16), with the
-        block's common gain of each kind integrated out (Likelihood), (k,): per kind of cell
-        log sum_c exp(c + lgamma(N + k) - (N + k) log(r + A)), A the sum of alpha x energy / mean
-        over its cells (kernels.ld_rows)."""
-        return kernels.ld_rows(np.ascontiguousarray(mu, dtype=float), *self._prepared(lik))
-
-    def ratio(self, m: np.ndarray, S: np.ndarray, mu0: np.ndarray, lik: "Likelihood", intensity: bool) -> tuple:
-        """kernels.ld_ratio: (log ratios per point, log normalizer, what they put in afterwards) of
-        masses m (k,) putting S (k, 16) on top of mu0 (16,)."""
-        return kernels.ld_ratio(np.ascontiguousarray(m, dtype=float), np.ascontiguousarray(S, dtype=float),
-                                np.ascontiguousarray(mu0, dtype=float), intensity, LOG_CAP, *self._prepared(lik))
-
-    def loglik(self, mu: np.ndarray, lik: "Likelihood") -> float:
-        """Tempered log-likelihood of the frames given the mean energies mu (16,)."""
-        a, tau = lik.alpha, lik.tau
-        const = ((self.t_unc * (a * np.log(a) - _lgamma(a)) + (a - 1) * self.t_le) / tau).sum()
-        return float(const + self._mu_part(mu[None, :], lik)[0])
-
-    def log_ratio(self, mu1: np.ndarray, mu0: np.ndarray, lik: "Likelihood") -> np.ndarray:
-        """Tempered log-likelihood ratio of the means mu1 (k, 16) against mu0 (16,), (k,)."""
-        both = self._mu_part(np.vstack([np.asarray(mu1, dtype=float), np.asarray(mu0, dtype=float)[None, :]]), lik)
-        return both[:-1] - both[-1]
-
-
-class Likelihood:
-    """The numbers of the energies' likelihood (Model): per cell the Gamma shape alpha and the
-    correlation time tau; per kind (moving, still) the prior of the block's common gain u: 1/u ~
-    Gamma(kappa, rate kappa) (mean 1), mixed with bursts, 1/u ~ Gamma(shape, rate shape x their gain)
-    (conjugate: integrated exactly)."""
-
-    def __init__(self, m):
-        self.alpha = cell_values(m, *m.ld_shape)
-        self.tau = cell_values(m, *m.ld_tau)
-        bk, bu, bw = m.ld_burst
-        br = bk * bu
-        self.kinds = []
-        for cells, k in ((MOVING, m.ld_gain[0]), (STILL_CELLS, m.ld_gain[1])):
-            comps = [(math.log(1 - bw) + k * math.log(k) - math.lgamma(k), k, k),
-                     (math.log(bw) + bk * math.log(br) - math.lgamma(bk), bk, br)]
-            self.kinds.append((cells, comps))
-
-
-class Echoes:
-    """The LD2410C's echo sources (MODEL.md 4.3): energy that is not a person's (on 7.10. at 01:08 in
-    the empty kitchen 40 s of near moving bursts and still energies up to 90 in gates 2-4). Per sensor
-    off, or one source on - the profile of a standing person on the axis at slant r, times an
-    amplitude - in one of K stages: it begins at rate ld_echo_rate (uniform over the sources), lives
-    an Erlang(K) time with mean ld_echo_life and ends. Like the LD2450's ghosts (4.2), what tells it
-    from a person is how it begins and ends: a person must come in, and stays."""
-
-    def __init__(self, m):
-        lo, hi, step = m.ld_echo_ranges
-        rs = np.arange(lo, hi + 1e-9, step)
-        prof = expected(m, np.zeros(len(rs)), rs, np.ones(len(rs), bool))[STILL]
-        self.src = np.concatenate([amp * prof for amp in m.ld_echo_amps])  # (J, 16)
-        self.K = m.ld_echo_stages
-        self.S = np.tile(self.src, (self.K, 1))  # (K J, 16): the states that are on
-        self.p = np.zeros(1 + len(self.S))  # [off, (stage, source)...]
-        self.p[0] = 1.0
-
-    def predict(self, dt: float, m, rate: float):
-        """Move on by dt: sources begin with rate (per s), age, end."""
-        J = len(self.src)
-        p, q = self.p, np.zeros_like(self.p)
-        on = p[0] * -math.expm1(-rate * dt)
-        q[0] = p[0] - on
-        q[1:1 + J] += on / J
-        self._fresh = on / J  # per source: what began just now (for learning the rate)
-        go = -math.expm1(-self.K / m.ld_echo_life * dt)
-        for k in range(self.K):
-            part = p[1 + k * J:1 + (k + 1) * J]
-            q[1 + k * J:1 + (k + 1) * J] += part * (1 - go)
-            if k + 1 < self.K:
-                q[1 + (k + 1) * J:1 + (k + 2) * J] += part * go
-            else:
-                q[0] += float(part.sum()) * go
-        self.p = q
-        self._first = q[1:1 + J].copy()
-
-    def began(self) -> float:
-        """After weigh: the expected number of sources that began in the last step."""
-        first = self._first
-        share = np.divide(self._fresh, first, out=np.zeros_like(first), where=first > 0)
-        return float(self.p[1:1 + len(self.src)] @ share)
-
-    def points(self, scale: np.ndarray) -> tuple:
-        """(masses of the states that are on, what each puts into the cells x scale)."""
-        return self.p[1:], self.S * scale
-
-    def weigh(self, logf: np.ndarray):
-        """Multiply the states that are on by exp(logf) (off by 1) and normalize."""
-        top = max(float(logf.max()), 0.0)
-        on = self.p[1:] * np.exp(logf - top)
-        z = self.p[0] * math.exp(-top) + float(on.sum())
-        self.p = np.concatenate([[self.p[0] * math.exp(-top)], on]) / z
-
-    def on(self) -> float:
-        return float(1.0 - self.p[0])
 
 
 def prior(m) -> np.ndarray:

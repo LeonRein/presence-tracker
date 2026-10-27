@@ -1008,18 +1008,6 @@ class Tracker:
         self._call("ld_frame", si, t, gates, target)
         rt.ld_e = self._c.ld_last(si)
 
-    @property
-    def _ld_stats(self) -> dict:
-        """sensor index -> what its LD2410C gathered since its last weighing (for reading, tests)."""
-        out = {}
-        for si in range(len(self.sensors)):
-            st = self._c.ld_stats(si)
-            if st is not None:
-                s = ld2410.Stats()
-                s.time, s.t_unc, s.t_e, s.t_le, s.t_cens, s.t_target = st[0], *map(np.array, st[1:5]), st[5]
-                out[si] = s
-        return out
-
     def _ld_tiles(self, si: int) -> tuple:
         """The tiles sensor si's LD2410C sees and what a person there puts into its 16 cells:
         (tile indices, standing (k, 16), walking (k, 16)), averaged over each tile."""
@@ -1044,18 +1032,14 @@ class Tracker:
         read before the echo sources moved on (docs/rust-core.md 2.0); nothing while learning is paused."""
         sid = self.sensors[si]
         b, rate = self.ld_background.b(sid), self.ld_background.rate(sid)
-        time = self._c.ld_stats(si)[0]
-        learn = self.learn_ghosts and not self.pauses.paused(self.now - time, self.now)
-        out = self._call("ld_weigh", si, [float(x) for x in b], float(rate), learn)
-        if out is None:
+        out = self._call("ld_weigh", si, [float(x) for x in b], float(rate))
+        if out is None or not self.learn_ghosts or self.pauses.paused(self.now - out["time"], self.now):
             return
-        mus, prior_w, nobody, off, began, (time, t_e, t_cens, t_target), alpha, target_t = out
         st = ld2410.Stats()
-        st.time, st.t_e, st.t_cens, st.t_target = time, t_e, t_cens, t_target
-        rt = self.runtime.get(sid)
-        quiet = self.now - target_t if rt is not None else 0.0
-        self.ld_background.learn(sid, b, mus, prior_w, st, alpha, off, quiet)
-        self.ld_background.learn_echoes(sid, began, rate, nobody, time)
+        st.time, st.t_e, st.t_cens, st.t_target = out["time"], out["t_e"], out["t_cens"], out["t_target"]
+        quiet = self.now - out["target_t"] if sid in self.runtime else 0.0
+        self.ld_background.learn(sid, b, out["mus"], out["prior_w"], st, out["alpha"], out["echo_off"], quiet)
+        self.ld_background.learn_echoes(sid, out["began"], rate, out["nobody"], st.time)
 
     def _ld_runtime(self, s, rt, t, ld):
         """LD2410C state for the display (presence with the app's own hold time)."""

@@ -150,10 +150,12 @@ fn the_people_without_a_track_are_paired_by_their_distance() {
 
 /// The world's two sensors, both watching since t.
 fn watching(t: f64) -> Vec<SensorState> {
+    let p = crate::params::Params::default();
     vec![
         SensorState {
             active: true,
             last_frame: t,
+            ..SensorState::new(&p)
         };
         2
     ]

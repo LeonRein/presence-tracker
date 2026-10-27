@@ -16,9 +16,10 @@ use presence_core::filter::mirror::{MirrorHyp, MirrorMixture, MirrorState};
 use presence_core::filter::mixture::{Kalman, Mixture, MixtureId, NewTrack, SegId, Slot};
 use presence_core::filter::pool::PoolId;
 use presence_core::ld2410::CELLS;
+use presence_core::ld2410::sensor::LdCollect;
 use presence_core::params::{LostKind, Params, Shapes};
-use presence_core::sensors::{SensorSet, SensorState};
-use presence_core::tracker::{LdCollect, TrackEvents, Tracker};
+use presence_core::sensors::SensorSet;
+use presence_core::tracker::{TrackEvents, Tracker};
 use presence_core::world::{DoorTile, LdExport, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
 
 fn item<'py>(d: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
@@ -33,7 +34,10 @@ fn floats(d: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<f64>> {
 
 fn ints(d: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<usize>> {
     let a: PyReadonlyArrayDyn<'_, i64> = item(d, key)?.extract()?;
-    Ok(a.as_slice()?.iter().map(|&i| i as usize).collect())
+    a.as_slice()?
+        .iter()
+        .map(|&i| usize::try_from(i).map_err(|_| PyValueError::new_err(format!("{key}: a negative index"))))
+        .collect()
 }
 
 fn number<'py, T: FromPyObjectOwned<'py>>(d: &Bound<'py, PyDict>, key: &str) -> PyResult<T> {
@@ -117,7 +121,7 @@ fn world_from(e: &Bound<'_, PyDict>) -> PyResult<World> {
         sensors,
         rooms: floats(e, "rooms")?,
     };
-    Ok(World::from_export(export))
+    World::from_export(export).map_err(PyValueError::new_err)
 }
 
 /// A sensor of the world's export: where it is and its sight; its LD2410C's axis, height above a
@@ -364,11 +368,7 @@ impl Core {
 
     /// Per sensor whether its frames count and when its last frame came.
     fn set_sensors(&mut self, sensors: Vec<(bool, f64)>) {
-        let sensors = sensors
-            .into_iter()
-            .map(|(active, last_frame)| SensorState { active, last_frame })
-            .collect();
-        self.tracker.set_sensors(sensors);
+        self.tracker.set_sensors(&sensors);
     }
 
     #[getter]
@@ -694,57 +694,35 @@ impl Core {
         self.tracker.ld_due()
     }
 
-    /// What sensor si's LD2410C gathered since its last weighing: (time, t_unc, t_e, t_le, t_cens,
-    /// t_target), or None.
-    #[allow(clippy::type_complexity)]
-    fn ld_stats(&self, si: usize) -> Option<(f64, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, f64)> {
-        self.tracker.filter().ld_stats(si).map(|s| {
-            (
-                s.time,
-                s.t_unc.to_vec(),
-                s.t_e.to_vec(),
-                s.t_le.to_vec(),
-                s.t_cens.to_vec(),
-                s.t_target,
-            )
-        })
-    }
-
     /// Weighs by the LD2410C si's frames given its background b and its echo sources' rate; what the
-    /// background learns: (mus (H x 16), prior_w, nobody, echo_off, began, (time, t_e, t_cens,
-    /// t_target), alpha, target_t), or None.
-    #[allow(clippy::type_complexity)]
+    /// background learns (mus (H x 16), prior_w, nobody, echo_off, began, the frames' time, t_e,
+    /// t_cens and t_target, alpha, target_t), or None if there were no frames.
     fn ld_weigh<'py>(
         &mut self,
         py: Python<'py>,
         si: usize,
         b: [f64; CELLS],
         rate: f64,
-        learn: bool,
-    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+    ) -> PyResult<Option<Bound<'py, PyDict>>> {
         self.changed();
-        let Some((l, target_t)) = self.tracker.ld_weigh(si, &b, rate, learn).map_err(not_finite)? else {
+        let Some(l) = self.tracker.ld_weigh(si, &b, rate).map_err(not_finite)? else {
             return Ok(None);
         };
         let mus: Vec<f64> = l.mus.iter().flatten().copied().collect();
         let st = &l.stats;
-        let alpha = self.tracker.world().ld_lik.alpha;
-        let out = (
-            array(py, &mus, &[l.mus.len(), CELLS])?,
-            array(py, &l.prior_w, &[l.prior_w.len()])?,
-            l.nobody,
-            l.echo_off,
-            l.began,
-            (
-                st.time,
-                array(py, &st.t_e, &[CELLS])?,
-                array(py, &st.t_cens, &[CELLS])?,
-                st.t_target,
-            ),
-            array(py, &alpha, &[CELLS])?,
-            target_t,
-        );
-        Ok(Some(out.into_pyobject(py)?.into_any()))
+        let out = PyDict::new(py);
+        out.set_item("mus", array(py, &mus, &[l.mus.len(), CELLS])?)?;
+        out.set_item("prior_w", array(py, &l.prior_w, &[l.prior_w.len()])?)?;
+        out.set_item("nobody", l.nobody)?;
+        out.set_item("echo_off", l.echo_off)?;
+        out.set_item("began", l.began)?;
+        out.set_item("time", st.time)?;
+        out.set_item("t_e", array(py, &st.t_e, &[CELLS])?)?;
+        out.set_item("t_cens", array(py, &st.t_cens, &[CELLS])?)?;
+        out.set_item("t_target", st.t_target)?;
+        out.set_item("alpha", array(py, &self.tracker.world().ld_lik.alpha, &[CELLS])?)?;
+        out.set_item("target_t", l.target_t)?;
+        Ok(Some(out))
     }
 
     /// The LD2410C of sensor si starts over (recalibrated).

@@ -50,47 +50,6 @@ def _censored_kernel(stats, mu, lik):
     return kernels.ld_censored(m, lm, c, rows[c], tables, ld2410._GRID) @ (stats.t_cens[c] / lik.tau[c])
 
 
-def test_the_censored_cells_kernel_is_log_censored():
-    rng = np.random.default_rng(1)
-    lik = ld2410.Likelihood(Model())
-    grid = ld2410._GRID
-    for k in range(20):
-        st = ld2410.Stats()
-        for _ in range(rng.integers(1, 30)):  # energies at 100 (censored) in some cells
-            e = rng.integers(0, 101, ld2410.CELLS).astype(float)
-            e[rng.random(ld2410.CELLS) < 0.3] = 100.0
-            st.add(e, 0.1)
-        # means from below the grid to above it, some exactly on grid points and at its edges
-        mu = np.exp(rng.uniform(grid[0] - 2, grid[-1] + 2, (int(rng.integers(1, 40)), ld2410.CELLS)))
-        mu[0, :5] = np.exp(grid[[0, 1, 2000, 3999, 4000]])
-        mu[-1, rng.integers(0, ld2410.CELLS)] = 0.0  # no energy expected: the lowest
-        with np.errstate(divide="ignore"):
-            assert np.array_equal(_censored_kernel(st, mu, lik), _censored_numpy(st, mu, lik))  # bit for bit
-    st = ld2410.Stats()
-    st.add(np.full(ld2410.CELLS, 100.0), 0.1)
-    mu = np.ones((2, ld2410.CELLS))
-    mu[1, 3] = np.nan  # NaN stays NaN (the app restarts the model on it)
-    assert np.isnan(_censored_kernel(st, mu, lik)[1]) and np.isfinite(_censored_kernel(st, mu, lik)[0])
-    assert len(_censored_kernel(st, np.ones((0, ld2410.CELLS)), lik)) == 0  # no rows
-    st = ld2410.Stats()
-    st.add(np.full(ld2410.CELLS, 50.0), 0.1)  # nothing censored: no cells
-    assert np.array_equal(_censored_kernel(st, np.ones((3, ld2410.CELLS)), lik), np.zeros(3))
-
-
-def test_the_censored_cells_kernel_interpolates_as_np_interp_on_the_grid():
-    grid = ld2410._GRID
-    tab = ld2410.log_gammaq(2.0, ld2410.CAP * 2.0 / np.exp(grid))
-    x = np.concatenate([grid[[0, 1, 17, 2000, 3999, 4000]], np.nextafter(grid[[0, 17, 4000]], -np.inf),
-                        np.nextafter(grid[[0, 17, 4000]], np.inf), [grid[0] - 5, grid[-1] + 5],
-                        np.random.default_rng(2).uniform(grid[0], grid[-1], 500)])
-    lm = np.ascontiguousarray(x[:, None])
-    got = kernels.ld_censored(np.exp(lm), lm, np.zeros(1, dtype=np.int64), np.zeros(1, dtype=np.int64),
-                              tab[None, :], grid)
-    assert np.array_equal(got[:, 0], np.interp(x, grid, tab))
-    assert kernels.ld_censored(np.exp(lm), lm, np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64),
-                               tab[None, :], grid).shape == (len(x), 0)  # no censored cells
-
-
 def test_the_gauss_points_kernel_is_the_numpy_formula_bit_for_bit():
     rng = np.random.default_rng(3)
     for _ in range(20):
@@ -239,21 +198,6 @@ def _mu_part_numpy(st, mu, lik):
     return out
 
 
-def test_the_ld2410_likelihood_is_the_numpy():
-    rng = np.random.default_rng(8)
-    lik = ld2410.Likelihood(Model())
-    for trial in range(200):
-        st = ld2410.Stats()
-        for _ in range(rng.integers(0 if trial % 10 == 0 else 1, 20)):
-            e = rng.integers(0, 101, ld2410.CELLS).astype(float)
-            e[rng.random(ld2410.CELLS) < 0.1] = 100.0
-            if trial % 7 == 0:
-                e[9:] = 100.0  # the still cells all censored: no looks there
-            st.add(e, float(rng.uniform(0.05, 1.0)))
-        mu = np.exp(rng.uniform(-3, 6, (int(rng.integers(1, 300)), ld2410.CELLS)))
-        np.testing.assert_allclose(st._mu_part(mu, lik), _mu_part_numpy(st, mu, lik), rtol=1e-12, atol=1e-9)
-
-
 def _predict_numpy(g, dt, m, sh):
     """Gauss.predict before kernels.gauss_predict (0.28.0), without walls and doors."""
     w = g.weights()
@@ -332,68 +276,11 @@ def test_the_near_sigma_kernel_is_the_numpy_bit_for_bit():
         assert np.array_equal(k, k_ref) and np.array_equal(pts, pts_ref)
 
 
-def test_the_ld2410_profile_rows_are_expected_bit_for_bit():
-    rng = np.random.default_rng(12)
-    m = Model()
-    for _ in range(200):
-        k = int(rng.integers(1, 6))
-        angle = rng.uniform(0, 90, k)
-        slant = rng.uniform(0.0, 8.0, k)
-        sight = rng.uniform(0, 1, k) * (rng.random(k) < 0.8)
-        modes = tuple(int(x) for x in rng.integers(0, 2, k))
-        rows = ld2410.expected_rows(m, angle, slant, sight, modes)
-        ref = ld2410.expected(m, angle, slant, sight)
-        for j, mode in enumerate(modes):
-            assert np.array_equal(rows[j], ref[mode][j])
-
-
-def test_the_ld2410_ratio_is_the_numpy():
-    rng = np.random.default_rng(13)
-    lik = ld2410.Likelihood(Model())
-    for trial in range(100):
-        st = ld2410.Stats()
-        for _ in range(rng.integers(1, 20)):
-            st.add(rng.integers(0, 101, ld2410.CELLS).astype(float), float(rng.uniform(0.05, 1.0)))
-        mu0 = np.exp(rng.uniform(0, 3, ld2410.CELLS))
-        S = np.exp(rng.uniform(-3, 6, (int(rng.integers(1, 400)), ld2410.CELLS))) * (rng.random() < 0.9)
-        m = rng.uniform(0, 1, len(S)) / len(S) * (rng.random(len(S)) < 0.7)
-        intensity = trial % 3 == 0
-        lr, norm, post = st.ratio(m, S, mu0, lik, intensity)
-        both = _mu_part_numpy(st, np.vstack([mu0[None, :] + S, mu0[None, :]]), lik)
-        ref = np.where(m > 0, np.minimum(both[:-1] - both[-1], ld2410.LOG_CAP), -ld2410.LOG_CAP)  # no mass: not computed
-        top = max(float(ref.max()), 0.0)
-        inside = float(m @ np.exp(ref - top))
-        ref_norm = (top + math.log(math.exp(-top) + inside) - math.log1p(m.sum()) if intensity
-                    else top + math.log(max(1.0 - m.sum(), 0.0) * math.exp(-top) + inside))
-        np.testing.assert_allclose(lr, ref, rtol=1e-12, atol=1e-9)
-        assert math.isclose(norm, ref_norm, rel_tol=1e-12, abs_tol=1e-9)
-        np.testing.assert_allclose(post, (m * np.exp(ref - ref_norm)) @ S, rtol=1e-11, atol=1e-12)
-
-
-def test_the_vectorized_log_and_exp_are_numpys_within_one_ulp():
-    rng = np.random.default_rng(15)
-    with np.errstate(all="ignore"):
-        for f, ref, x in ((kernels.vlog, np.log, np.concatenate([np.exp(rng.uniform(-700, 700, 20000)), rng.uniform(0, 3, 20000),
-                                                                   [0.0, -1.0, np.inf, np.nan, 5e-324, 1e-310, 1.0, 2.0, math.sqrt(2)]])),
-                          (kernels.vexp, np.exp, np.concatenate([rng.uniform(-745, 709.8, 20000), rng.uniform(-1e-9, 1e-9, 1000),
-                                                                   [0.0, np.inf, -np.inf, np.nan, 709.0, 710.0, -708.0, -746.0]]))):
-            got, want = f(x, np.empty_like(x)), ref(x)
-            assert np.array_equal(np.isnan(got), np.isnan(want))
-            exact = ~np.isfinite(want) | (want == 0)
-            assert np.array_equal(got[exact & ~np.isnan(want)], want[exact & ~np.isnan(want)])
-            fin = ~exact
-            assert (np.abs(got[fin] - want[fin]) <= np.spacing(np.abs(want[fin]))).all()
-
-
-def test_the_tile_mass_and_distance_kernels_are_the_numpy_bit_for_bit():
+def test_the_distance_kernel_is_the_numpy_bit_for_bit():
     rng = np.random.default_rng(14)
     for _ in range(50):
         n = int(rng.integers(1, 800))
         walk, still = rng.uniform(0, 1, n) * 1e-3, rng.uniform(0, 1, (5, 3, n)) * 1e-4
-        idx = np.sort(rng.choice(n, int(rng.integers(0, n + 1)), replace=False)).astype(np.int64)
-        share = float(rng.uniform(0, 1))
-        assert np.array_equal(kernels.ld_tile_masses(walk, still, idx, share),
-                              share * np.concatenate([walk[idx], still.sum(axis=(0, 1))[idx]]))
         walk2, still2 = rng.uniform(0, 1, n) * 1e-3, rng.uniform(0, 1, (5, 3, n)) * 1e-4
         region, region2 = rng.uniform(0, 1, (2, 18)), rng.uniform(0, 1, (2, 18))
         a, b, out, out2 = (float(x) for x in rng.uniform(0, 1, 4))
@@ -423,27 +310,6 @@ def test_the_weights_of_a_mixture_are_the_numpy_bit_for_bit():
         assert h.reweigh(dlog) == (comps if comps > -math.inf else -math.inf)
         if comps > -math.inf:
             assert np.array_equal(h.logw, lw - comps)
-
-
-def test_the_measured_tile_points_kernel_is_the_numpy_bit_for_bit():
-    rng = np.random.default_rng(16)
-    amp = np.append(np.exp(rng.normal(0, 0.5, 9)), 1.0)
-    for _ in range(100):
-        n = int(rng.integers(1, 700))
-        idx = np.sort(rng.choice(n, int(rng.integers(0, min(n, 300) + 1)), replace=False)).astype(np.int64)
-        m = len(idx)
-        walk = rng.uniform(0, 1, n)
-        still = rng.uniform(0, 1, (len(amp), m)) * (rng.random((len(amp), m)) < 0.7)
-        ms = still.sum(axis=0)
-        big = rng.random(m) < 0.4
-        ss, sw = rng.uniform(0, 50, (m, ld2410.CELLS)), rng.uniform(0, 50, (m, ld2410.CELLS))
-        share = float(rng.uniform(0, 1))
-        small = ~big
-        gm = np.divide(amp @ still[:, small], ms[small], out=np.ones(int(small.sum())), where=ms[small] > 0)
-        S = np.concatenate([sw, (amp[:, None, None] * ss[big][None, :, :]).reshape(-1, ld2410.CELLS), gm[:, None] * ss[small]])
-        mass = share * np.concatenate([walk[idx], still[:, big].ravel(), ms[small]])
-        got = kernels.ld_tile_points(walk, still, ms, big, amp @ still[:, small], idx, sw, ss, amp, share)
-        assert np.array_equal(got[0], mass) and np.array_equal(got[1], S)
 
 
 def test_weighing_at_some_tiles_is_weighing_with_ones_elsewhere_bit_for_bit():

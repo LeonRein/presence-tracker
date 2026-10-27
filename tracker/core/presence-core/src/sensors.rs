@@ -1,14 +1,27 @@
-//! What the filter knows of each sensor while it runs (MODEL.md 4.4): whether its frames count and
-//! when its last frame came.
+//! What the filter knows of each sensor while it runs (MODEL.md 4.4): whether its frames count, when
+//! its last frame came, its LD2410C.
 
-use crate::params::IDLE;
+use crate::ld2410::sensor::LdSensor;
+use crate::params::{IDLE, Params};
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SensorState {
     /// enabled and placed in the plan: its frames count
     pub active: bool,
     /// time of its last frame (-inf: none yet)
     pub last_frame: f64,
+    pub ld: LdSensor,
+}
+
+impl SensorState {
+    /// A sensor without frames, not counting yet.
+    pub fn new(p: &Params) -> Self {
+        Self {
+            active: false,
+            last_frame: f64::NEG_INFINITY,
+            ld: LdSensor::new(p),
+        }
+    }
 }
 
 /// A set of sensors by their index (at most 64), iterated in the order of the indices.
@@ -64,7 +77,12 @@ mod tests {
 
     #[test]
     fn only_active_sensors_with_recent_frames_watch() {
-        let s = |active, last_frame| SensorState { active, last_frame };
+        let p = Params::default();
+        let s = |active, last_frame| SensorState {
+            active,
+            last_frame,
+            ..SensorState::new(&p)
+        };
         let sensors = [s(true, 10.0), s(false, 10.0), s(true, 4.0), s(true, f64::NEG_INFINITY)];
         let w = live(&sensors, 9.5);
         assert_eq!(w.iter().collect::<Vec<_>>(), vec![0, 2]);

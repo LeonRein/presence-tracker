@@ -8,7 +8,7 @@ pub mod densities;
 pub mod evidence;
 pub mod holders;
 pub mod hyp;
-pub mod ld_weigh;
+mod ld_weigh;
 pub mod merge;
 #[cfg(any(test, feature = "mirror"))]
 pub mod mirror;
@@ -28,6 +28,8 @@ use hyp::{GroupId, Hyp, Owner};
 use mixture::MixtureId;
 use objects::Objects;
 use tracks::Tracks;
+
+pub use ld_weigh::LdLearn;
 
 /// What the filter cannot go on from: the hypotheses' weights are not finite (every output after
 /// it would be NaN, and NaN shows as "nobody there"; the app starts the model over).
@@ -56,8 +58,6 @@ pub struct Filter {
     /// time of the last move of everybody
     flushed: f64,
     walkers: WalkerCache,
-    /// per sensor what its LD2410C gathered and keeps between weighings
-    ld: Vec<ld_weigh::LdState>,
     /// counts the moves of everybody and the events that concern all hypotheses (moved, an event of
     /// a frame, merged, cut, a gap, a new world): what is derived from all of them, the outputs, is
     /// current while it stays (filter.Tracker._version)
@@ -111,7 +111,6 @@ impl Filter {
             loglik_cut: 0.0,
             flushed: 0.0,
             walkers: WalkerCache::new(sensors),
-            ld: vec![ld_weigh::LdState::default(); sensors],
             epoch: 0,
         }
     }
@@ -190,12 +189,11 @@ impl Filter {
         gid
     }
 
-    /// No live tracks, no data of the sensors gathered yet (Tracker._clear): from time t.
+    /// No live tracks (Tracker._clear): from time t.
     pub fn clear(&mut self, t: f64) {
         self.tracks = Tracks::new(self.tracks.sensors());
         self.flushed = t;
         self.walkers.clear();
-        self.ld.fill(ld_weigh::LdState::default());
         self.epoch = 0;
     }
 
