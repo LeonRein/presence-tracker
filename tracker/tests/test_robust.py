@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 from aiohttp import web
 
-from presence_tracker import app as app_module, kernels, ld2410
+from presence_tracker import app as app_module, filter as filter_module, kernels, ld2410
 from presence_tracker.app import App
 from presence_tracker.filter import Tracker
 from presence_tracker.ha import AVAILABILITY
@@ -331,6 +331,22 @@ def test_a_nan_is_a_model_failure_never_nobody_there(tmp_path, caplog):
         tracker._normalize()
     st = ZoneState(probability=math.nan, p_enter=math.nan, eta=math.inf, approaching=True)
     assert not st.finite() and st.to_dict()["probability"] is None  # never raises
+
+
+@pytest.mark.skipif(filter_module.presence_core is None, reason="the Rust core is not built")
+def test_a_panic_of_the_rust_core_is_a_model_failure(tmp_path, monkeypatch, caplog):
+    """PyO3 raises a panic of the Rust core as a BaseException, which the app's handler would let
+    through: the app would stop. The shell raises it as an Exception, the model starts over."""
+    core = filter_module.presence_core
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    run_a_while(app, 20.0)
+    tracker = app.tracker
+    monkeypatch.setattr(core, "proto_flush", lambda *args: core.panic_for_test("a bug in the core"))
+    assert not app.tick(1000.0 + 20.5)  # no raise
+    assert app.tracker is not tracker and "the Rust core failed: a bug in the core" in caplog.text
+    with pytest.raises(filter_module.CoreError):
+        filter_module._core(core.panic_for_test, "again")
 
 
 def test_the_ld2410_factor_of_a_person_all_in_view_never_takes_log_0():

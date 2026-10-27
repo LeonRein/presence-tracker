@@ -2,6 +2,13 @@
 
 ## Unveröffentlicht
 
+## 0.32.1 (Branch `rust-core`, nicht live)
+
+- **Ein Panic des Rust-Kerns ist ein Modellfehler wie ein `FloatingPointError`.** PyO3 meldet ihn als
+  `BaseException`, die das `except Exception` der App (`_model_failed`) nicht fängt: die App wäre ausgestiegen.
+  Jeder Aufruf in den Kern geht jetzt über `filter._core`, das ihn als `CoreError(RuntimeError)` weitergibt; die
+  App protokolliert und beginnt neu (Test `test_a_panic_of_the_rust_core_is_a_model_failure`).
+
 ## 0.32.0 (Branch `rust-core`, Prototyp des Rust-Kerns, nicht live)
 
 - **Phase 2 des Entwurfs `docs/rust-core.md`: Bewegen und Gewichten aller Personen in Rust.** Neuer

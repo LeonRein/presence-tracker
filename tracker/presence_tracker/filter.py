@@ -46,6 +46,20 @@ try:  # the Rust core (docs/rust-core.md); phase 2 prototype: it moves everybody
 except ImportError:
     presence_core = None
 
+
+class CoreError(RuntimeError):
+    """The Rust core panicked: a bug in the core, not in the data. PyO3 raises a panic as a
+    BaseException, which the app's handler (app._model_failed: log, start the model over, as after a
+    FloatingPointError) would let through and the app would stop; as this it is handled the same."""
+
+
+def _core(call, *args):
+    """Call into the Rust core, a panic as CoreError."""
+    try:
+        return call(*args)
+    except presence_core.PanicException as e:
+        raise CoreError(f"the Rust core failed: {e}") from e
+
 __all__ = ["Model", "Tracker"]
 
 MAX_STEP = 0.2  # s: motion is cut into parts no longer than this
@@ -795,8 +809,8 @@ class Tracker:
         parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
         lives = {tuple(self._live(t0 + (t - t0) * (k + 1) / parts)) for k in range(parts)}
         observed = [(list(lv), np.ascontiguousarray(self.tiles.observed(lv), dtype=float)) for lv in lives]
-        rounds, scalars, outs, made = presence_core.proto_flush(self._proto_world(), t0, t, sensors, dstates,
-                                                                list(range(len(hidden))), gstates, observed)
+        rounds, scalars, outs, made = _core(presence_core.proto_flush, self._proto_world(), t0, t, sensors, dstates,
+                                            list(range(len(hidden))), gstates, observed)
         for o, (out, clock, r) in zip(dens, scalars):
             o.out, o.clock, o.r = out, clock, r
         for (g, _), (mean, cov, logw, gow, ka, a, gt, away) in zip(gs, outs):
@@ -834,7 +848,7 @@ class Tracker:
             def i(a):
                 return np.ascontiguousarray(a, dtype=np.int64)
             d = tl.door_tiles
-            hit = self._gcache["rust"] = presence_core.ProtoWorld(dict(
+            hit = self._gcache["rust"] = _core(presence_core.ProtoWorld, dict(
                 params=json.dumps(params), go=f(sh.go), go_w=f(sh.go_w), kappa=f(sh.kappa), kappa_w=f(sh.kappa_w),
                 ka_w=f(sh.ka_w), x0=float(w.x0), y0=float(w.y0), nx=int(w.nx), ny=int(w.ny), walls=f(w.walls),
                 wall_dist=f(w.wall_grid), n=int(tl.n), R=int(tl.R), A=int(tl.A), tick=float(tl.tick), walk_t=f(tl.T_walk_t),
