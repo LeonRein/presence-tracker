@@ -19,7 +19,9 @@ hypotheses makes new objects (copy on write).
 
 import binascii
 import itertools
+import json
 import math
+import os
 import zlib
 
 import numpy as np
@@ -38,6 +40,11 @@ from .sensortracks import LOST, SensorTracks
 from .tiling import Tiling
 from .unobserved import Dwell
 from .world import CELL, OBSERVED, World
+
+try:  # the Rust core (docs/rust-core.md); phase 2 prototype: it moves everybody (_flush_parts)
+    import presence_core
+except ImportError:
+    presence_core = None
 
 __all__ = ["Model", "Tracker"]
 
@@ -750,7 +757,96 @@ class Tracker:
     def _flush_parts(self, t: float, t0: float, objs: list):
         """The people without a track in parts of the move, each Gaussian in parts from its own time
         (_sync), round by round: the parts gone through a door of the Gaussians move with the
-        people without a track (one Hidden.move_all per round)."""
+        people without a track (one Hidden.move_all per round). Prototype (docs/rust-core.md 7,
+        phase 2): in the Rust core on copies of the objects, written back after."""
+        if presence_core is None or os.environ.get("PT_PY_FLUSH"):
+            return self._flush_parts_py(t, t0, objs)
+        hidden = [(obj, refs) for obj, refs in objs if isinstance(obj, Hidden)]
+        gs = [(obj, refs) for obj, refs in objs
+              if not isinstance(obj, Hidden) and t > (self._flushed if obj.t is None else obj.t)]
+        dens = [obj for obj, _ in hidden] + [g.away for g, _ in gs if g.away is not None]
+        index = {id(o): k for k, o in enumerate(dens)}
+        K, n = len(self.shapes.kappa), self.tiles.n
+        for o in dens:
+            for name in ("walk", "still", "region"):
+                a = getattr(o, name)
+                if not (a.flags.c_contiguous and a.flags.writeable and a.dtype == np.float64):
+                    setattr(o, name, np.array(a, dtype=float))
+            if o._amp is not None and o._keep is None:
+                o._keep = np.ones((K, n))
+        dstates = [(o.walk, o.still, o.region, float(o.out), float(o.clock), float(o.r), type(o) is Undetected,
+                    None if o._amp is None else np.ascontiguousarray(o._amp), o._keep if o._amp is not None else None)
+                   for o in dens]
+        gstates = []
+        for g, _ in gs:
+            measured = sorted({self.segs[s]["si"] for s in g.slots if s in self.segs and self._measuring(s)})
+            gstates.append((np.ascontiguousarray(g.mean, dtype=float), np.ascontiguousarray(g.cov, dtype=float),
+                            np.ascontiguousarray(g.logw, dtype=float), np.ascontiguousarray(g.gow, dtype=float),
+                            np.ascontiguousarray(g.ka, dtype=float), float(g.a), g.t, bool(g.phantom),
+                            [(int(seg), int(k), float(g.var[seg])) for seg, k in g.slots.items()],
+                            None if g.away is None else index[id(g.away)], measured))
+        sensors = []
+        for si, sid in enumerate(self.sensors):
+            s = self.config.sensors[si]
+            rt = self.runtime.get(sid)
+            spots = [(False, *map(float, self.segs[seg]["z"])) if self.segs[seg]["lost"] is None
+                     else (True, *map(float, self.segs[seg]["lost"]["z"])) for seg in self._live_by_sensor.get(si, [])]
+            sensors.append((bool(s.enabled and s.placed), rt.last_frame if rt is not None else -math.inf, spots))
+        parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
+        lives = {tuple(self._live(t0 + (t - t0) * (k + 1) / parts)) for k in range(parts)}
+        observed = [(list(lv), np.ascontiguousarray(self.tiles.observed(lv), dtype=float)) for lv in lives]
+        rounds, scalars, outs, made = presence_core.proto_flush(self._proto_world(), t0, t, sensors, dstates,
+                                                                list(range(len(hidden))), gstates, observed)
+        for o, (out, clock, r) in zip(dens, scalars):
+            o.out, o.clock, o.r = out, clock, r
+        for (g, _), (mean, cov, logw, gow, ka, a, gt, away) in zip(gs, outs):
+            g.mean, g.cov, g.logw, g.gow, g.ka, g.a, g.t = mean, cov, logw, gow, ka, a, gt
+            if away is not None and away >= len(dens):
+                walk, still, region, out, clock, r = made[away - len(dens)]
+                h = Hidden(self.tiles)
+                h.walk, h.still, h.region = walk, still.reshape(h.still.shape), region.reshape(h.region.shape)
+                h.out, h.clock, h.r = out, clock, r
+                g.away = h
+        for dh, dg in rounds:
+            for (_, refs), d in zip(hidden, dh):
+                for h in refs:
+                    self.hyps[h].logw += d
+            for (_, refs), d in zip(gs, dg):
+                if d is not None:
+                    for h in refs:
+                        self.hyps[h].logw += d
+
+    def _proto_world(self):
+        """The world of the Rust core as this tracker built it (phase 2 glue), once per _gcache."""
+        hit = self._gcache.get("rust")
+        if hit is None:
+            tl, w, m, sh = self.tiles, self.world, self.m, self.shapes
+            names = ("still_noise", "kappa_switch", "speed", "speed_spread", "turn_rate", "walk_length", "arrive_rate",
+                     "guest_rate", "forget_rate", "find_radius", "res_range", "res_cross", "const_share", "tau",
+                     "unseen_life")
+            params = {k: float(getattr(m, k)) for k in names}
+            params["acquire"] = [[float(x) for x in a] for a in m.acquire]
+            params["max_step"] = MAX_STEP
+
+            def f(a):
+                return np.ascontiguousarray(a, dtype=float)
+
+            def i(a):
+                return np.ascontiguousarray(a, dtype=np.int64)
+            d = tl.door_tiles
+            hit = self._gcache["rust"] = presence_core.ProtoWorld(dict(
+                params=json.dumps(params), go=f(sh.go), go_w=f(sh.go_w), kappa=f(sh.kappa), kappa_w=f(sh.kappa_w),
+                ka_w=f(sh.ka_w), x0=float(w.x0), y0=float(w.y0), nx=int(w.nx), ny=int(w.ny), walls=f(w.walls),
+                wall_dist=f(w.wall_grid), n=int(tl.n), R=int(tl.R), A=int(tl.A), tick=float(tl.tick), walk_t=f(tl.T_walk_t),
+                into_t=f(tl.T_in_t), door_center=f(tl.centers[d]), door_var=f(tl.var[d]), door_area=f(tl.area[d]),
+                door_rates=f(tl.door_rate[d]), door_ptr=i(tl.door_ptr), door_list=i(tl.door_list), exits=i(tl.exits),
+                entries=i(tl.entry_idx), region_rates=f(tl.region_rates()), widths=f(tl.widths), points=f(tl.points),
+                point_tile=i(tl.point_tile), point_count=f(tl.point_count),
+                sensors=[(float(s.x), float(s.y), f(self._grid(si))) for si, s in enumerate(self.config.sensors)]))
+        return hit
+
+    def _flush_parts_py(self, t: float, t0: float, objs: list):
+        """_flush_parts in Python (the prototype's reference; PT_PY_FLUSH=1)."""
         parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
         dt = (t - t0) / parts
         watch = [self._watching(t0 + (t - t0) * (k + 1) / parts, dt) for k in range(parts)]

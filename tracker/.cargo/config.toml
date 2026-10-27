@@ -1,0 +1,3 @@
+# inge (i5-10210U) has AVX2 and FMA, no AVX-512: the images for amd64 are built for x86-64-v3 (docs/rust-core.md 5)
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v3"]

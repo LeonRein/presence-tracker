@@ -1,0 +1,19 @@
+[package]
+name = "presence-py"
+version = "0.1.0"
+description = "Python bindings of presence-core (module presence_core)"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "presence_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+presence-core = { path = "../presence-core" }
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py313"] }
+numpy = "0.30"
+
+[lints]
+workspace = true

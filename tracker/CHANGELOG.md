@@ -2,6 +2,22 @@
 
 ## Unveröffentlicht
 
+## 0.32.0 (Branch `rust-core`, Prototyp des Rust-Kerns, nicht live)
+
+- **Phase 2 des Entwurfs `docs/rust-core.md`: Bewegen und Gewichten aller Personen in Rust.** Neuer
+  Cargo-Workspace `tracker/core/` (`presence-core` ohne PyO3, `presence-py` als Modul `presence_core`, gebaut mit
+  `maturin`). Was `Tracker._flush_parts` tat, rechnet der Kern: die Kacheldichten (Aufenthalte, Gehen als ein
+  Matrixprodukt je Takt mit `faer` auf einem Thread, Regionen, Neuankömmlinge, Ablauf eines Datensatzes,
+  Gewichten durch keine neue Spur) und die Gauß-Mischungen (IMM-Vorhersage mit Wänden und Türen, Gewichten an den
+  Sigma-Punkten). Im Prototyp kopiert eine Klebeschicht die Python-Objekte je Flush hinein und zurück; ohne
+  gebautes Modul (oder mit `PT_PY_FLUSH=1`) rechnet Python wie 0.31.1. Das Teil hinter der Tür wird mit
+  exp(−Rate·dt) des letzten Teilschritts gewichtet statt mit der Potenz der Faktoren (gleich bis auf Rundung).
+  Modell unverändert. 10.10. 12–13 Uhr, erste 20 min (`ab.sh 1200`, zweites Paar): CPU 47,8 s (0.31.1) →
+  42,2 s (−12 %), gegen 0.30.0 56,9 → 42,3 s (−26 %). Spuren gegen 0.31.1: 7.10. 03 Uhr bis 4e-15 gleich; 10.10.
+  12 Uhr und 8.10. 19 Uhr beginnen als Rundung (1e-14) und kippen nach 20 bzw. 8 min eine Hypothese – genauso
+  wie 0.31.1 selbst, wenn nur das Gehen je Dichte statt als ein BLAS-Produkt gerechnet wird (dieselben 844
+  Raum-Sekunden); gegen diese Fassung bleibt der Prototyp am 10.10. über die Stunde bis auf 7e-6 gleich.
+
 ## 0.31.1
 
 - **Rechenzeit −16 % gegenüber 0.30.0, Ausgabe wie 0.31.0.** Die LD2410C-Likelihood interpoliert die

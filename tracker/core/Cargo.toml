@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["presence-core", "presence-py"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.99"
+publish = false
+
+[workspace.lints.clippy]
+redundant_clone = "warn"
+needless_pass_by_value = "warn"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+debug = "line-tables-only"  # py-spy -n shows the Rust frames

@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.15,<2"]
+build-backend = "maturin"
+
+[project]
+name = "presence-core"
+description = "The Bayes filter of the presence tracker in Rust (module presence_core)"
+requires-python = ">=3.13"
+dependencies = ["numpy>=2.0"]
+dynamic = ["version"]
+
+[tool.maturin]
+module-name = "presence_core"
+features = ["pyo3/extension-module"]
