@@ -71,6 +71,11 @@ impl Tracker {
         &self.world
     }
 
+    #[cfg(test)]
+    pub(crate) fn filter_mut(&mut self) -> &mut Filter {
+        &mut self.filter
+    }
+
     pub fn filter(&self) -> &Filter {
         &self.filter
     }
@@ -270,5 +275,81 @@ impl Tracker {
     #[cfg(any(test, feature = "mirror"))]
     pub fn load(&mut self, state: crate::filter::mirror::MirrorState) -> Result<(), String> {
         self.filter.load(state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing;
+
+    const MOVING: [f64; 9] = [13.0, 9.0, 4.0, 3.0, 3.0, 2.0, 2.0, 2.0, 2.0];
+    const STILL: [f64; 9] = [0.0, 0.0, 6.0, 5.0, 5.0, 5.0, 4.0, 4.0, 4.0];
+
+    fn frame(tr: &mut Tracker, t: f64, scale: f64, target: bool) {
+        let (m, s) = (MOVING.map(|x| x * scale), STILL.map(|x| x * scale));
+        tr.ld_frame(0, t, Some((&m, &s)), target);
+    }
+
+    /// The time and the time x energy of cell 0 (moving gate 0) gathered so far.
+    fn gathered(tr: &Tracker) -> (f64, f64) {
+        tr.filter().ld_stats(0).map_or((0.0, 0.0), |st| (st.time, st.t_e[0]))
+    }
+
+    fn close(got: (f64, f64), want: (f64, f64)) {
+        assert!(
+            (got.0 - want.0).abs() < 1e-12 && (got.1 - want.1).abs() < 1e-9,
+            "{got:?} against {want:?}"
+        );
+    }
+
+    #[test]
+    fn a_frame_stands_for_the_time_since_the_last_one_a_silence_for_the_frame_before_it() {
+        let mut tr = Tracker::new(testing::flat());
+        let fr = tr.world().params.ld_frame;
+        // the first frame (or after a gap longer than IDLE): one frame, and from now on the LD2450
+        // has seen nothing
+        frame(&mut tr, 10.0, 1.0, false);
+        close(gathered(&tr), (fr, fr * 13.0));
+        assert_eq!(tr.ld_collect(0).target_t, 10.0);
+        // the next frame: the time since the last one
+        frame(&mut tr, 10.1, 1.0, true);
+        close(gathered(&tr), (fr + 0.1, (fr + 0.1) * 13.0));
+        assert_eq!(tr.ld_collect(0).target_t, 10.1);
+        // after a heartbeat's silence of 3 s: the silence the energies of the frame before it
+        frame(&mut tr, 13.1, 2.0, false);
+        close(
+            gathered(&tr),
+            (fr + 3.1, (fr + 0.1) * 13.0 + (3.0 - fr) * 13.0 + fr * 26.0),
+        );
+        assert_eq!(tr.ld_collect(0).target_t, 10.1, "a silence is no target out of sight");
+        // all 0: the firmware's "no value", nothing gathered; the silence after it stands for nothing before
+        frame(&mut tr, 13.2, 0.0, false);
+        close(
+            gathered(&tr),
+            (fr + 3.1, (fr + 0.1) * 13.0 + (3.0 - fr) * 13.0 + fr * 26.0),
+        );
+        assert!(tr.ld_collect(0).last.is_none());
+        frame(&mut tr, 15.2, 1.0, false);
+        close(
+            gathered(&tr),
+            (fr + 5.1, (fr + 0.1) * 13.0 + (3.0 - fr) * 13.0 + fr * 26.0 + 2.0 * 13.0),
+        );
+        // a gap longer than IDLE is lost data: one frame
+        frame(&mut tr, 15.2 + IDLE + 0.5, 1.0, false);
+        close(
+            gathered(&tr),
+            (
+                2.0 * fr + 5.1,
+                (fr + 0.1) * 13.0 + (3.0 - fr) * 13.0 + fr * 26.0 + 2.0 * 13.0 + fr * 13.0,
+            ),
+        );
+        assert_eq!(tr.ld_collect(0).target_t, 15.2 + IDLE + 0.5);
+        // a frame not later than the last, and one without gates, add nothing
+        let before = gathered(&tr);
+        frame(&mut tr, 15.2, 1.0, true);
+        tr.ld_frame(0, 30.0, None, true);
+        close(gathered(&tr), before);
+        assert!(tr.ld_collect(0).last.is_none());
     }
 }

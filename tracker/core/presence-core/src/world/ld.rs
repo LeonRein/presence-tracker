@@ -9,6 +9,7 @@ use crate::ld2410::CELLS;
 /// The tiles an LD2410C sees and what a person there puts in, standing and walking (averaged over
 /// each tile).
 #[derive(Debug, Default)]
+#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct LdTiles {
     pub idx: Vec<usize>,
     pub still: Vec<[f64; CELLS]>,

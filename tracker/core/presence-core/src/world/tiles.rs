@@ -6,6 +6,7 @@ use crate::geometry::Point;
 /// A tile next to a door into a region or out of the house: as its small Gaussian (centre, spread
 /// per axis, area) with its rates of walking through each door (tiling.Tiling.near_doors).
 #[derive(Debug)]
+#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct DoorTile {
     pub center: Point,
     pub var: Point,
@@ -18,6 +19,7 @@ pub struct DoorTile {
 pub const POINT: f64 = 0.2;
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct Tiles {
     /// number of tiles
     pub n: usize,
@@ -55,6 +57,7 @@ pub struct Tiles {
     pub point_count: Vec<f64>,
     /// where a walk that begins in a tile ends - stopped in a tile, in a region, out - whatever its
     /// length, (n + R + 1) x n (tiling.Tiling.walk_end; for leaps over a gap in the data)
+    #[cfg_attr(test, serde(default))]
     pub walk_end: Vec<f64>,
 }
 

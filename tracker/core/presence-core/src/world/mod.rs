@@ -43,6 +43,7 @@ pub struct World {
 /// What the Python tracker built (docs/rust-core.md 6): the world handed over while the build is
 /// still Python, and later the aid that checks the build in Rust against it.
 #[derive(Debug)]
+#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct WorldExport {
     pub params: Params,
     pub shapes: Shapes,
@@ -58,6 +59,7 @@ pub struct WorldExport {
 /// A sensor as the Python tracker built it: where it is, where its sight lines start, its sight per
 /// cell and how well it can test a person per tile.
 #[derive(Debug)]
+#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct SensorExport {
     pub at: Point,
     pub origin: Point,
@@ -68,6 +70,7 @@ pub struct SensorExport {
 
 /// A sensor's LD2410C as the Python tracker built it (LdSight with its line of sight per cell).
 #[derive(Debug)]
+#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct LdExport {
     pub axis: Point,
     pub dh2: f64,

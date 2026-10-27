@@ -505,4 +505,97 @@ mod tests {
         let mu: [f64; CELLS] = std::array::from_fn(|c| b[c] + person[c]);
         assert!(prep.loglik(&st, &mu) > prep.loglik(&st, &b) + 5.0);
     }
+
+    /// log of the integral of exp(g(s)) over s, g given on a uniform grid with step h (Simpson).
+    fn log_integral(g: &[f64], h: f64) -> f64 {
+        let top = g.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+        let n = g.len() - 1;
+        let sum: f64 = g
+            .iter()
+            .enumerate()
+            .map(|(i, x)| {
+                (x - top).exp()
+                    * if i == 0 || i == n {
+                        1.0
+                    } else if i % 2 == 1 {
+                        4.0
+                    } else {
+                        2.0
+                    }
+            })
+            .sum();
+        top + (sum * h / 3.0).ln()
+    }
+
+    #[test]
+    fn the_likelihood_integrates_the_gain_out() {
+        // per kind of cell the common gain 1/v, v from the mixed Gamma prior, integrated numerically
+        // over log v; a censored cell P(energy >= CAP) integrated numerically over the energy
+        let p = Params::default();
+        let lik = Likelihood::new(&p);
+        let [bk, bu, bw] = p.ld_burst;
+        let mut rng = Rng::new(5);
+        for trial in 0..8 {
+            let mut st = Stats::default();
+            for _ in 0..1 + rng.below(12) {
+                let e: [f64; CELLS] = std::array::from_fn(|_| rng.below(99) as f64);
+                st.add(&e, rng.range(0.05, 0.5), false);
+            }
+            let censored = trial % 2 == 1;
+            if censored {
+                let mut e = [5.0; CELLS];
+                e[3] = 100.0;
+                e[12] = 100.0;
+                st.add(&e, 0.2, false);
+            }
+            let mu: [f64; CELLS] = std::array::from_fn(|_| rng.range(1.0, 40.0));
+            let mut want = 0.0;
+            for (c, m) in mu.iter().enumerate() {
+                let (a, tau) = (lik.alpha[c], lik.tau[c]);
+                want += (st.t_unc[c] * (a * a.ln() - lgamma(a)) + (a - 1.0) * st.t_le[c]) / tau;
+                want -= a * st.t_unc[c] / tau * m.ln();
+            }
+            for (cells, k) in [(0..MOVING, p.ld_gain[0]), (MOVING..CELLS, p.ld_gain[1])] {
+                let look: f64 = cells.clone().map(|c| lik.alpha[c] * st.t_unc[c] / lik.tau[c]).sum();
+                let ae: f64 = cells.map(|c| lik.alpha[c] * st.t_e[c] / lik.tau[c] / mu[c]).sum();
+                if look == 0.0 {
+                    continue;
+                }
+                let gamma = |v: f64, shape: f64, rate: f64| {
+                    shape * rate.ln() - lgamma(shape) + (shape - 1.0) * v.ln() - rate * v
+                };
+                let (lo, hi, n) = (-20.0, 12.0, 200_000);
+                let h = (hi - lo) / n as f64;
+                let g: Vec<f64> = (0..=n)
+                    .map(|i| {
+                        let s = lo + i as f64 * h;
+                        let v = s.exp();
+                        let prior = ((1.0 - bw).ln() + gamma(v, k, k)).max(bw.ln() + gamma(v, bk, bk * bu));
+                        let other = ((1.0 - bw).ln() + gamma(v, k, k)).min(bw.ln() + gamma(v, bk, bk * bu));
+                        let prior = prior + (other - prior).exp().ln_1p();
+                        prior + look * s - v * ae + s
+                    })
+                    .collect();
+                want += log_integral(&g, h);
+            }
+            for c in (0..CELLS).filter(|&c| st.t_cens[c] > 0.0) {
+                let (a, rate) = (lik.alpha[c], lik.alpha[c] / mu[c]);
+                let (n, top) = (200_000, CAP + 80.0 * mu[c]);
+                let h = (top - CAP) / n as f64;
+                let g: Vec<f64> = (0..=n)
+                    .map(|i| {
+                        let x = CAP + i as f64 * h;
+                        a * rate.ln() - lgamma(a) + (a - 1.0) * x.ln() - rate * x
+                    })
+                    .collect();
+                want += st.t_cens[c] / lik.tau[c] * log_integral(&g, h);
+            }
+            let got = st.prepare(&lik).loglik(&st, &mu);
+            let tol = if censored { 1e-5 } else { 1e-8 };
+            assert!(
+                (got - want).abs() < tol * want.abs().max(1.0),
+                "{trial}: {got} against {want}"
+            );
+        }
+    }
 }

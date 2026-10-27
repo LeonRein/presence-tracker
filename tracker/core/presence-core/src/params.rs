@@ -247,6 +247,7 @@ impl Params {
 /// getting up go_l with weight go_w_l (L kinds), its detectability kappa_k with kappa_w_k (K
 /// levels), and with it the LD2410C amplitude (A levels; ka_w the joint prior, K x A).
 #[derive(Debug)]
+#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct Shapes {
     pub go: Vec<f64>,
     pub go_w: Vec<f64>,

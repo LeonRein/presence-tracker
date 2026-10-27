@@ -174,6 +174,13 @@ impl Filter {
         self.ld[si].stats.as_ref()
     }
 
+    /// What the people put into sensor si's cells lately, and its echo sources' probabilities.
+    #[cfg(test)]
+    pub(crate) fn ld_memory_echo(&self, si: usize) -> (Option<&Cells>, Option<&[f64]>) {
+        let ld = &self.ld[si];
+        (ld.memory.as_ref(), ld.echoes.as_ref().map(|e| &e.p[..]))
+    }
+
     /// The LD2410C of sensor si starts over (it changed: recalibrated, moved).
     pub fn ld_reset(&mut self, si: usize) {
         self.ld[si] = LdState::default();
