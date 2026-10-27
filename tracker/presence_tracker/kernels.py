@@ -855,12 +855,26 @@ def _ld_cols(mu, look, klo, khi, ae, r, cl, nk, ccols, crows, tables, grid, wc):
             out[i] += m[i] + ls[i]
     if len(ccols):
         G = len(grid)
-        g0 = grid[0]
-        h = (grid[G - 1] - g0) / (G - 1)
+        g0, g1 = grid[0], grid[G - 1]
+        h = (g1 - g0) / (G - 1)
         for j in range(len(ccols)):
             c = ccols[j]
+            fp = tables[crows[j]]
+            wj = wc[j]
             for i in range(k):
-                out[i] += _censored_at(mu[c, i], lm[c, i], tables[crows[j]], grid, g0, h) * wc[j]
+                x = lm[c, i]
+                if not (mu[c, i] > 0.0 and x > g0 and x < g1):  # NaN, at or beyond the grid's ends
+                    out[i] += _censored_at(mu[c, i], x, fp, grid, g0, h) * wj
+                    continue
+                q = min(int((x - g0) / h), G - 2)  # the cell of the uniform grid (_censored_at, np.interp)
+                if x < grid[q]:
+                    q -= 1
+                elif x >= grid[q + 1]:
+                    q += 1
+                if x == grid[q]:
+                    out[i] += fp[q] * wj
+                else:
+                    out[i] += ((fp[q + 1] - fp[q]) / (grid[q + 1] - grid[q]) * (x - grid[q]) + fp[q]) * wj
     return out
 
 

@@ -1315,7 +1315,11 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Dichten als innerer Dimension, 1,5–3-mal langsamer als BLAS; ein Numba-Aufruf mit 20 Arrays kostet nur
   1,2 µs, ein gemeinsamer Speicher aller Objekte lohnt den Umbau also nicht. Was bleibt (py-spy): Evidenz je
   Frame 27 % (Verzweigen und Verschmelzen 11 %, gehaltene Spuren 6 %), LD2410C-Bewertung 24 % (davon
-  Likelihood 10 %, Punkte 6 %), Bewegen 20 % (davon BLAS 8 %), Ausgaben 11 %.
+  Likelihood 10 %, Punkte 6 %), Bewegen 20 % (davon BLAS 8 %), Ausgaben 11 %. 0.31.1: die zensierten Zellen
+  ohne Aufruf je Punkt interpoliert (27 → 3 ns je Punkt und Zelle), 47,8 s (−16 %). Verworfen: mehrere Takte
+  des Gehens als ein Produkt mit T² (−1 %): Schon `W @ [T | T_in]` in einem BLAS-Aufruf statt zweien rundet
+  anders, und das schaukelte sich in der Stunde zu einer anders entschiedenen Hypothese auf (ein Raum 30 min
+  belegt statt leer, 844 Raum-Sekunden gekippt) – die Rauschgrenze oben, an einem Beispiel.
 - **Rechenzeit: weniger Aufrufe, bitgleich (12./13.10., Qualitätsrunde nach 0.28.0)**. Profil der vollsten
   Stunde der Aufnahmen (10.10. 12–13 Uhr, 154 398 Frames, cProfile): kein einzelner Brennpunkt, sondern
   Pythons und numpys Aufwand je Objekt und Schritt – LD2410C-Bewertung 24 %, Bewegen der Gauß-Mischungen

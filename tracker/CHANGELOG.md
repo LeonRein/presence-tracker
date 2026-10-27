@@ -2,6 +2,13 @@
 
 ## Unveröffentlicht
 
+## 0.31.1
+
+- **Rechenzeit −16 % gegenüber 0.30.0, Ausgabe wie 0.31.0.** Die LD2410C-Likelihood interpoliert die
+  Wahrscheinlichkeit zensierter Zellen (Energie 100) ohne Funktionsaufruf je Punkt: vorher 27 ns je Punkt und
+  zensierter Zelle, jetzt 3. 10.10. 12–13 Uhr, erste 20 min: CPU 56,9 → 47,8 s; über die ganze Stunde gleich
+  0.31.0 (|ΔP(belegt)| 0 auf 6 Stellen).
+
 ## 0.31.0
 
 - **Rechenzeit −14 %, dasselbe Modell bis auf Rundung** (MODEL.md 10 „Rechenzeit: ein Aufruf je Gauß-Mischung
