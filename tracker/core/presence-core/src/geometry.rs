@@ -23,6 +23,38 @@ impl Walls {
         self.segs.is_empty()
     }
 
+    /// Per move p0 -> p1, does it cross a wall (world.World.crosses_wall, kernels.crosses_wall)? Only
+    /// walls whose box meets the box of all moves are tried.
+    pub fn crosses(&self, p0: &[Point], p1: &[Point]) -> Vec<bool> {
+        let mut out = vec![false; p0.len()];
+        if p0.is_empty() || self.segs.is_empty() {
+            return out;
+        }
+        let (mut lo0, mut lo1, mut hi0, mut hi1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for (a, b) in p0.iter().zip(p1) {
+            lo0 = lo0.min(a[0]).min(b[0]);
+            hi0 = hi0.max(a[0]).max(b[0]);
+            lo1 = lo1.min(a[1]).min(b[1]);
+            hi1 = hi1.max(a[1]).max(b[1]);
+        }
+        for (&[ax, ay, bx, by], bx_) in self.segs.iter().zip(&self.boxes) {
+            if !(bx_[0] <= hi0 && bx_[2] >= lo0 && bx_[1] <= hi1 && bx_[3] >= lo1) {
+                continue;
+            }
+            for ((o, &[px, py]), &[qx, qy]) in out.iter_mut().zip(p0).zip(p1) {
+                if *o {
+                    continue;
+                }
+                let d1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+                let d2 = (bx - ax) * (qy - ay) - (by - ay) * (qx - ax);
+                let d3 = (qx - px) * (ay - py) - (qy - py) * (ax - px);
+                let d4 = (qx - px) * (by - py) - (qy - py) * (bx - px);
+                *o = d1 * d2 < 0.0 && d3 * d4 < 0.0;
+            }
+        }
+        out
+    }
+
     /// world.World.reflect (kernels.reflect): each move p0 -> p1 mirrored at the first wall it
     /// crosses, into `out`, with that wall's unit normal in `normal` ([0, 0]: none). Returns whether
     /// any move met a wall. Only walls whose box meets the box of all moves are tried.
@@ -92,5 +124,9 @@ mod tests {
         assert_eq!(normal[0], [-1.0, 0.0]);
         assert_eq!(out[1], [0.5, 0.5]);
         assert_eq!(normal[1], [0.0, 0.0]);
+        assert_eq!(
+            walls.crosses(&[[0.0, 0.0], [0.0, 0.5]], &[[1.5, 0.0], [0.5, 0.5]]),
+            [true, false]
+        );
     }
 }

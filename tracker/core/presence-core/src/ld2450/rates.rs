@@ -5,7 +5,7 @@ use std::f64::consts::{LN_2, PI};
 
 use crate::geometry::Point;
 use crate::params::{P_FA, Params, STILL, WALK};
-use crate::sensors::{SensorSet, SensorState};
+use crate::sensors::SensorSet;
 use crate::world::Sight;
 
 /// A live track of a sensor as the rates see it: where it measures its target, or where it holds
@@ -99,7 +99,7 @@ impl RateModel {
     pub fn mixture_rates(
         &self,
         sights: &[Sight],
-        sensors: &[SensorState],
+        spots: &[Vec<TrackSpot>],
         users: SensorSet,
         pts: &[[Point; 5]; 2],
     ) -> [[f64; 5]; 2] {
@@ -107,7 +107,7 @@ impl RateModel {
         for si in users.iter() {
             for mode in [STILL, WALK] {
                 for (o, &p) in out[mode].iter_mut().zip(&pts[mode]) {
-                    *o += self.rate_at(&sights[si], p, mode, &sensors[si].spots);
+                    *o += self.rate_at(&sights[si], p, mode, &spots[si]);
                 }
             }
         }
@@ -144,7 +144,7 @@ mod tests {
             nx: 100,
             ny: 100,
         };
-        Sight::new([0.0, 0.0], Grid::new(raster, vec![1.0; 10_000]))
+        Sight::new([0.0, 0.0], [0.0, 0.0], Grid::new(raster, vec![1.0; 10_000]))
     }
 
     #[test]

@@ -18,6 +18,14 @@ impl<K: PartialEq, V> SmallMap<K, V> {
         self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
     }
 
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        self.entries.iter_mut().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.entries.iter().any(|(k, _)| k == key)
+    }
+
     /// Replaces the value of a key in place, or appends the key.
     pub fn insert(&mut self, key: K, value: V) {
         match self.entries.iter_mut().find(|(k, _)| *k == key) {
@@ -35,8 +43,25 @@ impl<K: PartialEq, V> SmallMap<K, V> {
         self.entries.iter().map(|(k, v)| (k, v))
     }
 
+    pub fn keys(&self) -> impl Iterator<Item = &K> {
+        self.entries.iter().map(|(k, _)| k)
+    }
+
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.entries.iter().map(|(_, v)| v)
+    }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.entries.iter_mut().map(|(_, v)| v)
+    }
+
+    pub fn into_values(self) -> impl Iterator<Item = V> {
+        self.entries.into_iter().map(|(_, v)| v)
+    }
+
+    /// Keeps the entries for which f is true, in their order.
+    pub fn retain(&mut self, mut f: impl FnMut(&K, &V) -> bool) {
+        self.entries.retain(|(k, v)| f(k, v));
     }
 
     pub fn len(&self) -> usize {

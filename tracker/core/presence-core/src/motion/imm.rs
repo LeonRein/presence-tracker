@@ -12,7 +12,7 @@
 use std::f64::consts::PI;
 
 use crate::filter::densities::{Densities, Kind};
-use crate::filter::mixture::{Kalman, Mixture, log_add, weights2};
+use crate::filter::mixture::{Kalman, Mixture, collapse, log_add, weights2};
 use crate::geometry::Point;
 use crate::params::{Params, STILL, Shapes, WALK};
 use crate::vmath::pairwise_sum;
@@ -115,38 +115,6 @@ fn transition(mix: &Mixture, step: &ImmStep) -> ([Square; 2], [Square; 2]) {
     (f, q)
 }
 
-/// Moment matching of two weighted Gaussians per axis (kernels._collapse2); (0, the first) if
-/// neither has weight.
-fn collapse(w1: f64, g1: &Kalman, w2: f64, g2: &Kalman) -> (f64, Kalman) {
-    let tot = w1 + w2;
-    if tot <= 0.0 {
-        return (0.0, g1.clone()); // a copy: the same Gaussian goes on in both modes
-    }
-    let d = g1.dim();
-    let mut out = Kalman::zeros(d);
-    for (m, (a, b)) in out.mean.iter_mut().zip(g1.mean.iter().zip(&g2.mean)) {
-        *m = (w1 * a + w2 * b) / tot;
-    }
-    for (w, g) in [(w1, g1), (w2, g2)] {
-        if w <= 0.0 {
-            continue;
-        }
-        for ax in 0..2 {
-            let (gm, m) = (&g.mean[ax * d..][..d], &out.mean[ax * d..][..d]);
-            for i in 0..d {
-                for j in 0..d {
-                    let at = (ax * d + i) * d + j;
-                    out.cov[at] += w * (g.cov[at] + (gm[i] - m[i]) * (gm[j] - m[j]));
-                }
-            }
-        }
-    }
-    for c in &mut out.cov {
-        *c /= tot;
-    }
-    (tot, out)
-}
-
 /// The Gaussian with its velocity set to 0 (and that of the standing component given variance v),
 /// per axis.
 fn without_velocity(g: &Kalman, v: f64) -> Kalman {
@@ -210,8 +178,8 @@ pub fn predict(
     let (w_ss, w_sw) = (w[STILL] * p_stay, w[STILL] * (1.0 - p_stay));
     let (w_ww, w_ws) = (w[WALK] * (1.0 - step.p_stop), w[WALK] * step.p_stop);
     let [still, walking] = &mix.modes;
-    let (tot_s, still0) = collapse(w_ss, still, w_ws, &without_velocity(walking, 0.0));
-    let (tot_w, walk0) = collapse(w_ww, walking, w_sw, &without_velocity(still, step.s2));
+    let (tot_s, still0) = collapse(&[(w_ss, still), (w_ws, &without_velocity(walking, 0.0))]);
+    let (tot_w, walk0) = collapse(&[(w_ww, walking), (w_sw, &without_velocity(still, step.s2))]);
     mix.modes = [
         linear(&still0, &f[STILL], &q[STILL]),
         linear(&walk0, &f[WALK], &q[WALK]),

@@ -10,6 +10,8 @@ publish = false
 [workspace.lints.clippy]
 redundant_clone = "warn"
 needless_pass_by_value = "warn"
+# `!(x > 0.0)` on purpose: NaN counts as "not positive", as `not x > 0` in the Python filter did
+neg_cmp_op_on_partial_ord = "allow"
 
 [profile.release]
 codegen-units = 1

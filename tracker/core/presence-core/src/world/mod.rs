@@ -8,11 +8,12 @@ pub mod tiles;
 
 pub use raster::{CELL, Grid, Raster};
 pub use sight::Sight;
-pub use tiles::{DoorTile, Tiles};
+pub use tiles::{DoorTile, POINT, Tiles};
 
 use crate::geometry::{Point, Walls};
 use crate::ld2450::rates::RateModel;
 use crate::params::{Params, Shapes};
+use crate::vmath::pairwise_sum;
 
 #[derive(Debug)]
 pub struct World {
@@ -38,8 +39,8 @@ pub struct WorldExport {
     pub walls: Vec<[f64; 4]>,
     pub wall_dist: Vec<f64>,
     pub tiles: Tiles,
-    /// per sensor where it is and its sight per cell
-    pub sensors: Vec<(Point, Vec<f64>)>,
+    /// per sensor where it is, where its sight lines start and its sight per cell
+    pub sensors: Vec<(Point, Point, Vec<f64>)>,
 }
 
 impl World {
@@ -49,8 +50,8 @@ impl World {
         let sights = e
             .sensors
             .into_iter()
-            .map(|(at, grid)| {
-                let mut s = Sight::new(at, Grid::new(raster, grid));
+            .map(|(at, origin, grid)| {
+                let mut s = Sight::new(at, origin, Grid::new(raster, grid));
                 s.set_rates(&rates, &e.tiles);
                 s
             })
@@ -70,5 +71,58 @@ impl World {
     /// No wall within r of the point (world.World.clear).
     pub fn clear(&self, p: Point, r: f64) -> bool {
         self.wall_dist.at(p) > r
+    }
+
+    /// The share of N(mean, diag var) at each sample point of the tiles (summing to 1), the points
+    /// behind a wall seen from the mean given nothing - those with a density above 1e-3 of the peak
+    /// (nobody walks through a wall, the Gaussian itself does not know them); None if the Gaussian
+    /// has nothing in view (tiling.Tiling.gauss_points).
+    pub fn gauss_points(&self, mean: Point, var: Point) -> Option<Vec<f64>> {
+        let tiles = &self.tiles;
+        let cell = POINT * POINT / 12.0;
+        let (vx, vy) = (var[0] + cell, var[1] + cell);
+        let mut d: Vec<f64> = tiles
+            .points
+            .iter()
+            .map(|&[x, y]| {
+                let (dx, dy) = (x - mean[0], y - mean[1]);
+                (-0.5 * (dx * dx / vx + dy * dy / vy)).exp()
+            })
+            .collect();
+        let reach = 3.72 * (var[0].max(var[1]) + cell).sqrt();
+        if !self.clear(mean, reach) {
+            let near: Vec<usize> = (0..d.len()).filter(|&i| d[i] > 1e-3).collect();
+            if !near.is_empty() {
+                let to: Vec<Point> = near.iter().map(|&i| tiles.points[i]).collect();
+                let behind = self.walls.crosses(&vec![mean; near.len()], &to);
+                if behind.iter().any(|&b| b) && !behind.iter().all(|&b| b) {
+                    for (&i, _) in near.iter().zip(&behind).filter(|(_, b)| **b) {
+                        d[i] = 0.0;
+                    }
+                }
+            }
+        }
+        let s = pairwise_sum(&d);
+        (s > 0.0).then(|| d.iter().map(|x| x / s).collect())
+    }
+
+    /// The share of N(mean, diag var) in each tile (tiling.Tiling.gauss_mass): by the sample points,
+    /// or all of it in the nearest tile if it has nothing in view.
+    pub fn gauss_mass(&self, mean: Point, var: Point) -> Vec<f64> {
+        let tiles = &self.tiles;
+        let mut out = vec![0.0; tiles.n];
+        match self.gauss_points(mean, var) {
+            Some(d) => {
+                for (&tile, &v) in tiles.point_tile.iter().zip(&d) {
+                    out[tile] += v;
+                }
+            }
+            None => {
+                if let Some(c) = tiles.cell_near(mean) {
+                    out[c] = 1.0;
+                }
+            }
+        }
+        out
     }
 }

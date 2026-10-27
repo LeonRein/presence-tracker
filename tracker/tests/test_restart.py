@@ -99,11 +99,11 @@ def test_a_gap_moves_everybody_on():
         from presence_tracker.filtermodel import Model
         m = Model()
         m.unseen_life = math.inf  # the motion alone (records nothing tests expire over a gap too, MODEL.md 5.5)
-        tr = Tracker(config, model=m)
-        tr.restore_people(state)
         old = F.GAP_EXACT
-        F.GAP_EXACT = gap + 1 if exact else old
+        F.GAP_EXACT = gap + 1 if exact else old  # a parameter of the core: given when it is built
         try:
+            tr = Tracker(config, model=m)
+            tr.restore_people(state)
             tr.process_frame("a", gap, {"targets": []})
         finally:
             F.GAP_EXACT = old

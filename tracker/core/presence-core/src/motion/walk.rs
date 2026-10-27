@@ -21,13 +21,12 @@ pub fn move_densities(world: &World, densities: &mut Densities, movers: &[(Densi
         for &(id, dt) in movers {
             let step = StayStep::new(p.stop_rate(), p.kappa_switch, shapes, dt);
             let d = densities.get_mut(id);
-            stays(
-                d.walk,
-                d.still,
-                d.amp.as_mut().map(|a| a.keep.as_mut_slice()),
-                &step,
-                shapes,
-            );
+            let (levels, n) = (d.shape.levels, d.shape.tiles);
+            let keep = d
+                .amp
+                .as_mut()
+                .map(|a| a.keep.get_or_insert_with(|| vec![1.0; levels * n]).as_mut_slice());
+            stays(d.walk, d.still, keep, &step, shapes);
             *d.clock += dt;
             let mut ticks = 0;
             while *d.clock >= tiles.tick {
@@ -55,6 +54,103 @@ pub fn move_densities(world: &World, densities: &mut Densities, movers: &[(Densi
             arrive(tiles, p, &mut d, dt);
         }
     }
+}
+
+/// The motion over a step dt much longer than a walk (a data gap of minutes to days, MODEL.md 5.3;
+/// hidden.Hidden.leap): standing people get up as in a move; every walk is taken whole, wherever it
+/// ends (Tiles::walk_end) - stopped in a tile, beginning a new stay, gone into a region or out. The
+/// stays begun in the step have their detectability anew and nothing measured.
+pub fn leap(world: &World, densities: &mut Densities, id: DensityId, dt: f64) {
+    let (tiles, p, shapes) = (&world.tiles, &world.params, &world.shapes);
+    let (n, levels) = (tiles.n, shapes.levels());
+    let mut kept = Vec::new();
+    let mut d = densities.get_mut(id);
+    if n > 0 {
+        let up: Vec<f64> = shapes.go.iter().map(|&go| -(-go * dt).exp_m1()).collect();
+        // per kind of stay the still mass per tile, and who gets up
+        let s: Vec<f64> = (0..shapes.kinds())
+            .flat_map(|l| {
+                let rows = &d.still[l * levels * n..][..levels * n];
+                let mut acc = rows[..n].to_vec();
+                for row in rows.chunks_exact(n).skip(1) {
+                    for (a, x) in acc.iter_mut().zip(row) {
+                        *a += x;
+                    }
+                }
+                acc
+            })
+            .collect();
+        let rise: Vec<f64> = s.iter().enumerate().map(|(i, x)| up[i / n] * x).collect();
+        let q = -(-p.kappa_switch * dt).exp_m1();
+        for (lk, row) in d.still.chunks_exact_mut(n).enumerate() {
+            let f = (1.0 - up[lk / levels]) * (1.0 - q);
+            for x in row {
+                *x *= f;
+            }
+        }
+        kept = d.shape.still_per_level(d.still);
+        for (lk, row) in d.still.chunks_exact_mut(n).enumerate() {
+            let (l, k) = (lk / levels, lk % levels);
+            for (c, x) in row.iter_mut().enumerate() {
+                *x += shapes.kappa_w[k] * (q * (s[l * n + c] - rise[l * n + c]));
+            }
+        }
+        let mut risen = rise[..n].to_vec();
+        for row in rise.chunks_exact(n).skip(1) {
+            for (a, r) in risen.iter_mut().zip(row) {
+                *a += r;
+            }
+        }
+        for (w, r) in d.walk.iter_mut().zip(&risen) {
+            *w += r;
+        }
+    }
+    if tiles.regions > 0 || tiles.ways() > 0 {
+        regions(tiles, p, &mut d, dt);
+    }
+    if d.kind == Kind::Intensity {
+        arrive(tiles, p, &mut d, dt);
+    }
+    if n == 0 {
+        return;
+    }
+    let rows = n + tiles.regions + 1;
+    let end: Vec<f64> = (0..rows)
+        .map(|i| {
+            tiles.walk_end[i * n..][..n]
+                .iter()
+                .zip(&*d.walk)
+                .fold(0.0, |s, (a, w)| s + a * w)
+        })
+        .collect();
+    d.walk.fill(0.0);
+    let prior = shapes.stay_prior(false);
+    for (lk, row) in d.still.chunks_exact_mut(n).enumerate() {
+        for (x, e) in row.iter_mut().zip(&end[..n]) {
+            *x += prior[lk] * e;
+        }
+    }
+    d.settle_amp();
+    if let Some(amp) = d.amp.as_ref() {
+        // the stays begun in the step: nothing measured (g = 1)
+        let (amps, now) = (d.shape.amps, d.shape.still_per_level(d.still));
+        let mut num = amp.levels.clone();
+        for k in 0..levels {
+            for a in 0..=amps {
+                let fresh = if a == amps { 1.0 } else { 0.0 };
+                let row = &mut num[(k * (amps + 1) + a) * n..][..n];
+                for (c, g) in row.iter_mut().enumerate() {
+                    let (kc, nc) = (kept[k * n + c], now[k * n + c]);
+                    *g = kc * *g + (nc - kc) * fresh;
+                }
+            }
+        }
+        d.set_amp(&num);
+    }
+    for (r, e) in end[n..n + tiles.regions].iter().enumerate() {
+        d.region[r * tiles.ages] += e;
+    }
+    *d.out += end[n + tiles.regions];
 }
 
 /// `ticks` ticks of walking for these densities together: per tick what walks through a door goes

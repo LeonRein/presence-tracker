@@ -342,7 +342,19 @@ def test_a_panic_of_the_rust_core_is_a_model_failure(tmp_path, monkeypatch, capl
     app = App(tmp_path, publish=False)
     run_a_while(app, 20.0)
     tracker = app.tracker
-    monkeypatch.setattr(core, "proto_flush", lambda *args: core.panic_for_test("a bug in the core"))
+
+    class Panicking:
+        """The tracker's core, but moving everybody panics."""
+
+        def __init__(self, inner):
+            self.inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self.inner, name)
+
+        def flush(self, *args):
+            core.panic_for_test("a bug in the core")
+    monkeypatch.setattr(tracker, "_c", Panicking(tracker._c))
     assert not app.tick(1000.0 + 20.5)  # no raise
     assert app.tracker is not tracker and "the Rust core failed: a bug in the core" in caplog.text
     with pytest.raises(filter_module.CoreError):

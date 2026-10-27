@@ -1,0 +1,161 @@
+//! What the tests share: a small deterministic random generator and a small world.
+
+/// splitmix64: deterministic, no dependency.
+pub struct Rng(u64);
+
+impl Rng {
+    pub fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    pub fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// Uniform in [0, 1).
+    pub fn uniform(&mut self) -> f64 {
+        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    pub fn range(&mut self, lo: f64, hi: f64) -> f64 {
+        lo + (hi - lo) * self.uniform()
+    }
+
+    /// Uniform in 0..n.
+    pub fn below(&mut self, n: usize) -> usize {
+        (self.uniform() * n as f64) as usize
+    }
+
+    /// Standard normal (Box-Muller).
+    pub fn normal(&mut self) -> f64 {
+        let (u, v) = (1.0 - self.uniform(), self.uniform());
+        (-2.0 * u.ln()).sqrt() * (2.0 * std::f64::consts::PI * v).cos()
+    }
+}
+
+use crate::geometry::Point;
+use crate::params::{Params, Shapes};
+use crate::world::{CELL, Raster, Tiles, World, WorldExport};
+
+/// Small shapes: two kinds of stay, two levels of detectability, two of the amplitude.
+pub fn shapes() -> Shapes {
+    let go = vec![1.0 / 600.0, 1.0 / 20.0];
+    let go_w = vec![0.5, 0.5];
+    let ongoing: Vec<f64> = go_w.iter().zip(&go).map(|(w, g)| w / g).collect();
+    let sum: f64 = ongoing.iter().sum();
+    Shapes {
+        go_w_ongoing: ongoing.iter().map(|x| x / sum).collect(),
+        go,
+        go_w,
+        kappa: vec![0.5, 1.5],
+        kappa_w: vec![0.5, 0.5],
+        amp: vec![0.5, 1.5],
+        ka_w: vec![0.25; 4],
+        amp_given_kappa: vec![0.5; 4],
+    }
+}
+
+/// m: side of the tiles of the test world
+pub const TILE: f64 = 0.5;
+
+fn segment_distance(p: Point, [x0, y0, x1, y1]: [f64; 4]) -> f64 {
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let t = (((p[0] - x0) * dx + (p[1] - y0) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+    (p[0] - x0 - t * dx).hypot(p[1] - y0 - t * dy)
+}
+
+/// The room of test_filter.flat_config without its doors: 6 x 5 m with walls around, square tiles
+/// of TILE m nobody walks between, two sensors in the bottom corners that see the whole room.
+pub fn flat() -> World {
+    let raster = Raster {
+        x0: -0.5,
+        y0: -0.5,
+        nx: 70,
+        ny: 60,
+    };
+    let walls = vec![
+        [0.0, 0.0, 6.0, 0.0],
+        [6.0, 0.0, 6.0, 5.0],
+        [6.0, 5.0, 0.0, 5.0],
+        [0.0, 5.0, 0.0, 0.0],
+    ];
+    let centre = |i: usize, j: usize| [raster.x0 + (i as f64 + 0.5) * CELL, raster.y0 + (j as f64 + 0.5) * CELL];
+    let inside = |p: Point| p[0] > 0.0 && p[0] < 6.0 && p[1] > 0.0 && p[1] < 5.0;
+    let half_diagonal = CELL * std::f64::consts::FRAC_1_SQRT_2;
+    let mut wall_dist = Vec::new();
+    let mut sight = Vec::new();
+    for i in 0..raster.nx {
+        for j in 0..raster.ny {
+            let p = centre(i, j);
+            let d = walls
+                .iter()
+                .map(|&w| segment_distance(p, w))
+                .fold(f64::INFINITY, f64::min);
+            wall_dist.push((d - half_diagonal).max(0.0));
+            sight.push(if inside(p) { 1.0 } else { 0.0 });
+        }
+    }
+    let (tx, ty) = ((6.0 / TILE) as usize, (5.0 / TILE) as usize);
+    let n = tx * ty;
+    let tile_of = |p: Point| ((p[0] / TILE) as usize).min(tx - 1) * ty + ((p[1] / TILE) as usize).min(ty - 1);
+    let centers: Vec<Point> = (0..n)
+        .map(|c| [((c / ty) as f64 + 0.5) * TILE, ((c % ty) as f64 + 0.5) * TILE])
+        .collect();
+    let fine_xy: Vec<Point> = (0..raster.nx)
+        .flat_map(|i| (0..raster.ny).map(move |j| (i, j)))
+        .map(|(i, j)| centre(i, j))
+        .filter(|&p| inside(p))
+        .collect();
+    let points: Vec<Point> = (0..30)
+        .flat_map(|i| (0..25).map(move |j| [0.1 + 0.2 * i as f64, 0.1 + 0.2 * j as f64]))
+        .collect();
+    let point_tile: Vec<usize> = points.iter().map(|&p| tile_of(p)).collect();
+    let mut point_count = vec![0.0; n];
+    for &c in &point_tile {
+        point_count[c] += 1.0;
+    }
+    let mut walk_t = vec![0.0; n * n];
+    for c in 0..n {
+        walk_t[c * n + c] = 1.0;
+    }
+    let ages = 18;
+    let tiles = Tiles {
+        n,
+        centers,
+        var: vec![[TILE * TILE / 12.0; 2]; n],
+        area: vec![TILE * TILE; n],
+        fine: fine_xy.iter().map(|&p| tile_of(p)).collect(),
+        fine_xy,
+        regions: 0,
+        ages,
+        tick: 0.1,
+        walk_t,
+        into_t: vec![0.0; n],
+        door_tiles: Vec::new(),
+        region_doors: Vec::new(),
+        exits: Vec::new(),
+        entries: Vec::new(),
+        region_rates: Vec::new(),
+        widths: (0..ages).map(|a| 2f64.powi(a as i32 + 1)).collect(),
+        points,
+        point_tile,
+        point_count,
+        walk_end: Vec::new(),
+    };
+    World::from_export(WorldExport {
+        params: Params::default(),
+        shapes: shapes(),
+        raster,
+        walls,
+        wall_dist,
+        tiles,
+        sensors: vec![
+            ([0.05, 0.05], [0.19, 0.19], sight.clone()), // the same sight for both sensors
+            ([5.95, 0.05], [5.81, 0.19], sight),
+        ],
+    })
+}

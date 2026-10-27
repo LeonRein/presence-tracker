@@ -2,6 +2,28 @@
 
 ## Unveröffentlicht
 
+## 0.33.0 (Branch `rust-core`, Phase 3 des Rust-Kerns, nicht live)
+
+- **Phase 3 des Entwurfs `docs/rust-core.md`: der Filterzustand in Rust.** Der Kern besitzt die Hypothesen und
+  ihre Objekte (Gauß-Mischungen im Pool, Kacheldichten in einem Speicher, Objekt → Hypothesen als Halterliste,
+  neu gebaut, wo sich Hypothesen ändern, danach Freigabe ohne Halter) und die laufenden Spuren. In Rust rechnen
+  jetzt: Bewegen aller Personen (`flush`), Evidenz je Frame (keine Geisterspur, gemessen, verloren, gehalten,
+  beendet, zensiert), Verzweigen samt Wiederfinden, Zusammenlegen (Paarung über Permutationen), Abschneiden,
+  Normieren, Zurückgeben an die Unbekannten, Datenlücken (`leap`), `people_state` auf Kopien. Python bleibt Hülle:
+  es ordnet den Frame (die Geisterkarte lernt zwischen den Schritten wie bisher), und LD2410C, Ausgaben und
+  Zielkarte lesen bis zu ihren Phasen einen Spiegel der Hypothesen als Python-Objekte (Wegwerfschicht: `dump`,
+  nach dem LD2410C `load`). Der Prototyp (`proto.rs`, `_flush_parts`) ist entfernt; jeder Aufruf geht über
+  `filter._core`. Modell unverändert; `GAP_EXACT`, `LEAP`, `MAX_LEAPS`, `GIVE_UP` sind Parameter des Kerns (beim
+  Bau übergeben). Die Fälle aus `test_hypotheses` (Zusammenlegen vor dem Abschneiden, Masse des Schnitts,
+  Spurende bei fast verschwundener Geister-Alternative, Odds) und `test_gauss` (Gehen unabhängig von der
+  Zerlegung, Richtung vergessen, Wände, Raten über die Komponente) sind Rust-Tests, dazu Halter/Freigabe,
+  Paarung, Kalman-Update, `in_sight`, `from_tiles` und ein Ereignistest mit `Filter::check()` nach jedem
+  Schritt. 10.10. 12–13 Uhr, erste 20 min (`ab.sh 1200`, zweites Paar): CPU 48,0 s (0.31.1) → 33,8 s (−30 %);
+  davon die Spiegelschicht ≈ 1,8 s (py-spy: 4,7 % der Proben). Spuren gegen 0.31.1: 7.10. 03 Uhr bis 4e-15
+  gleich; 8.10. 19 Uhr bis 459 s ≤ 3e-9, danach höchstens 0,012, keine gekippte Schwelle; 10.10. 12 Uhr bis
+  1290 s ≤ 7e-10, dann die bekannte Kippstelle bei 1305 s (844 Raum-Sekunden) – dieselbe wie 0.31.1, nur in der
+  Rundung gestört (`np.stack([w @ T for w in W])`); gegen diese Fassung kippt nichts (höchstens 2,4e-4).
+
 ## 0.32.1 (Branch `rust-core`, nicht live)
 
 - **Ein Panic des Rust-Kerns ist ein Modellfehler wie ein `FloatingPointError`.** PyO3 meldet ihn als

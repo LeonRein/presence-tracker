@@ -10,3 +10,6 @@ pub mod params;
 pub mod sensors;
 pub mod vmath;
 pub mod world;
+
+#[cfg(test)]
+pub mod testing;

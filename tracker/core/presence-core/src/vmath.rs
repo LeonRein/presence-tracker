@@ -26,6 +26,46 @@ pub fn pairwise_sum(a: &[f64]) -> f64 {
     pairwise_sum(&a[..half]) + pairwise_sum(&a[half..])
 }
 
+/// numpy's max of an array: NaN if any is NaN; -inf if empty.
+pub fn nan_max(a: &[f64]) -> f64 {
+    let mut top = f64::NEG_INFINITY;
+    for &x in a {
+        if x.is_nan() {
+            return x;
+        }
+        if x > top {
+            top = x;
+        }
+    }
+    top
+}
+
+/// log(sum(exp(a))) as filter._logsumexp: by the largest (numpy's max, NaN wins), the exponentials
+/// summed in numpy's order; -inf if empty or all -inf.
+pub fn logsumexp(a: &[f64]) -> f64 {
+    let top = nan_max(a);
+    if top == f64::NEG_INFINITY {
+        return top;
+    }
+    let e: Vec<f64> = a.iter().map(|&x| (x - top).exp()).collect();
+    top + pairwise_sum(&e).ln()
+}
+
+/// numpy's logaddexp of two (npy_logaddexp).
+pub fn logaddexp(x: f64, y: f64) -> f64 {
+    if x == y {
+        return x + std::f64::consts::LN_2;
+    }
+    let d = x - y;
+    if d > 0.0 {
+        x + (-d).exp().ln_1p()
+    } else if d <= 0.0 {
+        y + d.exp().ln_1p()
+    } else {
+        d // NaN
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,5 +95,15 @@ mod tests {
         assert_eq!(pairwise_sum(&a), pairwise_sum(&a[..half]) + pairwise_sum(&a[half..]));
         let exact: f64 = a.iter().sum();
         assert!((pairwise_sum(&a) - exact).abs() < 1e-12);
+    }
+
+    #[test]
+    fn logsumexp_is_by_the_largest() {
+        assert_eq!(logsumexp(&[]), f64::NEG_INFINITY);
+        assert_eq!(logsumexp(&[f64::NEG_INFINITY, f64::NEG_INFINITY]), f64::NEG_INFINITY);
+        assert!(logsumexp(&[1.0, f64::NAN]).is_nan());
+        assert!((logsumexp(&[0.0, 0.0]) - 2f64.ln()).abs() < 1e-15);
+        assert_eq!(logaddexp(f64::NEG_INFINITY, f64::NEG_INFINITY), f64::NEG_INFINITY);
+        assert!((logaddexp(1.0, 0.0) - (1.0 + (-1f64).exp().ln_1p())).abs() == 0.0);
     }
 }

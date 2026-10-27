@@ -1,17 +1,14 @@
-//! What the filter knows of each sensor while it runs (MODEL.md 4.4): when its last frame came and
-//! its live tracks.
+//! What the filter knows of each sensor while it runs (MODEL.md 4.4): whether its frames count and
+//! when its last frame came.
 
-use crate::ld2450::rates::TrackSpot;
 use crate::params::IDLE;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct SensorState {
     /// enabled and placed in the plan: its frames count
     pub active: bool,
     /// time of its last frame (-inf: none yet)
     pub last_frame: f64,
-    /// its live tracks, in the order they began
-    pub spots: Vec<TrackSpot>,
 }
 
 /// A set of sensors by their index (at most 64), iterated in the order of the indices.
@@ -67,11 +64,7 @@ mod tests {
 
     #[test]
     fn only_active_sensors_with_recent_frames_watch() {
-        let s = |active, last_frame| SensorState {
-            active,
-            last_frame,
-            spots: Vec::new(),
-        };
+        let s = |active, last_frame| SensorState { active, last_frame };
         let sensors = [s(true, 10.0), s(false, 10.0), s(true, 4.0), s(true, f64::NEG_INFINITY)];
         let w = live(&sensors, 9.5);
         assert_eq!(w.iter().collect::<Vec<_>>(), vec![0, 2]);

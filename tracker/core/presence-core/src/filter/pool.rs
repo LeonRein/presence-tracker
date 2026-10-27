@@ -41,10 +41,14 @@ impl<T, I: PoolId> Pool<T, I> {
     }
 
     /// Panics if the object was released.
-    pub fn remove(&mut self, id: I) -> T {
+    pub(super) fn remove(&mut self, id: I) -> T {
         let value = self.slots[id.index()].take().expect("an object released twice");
         self.free.push(id.index());
         value
+    }
+
+    pub fn contains(&self, id: I) -> bool {
+        self.slots.get(id.index()).is_some_and(Option::is_some)
     }
 
     pub fn get(&self, id: I) -> &T {
@@ -61,6 +65,20 @@ impl<T, I: PoolId> Pool<T, I> {
 
     pub fn len(&self) -> usize {
         self.slots.len() - self.free.len()
+    }
+
+    /// One more than the largest index ever given (for tables by index).
+    pub fn capacity(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// The live objects' indices, in the order of the indices.
+    pub fn ids(&self) -> impl Iterator<Item = I> + '_ {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.is_some())
+            .map(|(i, _)| I::from_index(i))
     }
 
     pub fn is_empty(&self) -> bool {

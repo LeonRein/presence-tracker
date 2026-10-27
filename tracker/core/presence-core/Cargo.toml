@@ -10,6 +10,7 @@ publish.workspace = true
 faer = { version = "0.24", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+libm = "0.2"
 
 [dev-dependencies]
 matrixmultiply = "0.3"

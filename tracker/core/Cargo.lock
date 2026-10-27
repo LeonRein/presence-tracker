@@ -524,6 +524,7 @@ name = "presence-core"
 version = "0.1.0"
 dependencies = [
  "faer",
+ "libm",
  "matrixmultiply",
  "serde",
  "serde_json",

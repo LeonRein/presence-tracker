@@ -1,8 +1,301 @@
 //! Hypotheses and the objects they hold (MODEL.md 5): Gaussian mixtures of the people with a track,
-//! densities over the tiles of the people without one, and the step that moves and weighs them.
+//! densities over the tiles of the people without one, and what moves, weighs, branches and merges
+//! them. The filter owns the objects; hypotheses hold indices, the holders say who holds what
+//! (docs/rust-core.md 2).
 
+pub mod branch;
 pub mod densities;
+pub mod evidence;
+pub mod holders;
+pub mod hyp;
+pub mod merge;
 pub mod mixture;
+pub mod objects;
 pub mod pool;
 pub mod small_map;
 pub mod step;
+pub mod tracks;
+
+#[cfg(test)]
+mod tests;
+
+use densities::{DensityData, DensityId, DensityShape};
+use holders::Holders;
+use hyp::{GroupId, Hyp, Owner};
+use mixture::MixtureId;
+use objects::Objects;
+use tracks::Tracks;
+
+/// What the filter cannot go on from: the hypotheses' weights are not finite (every output after
+/// it would be NaN, and NaN shows as "nobody there"; the app starts the model over).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NotFinite(pub f64);
+
+impl std::fmt::Display for NotFinite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the hypotheses' weights are not finite ({})", self.0)
+    }
+}
+
+impl std::error::Error for NotFinite {}
+
+#[derive(Debug)]
+pub struct Filter {
+    hyps: Vec<Hyp>,
+    objects: Objects,
+    /// always those of hyps: built anew wherever the hypotheses change (set_hyps)
+    holders: Holders,
+    tracks: Tracks,
+    next_group: u64,
+    /// counts the moves of everybody and the events (filter.Tracker._version: what is cached per
+    /// hypothesis is void when it changes)
+    version: u64,
+    /// log evidence of everything seen so far, and the part of it that is mass dropped by the cut
+    loglik: f64,
+    loglik_cut: f64,
+    /// time of the last move of everybody
+    flushed: f64,
+    /// per sensor the expected number of walkers in its view per hypothesis, as of the last move
+    /// of everybody or event (Tracker._walkers; emptied with every bump of the version)
+    walkers: Vec<Option<Vec<f64>>>,
+}
+
+/// What is known about the people, to start from after a restart (MODEL.md 5.3; Tracker.
+/// people_state): per hypothesis its weight (normalized), its known people and the unknown ones as
+/// indices into `densities`.
+#[derive(Debug)]
+pub struct PeopleState {
+    pub hyps: Vec<(f64, Vec<usize>, usize)>,
+    pub densities: Vec<DensityData>,
+}
+
+impl Filter {
+    /// A filter without hypotheses (load them with `set_hyps`).
+    pub fn new(shape: DensityShape, sensors: usize) -> Self {
+        Self {
+            hyps: Vec::new(),
+            objects: Objects::new(shape),
+            holders: Holders::default(),
+            tracks: Tracks::new(sensors),
+            next_group: 1,
+            version: 0,
+            loglik: 0.0,
+            loglik_cut: 0.0,
+            flushed: 0.0,
+            walkers: vec![None; sensors],
+        }
+    }
+
+    pub fn hyps(&self) -> &[Hyp] {
+        &self.hyps
+    }
+
+    pub fn objects(&self) -> &Objects {
+        &self.objects
+    }
+
+    /// The objects, for making new ones that a following set_hyps hands to hypotheses.
+    pub fn objects_mut(&mut self) -> &mut Objects {
+        &mut self.objects
+    }
+
+    pub fn tracks(&self) -> &Tracks {
+        &self.tracks
+    }
+
+    /// The live tracks, for loading them (a restored state, tests).
+    pub fn tracks_mut(&mut self) -> &mut Tracks {
+        &mut self.tracks
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Sets the version: what is cached per hypothesis is void.
+    pub fn set_version(&mut self, v: u64) {
+        self.version = v;
+        self.walkers.fill(None);
+    }
+
+    /// The version goes on (an event, a move of everybody).
+    pub fn bump(&mut self) {
+        self.set_version(self.version + 1);
+    }
+
+    pub fn flushed(&self) -> f64 {
+        self.flushed
+    }
+
+    pub fn set_flushed(&mut self, t: f64) {
+        self.flushed = t;
+    }
+
+    /// (log evidence, the part of it dropped by the cut)
+    pub fn loglik(&self) -> (f64, f64) {
+        (self.loglik, self.loglik_cut)
+    }
+
+    pub fn set_loglik(&mut self, (loglik, cut): (f64, f64)) {
+        (self.loglik, self.loglik_cut) = (loglik, cut);
+    }
+
+    /// Replaces the hypotheses: the holders are built anew and what nobody holds then is released.
+    pub fn set_hyps(&mut self, hyps: Vec<Hyp>) {
+        self.hyps = hyps;
+        self.rebuild();
+        self.walkers.fill(None);
+    }
+
+    /// The hypotheses changed in place: the holders anew, what nobody holds released.
+    fn rebuild(&mut self) {
+        let objects = &self.objects;
+        self.holders = Holders::build(&self.hyps, objects.mixtures.capacity(), objects.densities.capacity());
+        self.objects.release_unheld(&self.holders);
+    }
+
+    /// A new id for a person with tracks (they count on in branches that are later cut).
+    fn new_group(next: &mut u64) -> GroupId {
+        let gid = GroupId(*next);
+        *next += 1;
+        gid
+    }
+
+    /// No live tracks, no data of the sensors gathered yet (Tracker._clear): from time t.
+    pub fn clear(&mut self, t: f64) {
+        self.tracks = Tracks::new(self.tracks.sensors());
+        self.flushed = t;
+        self.set_version(0);
+    }
+
+    /// The hypotheses' weights, normalized by the largest (Tracker.hyp_weights).
+    pub fn hyp_weights(&self) -> Vec<f64> {
+        let lw: Vec<f64> = self.hyps.iter().map(|h| h.logw).collect();
+        let top = crate::vmath::nan_max(&lw);
+        let w: Vec<f64> = lw.iter().map(|l| (l - top).exp()).collect();
+        let s = crate::vmath::pairwise_sum(&w);
+        w.iter().map(|x| x / s).collect()
+    }
+
+    /// The people as densities over the tiles: those with tracks go to the tiles as when their last
+    /// track ends (5.4), ghost tracks end, and the hypotheses that then say the same are merged
+    /// (5.6). Changes nothing of the filter: it works on copies (reading a stored amplitude settles
+    /// it; in the model's own densities the run went another way after every save, 0.28), which
+    /// are released before it returns.
+    pub fn people_state(&mut self, world: &crate::world::World) -> PeopleState {
+        let objects = &mut self.objects;
+        let mut own: Vec<(DensityId, DensityId)> = Vec::new();
+        let mut copy = |objects: &mut Objects, id: DensityId| match own.iter().find(|(k, _)| *k == id) {
+            Some(&(_, c)) => c,
+            None => {
+                let c = objects.densities.fork(id);
+                own.push((id, c));
+                c
+            }
+        };
+        let mut tiled: Vec<(MixtureId, DensityId)> = Vec::new();
+        let mut hyps = Vec::with_capacity(self.hyps.len());
+        for hy in &self.hyps {
+            let mut people: Vec<DensityId> = hy.hidden.iter().map(|&u| copy(objects, u)).collect();
+            for &g in hy.people.values() {
+                let d = match tiled.iter().find(|(k, _)| *k == g) {
+                    Some(&(_, d)) => d,
+                    None => {
+                        // on a copy: its part gone through a door is settled when it is mixed in
+                        let mix = objects.mixtures.get(g).fork(&mut objects.densities);
+                        let d = mix.to_tiles(world, &mut objects.densities);
+                        if let Some(away) = mix.away {
+                            objects.densities.release(away);
+                        }
+                        tiled.push((g, d));
+                        d
+                    }
+                };
+                people.push(d);
+            }
+            let unknown = copy(objects, hy.unknown);
+            hyps.push(Hyp::new(hy.logw, people, unknown));
+        }
+        objects.merge_alike(&mut hyps);
+        let total = crate::vmath::logsumexp(&hyps.iter().map(|h| h.logw).collect::<Vec<_>>());
+        let mut order: Vec<DensityId> = Vec::new();
+        let mut index = |d: DensityId| match order.iter().position(|&x| x == d) {
+            Some(i) => i,
+            None => {
+                order.push(d);
+                order.len() - 1
+            }
+        };
+        let hyps = hyps
+            .iter()
+            .map(|hy| {
+                let people = hy.hidden.iter().map(|&u| index(u)).collect();
+                (hy.logw - total, people, index(hy.unknown))
+            })
+            .collect();
+        let densities = order
+            .iter()
+            .map(|&d| {
+                objects.densities.get_mut(d).settle_amp();
+                objects.densities.data(d)
+            })
+            .collect();
+        // the copies go: nobody holds them
+        objects.release_unheld(&self.holders);
+        PeopleState { hyps, densities }
+    }
+
+    /// The bookkeeping's invariants (Tracker.check, and those of the pools): no two hypotheses
+    /// alike; each says whose every live track is; its people with tracks are its groups, each
+    /// holding the offsets of its tracks; every ghost track has its source; the unknown ones an
+    /// intensity, the known ones persons; the holders and the objects (Objects::check).
+    pub fn check(&self) -> Result<(), String> {
+        use densities::Kind;
+        let mut keys = Vec::new();
+        for (h, hy) in self.hyps.iter().enumerate() {
+            let key = hy.key();
+            if keys.contains(&key) {
+                return Err(format!("hypothesis {h}: two hypotheses alike"));
+            }
+            keys.push(key);
+            let live: Vec<_> = self.tracks.iter().map(|(&s, _)| s).collect();
+            if hy.tracks.len() != live.len() || !live.iter().all(|s| hy.tracks.contains_key(s)) {
+                return Err(format!("hypothesis {h}: it and the live tracks differ"));
+            }
+            let groups = hy.group_segs();
+            if groups.len() != hy.people.len() || !groups.keys().all(|g| hy.people.contains_key(g)) {
+                return Err(format!(
+                    "hypothesis {h}: a person with tracks and no mixture, or the reverse"
+                ));
+            }
+            for (gid, segs) in groups.iter() {
+                let m = *hy.people.get(gid).expect("checked above");
+                if !self.objects.mixtures.contains(m) {
+                    return Err(format!("hypothesis {h}: a released mixture"));
+                }
+                let mix = self.objects.mixtures.get(m);
+                if !segs.iter().all(|s| mix.slots.contains_key(s)) {
+                    return Err(format!("hypothesis {h}: a track of a person without its offset"));
+                }
+            }
+            for (s, o) in hy.tracks.iter() {
+                if *o == Owner::Ghost && !hy.ghosts.contains_key(s) {
+                    return Err(format!("hypothesis {h}: a ghost without its source"));
+                }
+            }
+            let kind = |d: DensityId| {
+                self.objects
+                    .densities
+                    .contains(d)
+                    .then(|| self.objects.densities.get(d).kind)
+            };
+            if kind(hy.unknown) != Some(Kind::Intensity) {
+                return Err(format!("hypothesis {h}: no unknown people"));
+            }
+            if hy.hidden.iter().any(|&u| kind(u) != Some(Kind::Person)) {
+                return Err(format!("hypothesis {h}: a known person as an intensity, or released"));
+            }
+        }
+        self.objects.check(&self.hyps, &self.holders)
+    }
+}

@@ -14,10 +14,20 @@ pub struct DoorTile {
     pub rates: Vec<f64>,
 }
 
+/// m: the sample points of the rates are this far apart (tiling.POINT)
+pub const POINT: f64 = 0.2;
+
 #[derive(Debug)]
 pub struct Tiles {
     /// number of tiles
     pub n: usize,
+    /// per tile the centroid, the spread of its cells per axis (+ a cell's own) and the area
+    pub centers: Vec<Point>,
+    pub var: Vec<Point>,
+    pub area: Vec<f64>,
+    /// per 0.1 m cell in view its tile and centre (tiling.Tiling.fine, fine_xy)
+    pub fine: Vec<usize>,
+    pub fine_xy: Vec<Point>,
     /// regions without a sensor (R)
     pub regions: usize,
     /// age bins of a stay in a region (A)
@@ -43,12 +53,27 @@ pub struct Tiles {
     pub points: Vec<Point>,
     pub point_tile: Vec<usize>,
     pub point_count: Vec<f64>,
+    /// where a walk that begins in a tile ends - stopped in a tile, in a region, out - whatever its
+    /// length, (n + R + 1) x n (tiling.Tiling.walk_end; for leaps over a gap in the data)
+    pub walk_end: Vec<f64>,
 }
 
 impl Tiles {
     /// All ways into the house: the regions' ways out and the entries.
     pub fn ways(&self) -> usize {
         self.exits.iter().sum::<usize>() + self.entries.len()
+    }
+
+    /// The tile of a point, or the nearest one (tiling.Tiling.cell_near); None without tiles.
+    pub fn cell_near(&self, p: Point) -> Option<usize> {
+        let mut best: Option<(f64, usize)> = None;
+        for (&[x, y], &tile) in self.fine_xy.iter().zip(&self.fine) {
+            let d = (x - p[0]).powi(2) + (y - p[1]).powi(2);
+            if best.is_none_or(|(b, _)| d < b) {
+                best = Some((d, tile));
+            }
+        }
+        best.map(|(_, tile)| tile)
     }
 
     /// Per tile the mean of a function given at the sample points (tiling.Tiling.average): summed in

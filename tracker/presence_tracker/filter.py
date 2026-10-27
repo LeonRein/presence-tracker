@@ -21,17 +21,15 @@ import binascii
 import itertools
 import json
 import math
-import os
 import zlib
 
 import numpy as np
 
-from .filtermodel import FRAME, IDLE, P_FA, S50, STILL, WALK, Model, Shapes
+from .filtermodel import FRAME, IDLE, STILL, WALK, Model, Shapes
 from .frames import SensorRuntime, detections as frame_detections
 from . import kernels, ld2410
-from . import gauss
 from .gauss import Gauss
-from .hidden import Hidden, Undetected, _factors as hidden_factors
+from .hidden import Hidden, Undetected
 from . import destination
 from .pause import Pauses
 from .roomseen import RoomSeen
@@ -41,10 +39,7 @@ from .tiling import Tiling
 from .unobserved import Dwell
 from .world import CELL, OBSERVED, World
 
-try:  # the Rust core (docs/rust-core.md); phase 2 prototype: it moves everybody (_flush_parts)
-    import presence_core
-except ImportError:
-    presence_core = None
+import presence_core  # the Rust core (docs/rust-core.md): since phase 3 the hypotheses and their objects
 
 
 class CoreError(RuntimeError):
@@ -103,24 +98,6 @@ def _logsumexp(a) -> float:
     return top + math.log(float(np.exp(a - top).sum()))
 
 
-def _log(x):
-    with np.errstate(divide="ignore"):
-        return np.log(x)
-
-
-def _odds_shifted(p: float, log_factor: float) -> float:
-    """p with its odds multiplied by e^log_factor, without overflow: 1 / (1 + e^x) for the log odds
-    against, x = log(1 - p) - log(p) - log_factor. Since no live track loses an alternative (_cut),
-    p can be ~1e-300 and e^x beyond the floating point range (OverflowError, ablation 9.10.)."""
-    if not 0.0 < p < 1.0:
-        return p
-    x = math.log1p(-p) - math.log(p) - log_factor
-    if x > 0:
-        e = math.exp(-x)
-        return e / (1.0 + e)
-    return 1.0 / (1.0 + math.exp(x))
-
-
 class Hyp:
     """One hypothesis: its weight; per live track whose it is (a group id, or "g" for a ghost); per
     ghost track the log likelihood of its life per kind of ghost and its source (a Gauss); the
@@ -166,6 +143,15 @@ class Hyp:
                 frozenset(s for s, k in self.kind.items() if k == "g"))
 
 
+class _Mirror:
+    """The core's hypotheses as Python objects (Hyp, Gauss, Hidden) for what still reads them in
+    Python - the LD2410C, the outputs, the destination map, tests and tools (docs/rust-core.md 7,
+    phase 3; thrown away when they are in Rust). serial: the core's state it shows; ids: per object
+    (Python id) its index in the core; objs keeps those objects alive."""
+
+    __slots__ = ("serial", "hyps", "segs", "live", "ids", "objs")
+
+
 class Tracker:
     def __init__(self, config, start: float | None = None, n: int | None = None, seed: int = 1, people=None,
                  sensor_model: SensorModel | None = None, model: Model | None = None):
@@ -180,10 +166,8 @@ class Tracker:
         self.runtime = {}
         self.now = start or 0.0
         self.start = start
-        self.loglik = 0.0  # log evidence of everything seen so far
-        self.loglik_cut = 0.0  # ... the part of it that is mass of hypotheses dropped (_cut)
+        self._c = None  # the Rust core (presence_core.Core): the hypotheses and their objects
         self._ids = itertools.count(1)
-        self._gids = itertools.count(1)
         self.ghost_map = None  # where each sensor starts ghost tracks (ghostmap.py)
         # what each LD2410C sees without anybody (ld2410.py, learned online, MODEL.md 4.3)
         self.ld_background = ld2410.Background(ld2410.prior(self.m), self.m.ld_prior_time, self.m.ld_forget,
@@ -209,10 +193,6 @@ class Tracker:
         self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
         self.tracks = {sid: SensorTracks(sid, self._ids) for sid in self.sensors}
         self._gcache = {}
-        self._live_at = {}  # while everybody moves (_flush): t -> _live(t)
-        self._rates_ctx = None  # while everybody moves (_flush): the sensors' live tracks, packed (_sync_rates)
-        self._lat_pow = (None, None, None)  # _sync: the factors of no track started for a part of a move
-        self._area = {}
         self._ghost_total = {}
         rooms = self.config.observed_rooms()
         self.rooms = [z.id for z in rooms]
@@ -224,6 +204,201 @@ class Tracker:
         for si in range(len(self.sensors)):
             self._g(si, np.zeros((1, 2)))
         self.dest_geo = destination.Geometry(self)
+        loglik = self._c.loglik if self._c is not None else (0.0, 0.0)  # the evidence goes on over a rebuild
+        self._c = _core(presence_core.Core, self._export())
+        self._c.loglik = loglik
+        self._sent = (None, set())  # the sensors' state and the sets of live sensors the core has
+        self._mirror = None
+        self._dirty = False  # the mirror was handed out and may have been changed: loaded before the next call
+
+    def _export(self) -> dict:
+        """The world as this tracker built it, for the core (docs/rust-core.md 6: the WorldExport,
+        until the build is in Rust): the model, the shapes, the raster and walls, the tiles, per
+        sensor where it is and its sight."""
+        tl, w, m, sh = self.tiles, self.world, self.m, self.shapes
+        names = ("still_noise", "kappa_switch", "speed", "speed_spread", "turn_rate", "walk_length", "arrive_rate",
+                 "guest_rate", "forget_rate", "find_radius", "res_range", "res_cross", "const_share", "tau",
+                 "unseen_life", "white", "pos_every", "find_clutter", "ghost_echo", "hyp_mass")
+        # JSON has no infinity: such numbers go as "inf", "-inf", "nan" (params.rs)
+        params = {k: (v if math.isfinite(v) else str(v)) for k in names for v in [float(getattr(m, k))]}
+        params.update(acquire=[[float(x) for x in a] for a in m.acquire], track_life=[float(x) for x in m.track_life],
+                      refind={k: [float(x) for x in v] for k, v in m.refind.items()},
+                      ghost_types=[[float(r), float(life)] for r, life in self._ghost_types()], max_hyps=int(m.max_hyps),
+                      give_up=GIVE_UP, max_step=MAX_STEP, gap_exact=GAP_EXACT, leap=LEAP, max_leaps=MAX_LEAPS)
+
+        def f(a):
+            return np.ascontiguousarray(a, dtype=float)
+
+        def i(a):
+            return np.ascontiguousarray(a, dtype=np.int64)
+        d = tl.door_tiles
+        return dict(
+            params=json.dumps(params), go=f(sh.go), go_w=f(sh.go_w), go_w_ongoing=f(sh.go_w_ongoing), kappa=f(sh.kappa),
+            kappa_w=f(sh.kappa_w), amp=f(sh.amp), ka_w=f(sh.ka_w), amp_given_kappa=f(sh.amp_given_kappa), x0=float(w.x0),
+            y0=float(w.y0), nx=int(w.nx), ny=int(w.ny), walls=f(w.walls), wall_dist=f(w.wall_grid), n=int(tl.n), R=int(tl.R),
+            A=int(tl.A), tick=float(tl.tick), walk_t=f(tl.T_walk_t), into_t=f(tl.T_in_t), centers=f(tl.centers),
+            tile_var=f(tl.var), area=f(tl.area), fine=i(tl.fine), fine_xy=f(tl.fine_xy), door_center=f(tl.centers[d]),
+            door_var=f(tl.var[d]), door_area=f(tl.area[d]), door_rates=f(tl.door_rate[d]), door_ptr=i(tl.door_ptr),
+            door_list=i(tl.door_list), exits=i(tl.exits), entries=i(tl.entry_idx), region_rates=f(tl.region_rates()),
+            widths=f(tl.widths), points=f(tl.points), point_tile=i(tl.point_tile), point_count=f(tl.point_count),
+            sensors=[(float(s.x), float(s.y), *map(float, s.sight_origin()), f(self._grid(si)))
+                     for si, s in enumerate(self.config.sensors)])
+
+    # the core's state, as the Python filter named it
+
+    @property
+    def _version(self) -> int:
+        return self._c.version
+
+    @_version.setter
+    def _version(self, v: int):
+        self._c.version = v
+
+    @property
+    def _flushed(self) -> float:
+        return self._c.flushed
+
+    @_flushed.setter
+    def _flushed(self, t: float):
+        self._c.flushed = t
+
+    @property
+    def loglik(self) -> float:
+        """log evidence of everything seen so far"""
+        return self._c.loglik[0]
+
+    @property
+    def loglik_cut(self) -> float:
+        """... the part of it that is mass of hypotheses dropped (_cut)"""
+        return self._c.loglik[1]
+
+    # the mirror of the hypotheses (phase 3)
+
+    def _call(self, name, *args):
+        """A call into the core (through _core: a panic is a CoreError); a mirror that may have been
+        changed is loaded first."""
+        if self._dirty:
+            self._push()
+        return _core(getattr(self._c, name), *args)
+
+    def _view(self) -> _Mirror:
+        """The mirror of the core's state, made anew when the core changed."""
+        m = self._mirror
+        if m is None or (not self._dirty and m.serial != self._c.serial):
+            m = self._mirror = self._dump()
+        return m
+
+    @property
+    def _h(self) -> list:
+        """The hypotheses for reading (the mirror's)."""
+        return self._view().hyps
+
+    @property
+    def hyps(self) -> list:
+        """The hypotheses as Python objects (a mirror of the core's): what is changed in them reaches
+        the core before its next call."""
+        m = self._view()
+        self._dirty = True
+        return m.hyps
+
+    @hyps.setter
+    def hyps(self, value):
+        m = self._view()
+        m.hyps = list(value)
+        self._dirty = True
+
+    @property
+    def segs(self) -> dict:
+        """The live tracks (seg id -> si, t, zt, gt, var, z, z0, born, lost, map_odds), for reading."""
+        return self._view().segs
+
+    @property
+    def _live_by_sensor(self) -> dict:
+        return self._view().live
+
+    def _dump(self) -> _Mirror:
+        dens, mixs, hyps, tracks = _core(self._c.dump)
+        m = _Mirror()
+        m.serial = self._c.serial
+        m.ids, m.objs = {}, []
+        tl = self.tiles
+        ds, ms = {}, {}
+        for k, (walk, still, region, out, clock, r, amp, keep), intensity in dens:
+            h = (Undetected if intensity else Hidden).__new__(Undetected if intensity else Hidden)
+            h.tiles = tl
+            h.walk, h.still, h.region, h.out, h.clock, h.r, h._amp, h._keep = walk, still, region, out, clock, r, amp, keep
+            ds[k] = h
+            m.ids[id(h)] = k
+            m.objs.append(h)
+        for k, logw, mean, cov, gow, ka, slots, phantom, a, away, t in mixs:
+            g = Gauss(logw, mean, cov, gow, ka, {s: j for s, j, _ in slots}, {s: v for s, _, v in slots}, phantom, a,
+                      None if away is None else ds[away], t)
+            ms[k] = g
+            m.ids[id(g)] = k
+            m.objs.append(g)
+        m.hyps = [Hyp(logw, {s: "g" if o is None else o for s, o in tr}, {s: life for s, life, _ in gh},
+                      {g: ms[j] for g, j in people}, [ds[j] for j in hidden], ds[unknown],
+                      {s: ms[src] for s, _, src in gh})
+                  for logw, tr, gh, people, hidden, unknown in hyps]
+        m.segs, m.live = {}, {si: [] for si in range(len(self.sensors))}
+        for seg, si, (t, zt, gt, var), z, z0, born, lost, odds in tracks:
+            info = {"si": si, "t": t, "zt": zt, "var": var, "z": z, "z0": z0, "born": born,
+                    "lost": None if lost is None else dict(zip(("kind", "t", "z", "u"), lost)), "map_odds": odds}
+            if gt is not None:
+                info["gt"] = gt
+            m.segs[seg] = info
+            m.live[si].append(seg)
+        return m
+
+    def _push(self):
+        """Load the mirror's hypotheses into the core (after the LD2410C weighed them, or a test
+        changed them)."""
+        m = self._mirror
+        self._dirty = False
+        dens, dpos, mixs, mpos = [], {}, [], {}
+
+        def density(h) -> int:
+            if id(h) not in dpos:
+                dpos[id(h)] = len(dens)
+                dens.append(h)
+            return dpos[id(h)]
+
+        def mixture(g) -> int:
+            if id(g) not in mpos:
+                if g.away is not None:
+                    density(g.away)
+                mpos[id(g)] = len(mixs)
+                mixs.append(g)
+            return mpos[id(g)]
+
+        def f(a):
+            return None if a is None else np.ascontiguousarray(a, dtype=float)
+        hyps = [(float(hy.logw), [(s, None if k == "g" else k) for s, k in hy.kind.items()],
+                 [(s, f(hy.ghost[s]), mixture(hy.phantom[s])) for s in hy.ghost if s in hy.phantom],
+                 [(gid, mixture(g)) for gid, g in hy.groups.items()], [density(u) for u in hy.hidden], density(hy.ppp))
+                for hy in m.hyps]
+        dargs = [(m.ids.get(id(h)), f(h.walk), f(h.still), f(h.region), float(h.out), float(h.clock), float(h.r),
+                  type(h) is Undetected, f(h._amp), f(h._keep)) for h in dens]
+        margs = [(m.ids.get(id(g)), f(g.logw), f(g.mean), f(g.cov), f(g.gow), f(g.ka),
+                  [(s, int(j), float(g.var[s])) for s, j in g.slots.items()], bool(g.phantom), float(g.a),
+                  None if g.away is None else dpos[id(g.away)], g.t) for g in mixs]
+        _core(self._c.load, dargs, margs, hyps)
+        self._mirror = None  # the core gave the new objects their ids: read anew
+
+    def _send_sensors(self):
+        """The sensors' state as the core needs it for which of them watch (_live)."""
+        state = [(bool(s.enabled and s.placed and s.id in self.runtime),
+                  self.runtime[s.id].last_frame if s.id in self.runtime else -math.inf) for s in self.config.sensors]
+        if state != self._sent[0]:
+            self._sent = (state, self._sent[1])
+            _core(self._c.set_sensors, state)
+
+    def _send_observed(self, sensors):
+        """How well these sensors see each tile (Tiling.observed), once per set."""
+        key = tuple(sensors)
+        if key not in self._sent[1]:
+            self._sent[1].add(key)
+            _core(self._c.set_observed, list(key), np.ascontiguousarray(self.tiles.observed(key), dtype=float))
 
     def reset_people(self, people=None):
         """Start over: nothing known about the people (MODEL.md 5.3, unknown_start); or people at
@@ -257,16 +432,12 @@ class Tracker:
     def _clear(self):
         """No live tracks, no data of the sensors gathered yet."""
         self._recycled = self.now
-        self._flushed = self.now
+        self._call("clear", self.now)  # no tracks, moved to now, version 0
         self._gap_from = None  # time of a restored state: the gap to the first frame is still to predict
         self._out_cache = {}
-        self._expiry = None  # (dt, live sensors) and the factors per tile of _expire for them
         self._ld_stats = {}  # sensor index -> the LD2410C's frames since they were last weighed (ld2410.Stats)
         self._ld_memory = {}  # sensor index -> what the people put into its cells lately (the still ones lag)
         self._ld_echo = {}  # sensor index -> its echo sources (ld2410.Echoes)
-        self._version = 0  # counts the moves of everybody and the events (for the outputs' cache)
-        self.segs = {}  # seg id -> dict(si, t, zt, var, z, born, lost, ...)
-        self._live_by_sensor = {si: [] for si in range(len(self.sensors))}
         self._dest_learner = destination.Learner()  # the walks under way (they follow the live tracks)
         self._dest_t = -math.inf
 
@@ -276,34 +447,15 @@ class Tracker:
         Live tracks do not survive a restart (the sensors' next frames are a start, 4.1): the
         people with tracks go to the tiles as when their last track ends (5.4), ghost tracks end,
         and the hypotheses that then say the same are merged (5.6) - one per number of known
-        people. The time is that of the last move of everybody. Changes nothing here: it works on
-        copies, as reading a stored amplitude applies its deferred mixing (Hidden.amp) - in the
-        model's own densities the live run went another way after every save than a replay (0.28)."""
-        cache = {}
-        own = {}  # id of a density -> its copy (shared ones stay shared: the merge goes by identity)
-
-        def copy(o):
-            if id(o) not in own:
-                own[id(o)] = o.copy()
-            return own[id(o)]
-        hyps = []
-        for hy in self.hyps:
-            people = [copy(u) for u in hy.hidden]
-            for g in hy.groups.values():
-                if id(g) not in cache:
-                    cache[id(g)] = g.copy().to_tiles(self.tiles)
-                people.append(cache[id(g)])
-            hyps.append(Hyp(hy.logw, {}, {}, {}, people, copy(hy.ppp)))
-        hyps = self._merged(hyps)
-        total = _logsumexp([hy.logw for hy in hyps])
-        index = {}
-        for hy in hyps:
-            for o in hy.hidden + [hy.ppp]:
-                index.setdefault(id(o), (len(index), o))
-        return {"t": self._flushed, "tiles": self.tiles.fingerprint(),
-                "densities": [o.to_dict() for _, o in sorted(index.values(), key=lambda v: v[0])],
-                "hyps": [{"logw": hy.logw - total, "people": [index[id(o)][0] for o in hy.hidden],
-                          "unknown": index[id(hy.ppp)][0]} for hy in hyps]}
+        people (in the core, on copies). The time is that of the last move of everybody."""
+        hyps, dens = self._call("people_state")
+        objs = []
+        for walk, still, region, out, clock, r, amp, keep in dens:
+            h = Hidden(self.tiles)
+            h.walk, h.still, h.region, h.out, h.clock, h.r, h._amp, h._keep = walk, still, region, out, clock, r, amp, keep
+            objs.append(h)
+        return {"t": self._flushed, "tiles": self.tiles.fingerprint(), "densities": [o.to_dict() for o in objs],
+                "hyps": [{"logw": lw, "people": people, "unknown": u} for lw, people, u in hyps]}
 
     def restore_people(self, state: dict | None) -> bool:
         """Start from a saved state (people_state): the posterior then is the prior now (the PMBM
@@ -339,54 +491,16 @@ class Tracker:
 
     def _predict_gap(self, gap: float):
         """Everybody moves on over a gap in the data (MODEL.md 4.4, 5.3): its last GAP_EXACT s as
-        always (Hidden.move), what lies before in steps of LEAP s (Hidden.leap), at most MAX_LEAPS."""
+        always (Hidden.move), what lies before in steps of LEAP s (Hidden.leap), at most MAX_LEAPS;
+        what the sensors placed could have tested lasts (in the core)."""
         if gap <= 0:
             return
-        lead = max(gap - GAP_EXACT, 0.0)
-        leaps = min(int(math.ceil(lead / LEAP - 1e-9)), MAX_LEAPS)
-        parts = int(math.ceil((gap - lead) / MAX_STEP - 1e-9))
+        if gap > GAP_EXACT and not self._c.has_walk_end():
+            _core(self._c.set_walk_end, np.ascontiguousarray(self.tiles.walk_end(), dtype=float))
         # the sensors were there, only the app was not watching: what they could have tested lasts
         placed = [si for si, s in enumerate(self.config.sensors) if s.enabled and s.placed]
-        for obj, _ in self._objects():
-            for _ in range(leaps):
-                obj.leap(lead / leaps)
-                self._expire(obj, lead / leaps, placed)
-            for _ in range(parts):
-                obj.move((gap - lead) / parts)
-                self._expire(obj, (gap - lead) / parts, placed)
-        self._version += 1
-
-    def _expire(self, obj, dt: float, live):
-        """The record of a known person without a track lasts only as far as a measurement could
-        test it (MODEL.md 5.5): where a sensor sees them, the measurements alone decide (nothing ends
-        there, 1.3); the share of them that no sensor can see expires at 1/unseen_life - in a tile
-        by 1 - how well the live sensors see it (Tiling.observed; 0 in a blind spot, and where a
-        sensor saw whose frames stopped coming, MODEL.md 4.4), in the regions without a sensor and
-        out of the house whole - so the existence r falls by r x that share x (1 - e^(-dt/unseen_life)).
-        An assumption about records nothing supports, not a part of how people move (Musicki & Evans
-        2005: the existence chain of a track, here only where no detectability can act). Also in a
-        closed region (the balcony): 0.26 kept records there, but what it kept came from the ghosts at
-        the balcony door and later "came back" as people (MODEL.md 10, "0.27")."""
-        if type(obj) is not Hidden or not obj.r > 0:
-            return
-        m, tl = self.m, self.tiles
-        q = -math.expm1(-dt / m.unseen_life)
-        lost = obj.out * q
-        obj.out -= lost
-        reg = float(obj.region.sum())
-        if reg > 0:
-            obj.region *= 1.0 - q
-            lost += reg * q
-        if tl.n:
-            key = (dt, tuple(live))
-            if self._expiry is None or self._expiry[0] != key:  # the same for everybody in a step
-                self._expiry = (key, np.exp(-dt / m.unseen_life * (1.0 - tl.observed(live))))
-            f = self._expiry[1]
-            d, _ = kernels.hidden_weigh(obj.walk, obj.still, obj.region, 0.0, f, f[None, :], True)
-            lost += -d  # the mass before less after
-        if lost > 0:
-            obj.r *= 1.0 - lost
-            obj._normalize()
+        self._send_observed(placed)
+        self._call("predict_gap", gap, placed)
 
     def reconfigure(self, config):
         """A new configuration. If only sensors changed (turned, moved, recalibrated, switched on
@@ -446,28 +560,29 @@ class Tracker:
     def _recalibrated(self, changed):
         """Sensors changed, the people's world not (reconfigure): the people stay as they are; the
         changed sensors' tracks end as at lost data, their next frame counts as a start."""
-        if any(self._live_by_sensor[self.sidx[sid]] for sid in changed):
+        if any(self._c.live_tracks(self.sidx[sid]) for sid in changed):
             self._flush(self.now)  # the ends weigh and release everybody: all at now
         for sid in changed:
             si = self.sidx[sid]
-            for seg in list(self._live_by_sensor[si]):
+            for seg in self._c.live_tracks(si):
                 self._end(si, seg, self.now, True)
             self.tracks[sid] = SensorTracks(sid, self._ids)
             if sid in self.runtime:
                 self.runtime[sid].last_frame = -math.inf  # the next frame is a start (_evidence)
             for d in (self._ld_stats, self._ld_memory, self._ld_echo):
                 d.pop(si, None)
-        if changed and self.hyps:
+        if changed and self._h:
             self._merge()
             self._prune()
             self._normalize()
         self.world.config = self.config
-        self._gcache, self._area, self._ghost_total, self._out_cache = {}, {}, {}, {}
+        self._gcache, self._ghost_total, self._out_cache = {}, {}, {}
         self.tiles.g, self.tiles.dist, self.tiles._observed = {}, {}, {}
-        self._expiry = None
         for si in range(len(self.sensors)):
             self._g(si, np.zeros((1, 2)))
         self._version += 1
+        _core(self._c.set_world, self._export())  # the sensors' sight anew, what is known stays
+        self._sent = (None, set())
 
     def use_ghost_map(self, gm) -> bool:
         """Use a learned ghost map (MODEL.md 4.2) if it was learned with the prior the model has now;
@@ -513,11 +628,6 @@ class Tracker:
             self._ghost_total[si] = tot
         return self._ghost_total[si]
 
-    def _measuring(self, seg) -> bool:
-        """Is the track live and not held (lost) by its sensor?"""
-        info = self.segs.get(seg)
-        return info is not None and info["lost"] is None
-
     # ------------------------------------------------------------ geometry
 
     def _grid(self, si: int) -> np.ndarray:
@@ -537,7 +647,6 @@ class Tracker:
             grid, los = self._spread_sight(si, grid), self._spread_sight(si, los)
             self._gcache[si] = grid
             self._gcache[("los", si)] = los
-            self._area[si] = float((grid > 0.05).sum()) * CELL * CELL
         return grid
 
     def _spread_sight(self, si: int, grid: np.ndarray) -> np.ndarray:
@@ -590,79 +699,6 @@ class Tracker:
         w = self.world
         return kernels.grid_at(self._gcache[("los", si)], np.ascontiguousarray(pos, dtype=float).reshape(-1, 2), float(w.x0),
                                float(w.y0), CELL)
-
-    def _rates(self, si: int, pos: np.ndarray, skip=(), masked=True, base=None) -> np.ndarray:
-        """(2, n) rates (1/s) [walkers, still people] at which sensor si starts a track on somebody
-        at pos (n, 2): rho * P_D(r) * geometry (MODEL.md 4.1); masked: times the share left given
-        its live tracks but skip - next to a target it measures, somebody is merged into it
-        (resolution, Svensson 2012); near where it holds a lost target it finds that one again
-        (kernels.sensor_rates). base: the rates without the mask at pos if known."""
-        s, w, m = self.config.sensors[si], self.world, self.m
-        (rs, r50s), (rw, r50w) = m.acquire
-        live = [(0.0, *self.segs[seg]["z"]) if self.segs[seg]["lost"] is None else (1.0, *self.segs[seg]["lost"]["z"])
-                for seg in (self._live_by_sensor.get(si, []) if masked else ()) if seg not in skip]
-        return kernels.sensor_rates(np.ascontiguousarray(pos, dtype=float).reshape(-1, 2),
-                                    np.zeros((2, 0)) if base is None else base, float(s.x), float(s.y), self._grid(si),
-                                    float(w.x0), float(w.y0), CELL, np.array([rw, r50w, rs, r50s], dtype=float), P_FA,
-                                    S50, np.array(live, dtype=float).reshape(-1, 3),
-                                    np.array([m.res_range, m.res_cross], dtype=float), float(m.find_radius))
-
-    def _tile_rates(self, si: int, skip=()) -> tuple:
-        """(walkers, still people) rates (n,) of sensor si per tile (averaged over the tile)."""
-        tl = self.tiles
-        if not tl.n:
-            return np.zeros(0), np.zeros(0)
-        key = ("tiles", si)
-        base = self._gcache.get(key)
-        if base is None:
-            at = self._rates(si, tl.points, masked=False)
-            base = self._gcache[key] = (at, tl.average(at))
-        if not any(s not in skip for s in self._live_by_sensor.get(si, [])):
-            return base[1][0], base[1][1]
-        r = tl.average(self._rates(si, tl.points, skip, base=base[0]))
-        return r[0], r[1]
-
-    def _gauss_rates(self, si: int, g: Gauss, skip=(), pts=None) -> np.ndarray:
-        """(2, P) rate of sensor si per component [STILL, WALK] at its sigma points (gauss.UNIT, or
-        pts (2, P, 2)); 0 where the person has a measuring track of this sensor: one person, one
-        track per sensor."""
-        if any(self.segs[s]["si"] == si and self._measuring(s) for s in g.slots if s in self.segs and s not in skip):
-            return np.zeros((2, len(gauss.UNIT_W)))
-        if pts is None:
-            pts = g.sigma(self.world)
-        n = pts.shape[1]
-        r = self._rates(si, pts, skip)
-        return np.stack([r[1, :n], r[0, n:]])
-
-    def _rates_context(self, live: list) -> tuple:
-        """What kernels.gauss_rates takes of the sensors live (after the points and use): where they
-        are, their sight, their live tracks packed - once per move of everybody (_flush: the tracks
-        stay as they are meanwhile)."""
-        key = tuple(live)
-        ctx = self._rates_ctx.get(key) if self._rates_ctx is not None else None
-        if ctx is None:
-            grids = self._gcache.get(("grids", key))
-            if grids is None:
-                grids = self._gcache[("grids", key)] = np.stack([self._grid(si) for si in live])
-            rows, ptr = [], [0]
-            for si in live:
-                rows += [(0.0, *self.segs[seg]["z"]) if self.segs[seg]["lost"] is None else (1.0, *self.segs[seg]["lost"]["z"])
-                         for seg in self._live_by_sensor.get(si, [])]
-                ptr.append(len(rows))
-            m = self.m
-            (rs, r50s), (rw, r50w) = m.acquire
-            sensors = [self.config.sensors[si] for si in live]
-            ctx = (np.array([(float(s.x), float(s.y)) for s in sensors]), grids, np.array(rows, dtype=float).reshape(-1, 3),
-                   np.array(ptr, dtype=np.int64), np.array([rw, r50w, rs, r50s], dtype=float), float(P_FA), float(S50),
-                   np.array([m.res_range, m.res_cross], dtype=float), float(m.find_radius))
-            if self._rates_ctx is not None:
-                self._rates_ctx[key] = ctx
-        return ctx
-
-    @staticmethod
-    def _expect(f) -> np.ndarray:
-        """Expectation over the sigma points (last axis) of values at them."""
-        return f @ gauss.UNIT_W
 
     # ------------------------------------------------------------- frames
 
@@ -738,223 +774,35 @@ class Tracker:
         room occupied after they had left."""
         for si, sid in enumerate(self.sensors):
             tracks = self.tracks.get(sid)
-            if not self._live_by_sensor[si] or tracks is None or t - tracks.last <= LOST:
+            if tracks is None or t - tracks.last <= LOST:
+                continue
+            live = self._c.live_tracks(si)
+            if not live:
                 continue
             t_end = max(tracks.last + LOST, self.now)
             self._flush(t_end)  # the end weighs and releases everybody: all at its time
             self._version += 1
-            for seg in list(self._live_by_sensor[si]):
+            for seg in live:
                 self._end(si, seg, t_end, True)
             tracks.raw = []  # its next frame is a start (lost data, _evidence)
             self._merge()
             self._normalize()
 
     def _flush(self, t: float):
-        """Move everybody to time t: the people without a track all from the last flush, each
-        Gaussian from its own time; in parts no longer than MAX_STEP."""
+        """Move everybody to time t (in the core: the people without a track all from the last
+        flush, each Gaussian from its own time; in parts no longer than MAX_STEP), then the
+        LD2410C's energies gathered long enough are weighed."""
         if t <= self._flushed:
             return
-        objs = self._objects(phantoms=True)
         t0 = self._flushed
-        outer, self._rates_ctx = self._rates_ctx, {}  # the tracks stay as they are while everybody moves
-        self._live_at = {}  # t -> _live(t), the same for everybody in this move
-        try:
-            self._flush_parts(t, t0, objs)
-        finally:
-            self._rates_ctx = outer
+        self._send_sensors()
+        parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
+        for k in range(parts):
+            self._send_observed(self._live(t0 + (t - t0) * (k + 1) / parts))
+        self._call("flush", t)
         for si in sorted(self._ld_stats):
             if self._ld_stats[si].time >= self.m.ld_every:
                 self._ld_weigh(si, self._ld_stats.pop(si))
-        self._flushed = t
-        self._version += 1
-
-    def _flush_parts(self, t: float, t0: float, objs: list):
-        """The people without a track in parts of the move, each Gaussian in parts from its own time
-        (_sync), round by round: the parts gone through a door of the Gaussians move with the
-        people without a track (one Hidden.move_all per round). Prototype (docs/rust-core.md 7,
-        phase 2): in the Rust core on copies of the objects, written back after."""
-        if presence_core is None or os.environ.get("PT_PY_FLUSH"):
-            return self._flush_parts_py(t, t0, objs)
-        hidden = [(obj, refs) for obj, refs in objs if isinstance(obj, Hidden)]
-        gs = [(obj, refs) for obj, refs in objs
-              if not isinstance(obj, Hidden) and t > (self._flushed if obj.t is None else obj.t)]
-        dens = [obj for obj, _ in hidden] + [g.away for g, _ in gs if g.away is not None]
-        index = {id(o): k for k, o in enumerate(dens)}
-        K, n = len(self.shapes.kappa), self.tiles.n
-        for o in dens:
-            for name in ("walk", "still", "region"):
-                a = getattr(o, name)
-                if not (a.flags.c_contiguous and a.flags.writeable and a.dtype == np.float64):
-                    setattr(o, name, np.array(a, dtype=float))
-            if o._amp is not None and o._keep is None:
-                o._keep = np.ones((K, n))
-        dstates = [(o.walk, o.still, o.region, float(o.out), float(o.clock), float(o.r), type(o) is Undetected,
-                    None if o._amp is None else np.ascontiguousarray(o._amp), o._keep if o._amp is not None else None)
-                   for o in dens]
-        gstates = []
-        for g, _ in gs:
-            measured = sorted({self.segs[s]["si"] for s in g.slots if s in self.segs and self._measuring(s)})
-            gstates.append((np.ascontiguousarray(g.mean, dtype=float), np.ascontiguousarray(g.cov, dtype=float),
-                            np.ascontiguousarray(g.logw, dtype=float), np.ascontiguousarray(g.gow, dtype=float),
-                            np.ascontiguousarray(g.ka, dtype=float), float(g.a), g.t, bool(g.phantom),
-                            [(int(seg), int(k), float(g.var[seg])) for seg, k in g.slots.items()],
-                            None if g.away is None else index[id(g.away)], measured))
-        sensors = []
-        for si, sid in enumerate(self.sensors):
-            s = self.config.sensors[si]
-            rt = self.runtime.get(sid)
-            spots = [(False, *map(float, self.segs[seg]["z"])) if self.segs[seg]["lost"] is None
-                     else (True, *map(float, self.segs[seg]["lost"]["z"])) for seg in self._live_by_sensor.get(si, [])]
-            sensors.append((bool(s.enabled and s.placed), rt.last_frame if rt is not None else -math.inf, spots))
-        parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
-        lives = {tuple(self._live(t0 + (t - t0) * (k + 1) / parts)) for k in range(parts)}
-        observed = [(list(lv), np.ascontiguousarray(self.tiles.observed(lv), dtype=float)) for lv in lives]
-        rounds, scalars, outs, made = _core(presence_core.proto_flush, self._proto_world(), t0, t, sensors, dstates,
-                                            list(range(len(hidden))), gstates, observed)
-        for o, (out, clock, r) in zip(dens, scalars):
-            o.out, o.clock, o.r = out, clock, r
-        for (g, _), (mean, cov, logw, gow, ka, a, gt, away) in zip(gs, outs):
-            g.mean, g.cov, g.logw, g.gow, g.ka, g.a, g.t = mean, cov, logw, gow, ka, a, gt
-            if away is not None and away >= len(dens):
-                walk, still, region, out, clock, r = made[away - len(dens)]
-                h = Hidden(self.tiles)
-                h.walk, h.still, h.region = walk, still.reshape(h.still.shape), region.reshape(h.region.shape)
-                h.out, h.clock, h.r = out, clock, r
-                g.away = h
-        for dh, dg in rounds:
-            for (_, refs), d in zip(hidden, dh):
-                for h in refs:
-                    self.hyps[h].logw += d
-            for (_, refs), d in zip(gs, dg):
-                if d is not None:
-                    for h in refs:
-                        self.hyps[h].logw += d
-
-    def _proto_world(self):
-        """The world of the Rust core as this tracker built it (phase 2 glue), once per _gcache."""
-        hit = self._gcache.get("rust")
-        if hit is None:
-            tl, w, m, sh = self.tiles, self.world, self.m, self.shapes
-            names = ("still_noise", "kappa_switch", "speed", "speed_spread", "turn_rate", "walk_length", "arrive_rate",
-                     "guest_rate", "forget_rate", "find_radius", "res_range", "res_cross", "const_share", "tau",
-                     "unseen_life")
-            params = {k: float(getattr(m, k)) for k in names}
-            params["acquire"] = [[float(x) for x in a] for a in m.acquire]
-            params["max_step"] = MAX_STEP
-
-            def f(a):
-                return np.ascontiguousarray(a, dtype=float)
-
-            def i(a):
-                return np.ascontiguousarray(a, dtype=np.int64)
-            d = tl.door_tiles
-            hit = self._gcache["rust"] = _core(presence_core.ProtoWorld, dict(
-                params=json.dumps(params), go=f(sh.go), go_w=f(sh.go_w), kappa=f(sh.kappa), kappa_w=f(sh.kappa_w),
-                ka_w=f(sh.ka_w), x0=float(w.x0), y0=float(w.y0), nx=int(w.nx), ny=int(w.ny), walls=f(w.walls),
-                wall_dist=f(w.wall_grid), n=int(tl.n), R=int(tl.R), A=int(tl.A), tick=float(tl.tick), walk_t=f(tl.T_walk_t),
-                into_t=f(tl.T_in_t), door_center=f(tl.centers[d]), door_var=f(tl.var[d]), door_area=f(tl.area[d]),
-                door_rates=f(tl.door_rate[d]), door_ptr=i(tl.door_ptr), door_list=i(tl.door_list), exits=i(tl.exits),
-                entries=i(tl.entry_idx), region_rates=f(tl.region_rates()), widths=f(tl.widths), points=f(tl.points),
-                point_tile=i(tl.point_tile), point_count=f(tl.point_count),
-                sensors=[(float(s.x), float(s.y), f(self._grid(si))) for si, s in enumerate(self.config.sensors)]))
-        return hit
-
-    def _flush_parts_py(self, t: float, t0: float, objs: list):
-        """_flush_parts in Python (the prototype's reference; PT_PY_FLUSH=1)."""
-        parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
-        dt = (t - t0) / parts
-        watch = [self._watching(t0 + (t - t0) * (k + 1) / parts, dt) for k in range(parts)]
-        lat_f = watch[-1][1]
-        lat_f = None if lat_f is None else tuple(f ** (MAX_STEP * parts / (t - t0)) for f in lat_f)
-        hidden = [(obj, refs) for obj, refs in objs if isinstance(obj, Hidden)]
-        gs = []  # [obj, refs, its time, parts, dt, measured]
-        for obj, refs in objs:
-            if not isinstance(obj, Hidden):
-                g0 = self._flushed if obj.t is None else obj.t
-                if t > g0:
-                    n = int(math.ceil((t - g0) / MAX_STEP - 1e-9))
-                    gs.append([obj, refs, g0, n, (t - g0) / n, None])
-        for j in range(max([parts] + [g[3] for g in gs])):
-            movers, dts = ([obj for obj, _ in hidden], [dt] * len(hidden)) if j < parts else ([], [])
-            for g in gs:
-                if j < g[3] and g[0].away is not None:
-                    movers.append(g[0].away)
-                    dts.append(g[4])
-            Hidden.move_all(movers, dts)
-            if j < parts:
-                live, f = watch[j]
-                for obj, refs in hidden:
-                    self._expire(obj, dt, live)
-                    d = obj.weigh(*f) if f is not None else 0.0
-                    for h in refs:
-                        self.hyps[h].logw += d
-            for g in gs:
-                if j < g[3]:
-                    g[5] = self._sync_part(g[0], g[1], g[2] + g[4] * (j + 1), g[4], lat_f, True, g[5])
-        for g in gs:
-            g[0].t = t
-
-    def _watching(self, t: float, dt: float) -> tuple:
-        """The sensors watching at t, and the factors (walkers, still people per level of
-        detectability) per tile for no track started by them in dt."""
-        live = self._live(t)
-        if not live or not self.tiles.n:
-            return live, None
-        rates = [self._tile_rates(si) for si in live]
-        rw, rs = sum(r[0] for r in rates), sum(r[1] for r in rates)
-        return live, (np.exp(-rw * dt), np.exp(-np.outer(self.shapes.kappa, rs) * dt))
-
-    def _sync(self, obj: Gauss, refs, t: float, drop_away=False):
-        """Move one Gaussian (a person with tracks, or a ghost's source) from its own time to t, and
-        weigh it by no track started on the person meanwhile, without its part gone through a door (a
-        measurement of the person follows; with drop_away it drops that part, which is then not
-        moved). _flush moves everybody (_flush_parts, weighing that part too)."""
-        t0 = self._flushed if obj.t is None else obj.t
-        if t <= t0:
-            return
-        parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
-        dt = (t - t0) / parts
-        measured = None
-        for k in range(parts):
-            if obj.away is not None and not drop_away:
-                obj.away.move(dt)
-            measured = self._sync_part(obj, refs, t0 + dt * (k + 1), dt, None, not drop_away, measured)
-        obj.t = t
-
-    def _sync_part(self, obj: Gauss, refs, tk: float, dt: float, lat_f, keep_away: bool, measured):
-        """One part dt of _sync up to tk (its part gone through a door already moved): Gauss.predict,
-        and the weighing by no track started on the person in dt - its part gone through a door with
-        lat_f (the factors per tile for MAX_STEP, _flush), without that part not weighed - in one
-        compiled call (kernels.sync_step). Returns measured: the sensors with a measuring track of
-        this person (none of theirs starts), once known."""
-        tl = self.tiles
-        flags = 0 if keep_away else 4
-        live = None
-        if not obj.phantom:
-            live = self._live_at.get(tk) if self._rates_ctx is not None else None
-            if live is None:
-                live = self._live(tk)
-                if self._rates_ctx is not None:
-                    self._live_at[tk] = live
-        rates = gauss._NO_RATES
-        if live:
-            flags |= 8
-            if measured is None:  # the sensors with a measuring track of this person: none of theirs starts
-                measured = {self.segs[s]["si"] for s in obj.slots if s in self.segs and self._measuring(s)}
-            rates = (np.array([si not in measured for si in live]), *self._rates_context(live))
-        f = None
-        if lat_f is not None and live:
-            flags |= 16
-            share = dt / MAX_STEP  # lat_f holds for MAX_STEP; dt is at most that long
-            if self._lat_pow[0] is not lat_f or self._lat_pow[1] != share:  # the same for all in a move
-                self._lat_pow = (lat_f, share, hidden_factors(lat_f[0] ** share, lat_f[1] ** share))
-            f = self._lat_pow[2]
-        doors = tl if tl.n and not obj.phantom else None
-        d = obj.step(dt, self.m, self.shapes, doors, flags, f, gauss.step_args(doors, self.shapes), rates)
-        if flags & 8:
-            for h in refs:
-                self.hyps[h].logw += d
-        return measured
 
     def _live(self, t: float) -> list:
         return [si for si, sid in enumerate(self.sensors)
@@ -962,73 +810,41 @@ class Tracker:
                 and self.config.sensors[si].enabled and self.config.sensors[si].placed]
 
     def _recycle(self):
-        """Known people who almost surely do not exist join the unknown ones (MODEL.md 5.5): those the
-        measurements refuted, and those whose record expired where nothing could test it, out of the
-        house too (_expire). Until 7.10. who left was given back at once with all of r: unknown people
-        out of the house who came back at the rate of coming home (7.10. 09:01: r 0.99 given back, the
-        unknown ones out of the house 0.27 -> 1.25; at 09:48 a ghost in the hallway became a person,
-        MODEL.md 10). The unknown ones are one
-        Poisson process for all hypotheses, as in the PMBM (B_GarciaFernandez2018 eq. 7-10): what the
-        hypotheses give back is added to it weighted by their probability (otherwise every hypothesis
-        would carry its own copy of the density, a third of the computing time at a start with
-        nothing known, MODEL.md 10)."""
-        gone = [[u for u in hy.hidden if u.r < GIVE_UP] for hy in self.hyps]
-        if not any(gone):
+        """Known people who almost surely do not exist join the unknown ones (MODEL.md 5.5; in the
+        core): those the measurements refuted, and those whose record expired where nothing could
+        test it, out of the house too (_expire). The unknown ones are one Poisson process for all
+        hypotheses, as in the PMBM (B_GarciaFernandez2018 eq. 7-10): what the hypotheses give back is
+        added to it weighted by their probability."""
+        if not self._call("recycle"):
             return
-        w = self.hyp_weights()
-        parts = {}
-        for wi, hy, g in zip(w, self.hyps, gone):
-            parts.setdefault(id(hy.ppp), [0.0, hy.ppp, []])[0] += wi
-            parts[id(hy.ppp)][2].append((wi, g))
-        new = None
-        for wp, ppp, given in parts.values():
-            part = ppp.copy()
-            part.scale(wp)
-            for wi, g in given:
-                for u in g:
-                    part.add_scaled(u, wi)
-            if new is None:
-                new = part
-            else:
-                new.add_scaled(part, 1.0)
-        for hy, g in zip(self.hyps, gone):
-            hy.ppp = new
-            for u in g:
-                hy.hidden.remove(u)
         self._flush(self.now)
         self._merge()
         self._version += 1
 
     def _objects(self, phantoms=False) -> list:
         """The distinct objects of all hypotheses (people; with phantoms: also the sources of ghost
-        tracks), each with the hypotheses holding it (repeated as often as they hold it)."""
+        tracks), each with the hypotheses holding it (repeated as often as they hold it); of the
+        mirror."""
         seen = {}
-        for h, hy in enumerate(self.hyps):
+        for h, hy in enumerate(self._h):
             for obj in hy.objects() + (list(hy.phantom.values()) if phantoms else []):
                 seen.setdefault(id(obj), (obj, []))[1].append(h)
         return list(seen.values())
 
     # ------------------------------------------------------------ evidence
 
-    def _near(self, d2) -> np.ndarray:
-        """Can the sensor find its held target on a person this far (squared distance) from it?"""
-        return np.exp(-0.5 * d2 / self.m.find_radius ** 2)
-
     def _evidence(self, si, t, delta, ev):
-        m = self.m
+        """What the frame says (MODEL.md 4.1, 4.2), in the core step by step; the ghost map learns
+        in between (docs/rust-core.md 2.0)."""
         censored = delta <= 0
-        events = censored or ev.born or ev.ended or any(seg in self.segs and self.segs[seg]["lost"] is not None
-                                                       for seg, _ in ev.measured)
+        events = censored or ev.born or ev.ended or self._c.any_lost([seg for seg, _ in ev.measured])
         if events:
             self._flush(t)  # these weigh, branch or merge everybody: all at t
             self._version += 1
+        self._send_sensors()
         # 1. no ghost track was born meanwhile (echoes come with walkers in view)
-        area = self._area.get(si, 0.0)
         if delta > 0:
-            total = self._ghost_rate_total(si)
-            walkers = self._walkers(si)
-            for h, hy in enumerate(self.hyps):
-                hy.logw -= (total + m.ghost_echo * walkers[h] * area) * delta
+            self._call("watch", si, delta, self._ghost_rate_total(si))
             learn = not self.pauses.paused(t - delta, t)
             if self.learn_ghosts and learn:
                 self.ghost_map.add_watch(self.sensors[si], delta)
@@ -1037,20 +853,10 @@ class Tracker:
             for listener in self.listeners if learn else ():
                 listener("watch", (self.sensors[si], delta))
         # 2. the sensor's tracks: measured (or found again), lost, still held, gone
-        refound = []
-        for seg, d in ev.measured:
-            if seg in self.segs:
-                if self.segs[seg]["lost"] is None:
-                    self._measured(seg, d, t)
-                else:
-                    refound.append((seg, d))
-        for seg, kind, d in ev.lost:
-            if seg in self.segs:
-                self.segs[seg]["lost"] = {"kind": kind, "t": t, "z": d.pos.copy(), "u": 0.0}
-        for seg, d in ev.held:
-            if seg in self.segs:
-                self._held(si, seg, d, t)
-        ended = [seg for seg in ev.ended if seg in self.segs]
+        refound = self._call("track_events", si, t, [(seg, float(d.pos[0]), float(d.pos[1])) for seg, d in ev.measured],
+                             [(seg, kind, float(d.pos[0]), float(d.pos[1])) for seg, kind, d in ev.lost],
+                             [(seg, float(d.pos[0]), float(d.pos[1])) for seg, d in ev.held])
+        ended = [seg for seg in ev.ended if self._c.has_track(seg)]
         for seg in ended:
             self._end(si, seg, t, ev.data_lost)
         if ended:
@@ -1058,59 +864,19 @@ class Tracker:
         # 3. nothing seen before (start, lost data): a person there now is tracked with the share of
         # the time a track lasts against the time until one is started
         if censored:
-            self._censor(si)
-        # 4. new tracks, and lost ones found again
+            self._call("censor", si)
+        # 4. new tracks, and lost ones found again; the map at a birth includes this frame's ends
         if refound or ev.born:
-            skip = {seg for seg, _ in ev.born}
-            rates = self._tile_rates(si, skip)
+            found = [(seg, x, y, 0.0, 0.0) for seg, x, y in refound]
+            found += [(seg, float(d.pos[0]), float(d.pos[1]), self._offset_var(si, d.pos), self._ghost_rate(si, d.pos))
+                      for seg, d in ev.born]
             last = FRAME if censored else min(delta, FRAME)
-            for seg, d in refound + ev.born:
-                self._branch(si, seg, d, t, last, censored, rates, skip)
+            cats = self._call("branch_all", si, t, last, censored, [seg for seg, _ in ev.born], self.ghost_map.prior_rate,
+                              found)
+            for k, (seg, x, y, _, _) in enumerate(found):
+                for listener in self.listeners if cats[k] else ():
+                    listener("branch", (self.sensors[si], seg, np.array([x, y]), k < len(refound), cats[k]))
         self._normalize()
-
-    def _walkers(self, si) -> np.ndarray:
-        """Per hypothesis: the expected number of walkers in view of sensor si (as of the last move
-        of everybody or event)."""
-        key = ("walkers", si)
-        hit = self._out_cache.get(key)
-        if hit is not None and hit[0] == self._version and len(hit[1]) == len(self.hyps):
-            return hit[1]
-        val = self._count_walkers(si)
-        self._out_cache[key] = (self._version, val)
-        return val
-
-    def _count_walkers(self, si) -> np.ndarray:
-        val = np.zeros(len(self.hyps))
-        g, _ = self.tiles.seen(si)
-        seen = (g > 0.1).astype(float)  # the same products as with the mask itself (numpy casts it so)
-        for obj, refs in self._objects():
-            if isinstance(obj, Hidden):
-                v = float(obj.walking() @ seen) if self.tiles.n else 0.0
-            else:
-                v = (1 - obj.a) * obj.walking() * float(self._expect(self._g(si, obj.sigma(self.world)[WALK]) > 0.1))
-                if obj.away is not None and self.tiles.n:
-                    v += obj.a * float(obj.away.walking() @ seen)
-            for h in refs:
-                val[h] += v
-        return val
-
-    def _censor(self, si):
-        """First frame of a sensor (or after lost data): who has no track of it now was not tracked
-        by it - with the stationary share 1 / (1 + rate * life of a track)."""
-        m = self.m
-        kappa = self.shapes.kappa
-        rw, rs = self._tile_rates(si)
-        lw, ls = m.track_life[WALK], m.track_life[STILL]
-        for obj, refs in self._objects():
-            if isinstance(obj, Hidden):
-                d = obj.weigh(1 / (1 + rw * lw), 1 / (1 + np.outer(kappa, rs) * ls))
-            else:
-                r = self._gauss_rates(si, obj)
-                da = obj.away.weigh(1 / (1 + rw * lw), 1 / (1 + np.outer(kappa, rs) * ls)) if obj.away is not None else 0.0
-                d = obj.reweigh(obj.kappa_weigh(self._expect(1 / (1 + np.outer(kappa, r[STILL]) * ls)),
-                                                float(self._expect(1 / (1 + r[WALK] * lw)))), da)
-            for h in refs:
-                self.hyps[h].logw += d
 
     def _offset_var(self, si, pos) -> float:
         """Variance (per axis, m^2) of where a track sits on a person at this distance: the
@@ -1122,553 +888,49 @@ class Tracker:
         st = p.lateral_sigma_base + p.lateral_sigma_slope * dist
         return 0.5 * (sr * sr + st * st)
 
-    def _measured(self, seg, d, t):
-        """A measurement of a track that was not lost: it sits at z = x + c + o + w on its source
-        (a person, or a ghost's source), exact Kalman per component; a ghost lives on."""
-        m = self.m
-        info = self.segs[seg]
-        for hy in self.hyps:
-            if hy.kind.get(seg) == "g":
-                self._ghost_life(hy, seg, info, t)
-        info["gt"] = t
-        if t - info["zt"] < m.pos_every:
-            return
-        for obj, refs in self._objects(phantoms=True):
-            if isinstance(obj, Gauss) and seg in obj.slots:
-                self._sync(obj, refs, t, drop_away=True)
-                dl = obj.update(seg, d.pos, m.white)
-                obj.in_sight(self.world, self.config.sensors[info["si"]].sight_origin())
-                for h in refs:
-                    self.hyps[h].logw += dl
-        info["t"] = info["zt"] = t
-        info["z"] = d.pos.copy()
-
-    # ghosts: per hypothesis, a mixture over the kinds of ghosts (how long they live)
-
-    def _ghost_life(self, hy, seg, info, t):
-        acc = hy.ghost[seg]
-        before = _logsumexp(acc)
-        dt = t - info.get("gt", info["born"])
-        for k, (_, life) in enumerate(self._ghost_types()):
-            acc[k] += -dt / life
-        hy.logw += _logsumexp(acc) - before
-
-    # lost tracks
-
-    def _no_find(self, kind: str, u: float) -> float:
-        """P(the sensor has not found its lost target again within u s | the person stayed where
-        it was held): measured, a log-normal time to finding it again, and a small share never."""
-        if u <= 0:
-            return 1.0
-        median, spread, never = self.m.refind[kind]
-        later = 0.5 * math.erfc((math.log(u) - math.log(median)) / (spread * math.sqrt(2)))
-        return never + (1 - never) * later
-
-    def _kk_tiles(self, si, z) -> np.ndarray:
-        """(n,): how well the sensor could find its target held at z on somebody in each tile."""
-        tl = self.tiles
-        dz = tl.points - z
-        return tl.average(self._g(si, tl.points) * self._near((dz * dz).sum(axis=1)))
-
-    def _kk_gauss(self, si, c: Gauss, z) -> np.ndarray:
-        """(2,) per component: E[sight * kernel] - the kernel exactly, the sight at the sigma points
-        of the position weighted by it."""
-        k, pts = c.near_sigma(z, self.m.find_radius, self.world)
-        return k * self._expect(self._g(si, pts))
-
-    def _held(self, si, seg, d, t):
-        """A lost track, still held: not found again on anybody near where it is held, nor on the
-        ghost it may be, nor on a reflection there (MODEL.md 4.1)."""
-        info = self.segs[seg]
-        lost = info["lost"]
-        u0, u1 = lost["u"], t - lost["t"]
-        ratio = self._no_find(lost["kind"], u1) / max(self._no_find(lost["kind"], u0), 1e-300)
-        lost["u"] = u1
-        lr = math.log(max(ratio, 1e-300))
-        if lr < 0:
-            kl = self._kk_tiles(si, lost["z"]) if self.tiles.n else None
-            f = np.exp(kl * lr) if kl is not None else np.zeros(0)  # the same factor for every density
-            for obj, refs in self._objects():
-                if isinstance(obj, Hidden):
-                    dl = obj.weigh(f, f)
-                else:
-                    da = obj.away.weigh(f, f) if obj.away is not None and kl is not None else 0.0
-                    dl = obj.reweigh(self._kk_gauss(si, obj, lost["z"]) * lr, da)
-                for h in refs:
-                    self.hyps[h].logw += dl
-            for hy in self.hyps:
-                hy.logw += (self.m.find_clutter + (hy.kind.get(seg) == "g")) * lr
-        lost["z"] = d.pos.copy()
-
     def _end(self, si, seg, t, data_lost):
-        """The sensor dropped the track. For a person this follows from not finding it again
-        (counted while it was held); a ghost died: its hazard. A person left without tracks goes
-        to the people without one. The ghost map learns where ghosts begin, with P(ghost) as
-        judged now, but without what the map itself said at the birth (MODEL.md 4.2)."""
-        w = self.hyp_weights()
-        p_ghost = float(sum(wi for wi, hy in zip(w, self.hyps) if hy.kind.get(seg) == "g"))
-        info = self.segs.pop(seg)
-        # the map entered the odds once, as a factor at the birth: taken out
-        p_ghost = _odds_shifted(p_ghost, -info["map_odds"])
-        life = (info["lost"]["t"] if info["lost"] else info.get("gt", info["born"])) - info["born"]
-        learn = not self.pauses.paused(info["born"], t)  # a track of a paused time teaches nothing
+        """The sensor dropped the track (in the core: for a person this follows from not finding
+        it again; a ghost died: its hazard; a person left without tracks goes to the people
+        without one). The ghost map learns where ghosts begin, with P(ghost) as judged now, but
+        without what the map itself said at the birth (MODEL.md 4.2)."""
+        z0, p_ghost, life, born = self._call("end", seg, t, data_lost)
+        z0 = np.array(z0)
+        learn = not self.pauses.paused(born, t)  # a track of a paused time teaches nothing
         if self.learn_ghosts and learn and p_ghost > 0:
-            self.ghost_map.add_birth(self.sensors[si], info["z0"], p_ghost)
+            self.ghost_map.add_birth(self.sensors[si], z0, p_ghost)
             self._ghost_total.pop(si, None)
         for listener in self.listeners if learn else ():
-            listener("track_end", (self.sensors[si], info["z0"], p_ghost, life, data_lost))
-        self._live_by_sensor[si].remove(seg)
-        ghost_end = self._ghost_end(info, t)
-        cache = {}
-        for hy in self.hyps:
-            kind = hy.kind[seg]
-            acc = hy.ghost.pop(seg, None)
-            hy.phantom.pop(seg, None)
-            if kind == "g":
-                del hy.kind[seg]
-                if not data_lost and ghost_end is not None:
-                    before = _logsumexp(acc)
-                    acc += ghost_end
-                    hy.logw += _logsumexp(acc) - before
-                continue
-            self._release(hy, kind, seg, cache)
-            del hy.kind[seg]
-
-    def _ghost_end(self, info, t) -> np.ndarray | None:
-        """Per kind of ghost, the log factor of its track ending now beyond what the person's
-        alternative gets (MODEL.md 4.2). The track ends when the sensor gives up a target it has
-        not found again (sensortracks.py); for a person that is "not found again for u s" (_held,
-        S(u)). A ghost's source is either still there and not found again, S_d(u) S(u), or it
-        died at some tau < u before being found again, int f_d(tau) S(tau) dtau (it can't be found
-        when it is gone): together S(u) (S_d(u) + int f_d S / S(u)) - the S(u) of _held times this.
-        Ended without being held first: the same for both, 0. (Until 0.10.0: log(1 - S_d(u)), as if
-        the source had to die and also not be found: a ghost's track ending made it ~25 times less
-        likely than a person, MODEL.md 10.)"""
-        lost = info["lost"]
-        types = self._ghost_types()
-        if lost is None:
-            return None
-        u = t - lost["t"]
-        if u <= 0:
-            return None
-        s_u = max(self._no_find(lost["kind"], u), 1e-300)
-        tau = u * np.concatenate([[0.0], np.geomspace(1e-4, 1.0, 48)])  # S drops within 0.1-0.3 s
-        s_tau = np.array([self._no_find(lost["kind"], x) for x in tau])
-        out = []
-        for _, life in types:
-            f = np.exp(-tau / life) / life * s_tau
-            died = float(((f[1:] + f[:-1]) * np.diff(tau)).sum() / 2)
-            out.append(math.log(math.exp(-u / life) + died / s_u))
-        return np.array(out)
-
-    def _release(self, hy, gid, seg, cache):
-        """In hypothesis hy, the person of group gid no longer owns seg (it ended, or it is somebody
-        else's in this child): its offset is marginalized out; without any live track left they go
-        to the tiles (MODEL.md 5.4)."""
-        obj = hy.groups[gid]
-        rest = [s for s, k in hy.kind.items() if k == gid and s != seg]
-        key = (id(obj), seg, bool(rest))
-        if key not in cache:
-            new = obj.copy()
-            if seg in new.slots:
-                new.drop_track(seg)
-            cache[key] = new if rest else new.to_tiles(self.tiles)
-        new = cache[key]
-        if rest:
-            hy.groups[gid] = new
-        else:
-            del hy.groups[gid]
-            hy.hidden.append(new)
-
-    def _branch(self, si, seg, d, t, last, censored, rates, skip):
-        """A new track, or a lost one found again: branch every hypothesis (MODEL.md 5.1). A new
-        track is a ghost's, or a person's who has tracks of other sensors, or a person's without
-        any (from their tiles). A track found again is its owner's again, or the sensor found it
-        on somebody else near the spot, or on a reflection there - the LD2450 lets a held track
-        glide to the next target. Every alternative is a hypothesis with its exact weight."""
-        m = self.m
-        tl = self.tiles
-        refind = seg in self.segs
-        info = self.segs.get(seg)
-        var = info["var"] if refind else self._offset_var(si, d.pos)
-        z = d.pos
-        sight = self.config.sensors[si].sight_origin()  # measured: the person is in its sight (MODEL.md 4.1)
-        ghost_rates = np.array([rate for rate, _ in self._ghost_types()])
-        ghost_life = np.array([life for _, life in self._ghost_types()])
-        kappa = self.shapes.kappa
-        lw, ls = m.track_life[WALK], m.track_life[STILL]
-        if refind:
-            lost = info["lost"]
-            u0, u1 = lost["u"], t - lost["t"]
-            lr_nf = math.log(max(self._no_find(lost["kind"], u1) / max(self._no_find(lost["kind"], u0), 1e-300), 1e-300))
-            kl = self._kk_tiles(si, lost["z"]) if tl.n else np.zeros(0)
-            f_lat = (kl, kl)
-            g_life = np.array([-(t - info.get("gt", info["born"])) / life_ for life_ in ghost_life])
-
-            def logf(g):
-                return _log(self._kk_gauss(si, g, lost["z"]))
-        else:
-            rw, rs = rates
-            # a birth now instead of none in the last frame (the "none" is in the weights already)
-            rsk = np.outer(kappa, rs)  # still people: per level of detectability
-            f_lat = (rw * lw if censored else np.expm1(rw * last), rsk * ls if censored else np.expm1(rsk * last))
-            walkers = self._walkers(si)
-
-            def logf(g):
-                r = self._gauss_rates(si, g, skip | {seg})
-                if censored:
-                    return g.kappa_weigh(self._expect(np.outer(kappa, r[STILL]) * ls), float(self._expect(r[WALK] * lw)))
-                return g.kappa_weigh(self._expect(np.expm1(np.outer(kappa, r[STILL]) * last)),
-                                     float(self._expect(np.expm1(r[WALK] * last))))
-        if not refind:
-            # the ghost map learns from P(ghost) judged without itself at z (MODEL.md 4.2)
-            map_rate = self._ghost_rate(si, z)
-            ghost_ms, ghost_ls = [], []  # this track's ghost children: their log weights, and the same
-                                         # with the prior's rate at z in place of the map's
-        cache = {}
-        release_cache = {}
-
-        def derived(key, make):
-            if key not in cache:
-                cache[key] = make()
-            return cache[key]
-
-        def source():
-            return derived(("source",), lambda: Gauss.source(seg, z, var, m, self.shapes))
-
-        def measured_by_si(gid, hy):
-            return any(self.segs[s]["si"] == si and self._measuring(s) for s, k in hy.kind.items()
-                       if k == gid and s != seg)
-
-        def attach(obj):
-            """seg starts / is found on this person: (new object, log factor). The rate of the start
-            (or the chance of finding it there) where the person is given z: over the posterior,
-            int p(x) f(x) N(z | x) dx = N(z) E[f(x) | z]."""
-            if isinstance(obj, Gauss):  # somebody with tracks
-                def make():
-                    new = obj.copy()
-                    if seg not in new.slots:
-                        new.add_track(seg, var, m.const_share)
-                    L = new.update(seg, z, m.white)
-                    new.in_sight(self.world, sight)
-                    return new, L + new.reweigh(logf(new)) if L > -math.inf else L
-                return derived(("gauss", id(obj)), make)
-            if not tl.n:
-                return None, -math.inf
-
-            def from_tiles():
-                new, L = Gauss.from_tiles(obj, tl, f_lat[0], f_lat[1], seg, z, var, m)
-                if new is not None:
-                    new.in_sight(self.world, sight)
-                return new, L
-            return derived(("tiles", id(obj)), from_tiles)
-
-        children, cats = [], []  # cats: what each child says the track is (for listeners)
-
-        def add(ch, cat):
-            children.append(ch)
-            cats.append(cat)
-
-        for h, hy in enumerate(self.hyps):
-            cur = hy.kind.get(seg) if refind else None
-
-            def released(ch, cur=cur):
-                """The track leaves its old owner in this child."""
-                if cur == "g":
-                    ch.ghost.pop(seg, None)
-                    ch.phantom.pop(seg, None)
-                elif cur is not None:
-                    self._release(ch, cur, seg, release_cache)
-                return ch
-
-            if refind:
-                # found in this frame on one of the finders: everybody near the spot as far as the
-                # sensor sees them there, the ghost (if it is one), a reflection
-                E = m.find_clutter + (cur == "g")
-                for obj in hy.objects():
-                    if isinstance(obj, Gauss):
-                        E += (1 - obj.a) * float(obj.weights() @ self._kk_gauss(si, obj, lost["z"]))
-                        if obj.away is not None and tl.n:
-                            E += obj.a * obj.away.integrate(kl, kl)
-                    elif tl.n:
-                        E += obj.integrate(kl, kl)
-                pf = math.log(max(-math.expm1(E * lr_nf), 1e-300)) - math.log(E)
-                if cur == "g":
-                    acc = hy.ghost[seg]
-                    stay = acc + g_life
-                    ph = hy.phantom[seg]
-
-                    def found_source(ph=ph):
-                        new = ph.copy()
-                        return new, new.update(seg, z, m.white)
-                    new, L = derived(("gstay", id(ph)), found_source)
-                    ch = hy.child(hy.logw + pf + _logsumexp(stay) - _logsumexp(acc) + L)
-                    ch.ghost[seg] = stay
-                    ch.phantom[seg] = new
-                    add(ch, "refind_ghost")
-                else:
-                    new, L = attach(hy.groups[cur])
-                    if L > -math.inf:
-                        ch = hy.child(hy.logw + pf + L)
-                        ch.groups[cur] = new
-                        add(ch, "owner")
-                    ch = released(hy.child(hy.logw + pf + math.log(m.find_clutter / (2 * math.pi * m.find_radius ** 2))))
-                    ch.kind[seg] = "g"
-                    ch.ghost[seg] = _log(ghost_rates / ghost_rates.sum())
-                    ch.phantom[seg] = source()
-                    add(ch, "clutter")
-                base = pf
-            else:
-                lam = ghost_rates * (map_rate / ghost_rates.sum())
-                lam[0] += m.ghost_echo * walkers[h]
-                lam_prior = ghost_rates * (self.ghost_map.prior_rate / ghost_rates.sum())
-                lam_prior[0] += m.ghost_echo * walkers[h]
-                if censored:
-                    lam = lam * ghost_life / FRAME  # ghosts there now: born at any time before
-                    lam_prior = lam_prior * ghost_life / FRAME
-                ch = hy.child(hy.logw + math.log(lam.sum() * last))
-                ghost_ms.append(ch.logw)
-                ghost_ls.append(ch.logw + math.log(lam_prior.sum() / lam.sum()))
-                ch.kind[seg] = "g"
-                ch.ghost[seg] = _log(lam / lam.sum())
-                ch.phantom[seg] = source()
-                add(ch, "ghost")
-                base = 0.0
-            # somebody with tracks (of other sensors, or held ones)
-            for gid, obj in hy.groups.items():
-                if gid == cur or measured_by_si(gid, hy):
-                    continue
-                new, L = attach(obj)
-                if L == -math.inf:
-                    continue
-                ch = released(hy.child(hy.logw + base + L))
-                ch.groups[gid] = new
-                ch.kind[seg] = gid
-                add(ch, "tracked")
-            # somebody without a track: from their tiles
-            counts = {}
-            for u in hy.hidden:
-                counts.setdefault(id(u), [u, 0])[1] += 1
-            for u, mult in counts.values():
-                new, L = attach(u)
-                if L == -math.inf:
-                    continue
-                ch = released(hy.child(hy.logw + base + L + math.log(mult)))
-                ch.hidden.remove(u)
-                gid = next(self._gids)
-                ch.groups[gid] = new
-                ch.kind[seg] = gid
-                add(ch, "known")
-            # somebody nobody knew of (the unknown ones stay as they are: a birth is one point of
-            # the Poisson process, B_GarciaFernandez2018 eq. 18-24)
-            new, L = attach(hy.ppp)
-            if L > -math.inf:
-                ch = released(hy.child(hy.logw + base + L))
-                gid = next(self._gids)
-                ch.groups[gid] = new
-                ch.kind[seg] = gid
-                add(ch, "new")
-        if not children:
-            return
-        for listener in self.listeners:
-            listener("branch", (self.sensors[si], seg, z, refind, [(c.logw, k) for c, k in zip(children, cats)]))
-        # the factor by which the map at z moved the odds of "ghost" (for what the map learns, _end)
-        map_odds = _logsumexp(ghost_ms) - _logsumexp(ghost_ls) if not refind and ghost_ms else 0.0
-        if refind:
-            info["lost"] = None
-            info["t"] = info["zt"] = info["gt"] = t
-            info["z"] = d.pos.copy()
-        else:
-            self.segs[seg] = {"si": si, "t": t, "zt": t, "var": var, "z": d.pos.copy(), "z0": d.pos.copy(), "born": t,
-                              "lost": None, "map_odds": map_odds}
-            self._live_by_sensor[si].append(seg)
-        self._take(children)
+            listener("track_end", (self.sensors[si], z0, p_ghost, life, data_lost))
 
     # ------------------------------------------------------- bookkeeping
 
-    def _take(self, children: list):
-        """The children of a branch are the hypotheses: those alike merged first, then cut (MODEL.md
-        5.1, 5.6). The key of a hypothesis does not say which person a track went to, so the
-        alternatives "it is person u1's", "u2's", "a new person's" of one parent are one hypothesis
-        whose weight is their sum; cut one by one, many small ones were lost whose sum would have
-        stayed (until 0.21). The cut is decided on the merged weights before the mixtures are made:
-        what is dropped is never mixed."""
-        self.hyps = children
-        self._cut()
-        self._merge()
-        self._prune()
-
-    @staticmethod
-    def _mix_hidden(parts) -> Hidden:
-        """sum_i w_i * density_i for [(w_i, Hidden)]."""
-        merged = {}
-        for w, u in parts:
-            merged[id(u)] = (merged.get(id(u), (0.0, u))[0] + w, u)
-        vals = list(merged.values())
-        return vals[0][1] if len(vals) == 1 else Hidden.mixture(vals)
-
-    @staticmethod
-    def _pair(base: list, other: list) -> list:
-        """other reordered so that other[j] is the person most like base[j]: people without a track
-        are exchangeable, so the pairing with the least summed L1 distance (MODEL.md 5.6)."""
-        if len(base) <= 1 or len(base) > 6:  # more than six never happens in a household
-            return list(other)
-        cost = np.array([[a.distance(b) for b in other] for a in base])
-        best = min(itertools.permutations(range(len(other))), key=lambda p: sum(cost[i, j] for i, j in enumerate(p)))
-        return [other[j] for j in best]
-
     def _merge(self):
-        self._version += 1  # the hypotheses change: cached per-hypothesis values are void
-        self.hyps = self._merged(self.hyps)
-
-    def _merged(self, hyps: list) -> list:
-        """Hypotheses that now say the same about every live track are one: their mixture (MODEL.md
-        5.6). People held by the same object in all of them stay as they are; the others are mixed
-        per person (exact for one, the multi-Bernoulli approximation for more)."""
-        by = {}
-        for hy in hyps:
-            by.setdefault(hy.key(), []).append(hy)
-        if len(by) == len(hyps):
-            return hyps
-        out = []
-        for hs in by.values():
-            if len(hs) == 1:
-                out.append(hs[0])
-                continue
-            lw = np.array([h.logw for h in hs])
-            tot = _logsumexp(lw)
-            wn = np.exp(lw - tot) if tot > -math.inf else np.full(len(hs), 1.0 / len(hs))
-            base = hs[0]
-            new = base.child(tot)
-            for gid, segs in base.group_segs().items():
-                objs = []
-                for h in hs:
-                    g2 = next(k for k, v in h.group_segs().items() if v == segs)
-                    objs.append(h.groups[g2])
-                if all(o is objs[0] for o in objs):
-                    continue
-                merged = {}
-                for w, o in zip(wn, objs):
-                    merged[id(o)] = (merged.get(id(o), (0.0, o))[0] + w, o)
-                new.groups[gid] = Gauss.mixture(list(merged.values()))
-            for seg_ in base.phantom:
-                merged = {}
-                for w, h in zip(wn, hs):
-                    o = h.phantom[seg_]
-                    merged[id(o)] = (merged.get(id(o), (0.0, o))[0] + w, o)
-                if len(merged) > 1:
-                    new.phantom[seg_] = Gauss.mixture(list(merged.values()))
-            # people without a track: the objects all hold stay, the others are paired and mixed
-            common = list(base.hidden)
-            for h in hs[1:]:
-                rest = list(h.hidden)
-                keep = []
-                for u in common:
-                    if any(u is r for r in rest):
-                        keep.append(u)
-                        rest.remove(next(r for r in rest if r is u))
-                common = keep
-            rests = []
-            for h in hs:
-                rest = list(h.hidden)
-                for u in common:
-                    rest.remove(next(r for r in rest if r is u))
-                rests.append(rest)
-            # a hypothesis with fewer of them: the missing ones do not exist there (r = 0)
-            size = max(len(r) for r in rests)
-            if any(len(r) < size for r in rests):
-                nobody = Hidden.nobody(self.tiles)
-                rests = [r + [nobody] * (size - len(r)) for r in rests]
-            rests = [rests[0]] + [self._pair(rests[0], r) for r in rests[1:]]
-            mixed = [self._mix_hidden([(w, rest[j]) for w, rest in zip(wn, rests)]) for j in range(size)]
-            new.hidden = common + [u for u in mixed if u.r > 0]
-            new.ppp = self._mix_hidden([(w, h.ppp) for w, h in zip(wn, hs)])
-            out.append(new)
-        return out
+        """Hypotheses that now say the same about every live track are one (MODEL.md 5.6; core)."""
+        self._call("merge")
 
     def _prune(self):
-        """Keep the strongest hypotheses (after merging those alike, _merge): see _cut; strongest first."""
-        self._cut()
-        self.hyps.sort(key=lambda h: -h.logw)
-
-    def _cut(self):
-        """Keep the strongest hypotheses until what is dropped weighs at most hyp_mass of the whole,
-        and at most max_hyps of them: cutting by weight minimizes the L1 error, which is then at most
-        twice the mass dropped (B_Vo2017 Abschn. II, III-A; MODEL.md 5.1). Each is weighed as it
-        will be after merging (_merge), by the sum of those alike; the kept ones stay in their order
-        (merging takes the first as base). What is dropped counts in the evidence (_normalize): the
-        step's normalizer is the prior predictive of the data, whatever the filter keeps of the
-        posterior afterwards; loglik_cut says how much of the evidence is mass the filter dropped."""
-        self._version += 1
-        m = self.m
-        by = {}
-        for hy in self.hyps:
-            by.setdefault(hy.key(), []).append(hy)
-        groups = list(by.values())
-        glw = np.array([_logsumexp([h.logw for h in g]) for g in groups])
-        order = np.argsort(-glw, kind="stable")
-        lw = glw[order]
-        total = _logsumexp(lw)
-        if total == -math.inf:  # nothing explains the data (should not happen): keep them, see _normalize
-            keep = {id(h) for i in order[:m.max_hyps] for h in groups[i]}
-            self.hyps = [h for h in self.hyps if id(h) in keep]
-            return
-        w = np.exp(lw - total)
-        # from the weakest up, as long as the dropped ones together stay within hyp_mass
-        n = len(w) - int(np.searchsorted(np.cumsum(w[::-1]), m.hyp_mass, side="right"))
-        n = min(max(n, 1), m.max_hyps)
-        if n == len(w):
-            return
-        # no live track loses an alternative altogether (MODEL.md 5.1): whether it is a ghost or a
-        # person's is each track's own question (its Bernoulli in a track-oriented PMBM), and what
-        # its future measurements say about it (a ghost lives 3 / 39 s, a person stays) can only act
-        # on an alternative that is still there. Of the dropped ones, the strongest that holds an
-        # alternative the kept ones lack stays. Until 0.25 a track born where the filter knew nobody
-        # stayed a ghost for good: the bed 8.10. 00:29-06:14, the desk 7.10. 08:59-09:49.
-        chosen = list(order[:n])
-        held = {(s, hy.kind[s] == "g") for i in chosen for hy in groups[i] for s in hy.kind}
-        for i in order[n:]:
-            new = {(s, hy.kind[s] == "g") for hy in groups[i] for s in hy.kind} - held
-            if any((s, not g) in held for s, g in new):
-                chosen.append(i)
-                held |= new
-        kept = set(chosen)
-        keep = {id(h) for i in chosen for h in groups[i]}
-        self.hyps = [h for h in self.hyps if id(h) in keep]
-        self._normalize(float(sum(w[k] for k in range(len(w)) if order[k] not in kept)))
+        """Keep the strongest hypotheses (MODEL.md 5.1; core), strongest first."""
+        self._call("prune")
 
     def _normalize(self, dropped: float = 0.0):
-        """The hypotheses' weights to sum 1; their sum (and the share dropped just before, _cut) is
-        this step's factor of the evidence (MODEL.md 7)."""
-        total = _logsumexp([h.logw for h in self.hyps])
-        if math.isnan(total) or total == math.inf:
-            # a weight not finite: every weight and output after it would be NaN, and NaN shows as
-            # "nobody there" (argmax 0, NaN > c false). The app's model starts over (app._model_failed)
-            raise FloatingPointError(f"the hypotheses' weights are not finite ({total})")
-        if total == -math.inf:
-            # nothing explains the data (should not happen): keep the hypotheses, equal weights
-            for h in self.hyps:
-                h.logw = -math.log(len(self.hyps))
-            return
-        for h in self.hyps:
-            h.logw -= total
-        cut = -math.log1p(-min(dropped, 1.0 - 1e-16)) if dropped > 0 else 0.0
-        self.loglik += total + cut
-        self.loglik_cut += cut
+        """The hypotheses' weights to sum 1 (core); FloatingPointError if they are not finite (the
+        app's model starts over)."""
+        self._call("normalize", dropped)
 
     def hyp_weights(self) -> np.ndarray:
-        lw = np.array([h.logw for h in self.hyps])
+        lw = np.array([h.logw for h in self._h])
         w = np.exp(lw - lw.max())
         return w / w.sum()
 
     def check(self):
         """The bookkeeping's invariants (for tests)."""
         keys = set()
-        for hy in self.hyps:
+        segs = self.segs
+        for hy in self._h:
             k = hy.key()
             assert k not in keys, "two hypotheses alike"
             keys.add(k)
-            assert set(hy.kind) == set(self.segs), "hypothesis and live tracks differ"
+            assert set(hy.kind) == set(segs), "hypothesis and live tracks differ"
             gs = hy.group_segs()
             assert set(gs) == set(hy.groups), "a person with tracks and no object, or the reverse"
             for gid, obj in hy.groups.items():
@@ -1679,6 +941,7 @@ class Tracker:
                     assert s in hy.phantom and s in hy.ghost, "a ghost without its source"
             assert isinstance(hy.ppp, Undetected), "no unknown people"
             assert all(type(u) is Hidden for u in hy.hidden), "a known person as an intensity"
+        self._call("check")  # the core's own: holders, pools, the parts gone through a door
 
     # -------------------------------------------------------------- LD2410C
 
@@ -1887,7 +1150,7 @@ class Tracker:
         learn = self.learn_ghosts and not self.pauses.paused(self.now - st.time, self.now)
         if learn:
             mus, nobody = [], 0.0
-            for h, hy in enumerate(self.hyps):
+            for h, hy in enumerate(self._h):
                 mu, none = b0.copy(), 1.0
                 for o in hy.objects():
                     if id(o) in seen:
@@ -1900,9 +1163,9 @@ class Tracker:
         # per hypothesis the people one after the other, the echo sources last
         memo = {}
         cache = {}  # (object, what the others put in) -> its ratio and normalizer
-        logf = np.zeros(len(self.hyps))
+        logf = np.zeros(len(self._h))
         totals, owns, tracked = [], [], []
-        for h, hy in enumerate(self.hyps):
+        for h, hy in enumerate(self._h):
             R = np.zeros(ld2410.CELLS)
             prefix = ()
             own = []
@@ -1932,7 +1195,8 @@ class Tracker:
                            + sum((pts[id(o)][0] @ pts[id(o)][1] for o in hy.hidden + [hy.ppp] if id(o) in seen),
                                  np.zeros(ld2410.CELLS)))
         base = st.loglik(b0, lik)
-        for h, hy in enumerate(self.hyps):
+        self._dirty = True  # the mirror's hypotheses and objects change: loaded before the next call
+        for h, hy in enumerate(self._h):
             hy.logw += base + logf[h]
         lw = np.log(np.maximum(prior_w, 1e-300)) + logf
         post_w = np.exp(lw - lw.max())
@@ -1983,7 +1247,7 @@ class Tracker:
         # the hypotheses
         q = post_w / post_w.sum()
         parts, outs = [], []
-        for qh, h in zip(q, range(len(self.hyps))):
+        for qh, h in zip(q, range(len(self._h))):
             if qh < 1e-12:
                 continue
             lr, norm, _ = self._ld_ratio(echo, e_pts, b0 + tracked[h], st, lik)
@@ -2102,7 +1366,7 @@ class Tracker:
         vals = np.array([np.atleast_1d(per_object(o)) for o in objs])
         row = {id(o): i for i, o in enumerate(objs)}
         dists = [(w, self._poisson_binomial(vals[[row[id(o)] for o in hy.people()]], vals[row[id(hy.ppp)]]))
-                 for w, hy in zip(hw, self.hyps)]
+                 for w, hy in zip(hw, self._h)]
         out = np.zeros((vals.shape[1], max(d.shape[1] for _, d in dists)))
         for w, d in dists:
             out[:, :d.shape[1]] += w * d
@@ -2145,7 +1409,7 @@ class Tracker:
     def persons(self) -> list:
         """The known people of the most probable hypothesis that more probably exist than not
         (Garcia-Fernandez et al. 2018, sec. VI), for the display: those with a track first."""
-        hy = self.hyps[int(np.argmax([h.logw for h in self.hyps]))]
+        hy = self._h[int(np.argmax([h.logw for h in self._h]))]
         return [self._display(k + 1, obj) for k, obj in enumerate(hy.people()) if getattr(obj, "r", 1.0) >= 0.5]
 
     def _display(self, pid, obj) -> dict:
@@ -2300,7 +1564,7 @@ class Tracker:
         hw = self.hyp_weights()
         p = np.zeros(Z)
         share = {k: np.zeros(Z) for k in rise}
-        for wh, hy in zip(hw, self.hyps):
+        for wh, hy in zip(hw, self._h):
             empty = np.ones(Z)
             for obj in hy.people():
                 r = rise.get(id(obj))
@@ -2308,7 +1572,7 @@ class Tracker:
                     empty *= 1.0 - r
                     share[id(obj)] += wh * r
             p += wh * (1.0 - empty)
-        best = self.hyps[int(np.argmax([h.logw for h in self.hyps]))]
+        best = self._h[int(np.argmax([h.logw for h in self._h]))]
         display = {id(o): k + 1 for k, o in enumerate(best.people())}
         for k, z in enumerate(ids):
             out[z]["p"] = float(min(max(p[k], 0.0), 1.0))
@@ -2393,11 +1657,11 @@ class Tracker:
             n = float(cnt.sum())
             f = cnt / n if n > 0 else np.zeros(geo.C)
             walkers[id(obj)] = (pw, room, int(geo.space[room]), f, n, x, y, vx, vy)
-        hw = self.hyp_weights() if self.hyps else []
+        hw = self.hyp_weights() if self._h else []
         q_map = np.zeros(K)
         num, den = np.zeros(K), np.zeros(K)
         share = {}
-        for wh, hy in zip(hw, self.hyps):
+        for wh, hy in zip(hw, self._h):
             empty = np.ones(K)
             for obj in hy.people():
                 wk = walkers.get(id(obj))
@@ -2414,7 +1678,7 @@ class Tracker:
                 share.setdefault(id(obj), np.zeros(K))
                 share[id(obj)] += wh * pw * rel * (f[:K] + 1e-3)
             q_map += wh * (1.0 - empty)
-        best = self.hyps[int(np.argmax([h.logw for h in self.hyps]))] if self.hyps else None
+        best = self._h[int(np.argmax([h.logw for h in self._h]))] if self._h else None
         display = {id(o): k + 1 for k, o in enumerate(best.people())} if best is not None else {}
         out = {}
         for k, z in enumerate(self.rooms):

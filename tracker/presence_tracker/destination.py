@@ -300,7 +300,7 @@ class Learner:
         feats = {}
         agg = {}
         K = len(geo.rooms)
-        for wh, hy in zip(hw, tr.hyps):
+        for wh, hy in zip(hw, tr._h):
             if not hy.groups:
                 continue
             gs = hy.group_segs()

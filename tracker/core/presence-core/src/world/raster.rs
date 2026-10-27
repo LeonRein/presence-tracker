@@ -41,6 +41,10 @@ impl Grid {
         Self { raster, values }
     }
 
+    pub fn values(&self) -> &[f64] {
+        &self.values
+    }
+
     /// The value in the cell of a point (kernels.grid_at).
     pub fn at(&self, p: Point) -> f64 {
         self.values[self.raster.cell_of(p)]

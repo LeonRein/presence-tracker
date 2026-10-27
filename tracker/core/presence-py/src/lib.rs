@@ -3,7 +3,7 @@
 use pyo3::panic::PanicException;
 use pyo3::prelude::*;
 
-mod proto;
+mod core;
 
 /// Panics with this message: lets the shell's tests check that a panic of the core starts the model
 /// over like any other error of the model.
@@ -14,8 +14,7 @@ fn panic_for_test(message: &str) {
 
 #[pymodule]
 fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<proto::ProtoWorld>()?;
-    m.add_function(wrap_pyfunction!(proto::proto_flush, m)?)?;
+    m.add_class::<core::Core>()?;
     m.add_function(wrap_pyfunction!(panic_for_test, m)?)?;
     // a panic of the core is a BaseException in Python: the shell turns it into an Exception
     m.add("PanicException", m.py().get_type::<PanicException>())?;
