@@ -17,6 +17,9 @@ pub struct Sight {
     pub tiles: Vec<f64>,
     /// m^2: the area it sees (sight above 0.05; filter.Tracker._area)
     pub area: f64,
+    /// how well it can test a person in each tile, 0..1: its LD2450's sight or its LD2410C's beam,
+    /// whichever is better (tiling.Tiling.observed of this sensor alone, MODEL.md 5.5)
+    pub observed: Vec<f64>,
     /// [STILL, WALK] rates at the tiles' sample points and per tile, without live tracks
     base_points: [Vec<f64>; 2],
     base_tiles: [Vec<f64>; 2],
@@ -24,12 +27,13 @@ pub struct Sight {
 
 impl Sight {
     /// A sight without its rates per tile (set_rates).
-    pub fn new(at: Point, origin: Point, grid: Grid) -> Self {
+    pub fn new(at: Point, origin: Point, grid: Grid, observed: Vec<f64>) -> Self {
         let seen = grid.values().iter().filter(|&&v| v > 0.05).count();
         Self {
             at,
             origin,
             area: seen as f64 * CELL * CELL,
+            observed,
             grid,
             tiles: Vec::new(),
             base_points: [Vec::new(), Vec::new()],

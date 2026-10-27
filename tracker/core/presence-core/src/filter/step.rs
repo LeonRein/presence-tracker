@@ -18,32 +18,6 @@ use crate::sensors::{SensorSet, SensorState, live};
 use crate::vmath::pairwise_sum;
 use crate::world::World;
 
-/// How well the best of a set of live sensors sees each tile, 0..1 (tiling.Tiling.observed, MODEL.md
-/// 5.5), per set of sensors that occurs.
-#[derive(Debug, Default)]
-pub struct Observed {
-    sets: Vec<(SensorSet, Vec<f64>)>,
-}
-
-impl Observed {
-    pub fn insert(&mut self, sensors: SensorSet, per_tile: Vec<f64>) {
-        match self.sets.iter_mut().find(|(s, _)| *s == sensors) {
-            Some((_, v)) => *v = per_tile,
-            None => self.sets.push((sensors, per_tile)),
-        }
-    }
-
-    /// Panics if the set was not given.
-    pub fn get(&self, sensors: SensorSet) -> &[f64] {
-        &self
-            .sets
-            .iter()
-            .find(|(s, _)| *s == sensors)
-            .expect("observed tiles of a set of live sensors")
-            .1
-    }
-}
-
 /// The rates (1/s) per tile at which the live sensors start a track: on walkers (n), on still people
 /// at detectability 1 (n).
 #[derive(Debug)]
@@ -131,14 +105,13 @@ fn parts_of(span: f64, max_step: f64) -> usize {
     (span / max_step - 1e-9).ceil() as usize
 }
 
-/// What a move reads besides the objects: the world, the sensors' state (which of them watch),
-/// their live tracks, and how well the sets of live sensors see each tile.
+/// What a move reads besides the objects: the world, the sensors' state (which of them watch) and
+/// their live tracks.
 #[derive(Clone, Copy)]
 pub struct Watchers<'a> {
     pub world: &'a World,
     pub sensors: &'a [SensorState],
     pub tracks: &'a Tracks,
-    pub observed: &'a Observed,
 }
 
 /// A Gaussian mixture moved with everybody: its entry in the holders, and the sensors with a
@@ -304,7 +277,7 @@ fn flush_parts(
         if j < parts {
             let (at, sums) = &watch[j];
             let factors = sums.as_ref().map(|r| r.no_track(kappa, dt));
-            let fade = fade(world, w.observed.get(*at), dt);
+            let fade = fade(world, &world.observed(*at), dt);
             for &(entry, id) in in_view {
                 let mut d = objects.densities.get_mut(id);
                 expire(world, &mut d, dt, &fade);
@@ -350,7 +323,7 @@ impl Filter {
     /// track all from the last move of everybody, each Gaussian mixture from its own time, in
     /// parts no longer than max_step; the log factors go to the hypotheses holding each object,
     /// round by round.
-    pub fn flush(&mut self, world: &World, sensors: &[SensorState], observed: &Observed, t: f64) {
+    pub fn flush(&mut self, world: &World, sensors: &[SensorState], t: f64) {
         if t <= self.flushed {
             return;
         }
@@ -373,7 +346,6 @@ impl Filter {
             world,
             sensors,
             tracks: &self.tracks,
-            observed,
         };
         for round in flush_parts(watchers, &mut self.objects, &in_view, &moving, (t0, t)) {
             for (entry, d) in round {
@@ -383,7 +355,7 @@ impl Filter {
             }
         }
         self.flushed = t;
-        self.bump();
+        self.void_cache();
     }
 
     /// Moves one Gaussian mixture from its own time to t without its part gone through a door (a
@@ -495,7 +467,7 @@ impl Filter {
     /// gap_exact s as always, what lies before in leaps of `leap` s, at most max_leaps. The sensors
     /// `placed` were there, only the app was not watching: what they could have tested lasts.
     /// After a restart only densities are held.
-    pub fn predict_gap(&mut self, world: &World, observed: &Observed, placed: SensorSet, gap: f64) {
+    pub fn predict_gap(&mut self, world: &World, placed: SensorSet, gap: f64) {
         if gap <= 0.0 {
             return;
         }
@@ -503,7 +475,7 @@ impl Filter {
         let lead = (gap - p.gap_exact).max(0.0);
         let leaps = ((lead / p.leap - 1e-9).ceil() as usize).min(p.max_leaps);
         let parts = parts_of(gap - lead, p.max_step);
-        let seen = observed.get(placed);
+        let seen = world.observed(placed);
         let densities = &mut self.objects.densities;
         for (_, obj) in self.holders.entries(false) {
             let Obj::Density(id) = obj else {
@@ -511,19 +483,19 @@ impl Filter {
             };
             if leaps > 0 {
                 let dt = lead / leaps as f64;
-                let f = fade(world, seen, dt);
+                let f = fade(world, &seen, dt);
                 for _ in 0..leaps {
                     leap(world, densities, id, dt);
                     expire(world, &mut densities.get_mut(id), dt, &f);
                 }
             }
             let dt = (gap - lead) / parts as f64;
-            let f = fade(world, seen, dt);
+            let f = fade(world, &seen, dt);
             for _ in 0..parts {
                 move_densities(world, densities, &[(id, dt)]);
                 expire(world, &mut densities.get_mut(id), dt, &f);
             }
         }
-        self.bump();
+        self.void_cache();
     }
 }

@@ -9,6 +9,8 @@ pub mod evidence;
 pub mod holders;
 pub mod hyp;
 pub mod merge;
+#[cfg(any(test, feature = "mirror"))]
+pub mod mirror;
 pub mod mixture;
 pub mod objects;
 pub mod pool;
@@ -47,17 +49,41 @@ pub struct Filter {
     holders: Holders,
     tracks: Tracks,
     next_group: u64,
-    /// counts the moves of everybody and the events (filter.Tracker._version: what is cached per
-    /// hypothesis is void when it changes)
-    version: u64,
     /// log evidence of everything seen so far, and the part of it that is mass dropped by the cut
     loglik: f64,
     loglik_cut: f64,
     /// time of the last move of everybody
     flushed: f64,
-    /// per sensor the expected number of walkers in its view per hypothesis, as of the last move
-    /// of everybody or event (Tracker._walkers; emptied with every bump of the version)
-    walkers: Vec<Option<Vec<f64>>>,
+    walkers: WalkerCache,
+    /// counts the moves of everybody and the events that concern all hypotheses (moved, an event of
+    /// a frame, merged, cut, a gap, a new world): what is derived from all of them, the outputs, is
+    /// current while it stays (filter.Tracker._version)
+    epoch: u64,
+}
+
+/// Per sensor the expected number of walkers in its view per hypothesis, as of the last move of
+/// everybody or event (Tracker._walkers): counted when first needed, void when the hypotheses
+/// change, everybody moves, or an event concerns everybody.
+#[derive(Debug)]
+struct WalkerCache {
+    per_sensor: Vec<Option<Vec<f64>>>,
+}
+
+impl WalkerCache {
+    fn new(sensors: usize) -> Self {
+        Self {
+            per_sensor: vec![None; sensors],
+        }
+    }
+
+    fn clear(&mut self) {
+        self.per_sensor.fill(None);
+    }
+
+    /// The walkers per hypothesis of a sensor, counted if they are not known.
+    fn get(&mut self, si: usize, count: impl FnOnce() -> Vec<f64>) -> &[f64] {
+        self.per_sensor[si].get_or_insert_with(count)
+    }
 }
 
 /// What is known about the people, to start from after a restart (MODEL.md 5.3; Tracker.
@@ -78,11 +104,11 @@ impl Filter {
             holders: Holders::default(),
             tracks: Tracks::new(sensors),
             next_group: 1,
-            version: 0,
             loglik: 0.0,
             loglik_cut: 0.0,
             flushed: 0.0,
-            walkers: vec![None; sensors],
+            walkers: WalkerCache::new(sensors),
+            epoch: 0,
         }
     }
 
@@ -94,7 +120,8 @@ impl Filter {
         &self.objects
     }
 
-    /// The objects, for making new ones that a following set_hyps hands to hypotheses.
+    /// The objects, for making new ones that a following set_hyps hands to hypotheses (tests).
+    #[cfg(test)]
     pub fn objects_mut(&mut self) -> &mut Objects {
         &mut self.objects
     }
@@ -103,24 +130,22 @@ impl Filter {
         &self.tracks
     }
 
-    /// The live tracks, for loading them (a restored state, tests).
+    /// The live tracks, for setting them (tests).
+    #[cfg(test)]
     pub fn tracks_mut(&mut self) -> &mut Tracks {
         &mut self.tracks
     }
 
-    pub fn version(&self) -> u64 {
-        self.version
+    /// An event concerns everybody: what is cached per hypothesis is void (the Python filter's
+    /// version went on).
+    pub fn void_cache(&mut self) {
+        self.walkers.clear();
+        self.epoch += 1;
     }
 
-    /// Sets the version: what is cached per hypothesis is void.
-    pub fn set_version(&mut self, v: u64) {
-        self.version = v;
-        self.walkers.fill(None);
-    }
-
-    /// The version goes on (an event, a move of everybody).
-    pub fn bump(&mut self) {
-        self.set_version(self.version + 1);
+    /// What the outputs are cached by (the field `epoch`).
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     pub fn flushed(&self) -> f64 {
@@ -141,10 +166,9 @@ impl Filter {
     }
 
     /// Replaces the hypotheses: the holders are built anew and what nobody holds then is released.
-    pub fn set_hyps(&mut self, hyps: Vec<Hyp>) {
+    pub(crate) fn set_hyps(&mut self, hyps: Vec<Hyp>) {
         self.hyps = hyps;
         self.rebuild();
-        self.walkers.fill(None);
     }
 
     /// The hypotheses changed in place: the holders anew, what nobody holds released.
@@ -152,6 +176,7 @@ impl Filter {
         let objects = &self.objects;
         self.holders = Holders::build(&self.hyps, objects.mixtures.capacity(), objects.densities.capacity());
         self.objects.release_unheld(&self.holders);
+        self.walkers.clear();
     }
 
     /// A new id for a person with tracks (they count on in branches that are later cut).
@@ -165,7 +190,8 @@ impl Filter {
     pub fn clear(&mut self, t: f64) {
         self.tracks = Tracks::new(self.tracks.sensors());
         self.flushed = t;
-        self.set_version(0);
+        self.walkers.clear();
+        self.epoch = 0;
     }
 
     /// The hypotheses' weights, normalized by the largest (Tracker.hyp_weights).

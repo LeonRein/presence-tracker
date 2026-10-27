@@ -144,7 +144,7 @@ mod tests {
             nx: 100,
             ny: 100,
         };
-        Sight::new([0.0, 0.0], [0.0, 0.0], Grid::new(raster, vec![1.0; 10_000]))
+        Sight::new([0.0, 0.0], [0.0, 0.0], Grid::new(raster, vec![1.0; 10_000]), Vec::new())
     }
 
     #[test]

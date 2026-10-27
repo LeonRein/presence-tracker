@@ -11,8 +11,8 @@ use crate::world::World;
 
 #[derive(Debug)]
 pub struct Objects {
-    pub mixtures: Pool<Mixture, MixtureId>,
-    pub densities: Densities,
+    pub(crate) mixtures: Pool<Mixture, MixtureId>,
+    pub(crate) densities: Densities,
 }
 
 /// The people a track leaving its owner leaves, per (mixture, track, other tracks left) once: the
@@ -25,6 +25,14 @@ impl Objects {
             mixtures: Pool::default(),
             densities: Densities::new(shape),
         }
+    }
+
+    pub fn mixtures(&self) -> &Pool<Mixture, MixtureId> {
+        &self.mixtures
+    }
+
+    pub fn densities(&self) -> &Densities {
+        &self.densities
     }
 
     /// Releases what no hypothesis holds; a mixture's part gone through a door goes with it.

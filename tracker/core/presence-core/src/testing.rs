@@ -39,7 +39,7 @@ impl Rng {
 
 use crate::geometry::Point;
 use crate::params::{Params, Shapes};
-use crate::world::{CELL, Raster, Tiles, World, WorldExport};
+use crate::world::{CELL, Raster, SensorExport, Tiles, World, WorldExport};
 
 /// Small shapes: two kinds of stay, two levels of detectability, two of the amplitude.
 pub fn shapes() -> Shapes {
@@ -153,9 +153,13 @@ pub fn flat() -> World {
         walls,
         wall_dist,
         tiles,
-        sensors: vec![
-            ([0.05, 0.05], [0.19, 0.19], sight.clone()), // the same sight for both sensors
-            ([5.95, 0.05], [5.81, 0.19], sight),
-        ],
+        sensors: [([0.05, 0.05], [0.19, 0.19]), ([5.95, 0.05], [5.81, 0.19])]
+            .map(|(at, origin)| SensorExport {
+                at,
+                origin,
+                grid: sight.clone(), // the same sight for both sensors
+                observed: vec![1.0; n],
+            })
+            .into(),
     })
 }

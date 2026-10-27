@@ -207,7 +207,7 @@ class Tracker:
         loglik = self._c.loglik if self._c is not None else (0.0, 0.0)  # the evidence goes on over a rebuild
         self._c = _core(presence_core.Core, self._export())
         self._c.loglik = loglik
-        self._sent = (None, set())  # the sensors' state and the sets of live sensors the core has
+        self._sent = None  # the sensors' state the core has
         self._mirror = None
         self._dirty = False  # the mirror was handed out and may have been changed: loaded before the next call
 
@@ -241,18 +241,16 @@ class Tracker:
             door_var=f(tl.var[d]), door_area=f(tl.area[d]), door_rates=f(tl.door_rate[d]), door_ptr=i(tl.door_ptr),
             door_list=i(tl.door_list), exits=i(tl.exits), entries=i(tl.entry_idx), region_rates=f(tl.region_rates()),
             widths=f(tl.widths), points=f(tl.points), point_tile=i(tl.point_tile), point_count=f(tl.point_count),
-            sensors=[(float(s.x), float(s.y), *map(float, s.sight_origin()), f(self._grid(si)))
+            sensors=[(float(s.x), float(s.y), *map(float, s.sight_origin()), f(self._grid(si)), f(tl.observed((si,))))
                      for si, s in enumerate(self.config.sensors)])
 
     # the core's state, as the Python filter named it
 
     @property
     def _version(self) -> int:
-        return self._c.version
-
-    @_version.setter
-    def _version(self, v: int):
-        self._c.version = v
+        """What the outputs are cached by: the core counts the moves of everybody and the events that
+        concern all hypotheses (the Python filter's _version: between them the outputs are kept)."""
+        return self._c.epoch
 
     @property
     def _flushed(self) -> float:
@@ -389,16 +387,9 @@ class Tracker:
         """The sensors' state as the core needs it for which of them watch (_live)."""
         state = [(bool(s.enabled and s.placed and s.id in self.runtime),
                   self.runtime[s.id].last_frame if s.id in self.runtime else -math.inf) for s in self.config.sensors]
-        if state != self._sent[0]:
-            self._sent = (state, self._sent[1])
+        if state != self._sent:
+            self._sent = state
             _core(self._c.set_sensors, state)
-
-    def _send_observed(self, sensors):
-        """How well these sensors see each tile (Tiling.observed), once per set."""
-        key = tuple(sensors)
-        if key not in self._sent[1]:
-            self._sent[1].add(key)
-            _core(self._c.set_observed, list(key), np.ascontiguousarray(self.tiles.observed(key), dtype=float))
 
     def reset_people(self, people=None):
         """Start over: nothing known about the people (MODEL.md 5.3, unknown_start); or people at
@@ -415,8 +406,8 @@ class Tracker:
                 else:
                     hidden.append(Hidden.at_place(self.tiles, self.world.index[where]))
             ppp = Undetected.none(self.tiles)
-        self.hyps = [Hyp(0.0, {}, {}, {}, hidden, ppp)]
         self._clear()
+        self.hyps = [Hyp(0.0, {}, {}, {}, hidden, ppp)]
         self.started_from = None  # the saved state the people were restored from (restore_people)
 
     def unknown_start(self) -> Undetected:
@@ -480,8 +471,8 @@ class Tracker:
         total = _logsumexp([hy.logw for hy in hyps])
         for hy in hyps:
             hy.logw -= total
-        self.hyps = hyps
         self._clear()
+        self.hyps = hyps
         self.started_from = state
         if self.start is None:
             self._gap_from = t
@@ -499,7 +490,6 @@ class Tracker:
             _core(self._c.set_walk_end, np.ascontiguousarray(self.tiles.walk_end(), dtype=float))
         # the sensors were there, only the app was not watching: what they could have tested lasts
         placed = [si for si, s in enumerate(self.config.sensors) if s.enabled and s.placed]
-        self._send_observed(placed)
         self._call("predict_gap", gap, placed)
 
     def reconfigure(self, config):
@@ -580,9 +570,8 @@ class Tracker:
         self.tiles.g, self.tiles.dist, self.tiles._observed = {}, {}, {}
         for si in range(len(self.sensors)):
             self._g(si, np.zeros((1, 2)))
-        self._version += 1
-        _core(self._c.set_world, self._export())  # the sensors' sight anew, what is known stays
-        self._sent = (None, set())
+        self._call("set_world", self._export())  # the sensors' sight anew, what is known stays
+        self._sent = None
 
     def use_ghost_map(self, gm) -> bool:
         """Use a learned ghost map (MODEL.md 4.2) if it was learned with the prior the model has now;
@@ -780,26 +769,25 @@ class Tracker:
             if not live:
                 continue
             t_end = max(tracks.last + LOST, self.now)
-            self._flush(t_end)  # the end weighs and releases everybody: all at its time
-            self._version += 1
+            self._flush(t_end, event=True)  # the end weighs and releases everybody: all at its time
             for seg in live:
                 self._end(si, seg, t_end, True)
             tracks.raw = []  # its next frame is a start (lost data, _evidence)
             self._merge()
             self._normalize()
 
-    def _flush(self, t: float):
+    def _flush(self, t: float, event: bool = False):
         """Move everybody to time t (in the core: the people without a track all from the last
         flush, each Gaussian from its own time; in parts no longer than MAX_STEP), then the
-        LD2410C's energies gathered long enough are weighed."""
-        if t <= self._flushed:
+        LD2410C's energies gathered long enough are weighed. event: what the frame brings concerns
+        everybody (the core voids what it cached per hypothesis even if nobody moves)."""
+        moves = t > self._flushed
+        if not (moves or event):
             return
-        t0 = self._flushed
         self._send_sensors()
-        parts = int(math.ceil((t - t0) / MAX_STEP - 1e-9))
-        for k in range(parts):
-            self._send_observed(self._live(t0 + (t - t0) * (k + 1) / parts))
-        self._call("flush", t)
+        self._call("event" if event else "flush", t)
+        if not moves:
+            return
         for si in sorted(self._ld_stats):
             if self._ld_stats[si].time >= self.m.ld_every:
                 self._ld_weigh(si, self._ld_stats.pop(si))
@@ -819,7 +807,6 @@ class Tracker:
             return
         self._flush(self.now)
         self._merge()
-        self._version += 1
 
     def _objects(self, phantoms=False) -> list:
         """The distinct objects of all hypotheses (people; with phantoms: also the sources of ghost
@@ -839,8 +826,7 @@ class Tracker:
         censored = delta <= 0
         events = censored or ev.born or ev.ended or self._c.any_lost([seg for seg, _ in ev.measured])
         if events:
-            self._flush(t)  # these weigh, branch or merge everybody: all at t
-            self._version += 1
+            self._flush(t, event=True)  # these weigh, branch or merge everybody: all at t
         self._send_sensors()
         # 1. no ghost track was born meanwhile (echoes come with walkers in view)
         if delta > 0:
@@ -893,7 +879,10 @@ class Tracker:
         it again; a ghost died: its hazard; a person left without tracks goes to the people
         without one). The ghost map learns where ghosts begin, with P(ghost) as judged now, but
         without what the map itself said at the birth (MODEL.md 4.2)."""
-        z0, p_ghost, life, born = self._call("end", seg, t, data_lost)
+        ended = self._call("end", seg, t, data_lost)
+        if ended is None:  # not a track of the filter's
+            return
+        z0, p_ghost, life, born = ended
         z0 = np.array(z0)
         learn = not self.pauses.paused(born, t)  # a track of a paused time teaches nothing
         if self.learn_ghosts and learn and p_ghost > 0:

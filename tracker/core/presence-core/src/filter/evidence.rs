@@ -4,11 +4,11 @@
 
 use crate::filter::Filter;
 use crate::filter::densities::{TileFactors, TileFactorsBuf};
-use crate::filter::holders::Obj;
+use crate::filter::holders::{Holders, Obj};
 use crate::filter::hyp::{Hyp, Owner};
 use crate::filter::merge::odds_shifted;
 use crate::filter::mixture::{Mixture, MixtureId, SegId, UNIT_W};
-use crate::filter::objects::ReleaseCache;
+use crate::filter::objects::{Objects, ReleaseCache};
 use crate::filter::step::TileRates;
 use crate::filter::tracks::{Lost, TrackInfo, Tracks};
 use crate::geometry::Point;
@@ -47,24 +47,20 @@ pub struct Ended {
 }
 
 impl Filter {
-    /// Per hypothesis the expected number of walkers in view of sensor si, as of the last move of
-    /// everybody or event (Tracker._walkers; counted once until the version goes on).
-    pub fn walkers(&mut self, world: &World, si: usize) -> &[f64] {
-        if self.walkers[si].is_none() {
-            let counted = count_walkers(self, world, si);
-            self.walkers[si] = Some(counted);
-        }
-        self.walkers[si].as_deref().expect("counted above")
-    }
-
     /// Step 1 of a frame: no ghost track was born in delta s (echoes come with walkers in view);
     /// `ghost_total` is the rate of ghost births anywhere sensor si sees, read before the map
     /// learns this time.
     pub fn watch(&mut self, world: &World, si: usize, delta: f64, ghost_total: f64) {
-        self.walkers(world, si);
-        let walkers = self.walkers[si].as_deref().expect("counted above");
+        let Filter {
+            walkers,
+            hyps,
+            objects,
+            holders,
+            ..
+        } = self;
+        let walkers = walkers.get(si, || count_walkers(hyps, objects, holders, world, si));
         let (echo, area) = (world.params.ghost_echo, world.sights[si].area);
-        for (hy, w) in self.hyps.iter_mut().zip(walkers) {
+        for (hy, w) in hyps.iter_mut().zip(walkers) {
             hy.logw -= (ghost_total + echo * w * area) * delta;
         }
     }
@@ -239,7 +235,7 @@ impl Filter {
 }
 
 /// Per hypothesis the expected number of walkers in view of sensor si (Tracker._count_walkers).
-fn count_walkers(f: &Filter, world: &World, si: usize) -> Vec<f64> {
+pub(super) fn count_walkers(hyps: &[Hyp], objects: &Objects, holders: &Holders, world: &World, si: usize) -> Vec<f64> {
     let n = world.tiles.n;
     let seen: Vec<f64> = world.sights[si]
         .tiles
@@ -247,23 +243,23 @@ fn count_walkers(f: &Filter, world: &World, si: usize) -> Vec<f64> {
         .map(|&g| if g > 0.1 { 1.0 } else { 0.0 })
         .collect();
     let grid = &world.sights[si].grid;
-    let mut val = vec![0.0; f.hyps.len()];
-    for (entry, obj) in f.holders.entries(false) {
+    let mut val = vec![0.0; hyps.len()];
+    for (entry, obj) in holders.entries(false) {
         let v = match obj {
-            Obj::Density(id) if n > 0 => f.objects.densities.get(id).walking_in(&seen),
+            Obj::Density(id) if n > 0 => objects.densities.get(id).walking_in(&seen),
             Obj::Density(_) => 0.0,
             Obj::Mixture(id) => {
-                let mix = f.objects.mixtures.get(id);
+                let mix = objects.mixtures.get(id);
                 let pts = mix.sigma(world, true)[WALK];
                 let inside = expect(&pts.map(|p| if grid.at(p) > 0.1 { 1.0 } else { 0.0 }));
                 let mut v = (1.0 - mix.a) * mix.walking() * inside;
                 if let Some(away) = mix.away.filter(|_| n > 0) {
-                    v += mix.a * f.objects.densities.get(away).walking_in(&seen);
+                    v += mix.a * objects.densities.get(away).walking_in(&seen);
                 }
                 v
             }
         };
-        for &h in f.holders.refs(entry) {
+        for &h in holders.refs(entry) {
             val[h] += v;
         }
     }

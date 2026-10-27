@@ -10,9 +10,11 @@ pub use raster::{CELL, Grid, Raster};
 pub use sight::Sight;
 pub use tiles::{DoorTile, POINT, Tiles};
 
+use crate::filter::densities::DensityShape;
 use crate::geometry::{Point, Walls};
 use crate::ld2450::rates::RateModel;
 use crate::params::{Params, Shapes};
+use crate::sensors::SensorSet;
 use crate::vmath::pairwise_sum;
 
 #[derive(Debug)]
@@ -39,8 +41,17 @@ pub struct WorldExport {
     pub walls: Vec<[f64; 4]>,
     pub wall_dist: Vec<f64>,
     pub tiles: Tiles,
-    /// per sensor where it is, where its sight lines start and its sight per cell
-    pub sensors: Vec<(Point, Point, Vec<f64>)>,
+    pub sensors: Vec<SensorExport>,
+}
+
+/// A sensor as the Python tracker built it: where it is, where its sight lines start, its sight per
+/// cell and how well it can test a person per tile.
+#[derive(Debug)]
+pub struct SensorExport {
+    pub at: Point,
+    pub origin: Point,
+    pub grid: Vec<f64>,
+    pub observed: Vec<f64>,
 }
 
 impl World {
@@ -50,8 +61,13 @@ impl World {
         let sights = e
             .sensors
             .into_iter()
-            .map(|(at, origin, grid)| {
-                let mut s = Sight::new(at, origin, Grid::new(raster, grid));
+            .map(|sensor| {
+                let mut s = Sight::new(
+                    sensor.at,
+                    sensor.origin,
+                    Grid::new(raster, sensor.grid),
+                    sensor.observed,
+                );
                 s.set_rates(&rates, &e.tiles);
                 s
             })
@@ -66,6 +82,30 @@ impl World {
             tiles: e.tiles,
             sights,
         }
+    }
+
+    /// The shape of a density over these tiles.
+    pub fn density_shape(&self) -> DensityShape {
+        DensityShape {
+            tiles: self.tiles.n,
+            kinds: self.shapes.kinds(),
+            levels: self.shapes.levels(),
+            regions: self.tiles.regions,
+            ages: self.tiles.ages,
+            amps: self.shapes.amps(),
+        }
+    }
+
+    /// How well the best of these sensors can test a person in each tile, 0..1 (tiling.Tiling.
+    /// observed, MODEL.md 5.5): 0 where none of them sees, everywhere if none watches.
+    pub fn observed(&self, sensors: SensorSet) -> Vec<f64> {
+        let mut out = vec![0.0; self.tiles.n];
+        for si in sensors.iter() {
+            for (o, &x) in out.iter_mut().zip(&self.sights[si].observed) {
+                *o = f64::max(*o, x);
+            }
+        }
+        out
     }
 
     /// No wall within r of the point (world.World.clear).

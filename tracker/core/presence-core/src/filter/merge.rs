@@ -78,7 +78,7 @@ impl Filter {
     /// an alternative altogether: of the dropped ones, the strongest that holds an alternative the
     /// kept ones lack stays (MODEL.md 5.1). What is dropped counts in the evidence.
     pub fn cut(&mut self, p: &Params) -> Result<(), NotFinite> {
-        self.bump();
+        self.void_cache();
         let groups = alike(&self.hyps);
         let glw: Vec<f64> = groups
             .iter()
@@ -157,7 +157,7 @@ impl Filter {
 
     /// Hypotheses that now say the same about every live track are one (Tracker._merge).
     pub fn merge(&mut self) {
-        self.bump();
+        self.void_cache();
         self.objects.merge_alike(&mut self.hyps);
         self.rebuild();
     }

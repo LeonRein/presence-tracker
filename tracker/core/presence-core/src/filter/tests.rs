@@ -5,23 +5,15 @@ use super::branch::{Category, Found, Frame};
 use super::densities::{DensityData, DensityId, Kind};
 use super::hyp::{Ghost, GroupId, Hyp, Owner};
 use super::mixture::{NewTrack, SegId, ghost_source};
-use super::step::Observed;
 use super::tracks::TrackInfo;
 use super::*;
 use crate::params::LostKind;
-use crate::sensors::{SensorSet, SensorState};
+use crate::sensors::SensorState;
 use crate::testing;
 use crate::world::World;
 
 fn shape(world: &World) -> DensityShape {
-    DensityShape {
-        tiles: world.tiles.n,
-        kinds: world.shapes.kinds(),
-        levels: world.shapes.levels(),
-        regions: world.tiles.regions,
-        ages: world.tiles.ages,
-        amps: world.shapes.amps(),
-    }
+    world.density_shape()
 }
 
 /// Somebody standing anywhere in the room alike (the unknown ones: with `people` expected).
@@ -167,12 +159,6 @@ fn watching(t: f64) -> Vec<SensorState> {
     ]
 }
 
-fn observed(world: &World) -> Observed {
-    let mut o = Observed::default();
-    o.insert([0, 1].into_iter().collect::<SensorSet>(), vec![1.0; world.tiles.n]);
-    o
-}
-
 fn frame(t: f64, skip: &[SegId]) -> Frame<'_> {
     Frame {
         si: 0,
@@ -184,13 +170,11 @@ fn frame(t: f64, skip: &[SegId]) -> Frame<'_> {
     }
 }
 
-#[test]
-fn a_track_through_its_events_keeps_the_books() {
-    // a track begins on somebody standing in the room, is measured, lost, held, found again and
-    // ends; after each event the holders and the objects fit the hypotheses
-    let world = testing::flat();
-    let (mut f, _) = filter(&world, 1);
-    let (seen, mut t) = (observed(&world), 1.0);
+/// A track begins on somebody standing in the room, is measured, lost, held, found again and ends;
+/// `at` is called after each event with what it was. Returns the filter after the end.
+fn track_through_its_events(world: &World, mut at: impl FnMut(&Filter, &str)) -> Filter {
+    let (mut f, _) = filter(world, 1);
+    let mut t = 1.0;
     f.set_flushed(t);
     let seg = SegId(7);
     let z = [2.0, 2.0];
@@ -198,27 +182,26 @@ fn a_track_through_its_events_keeps_the_books() {
         track: NewTrack { seg, z, var: 0.04 },
         map_rate: 1.8e-5,
     };
-    let cats = f.branch_all(&world, &frame(t, &[seg]), &[found]).expect("finite");
-    f.check().expect("after a branch");
+    let cats = f.branch_all(world, &frame(t, &[seg]), &[found]).expect("finite");
+    at(&f, "branch");
     let cats: Vec<Category> = cats[0].iter().map(|&(_, c)| c).collect();
     assert_eq!(cats, [Category::Ghost, Category::Known, Category::New]);
-    assert!(f.hyps().len() >= 2);
     for step in 0..3 {
         t += 0.3;
-        f.flush(&world, &watching(t), &seen, t);
-        f.measured(&world, &watching(t), seg, [2.0 + 0.05 * step as f64, 2.0], t);
+        f.flush(world, &watching(t), t);
+        f.measured(world, &watching(t), seg, [2.0 + 0.05 * step as f64, 2.0], t);
         f.normalize(0.0).expect("finite");
-        f.check().expect("after a measurement");
+        at(&f, "measured");
     }
     t += 0.1;
     f.lost(seg, LostKind::Coast, [2.1, 2.0], t);
     t += 0.5;
-    f.flush(&world, &watching(t), &seen, t);
-    f.held(&world, 0, seg, [2.1, 2.0], t);
+    f.flush(world, &watching(t), t);
+    f.held(world, 0, seg, [2.1, 2.0], t);
     f.normalize(0.0).expect("finite");
-    f.check().expect("after holding");
+    at(&f, "held");
     t += 0.2;
-    f.flush(&world, &watching(t), &seen, t);
+    f.flush(world, &watching(t), t);
     let again = Found {
         track: NewTrack {
             seg,
@@ -227,23 +210,154 @@ fn a_track_through_its_events_keeps_the_books() {
         },
         map_rate: 0.0,
     };
-    let cats = f.branch_all(&world, &frame(t, &[]), &[again]).expect("finite");
-    f.check().expect("found again");
+    let cats = f.branch_all(world, &frame(t, &[]), &[again]).expect("finite");
+    at(&f, "found again");
     assert!(cats[0].iter().any(|&(_, c)| c == Category::Owner));
     assert!(f.tracks().get(seg).is_some_and(|i| i.lost.is_none() && i.var == 0.04));
     t += 0.5;
-    f.flush(&world, &watching(t), &seen, t);
-    let ended = f.end(&world, seg, t, false);
+    f.flush(world, &watching(t), t);
+    let ended = f.end(world, seg, t, false);
     f.merge();
     f.normalize(0.0).expect("finite");
-    f.check().expect("after the end");
-    assert!(f.tracks().is_empty());
+    at(&f, "end");
     assert!(0.0 <= ended.p_ghost && ended.p_ghost < 0.5 && ended.z0 == z);
+    f
+}
+
+/// Everything the filter holds, bit for bit, by index (Debug prints each number exactly).
+fn snapshot(f: &Filter) -> String {
+    let objects = f.objects();
+    let mut densities: Vec<DensityId> = objects.densities().ids().to_vec();
+    densities.sort_by_key(|d| super::pool::PoolId::index(*d));
+    let densities: Vec<String> = densities
+        .iter()
+        .map(|&d| format!("{d:?} {:?}", objects.densities().data(d)))
+        .collect();
+    let mixtures: Vec<String> = objects
+        .mixtures()
+        .ids()
+        .map(|m| format!("{m:?} {:?}", objects.mixtures().get(m)))
+        .collect();
+    let tracks: Vec<String> = f.tracks().iter().map(|(s, i)| format!("{s:?} {i:?}")).collect();
+    format!(
+        "{:?}\n{densities:?}\n{mixtures:?}\n{tracks:?}\n{:?} {:?}",
+        f.hyps(),
+        f.loglik(),
+        f.flushed()
+    )
+}
+
+#[test]
+fn a_track_through_its_events_keeps_the_books() {
+    // after each event the holders and the objects fit the hypotheses
+    let world = testing::flat();
+    let f = track_through_its_events(&world, |f, event| {
+        f.check().unwrap_or_else(|e| panic!("after {event}: {e}"));
+        assert!(!f.hyps().is_empty());
+    });
+    assert!(f.tracks().is_empty());
     assert!(f.hyps().iter().all(|h| h.people.is_empty()));
     // somebody known again, without a track
     assert!(f.hyps().iter().any(|h| !h.hidden.is_empty()));
-    assert!(f.recycle(world.params.give_up) || f.check().is_ok());
-    f.check().expect("after giving back");
+}
+
+#[test]
+fn the_same_events_give_the_same_bits() {
+    // nothing random, no order that differs between runs (no HashMap, one thread)
+    let world = testing::flat();
+    let mut first = Vec::new();
+    track_through_its_events(&world, |f, _| first.push(snapshot(f)));
+    let mut second = Vec::new();
+    track_through_its_events(&world, |f, _| second.push(snapshot(f)));
+    assert_eq!(first.len(), 7);
+    assert_eq!(first, second);
+}
+
+#[test]
+fn saving_the_people_changes_nothing() {
+    // people_state works on copies: reading a stored amplitude settles it (Hidden.amp), mixing in a
+    // part gone through a door does too (0.28: the live run went another way after every save)
+    let world = testing::flat();
+    let mut f = filter(&world, 1).0;
+    // a person with a track and a measured part gone through a door, its mixing deferred
+    let world_shape = world.density_shape();
+    f.set_flushed(1.0);
+    let found = Found {
+        track: NewTrack {
+            seg: SegId(1),
+            z: [2.0, 2.0],
+            var: 0.04,
+        },
+        map_rate: 1.8e-5,
+    };
+    f.branch_all(&world, &frame(1.0, &[SegId(1)]), &[found])
+        .expect("finite");
+    let objects = f.objects_mut();
+    let person = objects
+        .mixtures
+        .ids()
+        .find(|&m| !objects.mixtures.get(m).phantom)
+        .expect("a person");
+    let mut levels = world_shape.amp_prior();
+    for k in 0..world_shape.levels {
+        levels[world_shape.amp_row(k, 0)].fill(1.0);
+        levels[world_shape.amp_row(k, world_shape.amps)].fill(0.0);
+    }
+    let mut away = anywhere(&world, Kind::Person, 1.0);
+    away.amp = Some(super::densities::Amp {
+        levels,
+        keep: Some(vec![0.5; world_shape.levels * world_shape.tiles]),
+    });
+    let away = objects.densities.insert(away);
+    let mix = objects.mixtures.get_mut(person);
+    (mix.a, mix.away) = (0.3, Some(away));
+    f.check().expect("a person with a part gone through a door");
+    let before = snapshot(&f);
+    let first = f.people_state(&world);
+    assert_eq!(snapshot(&f), before);
+    let second = f.people_state(&world);
+    assert_eq!(snapshot(&f), before);
+    assert_eq!(format!("{first:?}"), format!("{second:?}"));
+    assert!(
+        first
+            .densities
+            .iter()
+            .any(|d| d.amp.as_ref().is_some_and(|a| a.keep.is_none()))
+    );
+}
+
+#[test]
+fn giving_back_keeps_the_mass() {
+    // a known person refuted (r < give_up) joins the unknown ones with r x their density, weighted
+    // by their hypothesis (Tracker._recycle); the others stay
+    let world = testing::flat();
+    let mut f = Filter::new(shape(&world), world.sights.len());
+    let objects = f.objects_mut();
+    let unknown = objects.densities.insert(anywhere(&world, Kind::Intensity, 1.5));
+    let gone = objects.densities.insert(DensityData {
+        r: 0.004,
+        ..anywhere(&world, Kind::Person, 1.0)
+    });
+    let kept = objects.densities.insert(DensityData {
+        r: 0.6,
+        ..anywhere(&world, Kind::Person, 1.0)
+    });
+    let w: [f64; 2] = [0.25, 0.75];
+    f.set_hyps(vec![
+        Hyp::new(w[0].ln(), vec![gone], unknown),
+        Hyp::new(w[1].ln(), vec![kept], unknown),
+    ]);
+    let total = |f: &Filter, d: DensityId| f.objects().densities().get(d).total();
+    let before = total(&f, unknown);
+    assert!(f.recycle(world.params.give_up));
+    let new = f.hyps()[0].unknown;
+    assert_eq!(f.hyps()[1].unknown, new);
+    assert!(f.hyps()[0].hidden.is_empty() && f.hyps()[1].hidden == [kept]);
+    let want = before + w[0] * 0.004;
+    assert!((total(&f, new) - want).abs() < 1e-12, "{} {want}", total(&f, new));
+    assert!(!f.objects().densities().contains(gone));
+    // nobody to give back: nothing changes
+    assert!(!f.recycle(world.params.give_up));
 }
 
 #[test]
@@ -302,4 +416,60 @@ fn a_track_whose_ghost_alternative_is_all_but_gone_ends() {
     f.check().expect("ended");
     assert!(f.tracks().is_empty() && f.hyps().iter().all(|h| h.tracks.is_empty()));
     assert!(0.0 <= ended.p_ghost && ended.p_ghost < 1e-300);
+}
+
+#[test]
+fn a_mirror_that_does_not_fit_changes_nothing() {
+    use super::mirror::{MirrorHyp, MirrorState};
+    let world = testing::flat();
+    let (mut f, _) = filter(&world, 1);
+    let before = snapshot(&f);
+    let hyp = |unknown| MirrorHyp {
+        logw: 0.0,
+        tracks: Vec::new(),
+        ghosts: Vec::new(),
+        people: Vec::new(),
+        hidden: Vec::new(),
+        unknown,
+    };
+    let unknown = (None, anywhere(&world, Kind::Intensity, 1.0));
+    let out_of_range = MirrorState {
+        densities: vec![unknown.clone()], // a state for this test
+        mixtures: Vec::new(),
+        hyps: vec![hyp(3)],
+    };
+    assert!(f.load(out_of_range).is_err());
+    let short = MirrorState {
+        densities: vec![(
+            None,
+            DensityData {
+                walk: vec![0.0; 2],
+                ..unknown.1.clone()
+            },
+        )], // too short
+        mixtures: Vec::new(),
+        hyps: vec![hyp(0)],
+    };
+    assert!(f.load(short).is_err());
+    let a_person_as_unknown = MirrorState {
+        densities: vec![(
+            None,
+            DensityData {
+                kind: Kind::Person,
+                ..unknown.1.clone()
+            },
+        )],
+        mixtures: Vec::new(),
+        hyps: vec![hyp(0)],
+    };
+    assert!(f.load(a_person_as_unknown).is_err());
+    assert_eq!(snapshot(&f), before);
+    let fits = MirrorState {
+        densities: vec![unknown],
+        mixtures: Vec::new(),
+        hyps: vec![hyp(0)],
+    };
+    f.load(fits).expect("a state that fits");
+    assert_eq!(f.hyps().len(), 1);
+    assert_eq!(f.objects().densities().len(), 1); // the others released
 }

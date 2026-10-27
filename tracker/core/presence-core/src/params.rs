@@ -246,4 +246,14 @@ mod tests {
         assert_eq!(p.speed, Params::default().speed);
         assert!(Params::from_json(r#"{"white": "much"}"#).is_err());
     }
+
+    #[test]
+    fn numbers_are_read_exactly() {
+        // serde_json reads floats correctly rounded only with float_roundtrip: without it
+        // 1 / 86400 came one ulp off and the traces of 8.10. depended on how the JSON was read
+        let p = Params::from_json(r#"{"forget_rate": 1.1574074074074073e-05, "arrive_rate": 6.944444444444444e-05}"#)
+            .expect("a model");
+        assert_eq!(p.forget_rate, 1.0 / 86400.0);
+        assert_eq!(p.arrive_rate, 1.0 / (4.0 * 3600.0));
+    }
 }

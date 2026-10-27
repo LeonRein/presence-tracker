@@ -6,7 +6,7 @@
 //! a hypothesis with its exact weight; the children are then merged and cut (merge.rs).
 
 use crate::filter::densities::{TileFactors, TileFactorsBuf};
-use crate::filter::evidence::{expect, mixture_rates, near_mixture, near_tiles, no_find};
+use crate::filter::evidence::{count_walkers, expect, mixture_rates, near_mixture, near_tiles, no_find};
 use crate::filter::holders::Obj;
 use crate::filter::hyp::{Ghost, GroupId, Hyp, Owner};
 use crate::filter::mixture::{Mixture, MixtureId, NewTrack, SegId, from_tiles, ghost_source};
@@ -170,12 +170,10 @@ impl Filter {
     ) -> Result<Vec<(f64, Category)>, NotFinite> {
         let seg = found.track.seg;
         let refind = self.tracks.get(seg).copied();
-        if refind.is_none() {
-            self.walkers(world, frame.si);
-        }
         let Filter {
             hyps,
             objects,
+            holders,
             tracks,
             walkers,
             next_group,
@@ -190,7 +188,7 @@ impl Filter {
                 found_again(world, frame, &info),
             ),
             None => {
-                let walkers = walkers[frame.si].as_deref().expect("counted above");
+                let walkers = walkers.get(frame.si, || count_walkers(hyps, objects, holders, world, frame.si));
                 (found.track, Chance::New { start, walkers })
             }
         };

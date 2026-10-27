@@ -2,6 +2,31 @@
 
 ## Unveröffentlicht
 
+## 0.33.1 (Branch `rust-core`, nach Leons Prüfung von Phase 3, nicht live)
+
+- **`presence_core::Tracker`** (`tracker.rs`) besitzt Welt, Filter und Sensorstand und führt die Schritte
+  aus (`flush`, `event`, `track_events`, `end`, `branch_all`, …); die Bindung `Core` wandelt nur noch um. Die
+  Sicht je Sensor und Kachel kommt mit dem Welt-Export, die Menge lebender Sensoren bildet der Kern selbst
+  (`World::observed`, das Maximum wie `Tiling.observed`, bitgleich): `_flush` in Python rechnet keine
+  Teilschritte mehr nach, nichts panict bei einer fehlenden Menge.
+- **Spiegel nur noch geprüft geladen:** `Filter::load(MirrorState) -> Result` prüft Indizes, Längen und Arten
+  vor jeder Änderung und am Ende `check()`; das gibt es nur mit dem Feature `mirror` (die Bindung), die
+  Zugriffe `objects_mut`/`tracks_mut` nur in Tests, die Felder von `Objects` sind `pub(crate)`.
+- **Caches:** `WalkerCache` statt Versionsvergleich, vom Kern selbst geleert; die Ausgaben der Hülle hängen an
+  `epoch` (Bewegen und Ereignisse, die alle betreffen, wie `_version` in 0.31.1, ohne Setter). Ein Versuch mit
+  `serial` als Schlüssel rechnete die Ausgaben öfter neu als 0.31.1 und wich bis 0,2 ab (8.10.) – verworfen.
+- **Zahlen exakt lesen:** `serde_json` mit `float_roundtrip` (ohne las es `forget_rate` = 1/86400 um ein ulp
+  anders als Python).
+- **Spurvergleich mit einem BLAS-Thread:** `ref_0311` ist bitgleich mit 0.31.1 bei `OPENBLAS_NUM_THREADS=1`;
+  die Übergabe zu 0.33.0 hatte 8.10. mit mehreren Threads gemessen (max 0,012, 0 gekippt). Richtig ist:
+  8.10. 19 Uhr bis 93 s gleich, dann 1e-14, Entscheidung bei 434 s (die Paarung zweier fast leerer Personen
+  in einer Hypothese mit w ≈ 5e-4), sichtbar ab 459 s, max 0,070, 5 Raum-Sekunden – so groß wie bei 0.31.1,
+  nur in der Rundung gestört (gegen die Referenz max 0,070, 3 Raum-Sekunden). `trace.py` setzt jetzt einen
+  Thread.
+- Tests: Determinismus (zweimal dieselbe Folge, bitgleich), `people_state` lässt den Filter bitgleich (Person
+  mit Spur und gemessenem Teil hinter der Tür), Masse beim Zurückgeben, ein nicht passender Spiegel ändert
+  nichts, Modellzahlen exakt; die wirkungslose Prüfung in `tests.rs` ersetzt.
+
 ## 0.33.0 (Branch `rust-core`, Phase 3 des Rust-Kerns, nicht live)
 
 - **Phase 3 des Entwurfs `docs/rust-core.md`: der Filterzustand in Rust.** Der Kern besitzt die Hypothesen und

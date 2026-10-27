@@ -8,6 +8,7 @@ pub mod ld2450;
 pub mod motion;
 pub mod params;
 pub mod sensors;
+pub mod tracker;
 pub mod vmath;
 pub mod world;
 
