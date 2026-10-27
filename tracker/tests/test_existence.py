@@ -5,11 +5,13 @@ do not see for minutes stays, and no strip of a room is out of every sensor's si
 import numpy as np
 
 from presence_tracker.filter import Tracker
+from presence_tracker.hidden import Hidden
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
 
 from test_filter import BALCONY_DOOR, FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
+from test_restart import saved
 
 
 def in_house(crowd) -> float:
@@ -122,12 +124,12 @@ def _hold_in_nook(r, minutes):
     measures anything. P(somebody in the room) afterwards."""
     config = _nook_config()
     crowd = Tracker(config, start=0.0, people=["outside"])
-    h = crowd.hyps[0].hidden[0]
-    h.out = 0.0
+    h = Hidden(crowd.tiles)
     for c in _nook(crowd.tiles):
         h.still[:, :, c] = crowd.shapes.stay_prior(ongoing=True)
     h.r = r
     h._normalize()
+    assert crowd.restore_people(saved(crowd, [h]))
     for t, sid, frame in simulate([], sim_sensors(config), 60 * minutes, rate=2.0, walls=config.wall_segments):
         crowd.process_frame(sid, t, frame)
     return 1 - crowd.count_distribution()["wohn"][0]

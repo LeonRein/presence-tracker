@@ -23,6 +23,11 @@ impl Raster {
         i * self.ny + j
     }
 
+    /// The centre of cell (i, j) (world.World.zone_mask).
+    pub fn centre(&self, i: usize, j: usize) -> Point {
+        [self.x0 + (i as f64 + 0.5) * CELL, self.y0 + (j as f64 + 0.5) * CELL]
+    }
+
     pub fn cells(&self) -> usize {
         self.nx * self.ny
     }

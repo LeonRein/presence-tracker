@@ -150,7 +150,8 @@ fn hyp(h: &Value) -> MirrorHyp {
 
 /// The tracker in the fixture's world with its state at the start.
 fn start(fx: &Value) -> Tracker {
-    let export: WorldExport = serde_json::from_value(fx["world"].clone()).expect("the world");
+    let mut export: WorldExport = serde_json::from_value(fx["world"].clone()).expect("the world");
+    export.plan = crate::testing::plan_without_rooms(&export.tiles, export.sensors.len());
     let mut tracker = Tracker::new(World::from_export(export).expect("a world"));
     let st = &fx["start"];
     for t in st["tracks"].as_array().expect("tracks") {

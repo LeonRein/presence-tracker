@@ -321,8 +321,7 @@ def test_a_nan_is_a_model_failure_never_nobody_there(tmp_path, caplog):
     run_a_while(app, 20.0)
     assert app.zone_states["wohn"].occupied
     tracker = app.tracker
-    for hy in tracker.hyps:
-        hy.logw = math.nan  # the mirror's weights: loaded into the core before its next step
+    tracker._c.spoil_weights_for_test()  # every hypothesis' weight NaN in the core
     assert not app.tick(1000.0 + 20.5)  # no raise
     assert app.tracker is not tracker and "not finite" in caplog.text
     with pytest.raises(FloatingPointError):

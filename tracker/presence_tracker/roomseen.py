@@ -18,87 +18,23 @@ tracks): in 64 h of recordings 6-20 s gaps of one board while the others sent ca
 each would have made its room unavailable for seconds; a board that is gone stays silent for minutes. A sensor that sent nothing since the model
 started counts from the start: at the app's start, before the first frames, nothing is silent.
 
-Only output: nothing here changes the filter's state, weights or what it learns."""
+Only output: nothing here changes the filter's state, weights or what it learns. The rule runs in the core
+(room_seen.rs; filter.Tracker.seen reads it); here what the shell still gives it."""
 
 MOUNT_MARGIN = 0.3  # m: a sensor hangs on a wall, its point lies at the room's outline
 SILENT_AFTER = 30.0  # s without any frame: the board is gone, its room is silent (not the WLAN's short gaps)
 
 
-class RoomSeen:
-    def __init__(self, config):
-        self.last: dict[str, float] = {}  # room id -> the last time its own LD2450 measured somebody in it
-        self.heard: dict[str, float] = {}  # sensor id -> the time of its last frame (any)
-        self.use(config)
-
-    def use(self, config):
-        """A new configuration: the observed rooms and which sensor is whose."""
-        self.zones = list(config.observed_rooms())
-        self.own = {}  # sensor id -> room id
-        for s in config.sensors:
-            room = self.own_room(s, self.zones)
-            if room is not None:
-                self.own[s.id] = room
-        rooms = set(self.own.values())
-        self.last = {r: t for r, t in self.last.items() if r in rooms}
-        self.in_use = {s.id for s in config.sensors if s.enabled and s.placed}
-
-    def watched(self) -> set:
-        """The rooms with an own sensor in use: these may be silent (Home Assistant: their own availability)."""
-        return {r for sid, r in self.own.items() if sid in self.in_use}
-
-    def heard_from(self, sensor_id: str, t: float):
-        """A frame of the sensor at t, whatever is in it (Tracker.process_frame, first thing)."""
-        if t > self.heard.get(sensor_id, -float("inf")):
-            self.heard[sensor_id] = t
-
-    def silent(self, now: float, start: float | None, limit: float | None = None) -> set:
-        """The rooms whose own sensors in use all sent no frame for more than limit s (default
-        SILENT_AFTER); one that sent nothing since start (the model's start, None: not started, nothing
-        silent) counts from start."""
-        if start is None:
-            return set()
-        quiet: dict[str, bool] = {}
-        for sid, room in self.own.items():
-            if sid in self.in_use:
-                quiet[room] = quiet.get(room, True) and not self.online(sid, now, start, limit)
-        return {r for r, q in quiet.items() if q}
-
-    def online(self, sensor_id: str, now: float, start: float | None, limit: float | None = None) -> bool:
-        """The sensor sent a frame within the last limit s (default SILENT_AFTER; one that sent nothing
-        counts from start, None: not started, online). The web UI's "online" too: until 0.28 it said
-        "offline" after 15 s, Home Assistant after 30 s."""
-        if start is None:
-            return True
-        limit = SILENT_AFTER if limit is None else limit
-        return now - self.heard.get(sensor_id, start) <= limit
-
-    @staticmethod
-    def own_room(s, zones) -> str | None:
-        name = (s.name or "").strip()
-        for z in zones:
-            if name and z.id == name:
-                return z.id
-        for z in zones:
-            if name and z.name.strip().casefold() == name.casefold():
-                return z.id
-        inside = [z.id for z in zones if z.contains(float(s.x), float(s.y), MOUNT_MARGIN)]
-        return inside[0] if len(inside) == 1 else None
-
-    def frame(self, sensor, t: float, dets):
-        """One frame of the sensor; dets as Tracker.process_frame marked them (hidden, stale)."""
-        room = self.own.get(sensor.id)
-        if room is None or not sensor.enabled or not sensor.placed:
-            return
-        for d in dets:
-            if d.hidden or getattr(d, "stale", False):
-                continue
-            x, y = float(d.pos[0]), float(d.pos[1])
-            z = next((z for z in self.zones if z.contains(x, y)), None)
-            if z is not None and z.id == room:
-                self.last[room] = t
-
-    def seen(self, now: float, hold: float) -> set:
-        """The rooms whose own LD2450 measured somebody in them within the last hold s (0: none)."""
-        if not hold > 0:
-            return set()
-        return {r for r, t in self.last.items() if now - t <= hold}
+def own_room(s, zones) -> str | None:
+    """The room of sensor s among the observed rooms (zones): named like the room's id, else like its
+    name, else the one it is mounted in (within MOUNT_MARGIN), if exactly one. Until the plan is built
+    in the core (phase 6) the shell gives the core this (filter.Tracker._export_plan)."""
+    name = (s.name or "").strip()
+    for z in zones:
+        if name and z.id == name:
+            return z.id
+    for z in zones:
+        if name and z.name.strip().casefold() == name.casefold():
+            return z.id
+    inside = [z.id for z in zones if z.contains(float(s.x), float(s.y), MOUNT_MARGIN)]
+    return inside[0] if len(inside) == 1 else None

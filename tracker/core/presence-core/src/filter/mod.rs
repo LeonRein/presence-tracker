@@ -10,12 +10,13 @@ pub mod holders;
 pub mod hyp;
 mod ld_weigh;
 pub mod merge;
-#[cfg(any(test, feature = "mirror"))]
+#[cfg(test)]
 pub mod mirror;
 pub mod mixture;
 pub mod objects;
 pub mod pool;
 pub mod small_map;
+mod start;
 pub mod step;
 pub mod tracks;
 
@@ -30,6 +31,7 @@ use objects::Objects;
 use tracks::Tracks;
 
 pub use ld_weigh::LdLearn;
+pub use start::Start;
 
 /// What the filter cannot go on from: the hypotheses' weights are not finite (every output after
 /// it would be NaN, and NaN shows as "nobody there"; the app starts the model over).
@@ -59,8 +61,9 @@ pub struct Filter {
     flushed: f64,
     walkers: WalkerCache,
     /// counts the moves of everybody and the events that concern all hypotheses (moved, an event of
-    /// a frame, merged, cut, a gap, a new world): what is derived from all of them, the outputs, is
-    /// current while it stays (filter.Tracker._version)
+    /// a frame, merged, cut, a gap, a new world, a start): what is derived from all of them, the
+    /// outputs, is current while it stays (filter.Tracker._version). Only counts up: what was derived
+    /// at another epoch never passes for current.
     epoch: u64,
 }
 
@@ -135,6 +138,11 @@ impl Filter {
         &self.objects
     }
 
+    /// Who holds each object (always those of the hypotheses).
+    pub fn holders(&self) -> &Holders {
+        &self.holders
+    }
+
     /// The objects, for making new ones that a following set_hyps hands to hypotheses (tests).
     #[cfg(test)]
     pub fn objects_mut(&mut self) -> &mut Objects {
@@ -194,12 +202,18 @@ impl Filter {
         self.walkers.clear();
     }
 
-    /// No live tracks (Tracker._clear): from time t.
+    /// No live tracks (Tracker._clear): from time t; what was derived before is void.
     pub fn clear(&mut self, t: f64) {
         self.tracks = Tracks::new(self.tracks.sensors());
         self.flushed = t;
-        self.walkers.clear();
-        self.epoch = 0;
+        self.void_cache();
+    }
+
+    /// Every hypothesis' weight NaN (a test of what the shell does then).
+    pub fn spoil_weights_for_test(&mut self) {
+        for hy in &mut self.hyps {
+            hy.logw = f64::NAN;
+        }
     }
 
     /// The hypotheses' weights, normalized by the largest (Tracker.hyp_weights).

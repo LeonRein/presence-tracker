@@ -1,26 +1,30 @@
-//! The filter of the core behind the Python tracker (docs/rust-core.md 7, phase 3): Rust owns the
-//! hypotheses and their objects; the world still comes from the Python build (WorldExport), and the
-//! shell orchestrates a frame, the LD2410C and the outputs on a mirror of the hypotheses
-//! (dump/load). The mirror and the world's export are the throwaway part.
+//! The filter of the core behind the Python tracker (docs/rust-core.md 7): Rust owns the hypotheses
+//! and their objects and computes the outputs; the world still comes from the Python build
+//! (WorldExport), and the shell orders the steps of a frame. What the shell and its tools still read
+//! of the hypotheses comes as a mirror (dump, read only). The mirror and the world's export are the
+//! throwaway part.
 
 use numpy::{PyArray1, PyArrayDyn, PyArrayMethods, PyReadonlyArrayDyn};
 use pyo3::exceptions::{PyFloatingPointError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use presence_core::filter::NotFinite;
 use presence_core::filter::branch::{Found, Frame};
-use presence_core::filter::densities::{Amp, DensityData, DensityId, DensityShape, Kind};
-use presence_core::filter::hyp::{GroupId, Owner};
-use presence_core::filter::mirror::{MirrorHyp, MirrorMixture, MirrorState};
-use presence_core::filter::mixture::{Kalman, Mixture, MixtureId, NewTrack, SegId, Slot};
+use presence_core::filter::densities::{Amp, DensityData, DensityShape, Kind};
+use presence_core::filter::hyp::Owner;
+use presence_core::filter::mixture::{NewTrack, SegId};
 use presence_core::filter::pool::PoolId;
+use presence_core::filter::{NotFinite, PeopleState, Start};
+use presence_core::geometry::{Point, Shape};
 use presence_core::ld2410::CELLS;
 use presence_core::ld2410::sensor::LdCollect;
+use presence_core::outputs::Source;
 use presence_core::params::{LostKind, Params, Shapes};
 use presence_core::sensors::SensorSet;
 use presence_core::tracker::{TrackEvents, Tracker};
-use presence_core::world::{DoorTile, LdExport, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
+use presence_core::world::{
+    DoorTile, LdExport, LdTiles, PlanExport, Raster, Room, SensorExport, SensorPlan, Tiles, World, WorldExport,
+};
 
 fn item<'py>(d: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
     d.get_item(key)?
@@ -120,8 +124,48 @@ fn world_from(e: &Bound<'_, PyDict>) -> PyResult<World> {
         tiles,
         sensors,
         rooms: floats(e, "rooms")?,
+        plan: plan_from(&item(e, "plan")?.cast_into::<PyDict>()?)?,
     };
     World::from_export(export).map_err(PyValueError::new_err)
+}
+
+/// A zone's outline: (kind, points, centre, radius) as model.ZoneConfig holds it.
+fn shape_from(z: (String, Vec<Point>, Option<Point>, f64)) -> PyResult<Shape> {
+    let (kind, points, centre, radius) = z;
+    match (kind.as_str(), points.as_slice(), centre) {
+        ("rect", &[a, b], _) => Ok(Shape::rect(a, b)),
+        ("circle", _, Some(center)) => Ok(Shape::Circle { center, radius }),
+        ("rect" | "circle", _, _) => Err(PyValueError::new_err(format!("a {kind} without its corners or centre"))),
+        _ => Ok(Shape::polygon(points)),
+    }
+}
+
+/// What the outputs need of the plan (world::PlanExport): the observed rooms (id, outline), per
+/// sensor (id, own room, in use), the areas' outlines, per tile its room (-1: none), region_start.
+fn plan_from(d: &Bound<'_, PyDict>) -> PyResult<PlanExport> {
+    type Zone = (String, Vec<Point>, Option<Point>, f64);
+    let rooms: Vec<(String, Zone)> = number(d, "rooms")?;
+    let sensors: Vec<(String, Option<usize>, bool)> = number(d, "sensors")?;
+    let areas: Vec<Zone> = number(d, "areas")?;
+    let tile_room: PyReadonlyArrayDyn<'_, i64> = item(d, "tile_room")?.extract()?;
+    Ok(PlanExport {
+        rooms: rooms
+            .into_iter()
+            .map(|(id, z)| {
+                Ok(Room {
+                    id,
+                    shape: shape_from(z)?,
+                })
+            })
+            .collect::<PyResult<_>>()?,
+        sensors: sensors
+            .into_iter()
+            .map(|(id, own_room, in_use)| SensorPlan { id, own_room, in_use })
+            .collect(),
+        areas: areas.into_iter().map(shape_from).collect::<PyResult<_>>()?,
+        tile_room: tile_room.as_slice()?.iter().map(|&k| usize::try_from(k).ok()).collect(),
+        region_start: floats(d, "region_start")?,
+    })
 }
 
 /// A sensor of the world's export: where it is and its sight; its LD2410C's axis, height above a
@@ -187,116 +231,45 @@ fn floats_of(a: &PyReadonlyArrayDyn<'_, f64>) -> PyResult<Vec<f64>> {
     Ok(a.as_slice()?.to_vec())
 }
 
-/// A density as the mirror holds it: id (None: made by the shell), walk, still, region, out, clock,
-/// r, an intensity, amp, keep.
+/// A density of a saved state as the shell decoded it (hidden.Hidden.from_dict): walk, still, region,
+/// out, r, an intensity (the unknown ones), amp.
 type DensityIn<'py> = (
-    Option<u32>,
     PyReadonlyArrayDyn<'py, f64>,
     PyReadonlyArrayDyn<'py, f64>,
     PyReadonlyArrayDyn<'py, f64>,
-    f64,
     f64,
     f64,
     bool,
     Option<PyReadonlyArrayDyn<'py, f64>>,
-    Option<PyReadonlyArrayDyn<'py, f64>>,
 );
 
-/// A mixture as the mirror holds it: id, logw, mean, cov, stay, ka, slots, phantom, a, away (index
-/// into the densities given), t.
-type MixtureIn<'py> = (
-    Option<u32>,
-    PyReadonlyArrayDyn<'py, f64>,
-    PyReadonlyArrayDyn<'py, f64>,
-    PyReadonlyArrayDyn<'py, f64>,
-    PyReadonlyArrayDyn<'py, f64>,
-    PyReadonlyArrayDyn<'py, f64>,
-    Vec<(u64, usize, f64)>,
-    bool,
-    f64,
-    Option<usize>,
-    Option<f64>,
-);
-
-/// A hypothesis as the mirror holds it: logw, per track its owner (None: a ghost), the ghosts'
-/// lives and sources (index into the mixtures), the people (index into the mixtures), the hidden
-/// and the unknown ones (indices into the densities).
-type HypIn<'py> = (
-    f64,
-    Vec<(u64, Option<u64>)>,
-    Vec<(u64, PyReadonlyArrayDyn<'py, f64>, usize)>,
-    Vec<(u64, usize)>,
-    Vec<usize>,
-    usize,
-);
-
-fn density_in(d: &DensityIn<'_>) -> PyResult<(Option<DensityId>, DensityData)> {
-    let (id, walk, still, region, out, clock, r, intensity, amp, keep) = d;
+fn density_in(d: &DensityIn<'_>) -> PyResult<DensityData> {
+    let (walk, still, region, out, r, intensity, amp) = d;
     let amp = match amp {
         Some(levels) => Some(Amp {
             levels: floats_of(levels)?,
-            keep: keep.as_ref().map(floats_of).transpose()?,
+            keep: None,
         }),
         None => None,
     };
-    let data = DensityData {
+    Ok(DensityData {
         walk: floats_of(walk)?,
         still: floats_of(still)?,
         region: floats_of(region)?,
         out: *out,
-        clock: *clock,
+        clock: 0.0,
         r: *r,
         kind: if *intensity { Kind::Intensity } else { Kind::Person },
         amp,
-    };
-    Ok((id.map(|i| DensityId::from_index(i as usize)), data))
+    })
 }
 
-fn mixture_in(m: &MixtureIn<'_>) -> PyResult<MirrorMixture> {
-    let (id, logw, mean, cov, stay, ka, slots, phantom, a, away, t) = m;
-    let (mean, cov, logw) = (mean.as_slice()?, cov.as_slice()?, logw.as_slice()?);
-    if logw.len() != 2 || mean.len() % 4 != 0 || 4 * cov.len() != mean.len() * mean.len() {
-        return Err(PyValueError::new_err("a mixture of another shape"));
+fn source_name(source: Source) -> &'static str {
+    match source {
+        Source::Filter => "filter",
+        Source::Ld2450 => "ld2450",
+        Source::Both => "beide",
     }
-    let d = mean.len() / 4;
-    let mode = |k: usize| Kalman {
-        mean: mean[k * 2 * d..][..2 * d].to_vec(),
-        cov: cov[k * 2 * d * d..][..2 * d * d].to_vec(),
-    };
-    let mixture = Mixture {
-        logw: [logw[0], logw[1]],
-        modes: [mode(0), mode(1)],
-        stay: floats_of(stay)?,
-        ka: floats_of(ka)?,
-        slots: slots
-            .iter()
-            .map(|&(s, index, var)| (SegId(s), Slot { index, var }))
-            .collect(),
-        phantom: *phantom,
-        a: *a,
-        away: None,
-        t: *t,
-    };
-    Ok(MirrorMixture {
-        id: id.map(|i| MixtureId::from_index(i as usize)),
-        mixture,
-        away: *away,
-    })
-}
-
-fn hyp_in(h: HypIn<'_>) -> PyResult<MirrorHyp> {
-    let (logw, tracks, ghosts, people, hidden, unknown) = h;
-    Ok(MirrorHyp {
-        logw,
-        tracks: tracks.into_iter().map(|(s, g)| (SegId(s), g.map(GroupId))).collect(),
-        ghosts: ghosts
-            .into_iter()
-            .map(|(s, life, source)| Ok((SegId(s), floats_of(&life)?, source)))
-            .collect::<PyResult<_>>()?,
-        people: people.into_iter().map(|(g, m)| (GroupId(g), m)).collect(),
-        hidden,
-        unknown,
-    })
 }
 
 /// The Rust tracker for the Python shell: converts, nothing more (the steps are presence_core's).
@@ -731,19 +704,151 @@ impl Core {
         self.changed();
     }
 
-    /// The hypotheses from the shell's mirror (Filter::load): ValueError if they do not fit.
-    fn load(
-        &mut self,
-        densities: Vec<DensityIn<'_>>,
-        mixtures: Vec<MixtureIn<'_>>,
-        hyps: Vec<HypIn<'_>>,
-    ) -> PyResult<()> {
-        let state = MirrorState {
-            densities: densities.iter().map(density_in).collect::<PyResult<_>>()?,
-            mixtures: mixtures.iter().map(mixture_in).collect::<PyResult<_>>()?,
-            hyps: hyps.into_iter().map(hyp_in).collect::<PyResult<_>>()?,
-        };
+    // ---------------------------------------------------------------- starts
+
+    /// Start over at t (Tracker::reset_people): nothing known (people None), or known people at
+    /// these places (a place's index, None: anywhere) and nobody unknown.
+    #[pyo3(signature = (t, people=None))]
+    fn reset_people(&mut self, t: f64, people: Option<Vec<Option<usize>>>) {
+        let people: Option<Vec<Start>> =
+            people.map(|v| v.into_iter().map(|p| p.map_or(Start::Anywhere, Start::Place)).collect());
+        self.tracker.reset_people(t, people.as_deref());
         self.changed();
-        self.tracker.load(state).map_err(PyValueError::new_err)
+    }
+
+    /// Start over at t from a saved state the shell decoded (Tracker::restore): the densities and per
+    /// hypothesis (logw, people, unknown) as indices into them. False, and nothing changed, if it
+    /// does not fit.
+    fn restore(
+        &mut self,
+        t: f64,
+        densities: Vec<DensityIn<'_>>,
+        hyps: Vec<(f64, Vec<usize>, usize)>,
+    ) -> PyResult<bool> {
+        let densities = densities.iter().map(density_in).collect::<PyResult<_>>()?;
+        let ok = self.tracker.restore(t, PeopleState { hyps, densities }).is_ok();
+        self.changed();
+        Ok(ok)
+    }
+
+    /// Every hypothesis' weight NaN: the shell's test of a failing model.
+    fn spoil_weights_for_test(&mut self) {
+        self.tracker.spoil_weights_for_test();
+        self.changed();
+    }
+
+    /// What the rooms' own LD2450s saw in an earlier core goes on here (the shell's rebuild).
+    fn adopt_seen(&mut self, mut old: PyRefMut<'_, Core>) {
+        let seen = old.tracker.take_seen();
+        self.tracker.adopt_seen(seen);
+    }
+
+    // ---------------------------------------------------------------- outputs (MODEL.md 6)
+
+    /// Per observed room the distribution of the number of people [P(0), P(1), ...], then of those
+    /// in view at all.
+    fn count_distribution<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let tracker = &mut self.tracker;
+        let rows = py.detach(|| tracker.count_distribution());
+        Ok(rows.into_pyobject(py)?.into_any())
+    }
+
+    /// Per place (observed, regions..., outside) the distribution of the number of people, then of
+    /// those in the house.
+    fn place_distribution<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let tracker = &mut self.tracker;
+        let rows = py.detach(|| tracker.place_distribution());
+        Ok(rows.into_pyobject(py)?.into_any())
+    }
+
+    /// Per zone (the observed rooms, then the areas) "wird betreten" for the look-ahead lead_time:
+    /// (p, distance, eta, person).
+    #[allow(clippy::type_complexity)]
+    fn entering(&mut self, py: Python<'_>, lead_time: f64) -> Vec<(f64, Option<f64>, Option<f64>, Option<usize>)> {
+        let tracker = &mut self.tracker;
+        py.detach(|| tracker.entering(lead_time))
+            .iter()
+            .map(|e| (e.p, e.distance, e.eta, e.person))
+            .collect()
+    }
+
+    /// Per observed room what decided it occupied at now ("filter", "ld2450", "beide"), None: not -
+    /// by the cost of the light, or the room's own LD2450 within the last seen_hold s.
+    fn occupancy(&mut self, now: f64, light_cost: f64, seen_hold: f64) -> Vec<Option<&'static str>> {
+        self.tracker
+            .occupancy(now, light_cost, seen_hold)
+            .into_iter()
+            .map(|s| s.map(source_name))
+            .collect()
+    }
+
+    /// The people of the display: (id, P per place, lost, r, (x, y, vx, vy, sigma, walk) or None).
+    #[allow(clippy::type_complexity)]
+    fn persons(&self) -> Vec<(usize, Vec<f64>, bool, f64, Option<(f64, f64, f64, f64, f64, f64)>)> {
+        self.tracker
+            .persons()
+            .into_iter()
+            .map(|p| {
+                let shown = p
+                    .shown
+                    .map(|s| (s.at[0], s.at[1], s.velocity[0], s.velocity[1], s.sigma, s.walk));
+                (p.id, p.places, p.lost, p.r, shown)
+            })
+            .collect()
+    }
+
+    /// Where they may be: (id, [[weight, x, y, sd x, sd y]], [(tile, mass per m^2)]).
+    #[allow(clippy::type_complexity)]
+    fn clouds(&self) -> Vec<(usize, Vec<[f64; 5]>, Vec<(usize, f64)>)> {
+        self.tracker
+            .clouds()
+            .into_iter()
+            .map(|c| (c.id, c.gauss, c.tiles))
+            .collect()
+    }
+
+    /// The people with tracks who are no ghost's source, (P(walking), x, y, vx, vy); per hypothesis
+    /// the walkers it holds with their place among its people; the most probable hypothesis.
+    #[allow(clippy::type_complexity)]
+    fn walkers(&self) -> (Vec<(f64, f64, f64, f64, f64)>, Vec<Vec<(usize, usize)>>, usize) {
+        let found = self.tracker.walkers();
+        let walkers = found
+            .walkers
+            .iter()
+            .map(|w| (w.walking, w.at[0], w.at[1], w.velocity[0], w.velocity[1]))
+            .collect();
+        (walkers, found.held, found.best)
+    }
+
+    /// A frame of the sensor with this id at t, whatever is in it.
+    fn heard_from(&mut self, id: &str, t: f64) {
+        self.tracker.heard_from(id, t);
+    }
+
+    /// The targets sensor si measured in a frame at t (not held, not hidden, not at the mount).
+    fn seen_frame(&mut self, si: usize, t: f64, measured: Vec<(f64, f64)>) {
+        let measured: Vec<Point> = measured.into_iter().map(|(x, y)| [x, y]).collect();
+        self.tracker.seen_frame(si, t, &measured);
+    }
+
+    /// Whether the sensor with this id sent a frame within the last limit s (start: the model's,
+    /// None: not started).
+    fn online(&self, id: &str, now: f64, start: Option<f64>, limit: f64) -> bool {
+        self.tracker.seen().online(id, now, start, limit)
+    }
+
+    /// Per observed room whether its own sensors in use all sent nothing for more than limit s.
+    fn silent(&self, now: f64, start: Option<f64>, limit: f64) -> Vec<bool> {
+        self.tracker.silent(now, start, limit)
+    }
+
+    /// Per room id the last time its own LD2450 measured somebody in it.
+    fn seen_last(&self) -> Vec<(String, f64)> {
+        self.tracker.seen().last().to_vec()
+    }
+
+    /// Per observed room whether it has an own sensor in use.
+    fn watched(&self) -> Vec<bool> {
+        self.tracker.watched()
     }
 }

@@ -202,6 +202,77 @@ pub fn lgamma(x: f64) -> f64 {
     libm::lgamma(x)
 }
 
+/// log k! for k < n as the outputs take them (filter._lgamma_table: CPython's math.lgamma(k + 1),
+/// its own Lanczos sum, which differs from libm's lgamma in the last bit for 690 of the first 2000).
+pub fn log_factorials(n: usize) -> Vec<f64> {
+    (0..n).map(|k| lanczos_lgamma(k as f64 + 1.0)).collect()
+}
+
+/// CPython's m_lgamma (Modules/mathmodule.c) for x > 0: Lanczos' approximation with g = 6.0247 and 13
+/// terms (Boost's; Godfrey's coefficients), the sum as a rational function in x (in 1/x from 5 on).
+/// The constants as CPython quotes them.
+#[allow(clippy::excessive_precision)]
+fn lanczos_lgamma(x: f64) -> f64 {
+    const G: f64 = 6.024680040776729583740234375;
+    const NUM: [f64; 13] = [
+        23531376880.410759688572007674451636754734846804940,
+        42919803642.649098768957899047001988850926355848959,
+        35711959237.355668049440185451547166705960488635843,
+        17921034426.037209699919755754458931112671403265390,
+        6039542586.3520280050642916443072979210699388420708,
+        1439720407.3117216736632230727949123939715485786772,
+        248874557.86205415651146038641322942321632125127801,
+        31426415.585400194380614231628318205362874684987640,
+        2876370.6289353724412254090516208496135991145378768,
+        186056.26539522349504029498971604569928220784236328,
+        8071.6720023658162106380029022722506138218516325024,
+        210.82427775157934587250973392071336271166969580291,
+        2.5066282746310002701649081771338373386264310793408,
+    ];
+    // x (x + 1) ... (x + 11)
+    const DEN: [f64; 13] = [
+        0.0,
+        39916800.0,
+        120543840.0,
+        150917976.0,
+        105258076.0,
+        45995730.0,
+        13339535.0,
+        2637558.0,
+        357423.0,
+        32670.0,
+        1925.0,
+        66.0,
+        1.0,
+    ];
+    if x.is_nan() {
+        return x;
+    }
+    if x.is_infinite() {
+        return f64::INFINITY;
+    }
+    if x == x.floor() && x <= 2.0 {
+        return if x <= 0.0 { f64::INFINITY } else { 0.0 };
+    }
+    if x < 1e-20 {
+        return -x.ln();
+    }
+    let (mut num, mut den) = (0.0, 0.0);
+    if x < 5.0 {
+        for (n, d) in NUM.iter().zip(&DEN).rev() {
+            num = num * x + n;
+            den = den * x + d;
+        }
+    } else {
+        for (n, d) in NUM.iter().zip(&DEN) {
+            num = num / x + n;
+            den = den / x + d;
+        }
+    }
+    let r = (num / den).ln() - G;
+    r + (x - 0.5) * ((x + G - 0.5).ln() - 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,5 +379,50 @@ mod tests {
             assert_eq!(e[i].to_bits(), vexp1(v).to_bits(), "exp {v}");
             assert_eq!(l[i].to_bits(), vlog1(v).to_bits(), "log {v}");
         }
+    }
+
+    #[test]
+    fn log_factorials_are_cpythons_lgamma_bit_for_bit() {
+        // math.lgamma(k + 1).hex() of CPython 3.13: its own Lanczos sum, not libm's
+        let want = [
+            (0, "0x0.0p+0"),
+            (2, "0x1.62e42fefa39ecp-1"),
+            (3, "0x1.cab0bfa2a2004p+0"),
+            (4, "0x1.96ca77c922cf7p+1"),
+            (5, "0x1.326643c4479cap+2"),
+            (9, "0x1.99a8921a7f7cep+3"),
+            (13, "0x1.68d5a9c3b32cdp+4"),
+            (22, "0x1.83c4faba84f05p+5"),
+            (40, "0x1.b94855c702ba1p+6"),
+            (63, "0x1.9204c51e7c761p+7"),
+            (64, "0x1.9a561e3e1a4bep+7"),
+            (99, "0x1.67225b4879462p+8"),
+            (170, "0x1.61495a1a8a1d5p+9"),
+            (500, "0x1.466a931d9ee1dp+11"),
+            (1999, "0x1.9c776338bbc50p+13"),
+        ];
+        let table = log_factorials(2000);
+        for (k, hex) in want {
+            assert_eq!(table[k], hexf(hex), "log {k}!");
+        }
+        assert_eq!(table[1], 0.0);
+        // not integers (math.lgamma(0.5), (4.75), (1e-21), (7.25))
+        for (x, hex) in [
+            (0.5, "0x1.250d048e7a1c0p-1"),
+            (4.75, "0x1.677f44aba1adep+1"),
+            (1e-21, "0x1.82d59465dffacp+5"),
+            (7.25, "0x1.c35701a50ff06p+2"),
+        ] {
+            assert_eq!(lanczos_lgamma(x), hexf(hex), "lgamma {x}");
+        }
+    }
+
+    /// A number written as Python's float.hex().
+    fn hexf(s: &str) -> f64 {
+        let (mant, exp) = s.trim_start_matches("0x").split_once('p').expect("p");
+        let (int, frac) = mant.split_once('.').expect(".");
+        let digits = u64::from_str_radix(&format!("{int}{frac}"), 16).expect("hex");
+        let e: i32 = exp.parse().expect("exponent");
+        digits as f64 * 2f64.powi(e - 4 * frac.len() as i32)
     }
 }

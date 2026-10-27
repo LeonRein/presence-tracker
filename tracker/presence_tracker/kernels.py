@@ -100,43 +100,6 @@ def gauss_predict(w, mean, cov, gow, ka, e_go, go_w, ka_w, p_stop, s2, dt, still
 
 
 @njit(cache=True)
-def poisson_binomial(ps, means, lgam):
-    """filter.Tracker._poisson_binomial (lgam[i] = lgamma(i + 1), long enough)."""
-    P, C = ps.shape
-    dist = np.zeros((C, P + 1))
-    dist[:, 0] = 1.0
-    for p in range(P):
-        for c in range(C):
-            q = ps[p, c]
-            prev = 0.0
-            for i in range(p + 2):
-                cur = dist[c, i]
-                dist[c, i] = cur * (1 - q) + prev * q
-                prev = cur
-    width = 0
-    for c in range(C):
-        if means[c] > 0:
-            width = max(width, int(means[c] + 10 * math.sqrt(means[c]) + 6))
-    if width == 0:
-        return dist
-    out = np.zeros((C, P + width))
-    for c in range(C):
-        mean = means[c]
-        if mean <= 0:
-            out[c, :P + 1] = dist[c]
-            continue
-        cut = int(mean + 10 * math.sqrt(mean) + 6)
-        lm = math.log(mean)
-        pois = np.empty(cut)
-        for k in range(cut):
-            pois[k] = math.exp(k * lm - mean - lgam[k])
-        for i in range(P + 1):
-            for k in range(cut):
-                out[c, i + k] += dist[c, i] * pois[k]
-    return out
-
-
-@njit(cache=True)
 def motion(d, dt, still_q, tau, s2, ao, slot_k, slot_q):
     """gauss.Gauss.predict: F and Q (2 modes, d, d) of one step dt - standing: the position
     diffuses (still_q per s); walking: the OU velocity (correlation time tau, stationary variance
@@ -968,7 +931,6 @@ def warm():
     imm_predict(w, mean, cov, 0.9, 0.1, 0.5, F, Q)
     gauss_predict(w, mean, cov, f(3), f((3, 4)), f(3), f(3), f((3, 4)), 0.1, 0.5, 0.2, 1e-4, 1.2, 0.9, i(1), f(1), 0.1)
     wall_moves(mean[1], cov[1], F[1], Q[1], mean[1], cov[1], walls, walls)
-    poisson_binomial(f((1, 2)), np.array([0.0, 0.5]), f(64))
     reflect(f((1, 2)), np.ones((1, 2)), walls, walls)
     crosses_wall(f((1, 2)), np.ones((1, 2)), walls, walls)
     sensor_rates(f((1, 2)), f((2, 0)), 0.0, 0.0, f((2, 2)), 0.0, 0.0, 0.1, f(4), 1e-6, 1.0, f((1, 3)), np.ones(2), 0.7)

@@ -181,7 +181,7 @@ class Discovery:
 
     async def sync(self, zones: list, watched=()):
         """The wanted discovery configs for the zones; watched: the rooms with an own sensor in use
-        (roomseen.RoomSeen.watched), their entities get the room's own availability too."""
+        (Tracker.seen.watched), their entities get the room's own availability too."""
         watched = set(watched)
         wanted = {}
         # the rooms and areas of the home; an entry room (the stairwell) is outside, it gets none

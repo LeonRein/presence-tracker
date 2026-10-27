@@ -12,10 +12,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 libm = "0.2"
 
-[features]
-# the Python shell's mirror of the hypotheses (phases 3-5): Filter::load
-mirror = []
-
 [dev-dependencies]
 flate2 = "1"
 matrixmultiply = "0.3"

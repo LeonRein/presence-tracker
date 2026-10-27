@@ -146,6 +146,19 @@ impl Kalman {
         out
     }
 
+    /// The position and velocity alone, per axis (without the tracks' offsets).
+    pub fn motion(&self) -> Kalman {
+        let d = self.dim();
+        let mut out = Kalman::zeros(2);
+        for ax in 0..2 {
+            out.mean[ax * 2..][..2].copy_from_slice(&self.mean[ax * d..][..2]);
+            for i in 0..2 {
+                out.cov[(ax * 2 + i) * 2..][..2].copy_from_slice(&self.cov[(ax * d + i) * d..][..2]);
+            }
+        }
+        out
+    }
+
     /// d: position, velocity and two per track
     pub fn dim(&self) -> usize {
         self.mean.len() / 2

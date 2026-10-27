@@ -25,14 +25,14 @@ import zlib
 
 import numpy as np
 
-from .filtermodel import FRAME, IDLE, WALK, Model, Shapes
+from .filtermodel import FRAME, IDLE, Model, Shapes
 from .frames import SensorRuntime, detections as frame_detections
 from . import kernels, ld2410
 from .gauss import Gauss
 from .hidden import Hidden, Undetected
 from . import destination
 from .pause import Pauses
-from .roomseen import RoomSeen
+from . import roomseen
 from .sensormodel import PD_MAX, SensorModel
 from .sensortracks import LOST, SensorTracks
 from .tiling import Tiling
@@ -75,27 +75,6 @@ GAP_EXACT = 120.0  # s: the end of a gap in the data is moved as always, what li
 LEAP = 15.0  # s   (_predict_gap; 7.10. 08:06, 8 people, 3 h: rooms within 0.022 of moving all as always)
 MAX_LEAPS = 2000  # longer gaps in longer leaps (8 h of 8 people: 1.7 s CPU; a week in leaps of 5 min,
                   # 8 h in leaps of 4 min put the rooms up to 0.12 off)
-
-
-_LGAMMA = np.zeros(0)
-
-
-def _lgamma_table(n: int) -> np.ndarray:
-    """lgamma(i + 1) for i < n (at least)."""
-    global _LGAMMA
-    if len(_LGAMMA) < n:
-        _LGAMMA = np.array([math.lgamma(i + 1) for i in range(max(n, 64))])
-    return _LGAMMA
-
-
-def _logsumexp(a) -> float:
-    a = np.asarray(a, dtype=float)
-    if not a.size:
-        return -math.inf
-    top = float(a.max())
-    if top == -math.inf:
-        return top
-    return top + math.log(float(np.exp(a - top).sum()))
 
 
 class Hyp:
@@ -145,11 +124,44 @@ class Hyp:
 
 class _Mirror:
     """The core's hypotheses as Python objects (Hyp, Gauss, Hidden) for what still reads them in
-    Python - the LD2410C, the outputs, the destination map, tests and tools (docs/rust-core.md 7,
-    phase 3; thrown away when they are in Rust). serial: the core's state it shows; ids: per object
-    (Python id) its index in the core; objs keeps those objects alive."""
+    Python - the destination map, tests and tools (docs/rust-core.md 7; thrown away when they are in
+    Rust). Only for reading: nothing goes back into the core. serial: the core's state it shows."""
 
-    __slots__ = ("serial", "hyps", "segs", "live", "ids", "objs")
+    __slots__ = ("serial", "hyps", "segs", "live")
+
+
+class _Seen:
+    """The rooms' own LD2450s (roomseen.py, MODEL.md 6 "Belegt") as the core keeps them, for reading:
+    the app's and the tests' view until the plan is in the core (phase 6). Silent after
+    roomseen.SILENT_AFTER s, read at each call."""
+
+    def __init__(self, tracker):
+        self._tr = tracker
+
+    @property
+    def own(self) -> dict:
+        """sensor id -> the id of its own room"""
+        return dict(self._tr._own)
+
+    @property
+    def last(self) -> dict:
+        """room id -> the last time its own LD2450 measured somebody in it"""
+        return dict(self._tr._c.seen_last())
+
+    def watched(self) -> set:
+        """The rooms with an own sensor in use: these may be silent (Home Assistant: their own availability)."""
+        return {r for r, w in zip(self._tr.rooms, self._tr._c.watched()) if w}
+
+    def silent(self, now: float, start: float | None, limit: float | None = None) -> set:
+        """The rooms whose own sensors in use all sent no frame for more than limit s (default
+        SILENT_AFTER), counted from start for one that sent nothing (None: not started, nothing silent)."""
+        limit = roomseen.SILENT_AFTER if limit is None else limit
+        return {r for r, q in zip(self._tr.rooms, self._tr._c.silent(now, start, float(limit))) if q}
+
+    def online(self, sensor_id: str, now: float, start: float | None, limit: float | None = None) -> bool:
+        """The sensor sent a frame within the last limit s (the web UI's "online" too)."""
+        limit = roomseen.SILENT_AFTER if limit is None else limit
+        return self._tr._c.online(sensor_id, now, start, float(limit))
 
 
 class Tracker:
@@ -179,7 +191,7 @@ class Tracker:
         self.learn_dest = True
         # Lernen pausieren (pause.py): in these intervals nothing of the above learns; the tracking goes on
         self.pauses = Pauses()
-        self.seen = RoomSeen(config)  # the rooms' own LD2450 (output only, MODEL.md 6 "Belegt")
+        self.seen = _Seen(self)  # the rooms' own LD2450 (output only, MODEL.md 6 "Belegt"; in the core)
         self._build()
         self.use_ghost_map(None)
         self.use_dest_map(None)
@@ -190,6 +202,7 @@ class Tracker:
     def _build(self):
         # what the sensors' LD2410C frames left goes on over a rebuild (until 0.33 the runtime held it)
         collected = {sid: self._c.ld_collect(k) for k, sid in enumerate(self.sensors)} if self._c is not None else {}
+        old = self._c
         self.world = World(self.config)
         self.sensors = [s.id for s in self.config.sensors]
         self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
@@ -209,12 +222,14 @@ class Tracker:
         loglik = self._c.loglik if self._c is not None else (0.0, 0.0)  # the evidence goes on over a rebuild
         self._c = _core(presence_core.Core, self._export())
         self._c.loglik = loglik
+        if old is not None:  # what the rooms' own LD2450s saw goes on
+            self._c.adopt_seen(old)
         for si, sid in enumerate(self.sensors):
             if sid in collected:
                 self._c.set_ld_collect(si, collected[sid])
         self._sent = None  # the sensors' state the core has
         self._mirror = None
-        self._dirty = False  # the mirror was handed out and may have been changed: loaded before the next call
+        self._out_cache = {}
 
     def _export(self) -> dict:
         """The world as this tracker built it, for the core (docs/rust-core.md 6: the WorldExport,
@@ -223,7 +238,7 @@ class Tracker:
         tl, w, m, sh = self.tiles, self.world, self.m, self.shapes
         names = ("still_noise", "kappa_switch", "speed", "speed_spread", "turn_rate", "walk_length", "arrive_rate",
                  "guest_rate", "forget_rate", "find_radius", "res_range", "res_cross", "const_share", "tau",
-                 "unseen_life", "white", "pos_every", "find_clutter", "ghost_echo", "hyp_mass")
+                 "unseen_life", "white", "pos_every", "find_clutter", "ghost_echo", "hyp_mass", "start_unknown")
         # JSON has no infinity: such numbers go as "inf", "-inf", "nan" (params.rs)
         params = {k: (v if math.isfinite(v) else str(v)) for k in names for v in [float(getattr(m, k))]}
         params.update(acquire=[[float(x) for x in a] for a in m.acquire], track_life=[float(x) for x in m.track_life],
@@ -255,7 +270,27 @@ class Tracker:
             door_list=i(tl.door_list), exits=i(tl.exits), entries=i(tl.entry_idx), region_rates=f(tl.region_rates()),
             widths=f(tl.widths), points=f(tl.points), point_tile=i(tl.point_tile), point_count=f(tl.point_count),
             sensors=[self._export_sensor(si) for si in range(len(self.sensors))],
-            rooms=f(np.where(self.room_of >= 0, self.room_of, len(self.rooms))))
+            rooms=f(np.where(self.room_of >= 0, self.room_of, len(self.rooms))), plan=self._export_plan())
+
+    def _export_plan(self) -> dict:
+        """What the outputs need of the plan (world/plan.rs, until the plan is built in the core): the
+        observed rooms with their outlines, per sensor its own room (roomseen.own_room) and whether it is
+        in use, the areas' outlines (the zones of "wird betreten" are the rooms, then the areas), per
+        tile its room, per region the age of a stay seen at a random time."""
+        def outline(z):
+            centre = None if z.center is None else tuple(map(float, z.center))
+            return z.shape, [tuple(map(float, q)) for q in z.points], centre, float(z.radius)
+        rooms = self.config.observed_rooms()
+        areas = self.config.home_zones("area")
+        index = {z.id: k for k, z in enumerate(rooms)}
+        self._own = {s.id: own for s in self.config.sensors for own in [roomseen.own_room(s, rooms)] if own is not None}
+        self._entry_ids = [z.id for z in rooms] + [z.id for z in areas]
+        tl = self.tiles
+        return dict(rooms=[(z.id, outline(z)) for z in rooms],
+                    sensors=[(s.id, index.get(self._own.get(s.id)), bool(s.enabled and s.placed))
+                             for s in self.config.sensors],
+                    areas=[outline(z) for z in areas], tile_room=np.ascontiguousarray(tl.room, dtype=np.int64),
+                    region_start=np.ascontiguousarray([tl.region_start(r) for r in range(tl.R)], dtype=float).reshape(-1))
 
     def _export_sensor(self, si: int) -> dict:
         """A sensor for the core: where it is, its sight, how well it tests a person per tile; its
@@ -302,16 +337,13 @@ class Tracker:
     # the mirror of the hypotheses (phase 3)
 
     def _call(self, name, *args):
-        """A call into the core (through _core: a panic is a CoreError); a mirror that may have been
-        changed is loaded first."""
-        if self._dirty:
-            self._push()
+        """A call into the core (through _core: a panic is a CoreError)."""
         return _core(getattr(self._c, name), *args)
 
     def _view(self) -> _Mirror:
         """The mirror of the core's state, made anew when the core changed."""
         m = self._mirror
-        if m is None or (not self._dirty and m.serial != self._c.serial):
+        if m is None or m.serial != self._c.serial:
             m = self._mirror = self._dump()
         return m
 
@@ -322,17 +354,9 @@ class Tracker:
 
     @property
     def hyps(self) -> list:
-        """The hypotheses as Python objects (a mirror of the core's): what is changed in them reaches
-        the core before its next call."""
-        m = self._view()
-        self._dirty = True
-        return m.hyps
-
-    @hyps.setter
-    def hyps(self, value):
-        m = self._view()
-        m.hyps = list(value)
-        self._dirty = True
+        """The hypotheses as Python objects, for reading (a mirror of the core's: a change in them
+        reaches nothing)."""
+        return self._view().hyps
 
     @property
     def segs(self) -> dict:
@@ -347,7 +371,6 @@ class Tracker:
         dens, mixs, hyps, tracks = _core(self._c.dump)
         m = _Mirror()
         m.serial = self._c.serial
-        m.ids, m.objs = {}, []
         tl = self.tiles
         ds, ms = {}, {}
         for k, (walk, still, region, out, clock, r, amp, keep), intensity in dens:
@@ -355,14 +378,10 @@ class Tracker:
             h.tiles = tl
             h.walk, h.still, h.region, h.out, h.clock, h.r, h._amp, h._keep = walk, still, region, out, clock, r, amp, keep
             ds[k] = h
-            m.ids[id(h)] = k
-            m.objs.append(h)
         for k, logw, mean, cov, gow, ka, slots, phantom, a, away, t in mixs:
             g = Gauss(logw, mean, cov, gow, ka, {s: j for s, j, _ in slots}, {s: v for s, _, v in slots}, phantom, a,
                       None if away is None else ds[away], t)
             ms[k] = g
-            m.ids[id(g)] = k
-            m.objs.append(g)
         m.hyps = [Hyp(logw, {s: "g" if o is None else o for s, o in tr}, {s: life for s, life, _ in gh},
                       {g: ms[j] for g, j in people}, [ds[j] for j in hidden], ds[unknown],
                       {s: ms[src] for s, _, src in gh})
@@ -377,41 +396,6 @@ class Tracker:
             m.live[si].append(seg)
         return m
 
-    def _push(self):
-        """Load the mirror's hypotheses into the core (after the LD2410C weighed them, or a test
-        changed them)."""
-        m = self._mirror
-        self._dirty = False
-        dens, dpos, mixs, mpos = [], {}, [], {}
-
-        def density(h) -> int:
-            if id(h) not in dpos:
-                dpos[id(h)] = len(dens)
-                dens.append(h)
-            return dpos[id(h)]
-
-        def mixture(g) -> int:
-            if id(g) not in mpos:
-                if g.away is not None:
-                    density(g.away)
-                mpos[id(g)] = len(mixs)
-                mixs.append(g)
-            return mpos[id(g)]
-
-        def f(a):
-            return None if a is None else np.ascontiguousarray(a, dtype=float)
-        hyps = [(float(hy.logw), [(s, None if k == "g" else k) for s, k in hy.kind.items()],
-                 [(s, f(hy.ghost[s]), mixture(hy.phantom[s])) for s in hy.ghost if s in hy.phantom],
-                 [(gid, mixture(g)) for gid, g in hy.groups.items()], [density(u) for u in hy.hidden], density(hy.ppp))
-                for hy in m.hyps]
-        dargs = [(m.ids.get(id(h)), f(h.walk), f(h.still), f(h.region), float(h.out), float(h.clock), float(h.r),
-                  type(h) is Undetected, f(h._amp), f(h._keep)) for h in dens]
-        margs = [(m.ids.get(id(g)), f(g.logw), f(g.mean), f(g.cov), f(g.gow), f(g.ka),
-                  [(s, int(j), float(g.var[s])) for s, j in g.slots.items()], bool(g.phantom), float(g.a),
-                  None if g.away is None else dpos[id(g.away)], g.t) for g in mixs]
-        _core(self._c.load, dargs, margs, hyps)
-        self._mirror = None  # the core gave the new objects their ids: read anew
-
     def _send_sensors(self):
         """The sensors' state as the core needs it for which of them watch (_live)."""
         state = [(bool(s.enabled and s.placed and s.id in self.runtime),
@@ -421,38 +405,21 @@ class Tracker:
             _core(self._c.set_sensors, state)
 
     def reset_people(self, people=None):
-        """Start over: nothing known about the people (MODEL.md 5.3, unknown_start); or people at
-        the given places ("anywhere" or a place name), nobody unknown (for tests and tools)."""
-        if people is None:
-            hidden, ppp = [], self.unknown_start()
-        else:
-            anywhere = None
-            hidden = []
-            for where in people:
-                if where == "anywhere":
-                    anywhere = anywhere or Hidden.anywhere(self.tiles)
-                    hidden.append(anywhere)
-                else:
-                    hidden.append(Hidden.at_place(self.tiles, self.world.index[where]))
-            ppp = Undetected.none(self.tiles)
-        self._clear()
-        self.hyps = [Hyp(0.0, {}, {}, {}, hidden, ppp)]
+        """Start over (in the core): nothing known about the people (MODEL.md 5.3: no known people, the
+        unknown ones anywhere, start_unknown of them expected - no fixed number: the data make known
+        people of them, through the tracks there at the start (4.1) and the ways in; without any in
+        view, whoever sits in view at the start can only be a ghost, the desk at 22:19 and 08:06; with
+        all of them behind doors more come out of the doors than anybody does, 6./7.10.: light wrongly
+        on 0.57 instead of 0.14 of 41); or people at the given places ("anywhere" or a place name),
+        nobody unknown (for tests and tools)."""
+        places = None if people is None else [None if w == "anywhere" else self.world.index[w] for w in people]
+        self._call("reset_people", self.now, places)  # no live tracks, nothing of the sensors gathered
+        self._forget()
         self.started_from = None  # the saved state the people were restored from (restore_people)
 
-    def unknown_start(self) -> Undetected:
-        """Nothing known (MODEL.md 5.3): no known people; unknown ones (5.5) as a Poisson intensity
-        with start_unknown people expected, anywhere (in view standing, their stays seen at a
-        random moment; behind doors; out). No fixed number: the data make known people of them,
-        through the tracks there at the start (4.1) and the ways in. Without any in view, whoever
-        sits in view at the start can only be a ghost (the desk at 22:19 and 08:06); with all of
-        them behind doors more come out of the doors than anybody does (6./7.10.: light wrongly
-        on 0.57 instead of 0.14 of 41)."""
-        return Undetected.anywhere(self.tiles, people=self.m.start_unknown)
-
-    def _clear(self):
-        """No live tracks, no data of the sensors gathered yet."""
+    def _forget(self):
+        """What the shell keeps of a run, after the core started over (reset_people, restore_people)."""
         self._recycled = self.now
-        self._call("clear", self.now)  # no tracks, moved to now, version 0
         self._gap_from = None  # time of a restored state: the gap to the first frame is still to predict
         self._out_cache = {}
         self._dest_learner = destination.Learner()  # the walks under way (they follow the live tracks)
@@ -479,26 +446,27 @@ class Tracker:
         recursion goes on from it, B_GarciaFernandez2018), moved on over the time between (a gap in
         the data says nothing, MODEL.md 4.4) - at the first frame if the model has not started yet.
         False, and nothing changed, if there is none or it does not fit the tiles (another floor
-        plan)."""
+        plan). The shell decodes the format, the core checks and sets it."""
         if not state or state.get("tiles") != self.tiles.fingerprint():
             return False
         try:
             unknown = {int(h["unknown"]) for h in state["hyps"]}
             objs = [(Undetected if k in unknown else Hidden).from_dict(self.tiles, d)
                     for k, d in enumerate(state["densities"])]
-            hyps = [Hyp(float(h["logw"]), {}, {}, {}, [objs[int(i)] for i in h["people"]], objs[int(h["unknown"])])
-                    for h in state["hyps"]]
+            hyps = [(float(h["logw"]), [int(i) for i in h["people"]], int(h["unknown"])) for h in state["hyps"]]
             t = float(state["t"])
         except (KeyError, ValueError, TypeError, IndexError, zlib.error, binascii.Error):
             return False
-        if (not hyps or not math.isfinite(t) or not all(math.isfinite(hy.logw) for hy in hyps)
-                or any(type(hy.ppp) is not Undetected or any(type(u) is not Hidden for u in hy.hidden) for hy in hyps)):
+        if not math.isfinite(t) or any(i < 0 for _, people, u in hyps for i in [*people, u]):
             return False
-        total = _logsumexp([hy.logw for hy in hyps])
-        for hy in hyps:
-            hy.logw -= total
-        self._clear()
-        self.hyps = hyps
+
+        def f(a):
+            return None if a is None else np.ascontiguousarray(a, dtype=float)
+        dens = [(f(o.walk), f(o.still), f(o.region), float(o.out), float(o.r), type(o) is Undetected, f(o._amp))
+                for o in objs]
+        if not self._call("restore", self.now, dens, hyps):
+            return False
+        self._forget()
         self.started_from = state
         if self.start is None:
             self._gap_from = t
@@ -534,7 +502,6 @@ class Tracker:
         self.reconfigured_from = state
         self.config = config
         self.p = config.params
-        self.seen.use(config)
         self.sensor_model.config = config
         self.sensor_model.rebuild()
         if changed is not None:
@@ -722,7 +689,7 @@ class Tracker:
             if self._gap_from is not None:  # restored: from the saved state's time to now
                 self._predict_gap(t - self._gap_from)
                 self._gap_from = None
-        self.seen.heard_from(sensor_id, t)  # its room is not silent (output only, roomseen.py)
+        self._call("heard_from", sensor_id, t)  # its room is not silent (output only, roomseen.py)
         sensor = self.config.sensor_by_id.get(sensor_id)
         rt = self.runtime.setdefault(sensor_id, SensorRuntime())
         prev = rt.last_frame
@@ -742,7 +709,9 @@ class Tracker:
         measured = {id(d) for _, d in ev.born + ev.measured} if ev else set()
         for d in dets:
             d.stale = not d.hidden and id(d) not in measured
-        self.seen.frame(sensor, t, dets)
+        # its own room is seen if it measured somebody in it (output only, roomseen.py)
+        self._call("seen_frame", self.sidx[sensor_id], t,
+                   [(float(d.pos[0]), float(d.pos[1])) for d in dets if not d.hidden and not d.stale])
         for listener in self.listeners:
             listener("frame", (sensor, t, dets))
         if ev is None or not sensor.enabled or not sensor.placed:
@@ -831,16 +800,6 @@ class Tracker:
             return
         self._flush(self.now)
         self._merge()
-
-    def _objects(self, phantoms=False) -> list:
-        """The distinct objects of all hypotheses (people; with phantoms: also the sources of ghost
-        tracks), each with the hypotheses holding it (repeated as often as they hold it); of the
-        mirror."""
-        seen = {}
-        for h, hy in enumerate(self._h):
-            for obj in hy.objects() + (list(hy.phantom.values()) if phantoms else []):
-                seen.setdefault(id(obj), (obj, []))[1].append(h)
-        return list(seen.values())
 
     # ------------------------------------------------------------ evidence
 
@@ -931,9 +890,8 @@ class Tracker:
         self._call("normalize", dropped)
 
     def hyp_weights(self) -> np.ndarray:
-        lw = np.array([h.logw for h in self._h])
-        w = np.exp(lw - lw.max())
-        return w / w.sum()
+        """The hypotheses' weights (core), summing to 1."""
+        return np.array(self._call("hyp_weights"))
 
     def check(self):
         """The bookkeeping's invariants (for tests)."""
@@ -1054,57 +1012,11 @@ class Tracker:
             rt.ld_distance = math.sqrt(max(slant * slant - dh * dh, 0.0))
         rt.ld_present = present or t - rt.ld_last_present <= p.ld2410_hold
 
-    # -------------------------------------------------------------- outputs
-
-    def _in_view(self, obj) -> np.ndarray:
-        """Mass per tile in view (n,)."""
-        if isinstance(obj, Hidden):
-            return obj.in_view()
-        out = (1 - obj.a) * obj.tile_mass(self.tiles)
-        return out + obj.a * obj.away.in_view() if obj.away is not None else out
-
-    def _room_probs(self, obj) -> np.ndarray:
-        """P(the person is in each scored room), and in view at all (last entry)."""
-        R = len(self.rooms)
-        mass = self._in_view(obj)
-        ok = self.tiles.room >= 0
-        out = np.bincount(self.tiles.room[ok], weights=mass[ok], minlength=R) if R else np.zeros(0)
-        return np.concatenate([out, [mass.sum()]])
-
-    def _place_probs(self, obj) -> np.ndarray:
-        if isinstance(obj, Hidden):
-            return obj.places()
-        out = np.zeros(len(self.world.places))
-        out[OBSERVED] = 1.0 - obj.a
-        return out + obj.a * obj.away.places() if obj.away is not None else out
-
-    @staticmethod
-    def _poisson_binomial(ps, means) -> np.ndarray:
-        """The number of people, per column: one Bernoulli per known person (ps (P, C)), plus a
-        Poisson number of unknown ones (means (C,)), cut where the rest is below 1e-9. (C, size),
-        a column's entries beyond its own cut 0."""
-        means = np.ascontiguousarray(means, dtype=float)
-        top = float(means.max()) if len(means) else 0.0
-        return kernels.poisson_binomial(np.ascontiguousarray(np.reshape(ps, (-1, len(means))), dtype=float), means,
-                                        _lgamma_table(int(top + 10 * math.sqrt(max(top, 0.0)) + 6)))
-
-    def _counts(self, per_object) -> np.ndarray:
-        """(columns, K): count distributions per column of per_object(obj) - for a known person the
-        probabilities, for the unknown ones the expected numbers - mixed over the hypotheses, all
-        columns at once."""
-        hw = self.hyp_weights()
-        objs = [obj for obj, _ in self._objects()]
-        vals = np.array([np.atleast_1d(per_object(o)) for o in objs])
-        row = {id(o): i for i, o in enumerate(objs)}
-        dists = [(w, self._poisson_binomial(vals[[row[id(o)] for o in hy.people()]], vals[row[id(hy.ppp)]]))
-                 for w, hy in zip(hw, self._h)]
-        out = np.zeros((vals.shape[1], max(d.shape[1] for _, d in dists)))
-        for w, d in dists:
-            out[:, :d.shape[1]] += w * d
-        return out
+    # -------------------------------------------------------------- outputs (MODEL.md 6; in the core)
 
     def _cached(self, name, make):
-        """Outputs are computed once per move of everybody (MAX_STEP) or event (_flush)."""
+        """What the shell still computes of the outputs ("Ziel"), once per move of everybody (MAX_STEP)
+        or event (_flush), as the core does its own."""
         key = (name, self._version)
         if self._out_cache.get(name, (None,))[0] != key:
             self._out_cache[name] = (key, make())
@@ -1112,25 +1024,16 @@ class Tracker:
 
     def count_distribution(self) -> dict:
         """room id -> [P(0 people), P(1), ...] over the observed rooms, and "_observed"."""
-        return self._cached("counts", self._count_distribution)
-
-    def _count_distribution(self) -> dict:
-        c = self._counts(self._room_probs)
-        out = {rid: c[k].tolist() for k, rid in enumerate(self.rooms)}
-        out["_observed"] = c[-1].tolist()
+        c = self._call("count_distribution")
+        out = dict(zip(self.rooms, c))
+        out["_observed"] = c[-1]
         return out
 
     def place_distribution(self) -> dict:
         """place name -> [P(0 people), P(1), ...], and "_house" (anywhere but outside)."""
-        return self._cached("places", self._place_distribution)
-
-    def _place_distribution(self) -> dict:
-        def with_house(o):
-            p = self._place_probs(o)
-            return np.append(p, p[:-1].sum())
-        c = self._counts(with_house)
-        out = {name: c[k].tolist() for k, name in enumerate(self.world.places)}
-        out["_house"] = c[-1].tolist()
+        c = self._call("place_distribution")
+        out = dict(zip(self.world.places, c))
+        out["_house"] = c[-1]
         return out
 
     def present_count(self) -> int:
@@ -1139,199 +1042,42 @@ class Tracker:
 
     def persons(self) -> list:
         """The known people of the most probable hypothesis that more probably exist than not
-        (Garcia-Fernandez et al. 2018, sec. VI), for the display: those with a track first."""
-        hy = self._h[int(np.argmax([h.logw for h in self._h]))]
-        return [self._display(k + 1, obj) for k, obj in enumerate(hy.people()) if getattr(obj, "r", 1.0) >= 0.5]
-
-    def _display(self, pid, obj) -> dict:
-        """Where to draw a person: with a measuring track the mean of the mixture (it moves as
-        smoothly as the estimate does); without, the densest tile of the most probable place."""
-        pr = self._place_probs(obj)
-        best = int(np.argmax(pr))
-        out = {"id": pid, "places": {self.world.places[i]: round(float(v), 3) for i, v in enumerate(pr) if v >= 0.005},
-               "lost": isinstance(obj, Hidden), "r": round(float(getattr(obj, "r", 1.0)), 3), "obj": obj}
-        if best != OBSERVED:
-            out.update({"x": None, "y": None, "vx": 0.0, "vy": 0.0, "sigma": 0.0, "walk": 0.0})
-            return out
-        if isinstance(obj, Hidden):
-            tl = self.tiles
-            mass = obj.in_view()
-            c = int(np.argmax(mass / tl.area))
-            x, y = tl.centers[c]
-            spread = mass @ (((tl.centers - [x, y]) ** 2).sum(axis=1) + tl.var.sum(axis=1))
-            out.update({"x": round(float(x), 3), "y": round(float(y), 3), "vx": 0.0, "vy": 0.0,
-                        "sigma": round(math.sqrt(float(spread) / max(mass.sum(), 1e-12)), 3),
-                        "walk": round(float(obj.walking().sum() / max(mass.sum(), 1e-12)), 3)})
-            return out
-        w = obj.weights()
-        pos = w @ obj.pos
-        vel = w @ obj.mean[:, :, 1]
-        spread = w @ (((obj.pos - pos) ** 2).sum(axis=1) + obj.pos_var().sum(axis=1))
-        out.update({"x": round(float(pos[0]), 3), "y": round(float(pos[1]), 3), "vx": round(float(vel[0]), 3),
-                    "vy": round(float(vel[1]), 3), "sigma": round(math.sqrt(float(spread)), 3),
-                    "walk": round(float(w[WALK]), 3)})
+        (Garcia-Fernandez et al. 2018, sec. VI), for the display: those with a track first. Where to
+        draw them: with a measuring track the mean of the mixture, without the densest tile of the most
+        probable place (the core's numbers, rounded here)."""
+        places = self.world.places
+        out = []
+        for pid, pr, lost, r, shown in self._call("persons"):
+            d = {"id": pid, "places": {places[i]: round(v, 3) for i, v in enumerate(pr) if v >= 0.005}, "lost": lost,
+                 "r": round(r, 3)}
+            if shown is None:
+                d.update({"x": None, "y": None, "vx": 0.0, "vy": 0.0, "sigma": 0.0, "walk": 0.0})
+            else:
+                x, y, vx, vy, sigma, walk = shown
+                d.update({"x": round(x, 3), "y": round(y, 3), "vx": round(vx, 3), "vy": round(vy, 3),
+                          "sigma": round(sigma, 3), "walk": round(walk, 3)})
+            out.append(d)
         return out
 
-    def _cloud(self, pid, obj) -> dict:
-        """Where a person may be, for the map: with a track their Gaussians [[weight, x, y, sd x,
-        sd y]] as they are; without (and their part gone through a door), [[tile, mass per m^2]]
-        of the tiles holding at least 0.2 % (anywhere in a tile alike: all the model knows about
+    def _clouds(self) -> list:
+        """Where the people of the display may be, for the map: with a track their Gaussians [[weight,
+        x, y, sd x, sd y]] as they are; without (and their part gone through a door), [[tile, mass per
+        m^2]] of the tiles holding at least 0.2 % (anywhere in a tile alike: all the model knows about
         where an unseen person is; the tiles' squares: /api/tiles)."""
-        tl = self.tiles
-        out = {"id": pid, "gauss": [], "tiles": []}
-        if isinstance(obj, Hidden):
-            mass = obj.in_view()
-        else:
-            sd = np.sqrt(obj.pos_var())
-            out["gauss"] = [[round(float((1 - obj.a) * w), 3), round(float(obj.pos[k][0]), 3), round(float(obj.pos[k][1]), 3),
-                             round(float(sd[k][0]), 3), round(float(sd[k][1]), 3)]
-                            for k, w in enumerate(obj.weights()) if (1 - obj.a) * w >= 0.01]
-            mass = obj.a * obj.away.in_view() if obj.away is not None else np.zeros(tl.n)
-        k = np.flatnonzero(mass > 0.002)
-        out["tiles"] = [[int(i), round(float(mass[i] / tl.area[i]), 4)] for i in k]
-        return out
+        return [{"id": pid, "gauss": [[round(v, 3) for v in g] for g in gauss],
+                 "tiles": [[i, round(m, 4)] for i, m in tiles]}
+                for pid, gauss, tiles in self._call("clouds")]
 
     # ------------------------------------------------- "about to be entered" (MODEL.md 6)
 
     def entering(self) -> dict:
         """zone id -> {"p", "eta", "distance", "person"} for the observed rooms and the areas: the
         probability that somebody walking with a track enters the zone within the look-ahead
-        (lead_time), and for the one who most probably does, the expected time
-        and distance to it and their id in the display (persons(); None if not in the most
-        probable hypothesis)."""
-        return self._cached("entering", lambda: self._entering(self.p.lead_time))
-
-    def _entry_targets(self):
-        """The zones a "wird betreten" is computed for - the observed rooms (by the tiles' rooms)
-        and the areas - as (zone ids, (sample points, zones) share of each point in each zone,
-        rasters (zones, nx, ny) of their cells)."""
-        cached = getattr(self, "_targets", None)
-        if cached is not None and cached[0] is self.tiles:
-            return cached[1:]
-        tl, w = self.tiles, self.world
-        areas = self.config.home_zones("area")
-        ids = list(self.rooms) + [z.id for z in areas]
-        A = np.zeros((len(tl.points), len(ids)))
-        masks = np.zeros((len(ids), w.nx, w.ny), dtype=bool)
-        room = tl.room[tl.point_tile]
-        for k in range(len(self.rooms)):
-            A[room == k, k] = 1.0
-            masks[k] = self.room_of == k
-        ci, cj = w.cell_of(tl.points)
-        for k, z in enumerate(areas, start=len(self.rooms)):
-            masks[k] = w.zone_mask(z)
-            A[masks[k][ci, cj], k] = 1.0
-        self._targets = (self.tiles, ids, A, masks)
-        return ids, A, masks
-
-    def _walk_ahead(self, obj, h: float):
-        """The position (mean (2,), variance (2,)) of a person's walking component h s ahead: the
-        OU velocity of MODEL.md 3.2 over one step h, the walls reflecting the move as in
-        Gauss.walls (sigma points, 5.2); door gaps are no wall."""
-        m = self.m
-        s2 = 0.5 * (m.speed ** 2 + m.speed_spread ** 2)
-        F, Q = kernels.motion(2, float(h), float(m.still_noise ** 2), 1.0 / m.turn_rate, float(s2), 0.0,
-                              np.zeros(0, dtype=np.int64), np.zeros(0))
-        F, Q = F[WALK], Q[WALK]
-        m0 = np.ascontiguousarray(obj.mean[WALK, :, :2])
-        P0 = np.ascontiguousarray(obj.cov[WALK, :, :2, :2])
-        mean = m0 @ F.T
-        cov = np.einsum("ij,ajk,lk->ail", F, P0, F) + Q[None]
-        (x0, y0), (x1, y1) = m0[:, 0].tolist(), mean[:, 0].tolist()
-        reach = math.hypot(x1 - x0, y1 - y0) + math.sqrt(8.0) * (
-            math.sqrt(max(float(P0[:, 0, 0].max()), 0.0)) + abs(F[0, 1]) * math.sqrt(max(float(P0[:, 1, 1].max()), 0.0))
-            + math.sqrt(max(Q[0, 0], 0.0)))
-        if not self.world.clear(x0, y0, reach):
-            _, mean, cov = kernels.wall_moves(m0, P0, F, Q, mean, np.ascontiguousarray(cov), self.world.walls,
-                                              self.world.wall_box)
-        return mean[:, 0], cov[:, 0, 0]
-
-    def _target_mass(self, mean, var, A) -> np.ndarray:
-        d = self.tiles.gauss_points(mean, var)
-        return np.zeros(A.shape[1]) if d is None else d @ A
-
-    def _entering(self, h: float) -> dict:
-        """entering() for the look-ahead h (s).
-
-        Per person with a track (not a ghost source), only their walking component moves on
-        (standing people sway by centimetres; getting up goes anywhere): where it is h/2 and h
-        s ahead - unless the walk ends first (rate speed / walk length, MODEL.md 3.2): then
-        where it stopped, the time of stopping on the nodes 0, h/2, h -, against where it is
-        now. Their rise in each zone, max(P(in it at h/2), P(in it at h)) - P(in it now), at
-        least 0, is the probability that they enter it within h (a lower bound of being in it
-        at some time; whoever is in it stays). People of a hypothesis are independent:
-        P(somebody enters) = 1 - prod(1 - rise), mixed over the hypotheses (5.1).
-        Deterministic, no samples."""
-        ids, A, masks = self._entry_targets()
-        Z = len(ids)
-        out = {z: {"p": 0.0, "eta": None, "distance": None, "person": None} for z in ids}
-        if not Z or h <= 0:
-            return out
-        m = self.m
-        mu = m.speed / m.walk_length
-        rise, walk = {}, {}
-        for obj, _ in self._objects():
-            if not isinstance(obj, Gauss) or obj.phantom:
-                continue
-            w = float(obj.weights()[WALK]) * (1.0 - obj.a)
-            if w < ENTER_MIN_WALK:
-                continue
-            pos, vel = obj.mean[WALK, :, 0], obj.mean[WALK, :, 1]
-            speed = math.hypot(float(vel[0]), float(vel[1]))
-            now = self._target_mass(pos, obj.cov[WALK, :, 0, 0], A)
-            half = self._target_mass(*self._walk_ahead(obj, 0.5 * h), A)
-            end = self._target_mass(*self._walk_ahead(obj, h), A)
-            # who stops stays where they stopped: the time of stopping on the three nodes
-            # (0, h/2, h), each taking the stops nearest to it
-            q1, q3 = (math.exp(-mu * h * f) for f in (0.25, 0.75))
-            at_half = (1.0 - q1) * now + q1 * half
-            at_end = (1.0 - q1) * now + (q1 - q3) * half + q3 * end
-            r = w * np.maximum(np.maximum(at_half, at_end) - now, 0.0)
-            if r.max() > 0:
-                rise[id(obj)] = r
-                walk[id(obj)] = (obj, pos.copy(), vel.copy(), speed)
-        if not rise:
-            return out
-        hw = self.hyp_weights()
-        p = np.zeros(Z)
-        share = {k: np.zeros(Z) for k in rise}
-        for wh, hy in zip(hw, self._h):
-            empty = np.ones(Z)
-            for obj in hy.people():
-                r = rise.get(id(obj))
-                if r is not None:
-                    empty *= 1.0 - r
-                    share[id(obj)] += wh * r
-            p += wh * (1.0 - empty)
-        best = self._h[int(np.argmax([h.logw for h in self._h]))]
-        display = {id(o): k + 1 for k, o in enumerate(best.people())}
-        for k, z in enumerate(ids):
-            out[z]["p"] = float(min(max(p[k], 0.0), 1.0))
-            if p[k] < 0.01:
-                continue
-            key = max(share, key=lambda q: share[q][k])
-            obj, pos, vel, speed = walk[key]
-            dist = self._ray_distance(pos, vel, masks[k])
-            out[z].update({"distance": dist, "eta": dist / speed if dist is not None and speed > 0.05 else None,
-                           "person": display.get(key)})
-        return out
-
-    def _ray_distance(self, pos, vel, mask, reach: float = 5.0, step: float = 0.05):
-        """How far a walker at pos walks in the direction of vel until they are in the zone (its
-        raster mask), if no wall is in the way and within reach; else None."""
-        speed = math.hypot(float(vel[0]), float(vel[1]))
-        if speed < 1e-6:
-            return None
-        s = np.arange(0.0, reach + step / 2, step)
-        pts = pos[None, :] + s[:, None] * (vel / speed)[None, :]
-        i, j = self.world.cell_of(pts)
-        inside = np.flatnonzero(mask[i, j])
-        if not len(inside):
-            return None
-        hit = int(inside[0])
-        if hit and self.world.crosses_wall(pos[None, :], pts[hit][None, :])[0]:
-            return None
-        return float(s[hit])
+        (lead_time), and for the one who most probably does, the expected time and distance to it and
+        their id in the display (persons(); None if not in the most probable hypothesis). In the core,
+        once per move of everybody or event."""
+        return {z: {"p": p, "eta": eta, "distance": dist, "person": person}
+                for z, (p, dist, eta, person) in zip(self._entry_ids, self._call("entering", float(self.p.lead_time)))}
 
     # ------------------------------------------------------- "Ziel" (MODEL.md 6)
 
@@ -1362,23 +1108,16 @@ class Tracker:
         return self._cached("targets", self._target_outputs)
 
     def _target_outputs(self) -> dict:
-        from .filtermodel import WALK
         geo, dm = self.dest_geo, self.dest_map
         enter = self.entering()
         p = self.p
         c_v = p.approach_cost / (p.approach_cost + 1.0)
         K = len(self.rooms)
         prior = self.m.dest_prior_walks
-        walkers = {}  # id(obj) -> (P(walking), room, space, f (C,), n, x, y, vx, vy)
-        for obj, _ in self._objects():
-            if not isinstance(obj, Gauss) or obj.phantom:
-                continue
-            pw = float(obj.weights()[WALK]) * (1.0 - obj.a)
-            if pw < ENTER_MIN_WALK:
-                continue
-            x, y = float(obj.mean[WALK, 0, 0]), float(obj.mean[WALK, 1, 0])
-            vx, vy = float(obj.mean[WALK, 0, 1]), float(obj.mean[WALK, 1, 1])
-            if math.hypot(vx, vy) < destination.MIN_SPEED:
+        found, held, best = self._call("walkers")  # the people with tracks, per hypothesis those it holds
+        walkers = {}  # walker -> (P(walking), room, space, f (C,), n, x, y, vx, vy)
+        for i, (pw, x, y, vx, vy) in enumerate(found):
+            if pw < ENTER_MIN_WALK or math.hypot(vx, vy) < destination.MIN_SPEED:
                 continue
             near = geo.around(x, y)
             if near is None:
@@ -1387,15 +1126,15 @@ class Tracker:
             cnt = dm.lookup(*near, vx, vy)
             n = float(cnt.sum())
             f = cnt / n if n > 0 else np.zeros(geo.C)
-            walkers[id(obj)] = (pw, room, int(geo.space[room]), f, n, x, y, vx, vy)
-        hw = self.hyp_weights() if self._h else []
+            walkers[i] = (pw, room, int(geo.space[room]), f, n, x, y, vx, vy)
+        hw = self.hyp_weights() if held else []
         q_map = np.zeros(K)
         num, den = np.zeros(K), np.zeros(K)
         share = {}
-        for wh, hy in zip(hw, self._h):
+        for wh, mine in zip(hw, held):
             empty = np.ones(K)
-            for obj in hy.people():
-                wk = walkers.get(id(obj))
+            for i, _ in mine:
+                wk = walkers.get(i)
                 if wk is None:
                     continue
                 pw, room, space, f, n, *_ = wk
@@ -1406,11 +1145,10 @@ class Tracker:
                 empty *= 1.0 - pk
                 num += wh * pw * n * rel
                 den += wh * pw * rel
-                share.setdefault(id(obj), np.zeros(K))
-                share[id(obj)] += wh * pw * rel * (f[:K] + 1e-3)
+                share.setdefault(i, np.zeros(K))
+                share[i] += wh * pw * rel * (f[:K] + 1e-3)
             q_map += wh * (1.0 - empty)
-        best = self._h[int(np.argmax([h.logw for h in self._h]))] if self._h else None
-        display = {id(o): k + 1 for k, o in enumerate(best.people())} if best is not None else {}
+        display = {i: k + 1 for i, k in held[best]} if held else {}
         out = {}
         for k, z in enumerate(self.rooms):
             c = min(max(self.threshold(z), 1e-6), 1.0 - 1e-6)
@@ -1445,21 +1183,13 @@ class Tracker:
         return out
 
     def occupancy(self) -> dict:
-        """Observed room id -> (occupied, source), MODEL.md 6 "Belegt": P(somebody there) above the
-        threshold c = light_cost / (light_cost + 1), or the room's own LD2450 measured somebody in it
-        within the last seen_hold s (roomseen.py). source: "filter", "ld2450", "beide" (both), None
-        if not occupied. Only an output: reads the filter, changes nothing in it."""
+        """Observed room id -> (occupied, source), MODEL.md 6 "Belegt" (in the core): P(somebody there)
+        above the threshold c = light_cost / (light_cost + 1), or the room's own LD2450 measured
+        somebody in it within the last seen_hold s (roomseen.py). source: "filter", "ld2450", "beide"
+        (both), None if not occupied. Only an output: reads the filter, changes nothing in it."""
         p = self.p
-        c = p.light_cost / (p.light_cost + 1.0)
-        counts = self.count_distribution()
-        seen = self.seen.seen(self.now, p.seen_hold)
-        out = {}
-        for z in self.rooms:
-            if z not in counts:
-                continue
-            f, s = 1 - float(counts[z][0]) > c, z in seen
-            out[z] = (f or s, "beide" if f and s else "filter" if f else "ld2450" if s else None)
-        return out
+        sources = self._call("occupancy", self.now, float(p.light_cost), float(p.seen_hold))
+        return {z: (s is not None, s) for z, s in zip(self.rooms, sources)}
 
     def zone_states(self) -> dict:
         """Per zone: the most probable number of people (observed rooms: from all hypotheses),
@@ -1469,7 +1199,7 @@ class Tracker:
         with the cost of a light switched on in vain against that of entering in the dark
         (MODEL.md 6). An observed room is also occupied while its own LD2450 measures somebody in it
         (occupancy()); its count is then at least 1, and the house's too. A room whose own sensors in
-        use all went silent (roomseen.RoomSeen.silent) is not available: no data, Home Assistant gets
+        use all went silent (Tracker.seen.silent) is not available: no data, Home Assistant gets
         "unavailable" instead of its state (ha.py); the state itself is computed as always."""
         from .zones import ZoneState
         p = self.p
@@ -1547,13 +1277,12 @@ class Tracker:
         """For the web UI: the people of the most probable hypothesis at their most probable place,
         their densities as heat maps, the sensors' raw data, the places without a sensor."""
         t = self.now
-        tracks, clouds = [], []
+        tracks = []
         for d in self.persons():
-            obj = d.pop("obj")
             room = None if d["x"] is None else next(
                 (z.id for z in self.config.zones_of("room") if z.contains(d["x"], d["y"])), None)
             tracks.append({**d, "room": room})
-            clouds.append(self._cloud(d["id"], obj))
+        clouds = self._clouds()
         sensors = {}
         for sid, rt in self.runtime.items():
             sensors[sid] = {

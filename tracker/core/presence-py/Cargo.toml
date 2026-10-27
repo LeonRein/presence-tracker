@@ -11,7 +11,7 @@ name = "presence_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-presence-core = { path = "../presence-core", features = ["mirror"] }
+presence-core = { path = "../presence-core" }
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py313"] }
 numpy = "0.30"
 

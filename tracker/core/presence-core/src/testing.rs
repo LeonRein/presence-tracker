@@ -37,11 +37,14 @@ impl Rng {
     }
 }
 
-use crate::geometry::Point;
+use crate::geometry::{Point, Shape};
 use crate::ld2410::{FLOOR, profile::expected};
 use crate::params::{Params, Shapes};
 use crate::params::{STILL, WALK};
-use crate::world::{CELL, Grid, LdExport, LdPlace, LdSight, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
+use crate::world::{
+    CELL, Grid, LdExport, LdPlace, LdSight, LdTiles, PlanExport, Raster, Room, SensorExport, SensorPlan, Tiles, World,
+    WorldExport,
+};
 
 /// What a person at each tile's centre puts into an LD2410C at `at` looking along `axis` (1.5 m
 /// above a person's height: dh2 0.64), the tiles it sees.
@@ -100,8 +103,26 @@ fn segment_distance(p: Point, [x0, y0, x1, y1]: [f64; 4]) -> f64 {
     (p[0] - x0 - t * dx).hypot(p[1] - y0 - t * dy)
 }
 
+/// A plan without rooms on these tiles: the outputs count nobody in a room (for worlds of fixtures).
+pub fn plan_without_rooms(tiles: &Tiles, sensors: usize) -> PlanExport {
+    PlanExport {
+        rooms: Vec::new(),
+        sensors: (0..sensors)
+            .map(|si| SensorPlan {
+                id: format!("s{si}"),
+                own_room: None,
+                in_use: true,
+            })
+            .collect(),
+        areas: Vec::new(),
+        tile_room: vec![None; tiles.n],
+        region_start: vec![0.0; tiles.regions * tiles.ages],
+    }
+}
+
 /// The room of test_filter.flat_config without its doors: 6 x 5 m with walls around, square tiles
-/// of TILE m nobody walks between, two sensors in the bottom corners that see the whole room.
+/// of TILE m nobody walks between, two sensors in the bottom corners that see the whole room. The
+/// room is "wohn", sensor 0 ("wohn") its own; an area "sofa" in its upper left corner (0..2 x 3..5).
 pub fn flat() -> World {
     World::from_export(flat_export()).expect("the test world fits")
 }
@@ -213,5 +234,21 @@ pub fn flat_export() -> WorldExport {
         })
         .into(),
         rooms: vec![0.0; raster.cells()],
+        plan: PlanExport {
+            rooms: vec![Room {
+                id: "wohn".into(),
+                shape: Shape::rect([0.0, 0.0], [6.0, 5.0]),
+            }],
+            sensors: [("wohn", Some(0)), ("b", None)]
+                .map(|(id, own_room)| SensorPlan {
+                    id: id.into(),
+                    own_room,
+                    in_use: true,
+                })
+                .into(),
+            areas: vec![Shape::rect([0.0, 3.0], [2.0, 5.0])],
+            tile_room: vec![Some(0); n],
+            region_start: Vec::new(),
+        },
     }
 }

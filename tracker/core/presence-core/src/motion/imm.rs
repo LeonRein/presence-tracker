@@ -12,7 +12,7 @@
 use std::f64::consts::PI;
 
 use crate::filter::densities::{Densities, Kind};
-use crate::filter::mixture::{Kalman, Mixture, collapse, log_add, weights2};
+use crate::filter::mixture::{Kalman, Mixture, Slot, collapse, log_add, weights2};
 use crate::geometry::Point;
 use crate::params::{Params, STILL, Shapes, WALK};
 use crate::vmath::pairwise_sum;
@@ -84,10 +84,10 @@ impl Square {
     }
 }
 
-/// F and Q of one step per mode (kernels.motion): standing, the position diffuses; walking, the OU
-/// velocity, exactly discretized; the tracks' wandering offsets o decay and get their noise.
-fn transition(mix: &Mixture, step: &ImmStep) -> ([Square; 2], [Square; 2]) {
-    let d = mix.dim();
+/// F and Q of one step per mode (kernels.motion) for d dimensions per axis: standing, the position
+/// diffuses; walking, the OU velocity, exactly discretized; the tracks' wandering offsets o (of these
+/// slots) decay and get their noise.
+fn transition<'a>(d: usize, slots: impl Iterator<Item = &'a Slot>, step: &ImmStep) -> ([Square; 2], [Square; 2]) {
     let mut f = [Square::identity(d), Square::identity(d)];
     let mut q = [Square::zeros(d), Square::zeros(d)];
     let (dt, tau, s2) = (step.dt, step.tau, step.s2);
@@ -104,7 +104,7 @@ fn transition(mix: &Mixture, step: &ImmStep) -> ([Square; 2], [Square; 2]) {
         0,
         2.0 * s2 * tau * (dt - 2.0 * tau * (1.0 - a) + 0.5 * tau * (1.0 - a * a)),
     );
-    for slot in mix.slots.values() {
+    for slot in slots {
         let k = slot.index + 1;
         let wander = slot.var * (1.0 - step.const_share) * (1.0 - step.ao * step.ao);
         for mode in [STILL, WALK] {
@@ -174,7 +174,7 @@ pub fn predict(
     // the stays that go on, and the IMM's mode changes
     let stayed: Vec<f64> = mix.stay.iter().zip(&step.e_go).map(|(g, e)| g * e).collect();
     let p_stay = pairwise_sum(&stayed);
-    let (f, q) = transition(mix, step);
+    let (f, q) = transition(mix.dim(), mix.slots.values(), step);
     let (w_ss, w_sw) = (w[STILL] * p_stay, w[STILL] * (1.0 - p_stay));
     let (w_ww, w_ws) = (w[WALK] * (1.0 - step.p_stop), w[WALK] * step.p_stop);
     let [still, walking] = &mix.modes;
@@ -199,7 +199,7 @@ pub fn predict(
     let tot = log_add(l0, l1);
     (l0, l1) = (l0 - tot, l1 - tot);
     if walls_and_doors {
-        reflect_at_walls(world, mix, &walk0, &f[WALK], &q[WALK]);
+        reflect_at_walls(world, &walk0, &mut mix.modes[WALK], &f[WALK], &q[WALK]);
         let walking = weights2(l0, l1)[WALK];
         if let Some(rate) = door_rates(world, &mix.modes[WALK], walking) {
             let total = rate.iter().fold(0.0, |s, &x| s + x);
@@ -219,14 +219,26 @@ pub fn predict(
     mix.logw = [l0, l1];
 }
 
+/// Where a walker's walking component is h s ahead (Tracker._walk_ahead; MODEL.md 6 "wird betreten"):
+/// the OU velocity of 3.2 over one step h, the walls reflecting the move as in the prediction (door
+/// gaps are no wall). The mean and variance per axis of its position.
+pub fn walk_ahead(world: &World, walking: &Kalman, h: f64) -> (Point, Point) {
+    let before = walking.motion();
+    let step = ImmStep::new(&world.params, &world.shapes, h);
+    let (f, q) = transition(before.dim(), std::iter::empty(), &step);
+    let mut after = linear(&before, &f[WALK], &q[WALK]);
+    reflect_at_walls(world, &before, &mut after, &f[WALK], &q[WALK]);
+    (after.pos(), after.pos_var())
+}
+
 /// Walls reflect the walking component's motion (kernels.wall_moves; MODEL.md 3.2, 5.2): the
 /// augmented unscented transform with the 16 cubature points of position, velocity and noise per
 /// axis (Saerkkae & Svensson 2023 alg. 8.16 / 8.11), moved, mirrored at the walls (the velocity
 /// too), matched again; the offsets follow by regression. Where the component already was stays as
-/// it is, only the motion meets the walls. Only if a wall is within reach of the motion.
-fn reflect_at_walls(world: &World, mix: &mut Mixture, before: &Kalman, f: &Square, q: &Square) {
+/// it is, only the motion meets the walls. Only if a wall is within reach of the motion. `before` and
+/// `after`: the walking component before the step and after its linear prediction.
+fn reflect_at_walls(world: &World, before: &Kalman, after: &mut Kalman, f: &Square, q: &Square) {
     let d = before.dim();
-    let after = &mix.modes[WALK];
     let from = before.pos();
     let to = after.pos();
     let p0 = |ax: usize, i: usize, j: usize| before.cov[(ax * d + i) * d + j];
@@ -291,7 +303,6 @@ fn reflect_at_walls(world: &World, mix: &mut Mixture, before: &Kalman, f: &Squar
             post[ax][1] -= 2.0 * vn * normal[ax];
         }
     }
-    let after = &mut mix.modes[WALK];
     for ax in 0..2 {
         let mut mu = [0.0; 2];
         for p in &post {
@@ -383,4 +394,35 @@ fn go_through_doors(densities: &mut Densities, mix: &mut Mixture, moved: f64, ra
         away.region[r * ages] += moved / (a + moved) * rate_r / total;
     }
     *away.out += moved / (a + moved) * rate[regions] / total;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing;
+
+    /// A walking component at `at` with velocity v (position variance 0.01, velocity 0.05).
+    fn walking(at: Point, v: Point) -> Kalman {
+        let mut g = Kalman::zeros(2);
+        for ax in 0..2 {
+            let (mean, cov) = g.axis_mut(ax);
+            (mean[0], mean[1], cov[0], cov[3]) = (at[ax], v[ax], 0.01, 0.05);
+        }
+        g
+    }
+
+    #[test]
+    fn a_walker_ahead_follows_the_ou_velocity_and_walls_turn_them_back() {
+        let world = testing::flat();
+        let p = &world.params;
+        let (h, tau) = (1.5, 1.0 / p.turn_rate);
+        // in the open: the mean velocity decays over tau (MODEL.md 3.2)
+        let (at, var) = walk_ahead(&world, &walking([3.0, 2.5], [0.5, 0.0]), h);
+        assert!((at[0] - (3.0 + tau * (1.0 - (-h / tau).exp()) * 0.5)).abs() < 1e-12 && at[1] == 2.5);
+        assert!(var[0] > 0.01 && var[0] == var[1]);
+        // towards the wall at x = 6 m: mirrored at it, the mean stays inside
+        let (at, _) = walk_ahead(&world, &walking([5.6, 2.5], [1.5, 0.0]), h);
+        let free = 5.6 + tau * (1.0 - (-h / tau).exp()) * 1.5;
+        assert!(free > 6.0 && at[0] < 6.0, "{at:?}");
+    }
 }

@@ -433,13 +433,6 @@ class Hidden:
         return kernels.hidden_distance(float(self.r), self.walk, self.still, self.region, float(self.out), float(other.r),
                                        other.walk, other.still, other.region, float(other.out))
 
-    def in_view(self) -> np.ndarray:
-        """Expected number per tile in view (n,): r x the mass."""
-        return self.r * (self.walk + self.still.sum(axis=(0, 1)))
-
-    def walking(self) -> np.ndarray:
-        return self.r * self.walk
-
     def places(self) -> np.ndarray:
         """Probability per place (observed, regions..., outside); 1 - r: nowhere (does not exist)."""
         return self.r * np.concatenate([[(self.walk.sum() + self.still.sum())], self.region.sum(axis=1), [self.out]])

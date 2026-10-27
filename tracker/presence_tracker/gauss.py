@@ -240,14 +240,6 @@ class Gauss:
         d2 = (self.pos - np.asarray(z)[None, :]) ** 2
         return np.prod(np.sqrt(radius ** 2 / v) * np.exp(-0.5 * d2 / v), axis=1)
 
-    def tile_mass(self, tiles) -> np.ndarray:
-        """(n,) probability of each tile, mixed over the modes."""
-        out = np.zeros(tiles.n)
-        for k, w in enumerate(self.weights()):
-            if w > 0:
-                out += w * tiles.gauss_mass(self.pos[k], self.pos_var()[k])
-        return out
-
     # ------------------------------------------------------------ dynamics
 
     def predict(self, dt: float, m, shapes, tiles=None):

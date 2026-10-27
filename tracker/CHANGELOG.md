@@ -2,6 +2,45 @@
 
 ## Unveröffentlicht
 
+## 0.35.0 (Branch `rust-core`, Phase 5 des Rust-Kerns, nicht live)
+
+- **Die Ausgaben im Kern** (`core/presence-core/src/outputs.rs`, MODEL.md 6): Zähl- und Ortsverteilungen (je
+  Objekt die Masse in Sicht bzw. je Ort, Poisson-Binomial der Bekannten mit den Unbekannten; log k! wie CPythons
+  `math.lgamma`, eigener Lanczos-Code, der bei 690 von 2000 Ganzzahlen von libm abweicht), Belegt (Filter oder der
+  LD2450 des Raums), *wird betreten* (der Gehende über die lineare Vorhersage und die Wände der IMM:
+  `motion::imm::walk_ahead`, `reflect_at_walls` jetzt auf `(&Kalman vorher, &mut Kalman nachher)`), Personen und
+  Wolken der Anzeige, ungerundet – die Hülle rundet (Leon).
+- **Neu gerechnet genau dann, wann 0.34.1 neu rechnete:** `OutputCache` (Zähl-, Ortsverteilungen, *wird betreten*)
+  hängt am `epoch` des Filters; der zählt jetzt nur noch hoch, auch `clear` zählt weiter statt auf 0 (Leon: kein
+  alter Cache kann mit einer neuen Epoche 0 verwechselt werden). Personen und Belegt je Aufruf wie bisher.
+- **RoomSeen im Kern** (`room_seen.rs`): Räume und Sensoren über ihre IDs, folgt einer neuen Welt und geht über
+  den Neubau der Hülle (`Core.adopt_seen`). Was der Kern vom Plan braucht (beobachtete Räume mit Umriss, eigener
+  Raum je Sensor, Bereiche, Raum je Kachel, `region_start`) kommt bis Phase 6 aus dem Export (`world/plan.rs`,
+  `geometry::Shape`). `light_cost`, `seen_hold`, `lead_time` und `roomseen.SILENT_AFTER` gibt die Hülle je Aufruf
+  mit – 0.34.1 las sie je Aufruf.
+- **Nichts schreibt mehr über den Spiegel:** `reset_people`/`restore_people` im Kern (`filter/start.rs`: nichts
+  bekannt, Personen an Orten, geprüfter gespeicherter Zustand; die Hülle dekodiert nur das Format); `hyps` nur
+  lesend; `Core.load`, das Cargo-Feature `mirror` und `_push` gelöscht (`filter/mirror.rs` nur noch für Rust-Tests).
+  Tests: `test_restart`/`test_existence` bauen einen gespeicherten Zustand (`saved`) und nehmen `restore_people`;
+  `test_robust` verdirbt die Gewichte mit `Core.spoil_weights_for_test`.
+- **Hülle:** `zone_states` und `snapshot` setzen nur noch zusammen (Regionen, Bereiche, bewegt/ruhig aus den
+  gerundeten Personen wie bisher); „Ziel“ bleibt Python bis Phase 8, liest aber `Core.walkers()` statt des
+  Spiegels. `roomseen.py` nur noch `own_room` und die Konstanten. Gelöscht: `_counts`, `_poisson_binomial`,
+  `_lgamma_table`, `_logsumexp`, `_in_view`, `_room_probs`, `_place_probs`, `_display`, `_cloud`, `_entry_targets`,
+  `_walk_ahead`, `_target_mass`, `_entering`, `_ray_distance`, `_objects`, `unknown_start`; `kernels.poisson_binomial`,
+  `Hidden.in_view/walking`, `Gauss.tile_mass`; `persons()` ohne `obj` (kein Benutzer). `restore_people` lehnt
+  negative Indizes ab (vorher von hinten gezählt).
+- **Prüfung:** Referenz 0.34.1 mit numpy wie auf inge (`NPY_DISABLE_CPU_FEATURES="X86_V4 AVX512_ICL"`: auf hermann
+  rechnet numpy `exp` mit AVX-512, 4,6 % der Werte im letzten Bit anders als libm; `OPENBLAS_CORETYPE=Haswell`
+  stürzt auf Zen 5 bei großen Produkten ab, BLAS also wie auf hermann). Alle drei Stunden: Gewichte, counts, places,
+  P(belegt) und alle Zonenfelder bitgleich außer *wird betreten*/Ziel (`p_enter`, `p_target`, `eta`: ≤ 1,8e-15 in
+  1–34 von ~3400 Sekunden, keine Entscheidung gekippt; 0.34.1 rechnete dort mit BLAS-Produkten und `einsum`, deren
+  Reihenfolge vom BLAS-Kern der Maschine abhängt). zone_states, snapshot, entering, persons, occupancy je Sekunde
+  über die Stunde 10.10. 12 Uhr (`rust-port/outtrace.py`, `cmpout.py`): Snapshot und Belegt bitgleich, mit 1e-12
+  Toleranz 0 Felder. Mit numpy auf AVX-512: Ausgaben ≤ 4,4e-16 anders, über die Stunde nicht wachsend.
+- **Messung:** `ab.sh 1200` 21,3 s gegen 48,3 s (0.31.1), −56 %; gegen 0.34.1 (eigene venv) 27,4 → 21,5 s (−22 %);
+  gegen 0.30.0 (56,9 s) 2,67× – das Ziel von AUFTRAG 1.3 (≤ 22,8 s). 73 Rust-, 225 Python-Tests.
+
 ## 0.34.1 (Branch `rust-core`, nach Leons Prüfung von Phase 4, nicht live)
 
 - **Referenz aus Python 16d148f** (`core/presence-core/fixtures/ld_reference.py`, `.json.gz`, Test

@@ -3,11 +3,13 @@
 //! step borrows it.
 
 pub mod ld;
+pub mod plan;
 pub mod raster;
 pub mod sight;
 pub mod tiles;
 
 pub use ld::{LdPlace, LdSight, LdTiles};
+pub use plan::{Plan, PlanExport, Room, SensorPlan};
 pub use raster::{CELL, Grid, Raster};
 pub use sight::Sight;
 pub use tiles::{DoorTile, POINT, Tiles};
@@ -38,6 +40,7 @@ pub struct World {
     pub rooms: Grid,
     /// the LD2410C's likelihood (its tables are built once)
     pub ld_lik: Likelihood,
+    pub plan: Plan,
 }
 
 /// What the Python tracker built (docs/rust-core.md 6): the world handed over while the build is
@@ -54,6 +57,8 @@ pub struct WorldExport {
     pub sensors: Vec<SensorExport>,
     /// per cell its room, the last index for none
     pub rooms: Vec<f64>,
+    #[cfg_attr(test, serde(skip))]
+    pub plan: PlanExport,
 }
 
 /// A sensor as the Python tracker built it: where it is, where its sight lines start, its sight per
@@ -84,6 +89,7 @@ impl WorldExport {
     /// range, each cell's room one of the rooms of a sensor's view (Err names what does not).
     pub fn check(&self) -> Result<(), String> {
         self.params.validate()?;
+        Plan::check(&self.plan, &self.tiles, self.sensors.len())?;
         let cells = self.raster.nx * self.raster.ny;
         let (t, n) = (&self.tiles, self.tiles.n);
         let below = |idx: &[usize], top: usize| idx.iter().all(|&i| i < top);
@@ -183,6 +189,8 @@ impl World {
             })
             .unzip();
         let ld_lik = Likelihood::new(&e.params);
+        let rooms = Grid::new(raster, e.rooms);
+        let plan = Plan::new(e.plan, raster, &rooms, &e.tiles);
         Ok(Self {
             params: e.params,
             shapes: e.shapes,
@@ -193,8 +201,9 @@ impl World {
             tiles: e.tiles,
             sights,
             ld,
-            rooms: Grid::new(raster, e.rooms),
+            rooms,
             ld_lik,
+            plan,
         })
     }
 

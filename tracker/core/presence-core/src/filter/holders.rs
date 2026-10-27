@@ -94,6 +94,20 @@ impl Holders {
         }
     }
 
+    /// The number of entries (objects held, sources of ghost tracks too).
+    pub fn len(&self) -> usize {
+        self.objects.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.objects.is_empty()
+    }
+
+    /// The objects by entry.
+    pub fn objects(&self) -> &[Obj] {
+        &self.objects
+    }
+
     pub fn entries(&self, sources: bool) -> impl Iterator<Item = (usize, Obj)> + '_ {
         self.objects
             .iter()

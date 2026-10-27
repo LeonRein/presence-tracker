@@ -8,7 +8,7 @@ import math
 import numpy as np
 
 from presence_tracker.filter import Tracker
-from presence_tracker.hidden import Hidden
+from presence_tracker.hidden import Hidden, Undetected
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
 
@@ -20,6 +20,15 @@ def sitting_two(config, end):
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.6, 1.0), start=1, pauses={2: end}))
     b = Person(walk((-1.0, 4.0), FLUR_DOOR, (2.0, 2.5), (2.1, 2.5), start=20, pauses={2: end}))
     return [a, b]
+
+
+def saved(tracker, people, t: float = 0.0) -> dict:
+    """A saved state (Tracker.people_state's format) of one hypothesis: these known people (Hidden),
+    nobody unknown - how a test puts people where it wants them (the core's state is written only by
+    the filter)."""
+    tl = tracker.tiles
+    return {"t": t, "tiles": tl.fingerprint(), "densities": [h.to_dict() for h in people] + [Undetected.none(tl).to_dict()],
+            "hyps": [{"logw": 0.0, "people": list(range(len(people))), "unknown": len(people)}]}
 
 
 def two_in_the_room(dist) -> float:
@@ -91,7 +100,7 @@ def test_a_gap_moves_everybody_on():
     h = Hidden(crowd.tiles)
     h.still[:, :, crowd.tiles.cell_near((3.0, 2.5))] = crowd.shapes.stay_prior(ongoing=True)
     h._normalize()
-    crowd.hyps[0].hidden = [h]
+    assert crowd.restore_people(saved(crowd, [h]))
     state = crowd.people_state()
 
     def after(gap, exact=False):
@@ -170,11 +179,9 @@ def test_saving_the_people_changes_nothing():
     ka[:, a] = g.kw
     g.ka = ka
     h, other = g.to_tiles(tl), g.to_tiles(tl)
-    for _ in range(5):  # moving on defers the mixing of the amplitude (Hidden._keep)
-        h.move(1.0)
-        other.move(1.0)
-    assert h._keep is not None and other._keep is not None
-    crowd.hyps[0].hidden = [h, other]
+    assert h.measured and crowd.restore_people(saved(crowd, [h, other]))
+    for k in range(1, 26):  # moving on defers the mixing of the amplitude (Hidden._keep)
+        crowd.step(0.2 * k)
 
     def raw():
         return [np.copy(x) for u in crowd._h[0].hidden for x in (u._amp, u._keep, u.still)]

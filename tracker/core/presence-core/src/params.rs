@@ -88,6 +88,9 @@ pub struct Params {
     #[serde(deserialize_with = "real")]
     pub ghost_echo: f64,
     pub ghost_types: Vec<[f64; 2]>,
+    // 5.3 nothing known: the unknown people expected at a start
+    #[serde(deserialize_with = "real")]
+    pub start_unknown: f64,
     // 5.5 a known person's record expires where no sensor could test it
     #[serde(deserialize_with = "real")]
     pub unseen_life: f64,
@@ -191,6 +194,7 @@ impl Default for Params {
             },
             ghost_echo: 3e-4,
             ghost_types: vec![[0.4 * 1.8e-5, 3.0], [0.6 * 1.8e-5, 39.0]],
+            start_unknown: 1.0,
             unseen_life: 120.0,
             max_hyps: 12,
             hyp_mass: 1e-7,
@@ -275,6 +279,10 @@ impl Params {
                     !self.ld_echo_amps.is_empty() && self.ld_echo_amps.iter().all(|&a| a > 0.0),
                 ),
                 ("ld_tile_mass", self.ld_tile_mass >= 0.0),
+                (
+                    "start_unknown",
+                    self.start_unknown >= 0.0 && self.start_unknown.is_finite(),
+                ),
                 ("give_up", (0.0..=1.0).contains(&self.give_up)),
                 ("max_hyps", self.max_hyps >= 1),
                 (

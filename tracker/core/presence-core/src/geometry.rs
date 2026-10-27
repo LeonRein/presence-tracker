@@ -1,4 +1,5 @@
-//! Plane geometry of the plan (MODEL.md 2): walls as segments, moves mirrored at them.
+//! Plane geometry of the plan (MODEL.md 2): walls as segments, moves mirrored at them; the outlines of
+//! the zones.
 
 pub type Point = [f64; 2];
 
@@ -105,6 +106,78 @@ impl Walls {
     }
 }
 
+/// A zone's outline (geometry.Shape): a rectangle by two corners, a circle, or a polygon.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Shape {
+    Rect {
+        lo: Point,
+        hi: Point,
+    },
+    Circle {
+        center: Point,
+        radius: f64,
+    },
+    /// with its bounding box (None without corners)
+    Polygon {
+        corners: Vec<Point>,
+        bounds: Option<[f64; 4]>,
+    },
+}
+
+impl Shape {
+    /// A rectangle by any two opposite corners.
+    pub fn rect(a: Point, b: Point) -> Self {
+        Self::Rect {
+            lo: [a[0].min(b[0]), a[1].min(b[1])],
+            hi: [a[0].max(b[0]), a[1].max(b[1])],
+        }
+    }
+
+    pub fn polygon(corners: Vec<Point>) -> Self {
+        let bounds = (!corners.is_empty()).then(|| {
+            corners.iter().fold(
+                [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
+                |[x0, y0, x1, y1], &[x, y]| [x0.min(x), y0.min(y), x1.max(x), y1.max(y)],
+            )
+        });
+        Self::Polygon { corners, bounds }
+    }
+
+    /// Whether the point is inside (geometry.Shape.contains without a margin; the outline grown or
+    /// shrunk by one comes with the plan, phase 6). A circle by Rust's hypot (CPython's own may
+    /// differ in the last bit: only a point on the outline could tell).
+    pub fn contains(&self, [x, y]: Point) -> bool {
+        match self {
+            Self::Rect { lo, hi } => lo[0] <= x && x <= hi[0] && lo[1] <= y && y <= hi[1],
+            Self::Circle { center, radius } => (x - center[0]).hypot(y - center[1]) <= *radius,
+            Self::Polygon { corners, bounds } => {
+                // far outside its box a point is not inside, whatever the edges say
+                let far = 1e-6;
+                if let Some([x0, y0, x1, y1]) = *bounds
+                    && (x < x0 - far || x > x1 + far || y < y0 - far || y > y1 + far)
+                {
+                    return false;
+                }
+                in_polygon([x, y], corners)
+            }
+        }
+    }
+}
+
+/// Even-odd rule (geometry.point_in_polygon): the edges crossed by a ray from the point to the right.
+fn in_polygon([x, y]: Point, corners: &[Point]) -> bool {
+    let mut inside = false;
+    let mut j = corners.len().wrapping_sub(1);
+    for (i, &[xi, yi]) in corners.iter().enumerate() {
+        let [xj, yj] = corners[j];
+        if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +201,27 @@ mod tests {
             walls.crosses(&[[0.0, 0.0], [0.0, 0.5]], &[[1.5, 0.0], [0.5, 0.5]]),
             [true, false]
         );
+    }
+
+    #[test]
+    fn a_point_is_inside_an_outline_as_the_python_plan_says() {
+        let rect = Shape::rect([2.0, 3.0], [0.0, 1.0]);
+        assert!(rect.contains([0.0, 1.0]) && rect.contains([2.0, 2.0]) && !rect.contains([2.0001, 2.0]));
+        let circle = Shape::Circle {
+            center: [1.0, 1.0],
+            radius: 0.5,
+        };
+        assert!(circle.contains([1.5, 1.0]) && !circle.contains([1.4, 1.4]));
+        // an L: the notch is outside
+        let l = Shape::polygon(vec![
+            [0.0, 0.0],
+            [2.0, 0.0],
+            [2.0, 1.0],
+            [1.0, 1.0],
+            [1.0, 2.0],
+            [0.0, 2.0],
+        ]);
+        assert!(l.contains([0.5, 1.5]) && l.contains([1.5, 0.5]) && !l.contains([1.5, 1.5]));
+        assert!(!l.contains([3.0, 0.5]) && !Shape::polygon(Vec::new()).contains([0.0, 0.0]));
     }
 }
