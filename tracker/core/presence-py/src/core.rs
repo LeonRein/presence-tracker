@@ -15,10 +15,11 @@ use presence_core::filter::hyp::{GroupId, Owner};
 use presence_core::filter::mirror::{MirrorHyp, MirrorMixture, MirrorState};
 use presence_core::filter::mixture::{Kalman, Mixture, MixtureId, NewTrack, SegId, Slot};
 use presence_core::filter::pool::PoolId;
+use presence_core::ld2410::CELLS;
 use presence_core::params::{LostKind, Params, Shapes};
 use presence_core::sensors::{SensorSet, SensorState};
-use presence_core::tracker::{TrackEvents, Tracker};
-use presence_core::world::{DoorTile, Raster, SensorExport, Tiles, World, WorldExport};
+use presence_core::tracker::{LdCollect, TrackEvents, Tracker};
+use presence_core::world::{DoorTile, LdExport, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
 
 fn item<'py>(d: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
     d.get_item(key)?
@@ -102,24 +103,9 @@ fn world_from(e: &Bound<'_, PyDict>) -> PyResult<World> {
         point_count: floats(e, "point_count")?,
         walk_end: Vec::new(),
     };
-    type SensorIn<'py> = (
-        f64,
-        f64,
-        f64,
-        f64,
-        PyReadonlyArrayDyn<'py, f64>,
-        PyReadonlyArrayDyn<'py, f64>,
-    );
-    let sensors = number::<Vec<SensorIn<'_>>>(e, "sensors")?
-        .into_iter()
-        .map(|(x, y, ox, oy, grid, observed)| {
-            Ok(SensorExport {
-                at: [x, y],
-                origin: [ox, oy],
-                grid: grid.as_slice()?.to_vec(),
-                observed: observed.as_slice()?.to_vec(),
-            })
-        })
+    let sensors = item(e, "sensors")?
+        .try_iter()?
+        .map(|d| sensor_from(&d?.cast_into::<PyDict>()?))
         .collect::<PyResult<_>>()?;
     let export = WorldExport {
         params,
@@ -129,8 +115,43 @@ fn world_from(e: &Bound<'_, PyDict>) -> PyResult<World> {
         wall_dist: floats(e, "wall_dist")?,
         tiles,
         sensors,
+        rooms: floats(e, "rooms")?,
     };
     Ok(World::from_export(export))
+}
+
+/// A sensor of the world's export: where it is and its sight; its LD2410C's axis, height above a
+/// person, line of sight, measured view of the rooms and tiles.
+fn sensor_from(d: &Bound<'_, PyDict>) -> PyResult<SensorExport> {
+    let pair = |key: &str| -> PyResult<[f64; 2]> {
+        let (x, y): (f64, f64) = number(d, key)?;
+        Ok([x, y])
+    };
+    let rows = |key: &str| -> PyResult<Vec<[f64; CELLS]>> {
+        let v = floats(d, key)?;
+        Ok(v.as_chunks::<CELLS>().0.to_vec())
+    };
+    let view = match item(d, "ld_view")? {
+        v if v.is_none() => None,
+        v => Some(v.extract::<PyReadonlyArrayDyn<'_, f64>>()?.as_slice()?.to_vec()),
+    };
+    Ok(SensorExport {
+        at: pair("at")?,
+        origin: pair("origin")?,
+        grid: floats(d, "grid")?,
+        observed: floats(d, "observed")?,
+        ld: LdExport {
+            axis: pair("ld_axis")?,
+            dh2: number(d, "ld_dh2")?,
+            los: floats(d, "ld_los")?,
+            view,
+            tiles: LdTiles {
+                idx: ints(d, "ld_idx")?,
+                still: rows("ld_still")?,
+                walk: rows("ld_walk")?,
+            },
+        },
+    })
 }
 
 fn not_finite(e: NotFinite) -> PyErr {
@@ -638,6 +659,98 @@ impl Core {
             );
         }
         Ok((densities, mixtures, hyps, tracks))
+    }
+
+    /// The energies of a frame of sensor si's LD2410C (move_gates, still_gates; None: none in it),
+    /// and whether the housing's LD2450 has something in sight.
+    fn ld_frame(&mut self, si: usize, t: f64, gates: Option<([f64; 9], [f64; 9])>, target: bool) {
+        self.tracker
+            .ld_frame(si, t, gates.as_ref().map(|(m, s)| (m, s)), target);
+        self.changed();
+    }
+
+    /// The energies of sensor si's last LD2410C frame that counted (16), or None.
+    fn ld_last<'py>(&self, py: Python<'py>, si: usize) -> PyResult<Option<Out<'py>>> {
+        self.tracker
+            .ld_collect(si)
+            .last
+            .map(|e| array(py, &e, &[CELLS]))
+            .transpose()
+    }
+
+    /// What sensor si's LD2410C frames left: (t, last energies, target_t).
+    fn ld_collect(&self, si: usize) -> (f64, Option<Vec<f64>>, f64) {
+        let c = self.tracker.ld_collect(si);
+        (c.t, c.last.map(|e| e.to_vec()), c.target_t)
+    }
+
+    fn set_ld_collect(&mut self, si: usize, collect: (f64, Option<[f64; CELLS]>, f64)) {
+        let (t, last, target_t) = collect;
+        self.tracker.set_ld_collect(si, LdCollect { t, last, target_t });
+    }
+
+    /// The sensors whose LD2410C has gathered long enough to be weighed.
+    fn ld_due(&self) -> Vec<usize> {
+        self.tracker.ld_due()
+    }
+
+    /// What sensor si's LD2410C gathered since its last weighing: (time, t_unc, t_e, t_le, t_cens,
+    /// t_target), or None.
+    #[allow(clippy::type_complexity)]
+    fn ld_stats(&self, si: usize) -> Option<(f64, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, f64)> {
+        self.tracker.filter().ld_stats(si).map(|s| {
+            (
+                s.time,
+                s.t_unc.to_vec(),
+                s.t_e.to_vec(),
+                s.t_le.to_vec(),
+                s.t_cens.to_vec(),
+                s.t_target,
+            )
+        })
+    }
+
+    /// Weighs by the LD2410C si's frames given its background b and its echo sources' rate; what the
+    /// background learns: (mus (H x 16), prior_w, nobody, echo_off, began, (time, t_e, t_cens,
+    /// t_target), alpha, target_t), or None.
+    #[allow(clippy::type_complexity)]
+    fn ld_weigh<'py>(
+        &mut self,
+        py: Python<'py>,
+        si: usize,
+        b: [f64; CELLS],
+        rate: f64,
+        learn: bool,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        self.changed();
+        let Some((l, target_t)) = self.tracker.ld_weigh(si, &b, rate, learn).map_err(not_finite)? else {
+            return Ok(None);
+        };
+        let mus: Vec<f64> = l.mus.iter().flatten().copied().collect();
+        let st = &l.stats;
+        let alpha = self.tracker.world().ld_lik.alpha;
+        let out = (
+            array(py, &mus, &[l.mus.len(), CELLS])?,
+            array(py, &l.prior_w, &[l.prior_w.len()])?,
+            l.nobody,
+            l.echo_off,
+            l.began,
+            (
+                st.time,
+                array(py, &st.t_e, &[CELLS])?,
+                array(py, &st.t_cens, &[CELLS])?,
+                st.t_target,
+            ),
+            array(py, &alpha, &[CELLS])?,
+            target_t,
+        );
+        Ok(Some(out.into_pyobject(py)?.into_any()))
+    }
+
+    /// The LD2410C of sensor si starts over (recalibrated).
+    fn ld_reset(&mut self, si: usize) {
+        self.tracker.ld_reset(si);
+        self.changed();
     }
 
     /// The hypotheses from the shell's mirror (Filter::load): ValueError if they do not fit.

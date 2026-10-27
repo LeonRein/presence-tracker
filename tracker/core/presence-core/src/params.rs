@@ -101,6 +101,35 @@ pub struct Params {
     /// s: motion is cut into parts no longer than this (filter.MAX_STEP)
     #[serde(deserialize_with = "real")]
     pub max_step: f64,
+    // 4.3 the LD2410C: per mode [STILL, WALK] the profile (A, n, delta, sigma, tail, ell) of the
+    // moving and the still cells, the beam (degrees: full, none), the Gamma shape and the
+    // correlation time (moving, still), the common gain's prior (moving, still) and bursts (shape,
+    // gain, weight)
+    pub ld_moving: [[f64; 6]; 2],
+    pub ld_still: [[f64; 6]; 2],
+    pub ld_beam: [f64; 2],
+    pub ld_shape: [f64; 2],
+    pub ld_tau: [f64; 2],
+    pub ld_gain: [f64; 2],
+    pub ld_burst: [f64; 3],
+    /// s: the energies are weighed this often
+    #[serde(deserialize_with = "real")]
+    pub ld_every: f64,
+    /// s: a frame of the LD2410C stands for this long
+    #[serde(deserialize_with = "real")]
+    pub ld_frame: f64,
+    /// s: the still energies follow a person with this time constant
+    #[serde(deserialize_with = "real")]
+    pub ld_memory: f64,
+    // echo sources: mean life s, its stages, the slants (from, to, step m) and amplitudes
+    #[serde(deserialize_with = "real")]
+    pub ld_echo_life: f64,
+    pub ld_echo_stages: usize,
+    pub ld_echo_ranges: [f64; 3],
+    pub ld_echo_amps: Vec<f64>,
+    /// a tile holding less of a person standing is weighed at its mean amplitude (filter.LD_TILE_MASS)
+    #[serde(deserialize_with = "real")]
+    pub ld_tile_mass: f64,
     /// s: the end of a gap in the data is moved as always, what lies before in leaps of `leap` s,
     /// at most `max_leaps` of them (filter.GAP_EXACT, LEAP, MAX_LEAPS)
     #[serde(deserialize_with = "real")]
@@ -168,6 +197,27 @@ impl Default for Params {
             hyp_mass: 1e-7,
             give_up: 0.01,
             max_step: 0.2,
+            ld_moving: [
+                [63.0, 2.52, 0.41, 0.55, 0.27, 1.34],
+                [159.4, 2.16, 0.41, 0.57, 0.47, 1.26],
+            ],
+            ld_still: [
+                [574.0, 2.03, 0.19, 0.77, 0.40, 1.70],
+                [949.0, 2.19, 0.58, 1.44, 1.00, 1.25],
+            ],
+            ld_beam: [50.0, 70.0],
+            ld_shape: [2.5, 2.0],
+            ld_tau: [4.0, 13.0],
+            ld_gain: [16.0, 50.0],
+            ld_burst: [4.0, 2.5, 0.02],
+            ld_every: 1.0,
+            ld_frame: 0.089,
+            ld_memory: 2.0,
+            ld_echo_life: 20.0,
+            ld_echo_stages: 2,
+            ld_echo_ranges: [0.75, 6.5, 0.5],
+            ld_echo_amps: vec![0.3, 1.0, 3.0],
+            ld_tile_mass: 1e-4,
             gap_exact: 120.0,
             leap: 15.0,
             max_leaps: 2000,

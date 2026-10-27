@@ -905,11 +905,10 @@ pub fn from_tiles(
         .zip(&dens)
         .map(|((w, x), e)| w * x * e)
         .collect();
-    let per_level = f.still.len() != n;
     let mut qs = vec![0.0; s.still_len()];
     for l in 0..s.kinds {
         for k in 0..s.levels {
-            let fk = if per_level { &f.still[s.level_row(k)] } else { f.still };
+            let fk = f.still.level(k, n);
             let row = s.still_row(l, k);
             for (((q, x), fx), e) in qs[row.clone()].iter_mut().zip(&d.still[row]).zip(fk).zip(&dens) {
                 *q = x * (fx * e);

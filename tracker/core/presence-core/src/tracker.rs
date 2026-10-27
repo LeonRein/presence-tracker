@@ -5,10 +5,12 @@
 
 use crate::filter::branch::{Category, Found, Frame};
 use crate::filter::evidence::Ended;
+use crate::filter::ld_weigh::LdLearn;
 use crate::filter::mixture::SegId;
 use crate::filter::{Filter, NotFinite, PeopleState};
 use crate::geometry::Point;
-use crate::params::LostKind;
+use crate::ld2410::CELLS;
+use crate::params::{IDLE, LostKind};
 use crate::sensors::{SensorSet, SensorState};
 use crate::world::World;
 
@@ -21,11 +23,31 @@ pub struct TrackEvents {
     pub held: Vec<(SegId, Point)>,
 }
 
+/// What a sensor's LD2410C frames left (the shell's runtime until 0.33: ld_t, ld_e, ld_target_t):
+/// when its last frame came, the energies it brought, when its LD2450 last had something in sight.
+#[derive(Debug, Clone, Copy)]
+pub struct LdCollect {
+    pub t: f64,
+    pub last: Option<[f64; CELLS]>,
+    pub target_t: f64,
+}
+
+impl Default for LdCollect {
+    fn default() -> Self {
+        Self {
+            t: f64::NEG_INFINITY,
+            last: None,
+            target_t: f64::NEG_INFINITY,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Tracker {
     world: World,
     filter: Filter,
     sensors: Vec<SensorState>,
+    ld: Vec<LdCollect>,
 }
 
 impl Tracker {
@@ -41,6 +63,7 @@ impl Tracker {
             world,
             filter,
             sensors: vec![quiet; n],
+            ld: vec![LdCollect::default(); n],
         }
     }
 
@@ -169,6 +192,78 @@ impl Tracker {
 
     pub fn people_state(&mut self) -> PeopleState {
         self.filter.people_state(&self.world)
+    }
+
+    /// The energies of a frame of sensor si's LD2410C (moving 0..8, still 0..8), gathered until they
+    /// are weighed (MODEL.md 4.3; Tracker._ld_frame). A frame stands for one frame. Without anything
+    /// to report the firmware sends only a heartbeat every 5 s, and the first frame after such a
+    /// silence is there because something rose: the silence stands for the energies of the frame
+    /// before it. A gap longer than IDLE is lost data. All energies 0 are the firmware's "no value",
+    /// no measurement. target: the housing's LD2450 has something in sight.
+    pub fn ld_frame(&mut self, si: usize, t: f64, gates: Option<(&[f64; 9], &[f64; 9])>, target: bool) {
+        let collect = &mut self.ld[si];
+        let dt = t - collect.t;
+        if dt <= 0.0 {
+            return;
+        }
+        collect.t = t;
+        let prev = collect.last.take();
+        let Some((moving, still)) = gates else {
+            return;
+        };
+        if moving.iter().all(|&x| x == 0.0) && still[2..].iter().all(|&x| x == 0.0) {
+            return;
+        }
+        let e: [f64; CELLS] = std::array::from_fn(|c| if c < 9 { moving[c] } else { still[c - 9 + 2] });
+        collect.last = Some(e);
+        if target || dt > IDLE {
+            // how long it has seen nothing (a gap in the data says nothing: from now)
+            collect.target_t = t;
+        }
+        let frame = self.world.params.ld_frame;
+        let st = self.filter.ld_gather(si);
+        if dt > IDLE {
+            st.add(&e, frame, target);
+        } else if dt > 2.0 * frame && prev.is_some() {
+            st.add(&prev.expect("checked"), dt - frame, false);
+            st.add(&e, frame, target);
+        } else {
+            st.add(&e, dt, target); // the next frame (or one lost on the way)
+        }
+    }
+
+    /// What sensor si's LD2410C frames left.
+    pub fn ld_collect(&self, si: usize) -> LdCollect {
+        self.ld[si]
+    }
+
+    /// The same of an earlier tracker of this sensor (the shell's rebuild).
+    pub fn set_ld_collect(&mut self, si: usize, collect: LdCollect) {
+        self.ld[si] = collect;
+    }
+
+    /// The sensors whose LD2410C has gathered long enough to be weighed.
+    pub fn ld_due(&self) -> Vec<usize> {
+        self.filter.ld_due(self.world.params.ld_every)
+    }
+
+    /// Weighs by the LD2410C si's frames (Filter::ld_weigh) given its background and its echo
+    /// sources' rate read before; what the background learns, and when the housing's LD2450 last had
+    /// something in sight.
+    pub fn ld_weigh(
+        &mut self,
+        si: usize,
+        b: &[f64; CELLS],
+        rate: f64,
+        learn: bool,
+    ) -> Result<Option<(LdLearn, f64)>, NotFinite> {
+        let learned = self.filter.ld_weigh(&self.world, si, b, rate, learn)?;
+        Ok(learned.map(|l| (l, self.ld[si].target_t)))
+    }
+
+    /// The LD2410C of sensor si starts over (recalibrated).
+    pub fn ld_reset(&mut self, si: usize) {
+        self.filter.ld_reset(si);
     }
 
     /// The hypotheses from the shell's mirror (Filter::load).

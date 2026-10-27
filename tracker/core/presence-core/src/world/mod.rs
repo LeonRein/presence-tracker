@@ -2,16 +2,19 @@
 //! sensors' sight, the model's numbers. Built once, unchanged until the configuration changes; every
 //! step borrows it.
 
+pub mod ld;
 pub mod raster;
 pub mod sight;
 pub mod tiles;
 
+pub use ld::{LdPlace, LdSight, LdTiles};
 pub use raster::{CELL, Grid, Raster};
 pub use sight::Sight;
 pub use tiles::{DoorTile, POINT, Tiles};
 
 use crate::filter::densities::DensityShape;
 use crate::geometry::{Point, Walls};
+use crate::ld2410::likelihood::Likelihood;
 use crate::ld2450::rates::RateModel;
 use crate::params::{Params, Shapes};
 use crate::sensors::SensorSet;
@@ -29,6 +32,12 @@ pub struct World {
     pub tiles: Tiles,
     /// per sensor (in the order of the configuration)
     pub sights: Vec<Sight>,
+    /// per sensor its LD2410C
+    pub ld: Vec<LdSight>,
+    /// per cell its room (an index into the views of the LD2410C; the last for none)
+    pub rooms: Grid,
+    /// the LD2410C's likelihood (its tables are built once)
+    pub ld_lik: Likelihood,
 }
 
 /// What the Python tracker built (docs/rust-core.md 6): the world handed over while the build is
@@ -42,6 +51,8 @@ pub struct WorldExport {
     pub wall_dist: Vec<f64>,
     pub tiles: Tiles,
     pub sensors: Vec<SensorExport>,
+    /// per cell its room, the last index for none
+    pub rooms: Vec<f64>,
 }
 
 /// A sensor as the Python tracker built it: where it is, where its sight lines start, its sight per
@@ -52,13 +63,24 @@ pub struct SensorExport {
     pub origin: Point,
     pub grid: Vec<f64>,
     pub observed: Vec<f64>,
+    pub ld: LdExport,
+}
+
+/// A sensor's LD2410C as the Python tracker built it (LdSight with its line of sight per cell).
+#[derive(Debug)]
+pub struct LdExport {
+    pub axis: Point,
+    pub dh2: f64,
+    pub los: Vec<f64>,
+    pub view: Option<Vec<f64>>,
+    pub tiles: LdTiles,
 }
 
 impl World {
     pub fn from_export(e: WorldExport) -> Self {
         let rates = RateModel::new(&e.params);
         let raster = e.raster;
-        let sights = e
+        let (sights, ld) = e
             .sensors
             .into_iter()
             .map(|sensor| {
@@ -69,9 +91,18 @@ impl World {
                     sensor.observed,
                 );
                 s.set_rates(&rates, &e.tiles);
-                s
+                let ld = LdSight {
+                    at: sensor.at,
+                    axis: sensor.ld.axis,
+                    dh2: sensor.ld.dh2,
+                    los: Grid::new(raster, sensor.ld.los),
+                    view: sensor.ld.view,
+                    tiles: sensor.ld.tiles,
+                };
+                (s, ld)
             })
-            .collect();
+            .unzip();
+        let ld_lik = Likelihood::new(&e.params);
         Self {
             params: e.params,
             shapes: e.shapes,
@@ -81,6 +112,9 @@ impl World {
             wall_dist: Grid::new(raster, e.wall_dist),
             tiles: e.tiles,
             sights,
+            ld,
+            rooms: Grid::new(raster, e.rooms),
+            ld_lik,
         }
     }
 

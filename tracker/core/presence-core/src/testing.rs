@@ -38,8 +38,35 @@ impl Rng {
 }
 
 use crate::geometry::Point;
+use crate::ld2410::{FLOOR, profile::expected};
 use crate::params::{Params, Shapes};
-use crate::world::{CELL, Raster, SensorExport, Tiles, World, WorldExport};
+use crate::params::{STILL, WALK};
+use crate::world::{CELL, LdExport, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
+
+/// What a person at each tile's centre puts into an LD2410C at `at` looking along `axis` (1.5 m
+/// above a person's height: dh2 0.64), the tiles it sees.
+fn ld_tiles(at: Point, axis: Point, centers: &[Point]) -> LdTiles {
+    let p = Params::default();
+    let mut out = LdTiles::default();
+    for (c, &q) in centers.iter().enumerate() {
+        let (dx, dy) = (q[0] - at[0], q[1] - at[1]);
+        let ahead = dx * axis[0] + dy * axis[1];
+        let side = dx * axis[1] - dy * axis[0];
+        let angle = side.atan2(ahead.max(1e-9)).abs().to_degrees();
+        let slant = (dx * dx + dy * dy + 0.64).sqrt();
+        let sight = if ahead > 0.0 { 1.0 } else { 0.0 };
+        let (still, walk) = (
+            expected(&p, STILL, angle, slant, sight),
+            expected(&p, WALK, angle, slant, sight),
+        );
+        if still.iter().chain(&walk).any(|&x| x > FLOOR) {
+            out.idx.push(c);
+            out.still.push(still);
+            out.walk.push(walk);
+        }
+    }
+    out
+}
 
 /// Small shapes: two kinds of stay, two levels of detectability, two of the amplitude.
 pub fn shapes() -> Shapes {
@@ -105,6 +132,7 @@ pub fn flat() -> World {
     let centers: Vec<Point> = (0..n)
         .map(|c| [((c / ty) as f64 + 0.5) * TILE, ((c % ty) as f64 + 0.5) * TILE])
         .collect();
+    let tile_centers = centers.clone(); // for the LD2410C's tiles
     let fine_xy: Vec<Point> = (0..raster.nx)
         .flat_map(|i| (0..raster.ny).map(move |j| (i, j)))
         .map(|(i, j)| centre(i, j))
@@ -153,13 +181,27 @@ pub fn flat() -> World {
         walls,
         wall_dist,
         tiles,
-        sensors: [([0.05, 0.05], [0.19, 0.19]), ([5.95, 0.05], [5.81, 0.19])]
-            .map(|(at, origin)| SensorExport {
+        sensors: [
+            ([0.05, 0.05], [0.19, 0.19], 45f64),
+            ([5.95, 0.05], [5.81, 0.19], 135f64),
+        ]
+        .map(|(at, origin, heading)| {
+            let axis = [heading.to_radians().cos(), heading.to_radians().sin()];
+            SensorExport {
                 at,
                 origin,
                 grid: sight.clone(), // the same sight for both sensors
                 observed: vec![1.0; n],
-            })
-            .into(),
+                ld: LdExport {
+                    axis,
+                    dh2: 0.8f64.powi(2),
+                    los: sight.clone(), // as the LD2450's
+                    view: None,
+                    tiles: ld_tiles(at, axis, &tile_centers),
+                },
+            }
+        })
+        .into(),
+        rooms: vec![0.0; raster.cells()],
     })
 }

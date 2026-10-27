@@ -53,33 +53,53 @@ pub struct Amp {
     pub keep: Option<Vec<f64>>,
 }
 
-/// Factors per tile of a likelihood: for walkers (n), for still people per tile (n) or per level of
-/// detectability and tile (K x n), the same for every kind of stay.
+/// Factors of a likelihood for still people, the same for every kind of stay: per tile, or per level
+/// of detectability and tile (K x tiles).
+#[derive(Debug, Clone, Copy)]
+pub enum StillFactors<'a> {
+    PerTile(&'a [f64]),
+    PerLevel(&'a [f64]),
+}
+
+impl<'a> StillFactors<'a> {
+    /// The factors of level k, over m tiles.
+    pub fn level(self, k: usize, m: usize) -> &'a [f64] {
+        match self {
+            StillFactors::PerTile(f) => f,
+            StillFactors::PerLevel(f) => &f[k * m..][..m],
+        }
+    }
+}
+
+/// Factors per tile of a likelihood: for walkers, and for still people.
 #[derive(Debug, Clone, Copy)]
 pub struct TileFactors<'a> {
     pub walk: &'a [f64],
-    pub still: &'a [f64],
+    pub still: StillFactors<'a>,
 }
 
 impl<'a> TileFactors<'a> {
     /// The same factor per tile for walkers and still people.
     pub fn same(f: &'a [f64]) -> Self {
-        Self { walk: f, still: f }
+        Self {
+            walk: f,
+            still: StillFactors::PerTile(f),
+        }
     }
 }
 
-/// TileFactors that own their arrays.
+/// TileFactors that own their arrays, for still people per level and tile.
 #[derive(Debug, Clone, Default)]
 pub struct TileFactorsBuf {
     pub walk: Vec<f64>,
-    pub still: Vec<f64>,
+    pub still_per_level: Vec<f64>,
 }
 
 impl TileFactorsBuf {
     pub fn view(&self) -> TileFactors<'_> {
         TileFactors {
             walk: &self.walk,
-            still: &self.still,
+            still: StillFactors::PerLevel(&self.still_per_level),
         }
     }
 }
@@ -589,18 +609,52 @@ impl DensityRef<'_> {
         pairwise_sum(self.walk) + pairwise_sum(self.still) + pairwise_sum(self.region) + self.out
     }
 
-    /// sum of r x density x f over the tiles in view (Hidden.integrate; f.still per tile).
-    pub fn integrate(&self, f: TileFactors, shape: &DensityShape) -> f64 {
+    /// sum of r x density x f over the tiles in view, f per tile for walkers and still people alike
+    /// (Hidden.integrate(f, f)).
+    pub fn integrate(&self, f: &[f64], shape: &DensityShape) -> f64 {
         if shape.tiles == 0 {
             return 0.0;
         }
-        let walk = self.walk.iter().zip(f.walk).fold(0.0, |s, (w, x)| s + w * x);
+        let walk = self.walk.iter().zip(f).fold(0.0, |s, (w, x)| s + w * x);
         let per_level = shape.still_per_level(self.still);
         let still: Vec<f64> = per_level
             .chunks_exact(shape.tiles)
-            .flat_map(|row| row.iter().zip(f.still).map(|(m, x)| m * x))
+            .flat_map(|row| row.iter().zip(f).map(|(m, x)| m * x))
             .collect();
         self.r * (walk + pairwise_sum(&still))
+    }
+
+    /// The still mass of the tiles idx per level of the amplitude, (A + 1) x len(idx): the sum over
+    /// the kinds of stay and the detectability of still x amp (kernels.amp_mass; the amplitude as
+    /// it is, settled before).
+    pub fn amp_mass(&self, shape: &DensityShape, idx: &[usize]) -> Vec<f64> {
+        let (m, a1) = (idx.len(), shape.amps + 1);
+        let prior = shape.amp_prior();
+        let amp = self.amp.map_or(&prior, |a| &a.levels);
+        let mut out = vec![0.0; a1 * m];
+        for (j, &c) in idx.iter().enumerate() {
+            for k in 0..shape.levels {
+                let t = (0..shape.kinds).fold(0.0, |s, l| s + self.still[shape.still_row(l, k)][c]);
+                if t > 0.0 {
+                    for a in 0..a1 {
+                        out[a * m + j] += t * amp[shape.amp_row(k, a)][c];
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The still mass per tile summed over the kinds of stay and the detectability, in numpy's
+    /// order (still.sum(axis=(0, 1)) at one tile: kernels.ld_tile_masses).
+    pub fn still_at(&self, shape: &DensityShape, c: usize) -> f64 {
+        let mut t = 0.0;
+        for l in 0..shape.kinds {
+            for k in 0..shape.levels {
+                t += self.still[shape.still_row(l, k)][c];
+            }
+        }
+        t
     }
 
     /// The expected number walking in the tiles marked (seen 0 or 1): r x walk @ seen.
@@ -667,25 +721,29 @@ impl DensityMut<'_> {
     }
 
     /// Multiplies walkers by f.walk and still people by f.still for every kind of stay
-    /// (kernels._hidden_weigh). As a person (intensity false): normalized, returns the log of the
-    /// mass that was left (-inf and nothing normalized if none was). As an intensity: returns the
-    /// mass after less the mass before, in view. The sums run in numpy's order.
-    fn weigh_masses(&mut self, f: TileFactors, intensity: bool) -> f64 {
+    /// (kernels._hidden_weigh), at all tiles or (idx) at these only, by 1 elsewhere
+    /// (kernels.hidden_weigh_at: the same numbers). As a person (intensity false): normalized,
+    /// returns the log of the mass that was left (-inf and nothing normalized if none was). As an
+    /// intensity: returns the mass after less the mass before, in view. The sums run in numpy's order.
+    fn weigh_masses(&mut self, f: TileFactors, idx: Option<&[usize]>, kind: Kind) -> f64 {
         let s = self.shape;
+        let intensity = kind == Kind::Intensity;
         let before = if intensity {
             pairwise_sum(self.walk) + pairwise_sum(self.still)
         } else {
             0.0
         };
-        for (w, x) in self.walk.iter_mut().zip(f.walk) {
-            *w *= x;
+        let m = idx.map_or(s.tiles, <[usize]>::len);
+        let tile = |j: usize| idx.map_or(j, |idx| idx[j]);
+        for j in 0..m {
+            self.walk[tile(j)] *= f.walk[j];
         }
-        let per_level = f.still.len() != s.tiles;
         for l in 0..s.kinds {
             for k in 0..s.levels {
-                let factors = if per_level { &f.still[s.level_row(k)] } else { f.still };
-                for (x, g) in self.still[s.still_row(l, k)].iter_mut().zip(factors) {
-                    *x *= g;
+                let factors = f.still.level(k, m);
+                let row = &mut self.still[s.still_row(l, k)];
+                for (j, g) in factors.iter().enumerate() {
+                    row[tile(j)] *= g;
                 }
             }
         }
@@ -725,13 +783,28 @@ impl DensityMut<'_> {
         }
         match self.kind {
             Kind::Person => self.weigh_person(f),
-            Kind::Intensity => self.weigh_masses(f, true),
+            Kind::Intensity => self.weigh_masses(f, None, Kind::Intensity),
+        }
+    }
+
+    /// weigh with the factors given at the tiles idx only, 1 elsewhere (Hidden.weigh_at; f.still per
+    /// tile of idx or per level and tile of idx).
+    pub fn weigh_at(&mut self, idx: &[usize], f: TileFactors) -> f64 {
+        if self.shape.tiles == 0 {
+            return 0.0;
+        }
+        match self.kind {
+            Kind::Person => {
+                let q = self.weigh_masses(f, Some(idx), Kind::Person);
+                self.bernoulli(q)
+            }
+            Kind::Intensity => self.weigh_masses(f, Some(idx), Kind::Intensity),
         }
     }
 
     /// weigh as a person, whatever its kind (the part of a Gaussian gone through a door).
     pub fn weigh_person(&mut self, f: TileFactors) -> f64 {
-        let q = self.weigh_masses(f, false);
+        let q = self.weigh_masses(f, None, Kind::Person);
         self.bernoulli(q)
     }
 
@@ -760,7 +833,8 @@ impl DensityMut<'_> {
     /// The mass in view taken out by factors f per tile, for walkers and still people alike: the
     /// mass before less after (the expiry of a record, filter.Tracker._expire).
     pub fn take_in_view(&mut self, f: &[f64]) -> f64 {
-        -self.weigh_masses(TileFactors::same(f), true)
+        // the mass taken, as for the unknown ones
+        -self.weigh_masses(TileFactors::same(f), None, Kind::Intensity)
     }
 }
 
@@ -823,10 +897,10 @@ mod tests {
         let mut d = Densities::new(SHAPE);
         let id = d.alloc(Kind::Intensity);
         d.get_mut(id).walk.fill(1.0);
-        let still = [1.0; 6]; // per level
+        let still = [1.0; 6];
         let q = d.get_mut(id).weigh(TileFactors {
             walk: &[0.5, 1.0, 1.0],
-            still: &still,
+            still: StillFactors::PerLevel(&still),
         });
         assert_eq!(q, -0.5);
         assert_eq!(d.get(id).walk, &[0.5, 1.0, 1.0]);
@@ -862,7 +936,15 @@ mod tests {
                 m.still.copy_from_slice(&still);
                 m.region.fill(0.01);
                 *m.out = 0.3;
-                let q = m.weigh(TileFactors { walk: &fw, still: &fs });
+                let factors = if fs.len() == n {
+                    StillFactors::PerTile(&fs)
+                } else {
+                    StillFactors::PerLevel(&fs)
+                };
+                let q = m.weigh(TileFactors {
+                    walk: &fw,
+                    still: factors,
+                });
                 let w: Vec<f64> = walk.iter().zip(&fw).map(|(a, b)| a * b).collect();
                 let s: Vec<f64> = still
                     .iter()
@@ -949,5 +1031,61 @@ mod tests {
         // almost all of it fresh: nothing measured
         d.get_mut(id).amp.as_mut().expect("measured").keep = Some(vec![1e-7; 6]);
         assert!(!d.measured(id));
+    }
+
+    #[test]
+    fn weighing_at_some_tiles_is_weighing_with_ones_elsewhere() {
+        // test_kernels.test_weighing_at_some_tiles_is_weighing_with_ones_elsewhere_bit_for_bit
+        let mut rng = crate::testing::Rng::new(17);
+        let shape = DensityShape {
+            tiles: 50,
+            kinds: 5,
+            levels: 3,
+            regions: 2,
+            ages: 18,
+            amps: 2,
+        };
+        for trial in 0..40 {
+            let idx: Vec<usize> = (0..shape.tiles).filter(|_| rng.uniform() < 0.5).collect();
+            let m = idx.len();
+            let fw: Vec<f64> = (0..m).map(|_| rng.range(0.0, 2.0)).collect();
+            let per_level = trial % 2 == 1;
+            let fs: Vec<f64> = (0..if per_level { 3 * m } else { m })
+                .map(|_| rng.range(0.0, 2.0))
+                .collect();
+            let mut full_w = vec![1.0; shape.tiles];
+            let mut full_s = vec![1.0; if per_level { 3 * shape.tiles } else { shape.tiles }];
+            for (j, &c) in idx.iter().enumerate() {
+                full_w[c] = fw[j];
+                for k in 0..if per_level { 3 } else { 1 } {
+                    full_s[k * shape.tiles + c] = fs[k * m + j];
+                }
+            }
+            for kind in [Kind::Person, Kind::Intensity] {
+                let mut d = Densities::new(shape);
+                let a = d.alloc(kind);
+                {
+                    let x = d.get_mut(a);
+                    for v in x.walk.iter_mut().chain(x.still.iter_mut()).chain(x.region.iter_mut()) {
+                        *v = rng.uniform() * 1e-3;
+                    }
+                    *x.out = 0.2;
+                    *x.r = 0.7;
+                }
+                let b = d.fork(a);
+                let (sa, sb) = if per_level {
+                    (StillFactors::PerLevel(&fs), StillFactors::PerLevel(&full_s))
+                } else {
+                    (StillFactors::PerTile(&fs), StillFactors::PerTile(&full_s))
+                };
+                let qa = d.get_mut(a).weigh_at(&idx, TileFactors { walk: &fw, still: sa });
+                let qb = d.get_mut(b).weigh(TileFactors {
+                    walk: &full_w,
+                    still: sb,
+                });
+                assert_eq!(qa.to_bits(), qb.to_bits());
+                assert_eq!(format!("{:?}", d.data(a)), format!("{:?}", d.data(b)));
+            }
+        }
     }
 }

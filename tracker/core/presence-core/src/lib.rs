@@ -4,6 +4,7 @@
 
 pub mod filter;
 pub mod geometry;
+pub mod ld2410;
 pub mod ld2450;
 pub mod motion;
 pub mod params;

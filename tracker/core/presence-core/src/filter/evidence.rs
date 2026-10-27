@@ -204,7 +204,7 @@ impl Filter {
         let [rs, rw] = rates.get(si);
         let f = TileFactorsBuf {
             walk: rw.iter().map(|r| 1.0 / (1.0 + r * lw)).collect(),
-            still: kappa
+            still_per_level: kappa
                 .iter()
                 .flat_map(|&k| rs.iter().map(move |r| 1.0 / (1.0 + k * r * ls)))
                 .collect(),

@@ -144,12 +144,12 @@ impl Filter {
         let start = if frame.censored {
             TileFactorsBuf {
                 walk: rw.iter().map(|r| r * lw).collect(),
-                still: kappa.iter().flat_map(|&k| rs.iter().map(move |r| k * r * ls)).collect(),
+                still_per_level: kappa.iter().flat_map(|&k| rs.iter().map(move |r| k * r * ls)).collect(),
             }
         } else {
             TileFactorsBuf {
                 walk: rw.iter().map(|r| (r * frame.last).exp_m1()).collect(),
-                still: kappa
+                still_per_level: kappa
                     .iter()
                     .flat_map(|&k| rs.iter().map(move |r| (k * r * frame.last).exp_m1()))
                     .collect(),
@@ -290,7 +290,6 @@ impl Branching<'_> {
                 // sensor sees them there, the ghost (if it is one), a reflection
                 let mut e = p.find_clutter + if cur == Some(Owner::Ghost) { 1.0 } else { 0.0 };
                 let (n, shape) = (world.tiles.n, self.objects.densities.shape());
-                let near = TileFactors::same(near);
                 for &m in hy.people.values() {
                     let mix = self.objects.mixtures.get(m);
                     let (w, k) = (mix.weights(), near_mixture(world, self.frame.si, mix, lost.z));

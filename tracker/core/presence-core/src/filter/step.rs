@@ -32,7 +32,7 @@ impl TileRateSums {
     fn no_track(&self, kappa: &[f64], dt: f64) -> TileFactorsBuf {
         TileFactorsBuf {
             walk: self.walk.iter().map(|rw| (-rw * dt).exp()).collect(),
-            still: kappa
+            still_per_level: kappa
                 .iter()
                 .flat_map(|&k| self.still.iter().map(move |rs| (-(k * rs) * dt).exp()))
                 .collect(),

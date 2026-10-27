@@ -8,6 +8,7 @@ pub mod densities;
 pub mod evidence;
 pub mod holders;
 pub mod hyp;
+pub mod ld_weigh;
 pub mod merge;
 #[cfg(any(test, feature = "mirror"))]
 pub mod mirror;
@@ -55,6 +56,8 @@ pub struct Filter {
     /// time of the last move of everybody
     flushed: f64,
     walkers: WalkerCache,
+    /// per sensor what its LD2410C gathered and keeps between weighings
+    ld: Vec<ld_weigh::LdState>,
     /// counts the moves of everybody and the events that concern all hypotheses (moved, an event of
     /// a frame, merged, cut, a gap, a new world): what is derived from all of them, the outputs, is
     /// current while it stays (filter.Tracker._version)
@@ -108,6 +111,7 @@ impl Filter {
             loglik_cut: 0.0,
             flushed: 0.0,
             walkers: WalkerCache::new(sensors),
+            ld: vec![ld_weigh::LdState::default(); sensors],
             epoch: 0,
         }
     }
@@ -191,6 +195,7 @@ impl Filter {
         self.tracks = Tracks::new(self.tracks.sensors());
         self.flushed = t;
         self.walkers.clear();
+        self.ld.fill(ld_weigh::LdState::default());
         self.epoch = 0;
     }
 

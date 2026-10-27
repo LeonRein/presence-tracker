@@ -2,6 +2,32 @@
 
 ## Unveröffentlicht
 
+## 0.34.0 (Branch `rust-core`, Phase 4 des Rust-Kerns, nicht live)
+
+- **LD2410C im Kern** (`ld2410/`, `filter/ld_weigh.rs`, `world/ld.rs`, ~1500 Zeilen): Sammeln der Frames
+  (`Stats`, Ziel der LD2450 in Sicht), Erwartungsprofil, Gamma-Likelihood mit Zensur bei 99,5 (Tabellen und
+  Interpolation wie `np.interp`), zusammengesetzte Likelihood dt/τ, Echoquellen (K Stufen × 36 Quellen),
+  Verrechnung je Hypothese „Personen nacheinander“ mit Gedächtnis je Präfix und Cache nach dem, was die anderen
+  beitragen, Gewichten je Objekt gemischt über die haltenden Hypothesen. `log`/`exp` als fdlibm-Nachbau
+  (`vmath::fdlibm`, wie numpy), `lgamma` aus `libm`. Die Kacheln, Achse und Sicht je Sensor kommen mit dem
+  Welt-Export.
+- **Kein Schreiben mehr über den Spiegel:** `_ld_weigh` in der Hülle ruft nur `Core.ld_weigh` und gibt das
+  Gelernte an den Hintergrund (bis Phase 8 Python); `_ld_points`, `_ld_apply`, `_ld_split`, `_ld_ratio` sind weg.
+  Die alten numba-Kerne dazu bleiben bis Phase 9 (nur noch Tests nutzen sie).
+- **Lernreihenfolge wie Entwurf 2.0:** Hintergrund und Anker lernen aus `b` und den Mitteln vom Anfang der
+  Bewertung, `learn_echoes` mit der Rate vor `predict` (wie 0.31.1).
+- **Form über Typ statt Länge** (REVIEW_phase3 Punkt 8): `StillFactors::{PerTile, PerLevel}` statt
+  `still.len() != n`; `weigh_masses(f, idx, kind)`.
+- Tests: Echoquellen beginnen, leben, enden; Gamma oben/zensiert; Verhältnis gegen Likelihood-Differenz;
+  eine Person erklärt Energie, die Leere nicht; Energien begünstigen die Hypothese mit Person; Determinismus
+  (51 Rust-Tests).
+- **Messung** (`ab.sh 1200`, zweites Paar): 29,8 s gegen 47,5 s (0.31.1), −37 % (0.33.1: 33,9 s).
+- **Spuren** (ein BLAS-Thread, gegen `ref_0311`): 7.10. max 3,9e-15. 10.10. bis 1125 s ≤ 7e-13, dann ein
+  Verstärkungspunkt bei 1128 s (Gewichte 1,9e-10), den 0.33.1 und das in der Rundung gestörte 0.31.1 genauso
+  zeigen; max 1,0e-4, 0 gekippte Raum-Sekunden (die Kippung bei 1305 s aus 0.33.1 tritt nicht mehr auf).
+  8.10. bis 614 s ≤ 4e-8, bei 614,5 s dieselbe Entscheidung wie das gestörte 0.31.1 (gegen dieses max 9e-4,
+  3 Raum-Sekunden); gegen die Referenz max 0,070, 6 Raum-Sekunden.
+
 ## 0.33.1 (Branch `rust-core`, nach Leons Prüfung von Phase 3, nicht live)
 
 - **`presence_core::Tracker`** (`tracker.rs`) besitzt Welt, Filter und Sensorstand und führt die Schritte

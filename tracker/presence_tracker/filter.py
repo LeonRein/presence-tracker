@@ -25,7 +25,7 @@ import zlib
 
 import numpy as np
 
-from .filtermodel import FRAME, IDLE, STILL, WALK, Model, Shapes
+from .filtermodel import FRAME, IDLE, WALK, Model, Shapes
 from .frames import SensorRuntime, detections as frame_detections
 from . import kernels, ld2410
 from .gauss import Gauss
@@ -188,6 +188,8 @@ class Tracker:
     # --------------------------------------------------------------- setup
 
     def _build(self):
+        # what the sensors' LD2410C frames left goes on over a rebuild (until 0.33 the runtime held it)
+        collected = {sid: self._c.ld_collect(k) for k, sid in enumerate(self.sensors)} if self._c is not None else {}
         self.world = World(self.config)
         self.sensors = [s.id for s in self.config.sensors]
         self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
@@ -207,6 +209,9 @@ class Tracker:
         loglik = self._c.loglik if self._c is not None else (0.0, 0.0)  # the evidence goes on over a rebuild
         self._c = _core(presence_core.Core, self._export())
         self._c.loglik = loglik
+        for si, sid in enumerate(self.sensors):
+            if sid in collected:
+                self._c.set_ld_collect(si, collected[sid])
         self._sent = None  # the sensors' state the core has
         self._mirror = None
         self._dirty = False  # the mirror was handed out and may have been changed: loaded before the next call
@@ -224,7 +229,15 @@ class Tracker:
         params.update(acquire=[[float(x) for x in a] for a in m.acquire], track_life=[float(x) for x in m.track_life],
                       refind={k: [float(x) for x in v] for k, v in m.refind.items()},
                       ghost_types=[[float(r), float(life)] for r, life in self._ghost_types()], max_hyps=int(m.max_hyps),
-                      give_up=GIVE_UP, max_step=MAX_STEP, gap_exact=GAP_EXACT, leap=LEAP, max_leaps=MAX_LEAPS)
+                      give_up=GIVE_UP, max_step=MAX_STEP, gap_exact=GAP_EXACT, leap=LEAP, max_leaps=MAX_LEAPS,
+                      ld_moving=[[float(x) for x in r] for r in m.ld_moving],
+                      ld_still=[[float(x) for x in r] for r in m.ld_still], ld_beam=[float(x) for x in m.ld_beam],
+                      ld_shape=[float(x) for x in m.ld_shape], ld_tau=[float(x) for x in m.ld_tau],
+                      ld_gain=[float(x) for x in m.ld_gain], ld_burst=[float(x) for x in m.ld_burst],
+                      ld_every=float(m.ld_every), ld_frame=float(m.ld_frame), ld_memory=float(m.ld_memory),
+                      ld_echo_life=float(m.ld_echo_life), ld_echo_stages=int(m.ld_echo_stages),
+                      ld_echo_ranges=[float(x) for x in m.ld_echo_ranges], ld_echo_amps=[float(x) for x in m.ld_echo_amps],
+                      ld_tile_mass=LD_TILE_MASS)
 
         def f(a):
             return np.ascontiguousarray(a, dtype=float)
@@ -241,8 +254,24 @@ class Tracker:
             door_var=f(tl.var[d]), door_area=f(tl.area[d]), door_rates=f(tl.door_rate[d]), door_ptr=i(tl.door_ptr),
             door_list=i(tl.door_list), exits=i(tl.exits), entries=i(tl.entry_idx), region_rates=f(tl.region_rates()),
             widths=f(tl.widths), points=f(tl.points), point_tile=i(tl.point_tile), point_count=f(tl.point_count),
-            sensors=[(float(s.x), float(s.y), *map(float, s.sight_origin()), f(self._grid(si)), f(tl.observed((si,))))
-                     for si, s in enumerate(self.config.sensors)])
+            sensors=[self._export_sensor(si) for si in range(len(self.sensors))],
+            rooms=f(np.where(self.room_of >= 0, self.room_of, len(self.rooms))))
+
+    def _export_sensor(self, si: int) -> dict:
+        """A sensor for the core: where it is, its sight, how well it tests a person per tile; its
+        LD2410C's axis, height above a person, line of sight, view of the rooms, tiles (_ld_tiles)."""
+        s, tl = self.config.sensors[si], self.tiles
+
+        def f(a):
+            return np.ascontiguousarray(a, dtype=float)
+        self._grid(si)
+        idx, ss, sw = self._ld_tiles(si)
+        view = self._ld_view(si)
+        return dict(at=(float(s.x), float(s.y)), origin=tuple(map(float, s.sight_origin())), grid=f(self._grid(si)),
+                    observed=f(tl.observed((si,))), ld_axis=(float(s._cos), float(s._sin)),
+                    ld_dh2=float((s.height - self.p.target_height) ** 2), ld_los=f(self._gcache[("los", si)]),
+                    ld_view=None if view is None else f(view), ld_idx=np.ascontiguousarray(idx, dtype=np.int64),
+                    ld_still=f(ss), ld_walk=f(sw))
 
     # the core's state, as the Python filter named it
 
@@ -426,9 +455,6 @@ class Tracker:
         self._call("clear", self.now)  # no tracks, moved to now, version 0
         self._gap_from = None  # time of a restored state: the gap to the first frame is still to predict
         self._out_cache = {}
-        self._ld_stats = {}  # sensor index -> the LD2410C's frames since they were last weighed (ld2410.Stats)
-        self._ld_memory = {}  # sensor index -> what the people put into its cells lately (the still ones lag)
-        self._ld_echo = {}  # sensor index -> its echo sources (ld2410.Echoes)
         self._dest_learner = destination.Learner()  # the walks under way (they follow the live tracks)
         self._dest_t = -math.inf
 
@@ -559,8 +585,7 @@ class Tracker:
             self.tracks[sid] = SensorTracks(sid, self._ids)
             if sid in self.runtime:
                 self.runtime[sid].last_frame = -math.inf  # the next frame is a start (_evidence)
-            for d in (self._ld_stats, self._ld_memory, self._ld_echo):
-                d.pop(si, None)
+            self._call("ld_reset", si)
         if changed and self._h:
             self._merge()
             self._prune()
@@ -788,9 +813,8 @@ class Tracker:
         self._call("event" if event else "flush", t)
         if not moves:
             return
-        for si in sorted(self._ld_stats):
-            if self._ld_stats[si].time >= self.m.ld_every:
-                self._ld_weigh(si, self._ld_stats.pop(si))
+        for si in self._c.ld_due():
+            self._ld_weigh(si)
 
     def _live(self, t: float) -> list:
         return [si for si, sid in enumerate(self.sensors)
@@ -976,43 +1000,25 @@ class Tracker:
         return self._gcache[key]
 
     def _ld_frame(self, si, rt, t, ld):
-        """The LD2410C's energies of this frame (MODEL.md 4.3), gathered until they are weighed
-        (every ld_every s, with the next move of everybody). A frame stands for one frame (ld_frame).
-        Without anything to report (no LD2450 target, both flags off) the firmware sends only a
-        heartbeat every 5 s, and the first frame after such a silence is there because something
-        rose: the silence stands for the energies of the frame before it, as the frames until the
-        next heartbeat would have been (measured on thinned full-rate stretches: within 0-7 %; the
-        flags are no thresholds on the energies, a censored "below the thresholds" was 5-65 % off).
-        A gap longer than IDLE is lost data."""
-        dt = t - rt.ld_t
+        """The LD2410C's energies of this frame (MODEL.md 4.3), gathered in the core until they are
+        weighed (every ld_every s, with the next move of everybody)."""
         mg, sg = ld.get("move_gates"), ld.get("still_gates")
-        if dt <= 0:
-            return
-        rt.ld_t = t
-        prev, rt.ld_e = rt.ld_e, None
-        if not mg or not sg or len(mg) != 9 or len(sg) != 9:
-            return
-        if not any(mg) and not any(sg[2:]):
-            # every energy 0: no measurement but the firmware's "no value" (mm(): NaN -> 0). Without
-            # anybody moving ring 0 is 9-16 (MODEL.md 4.3); none of 1.5 million recorded frames had all
-            # 0. Weighed, it outvoted two LD2450 tracks of somebody sitting there (P 4e-6, BUGS 14)
-            return
-        e = rt.ld_e = np.array(list(mg) + list(sg[2:]), dtype=float)
-        st = self._ld_stats.get(si)
-        if st is None:
-            st = self._ld_stats[si] = ld2410.Stats()
-        frame = self.m.ld_frame
-        # the LD2450 of the housing has something in sight (in a silence it had nothing)
-        target = any(not d.hidden for d in rt.detections)
-        if target or dt > IDLE:  # how long it has seen nothing (a gap in the data says nothing: from now)
-            rt.ld_target_t = t
-        if dt > IDLE:
-            st.add(e, frame, target)
-        elif dt > 2 * frame and prev is not None:
-            st.add(prev, dt - frame)
-            st.add(e, frame, target)
-        else:
-            st.add(e, dt, target)  # the next frame (or one lost on the way)
+        gates = (list(map(float, mg)), list(map(float, sg))) if mg and sg and len(mg) == 9 and len(sg) == 9 else None
+        target = any(not d.hidden for d in rt.detections)  # the LD2450 of the housing has something in sight
+        self._call("ld_frame", si, t, gates, target)
+        rt.ld_e = self._c.ld_last(si)
+
+    @property
+    def _ld_stats(self) -> dict:
+        """sensor index -> what its LD2410C gathered since its last weighing (for reading, tests)."""
+        out = {}
+        for si in range(len(self.sensors)):
+            st = self._c.ld_stats(si)
+            if st is not None:
+                s = ld2410.Stats()
+                s.time, s.t_unc, s.t_e, s.t_le, s.t_cens, s.t_target = st[0], *map(np.array, st[1:5]), st[5]
+                out[si] = s
+        return out
 
     def _ld_tiles(self, si: int) -> tuple:
         """The tiles sensor si's LD2410C sees and what a person there puts into its 16 cells:
@@ -1032,272 +1038,24 @@ class Tracker:
             self._gcache[key] = hit
         return hit
 
-    def _ld_split(self, si: int, h, share: float) -> tuple:
-        """The standing mass of the tiles sensor si's LD2410C sees (h a person or the unknown ones,
-        times share): per level of the amplitude (A + 1, k), per tile (k,), and which tiles hold enough
-        of a measured stay (not g = 1) to be weighed level by level (LD_TILE_MASS; the others at their
-        mean amplitude, 1 where nothing was measured)."""
-        key = (si, id(h))
-        hit = self._ld_split_cache.get(key)
-        if hit is None:
-            idx = self._ld_tiles(si)[0]
-            still = kernels.amp_mass(h.still, h.amp, idx)
-            ms = still.sum(axis=0)
-            hit = self._ld_split_cache[key] = (still, ms, share * (ms - still[-1]) > LD_TILE_MASS)
-        return hit
-
-    def _ld_points(self, si: int, obj) -> tuple:
-        """Where sensor si's LD2410C sees a person (or the unknown ones): (masses (k,), what each puts
-        into its cells (k, 16)): the tiles - walking, and standing at each level of the amplitude of
-        their stay (4.3) -, or a Gaussian's components at their means. The rest of the mass (out of
-        its view, behind a door, out of the house) puts nothing in."""
-        idx, ss, sw = self._ld_tiles(si)
-
-        def tiles(h, share):
-            if not len(idx):
-                return np.zeros(0), np.zeros((0, ld2410.CELLS))
-            if not h.measured:  # g = 1 everywhere
-                both = self._gcache.get(("ld2410 both", si))
-                if both is None:
-                    both = self._gcache[("ld2410 both", si)] = np.concatenate([sw, ss])
-                return kernels.ld_tile_masses(h.walk, h.still, idx, float(share)), both
-            still, ms, big = self._ld_split(si, h, share)
-            amp = self.shapes.tile_amp
-            # the small tiles at their mean amplitude: numpy's product, the rest compiled (the same numbers)
-            return kernels.ld_tile_points(h.walk, still, ms, big, amp @ still[:, ~big], idx, sw, ss, amp, float(share))
-
-        if isinstance(obj, Hidden):
-            return tiles(obj, obj.r)
-        w = obj.weights()
-        angle, slant, sight = self._ld_geometry(si, obj.pos)
-        # ld2410.expected, the standing profile at the standing component, the walking one at the walking
-        rows = ld2410.expected_rows(self.m, angle, slant, sight, (STILL, WALK))
-        s_still, s_walk = {STILL: rows[STILL]}, {WALK: rows[WALK]}
-        # the standing component per level of its amplitude (4.3), then the walking one
-        sh = self.shapes
-        aw = obj.amw
-        # a component out of its view (as a tile: expected energy below FLOOR) is not in view: mass 0
-        # here, so it is weighed by 1 like the rest out of view (_ld_weigh). Until 0.25 it counted as
-        # in view with nothing put in, and got P(no echo source) where its part gone through a door
-        # got 1: every LD2410C with a likely echo source pushed every tracked person in the house
-        # through a door (MODEL.md 10, "Meldungen 8.10. abends")
-        vs = float(s_still[STILL].max()) > ld2410.FLOOR
-        vw = float(s_walk[WALK].max()) > ld2410.FLOOR
-        masses = [(1 - obj.a) * np.concatenate([w[STILL] * aw * vs, [w[WALK] * vw]])]
-        S = [np.vstack([sh.amp[:, None] * s_still[STILL][None, :], s_walk[WALK][None, :]])]
-        if obj.away is not None and obj.a > 0:
-            m_, S_ = tiles(obj.away, obj.a)
-            masses.append(m_)
-            S.append(S_)
-        return np.concatenate(masses), np.concatenate(S)
-
-    @staticmethod
-    def _ld_ratio(obj, pts, mu0, st, lik) -> tuple:
-        """A person (or the unknown ones) on top of mean energies mu0 (16,): the log likelihood
-        ratio per point (k,), the log of its normalizer - the factor of the whole person, or for
-        the unknown ones log((1 + int lambda L) / (1 + Lambda)): at most one of them in view (the
-        Poisson process truncated after one; afterwards moment-matched again) - and what they put in
-        afterwards (16,) (kernels.ld_ratio)."""
-        return st.ratio(pts[0], pts[1], mu0, lik, isinstance(obj, Undetected))
-
-    def _ld_weigh(self, si: int, st: "ld2410.Stats"):
-        """The LD2410C's energies since they were last weighed (MODEL.md 4.3): mean = background +
-        what the people put in. Not a product over the people: per hypothesis the people one after the
-        other, each given those before at what they put in afterwards (the ones with tracks first,
-        the unknown ones last; exact for people at known places). Each person is then weighed given
-        all the others, mixed over the hypotheses holding them (the marginals of JIPDA; what the
-        others explain says nothing about this person, 0.6.13)."""
-        m = self.m
+    def _ld_weigh(self, si: int):
+        """The LD2410C's energies since they were last weighed (MODEL.md 4.3), in the core; the
+        background (still Python) learns from b and the means from before the frames and the echo rate
+        read before the echo sources moved on (docs/rust-core.md 2.0); nothing while learning is paused."""
         sid = self.sensors[si]
-        lik = ld2410.Likelihood(m)
-        self._ld_split_cache = {}  # per person: what of them stands where this LD2410C sees (_ld_split)
-        b = self.ld_background.b(sid)
-        # the still energies lag (the firmware smooths them; time constant ld_memory): over these
-        # frames they are what the people put in before (the memory M) and only by 1 - wm what they
-        # put in now. The moving ones follow at once.
-        M = self._ld_memory.get(si)
-        a = math.exp(-st.time / m.ld_memory)
-        wm = m.ld_memory / st.time * (1 - a) if M is not None else 0.0
-        now = ld2410.cell_values(m, 1.0, 1.0 - wm)
-        b0 = b + wm * M * (now < 1) if M is not None else b
-        objs = self._objects()
-        pts = {}
-        for o, _ in objs:
-            mm, S = self._ld_points(si, o)
-            pts[id(o)] = (mm, S * now)
-        seen = {i for i, (mm, _) in pts.items() if len(mm) and mm.sum() > 1e-12}
-        prior_w = self.hyp_weights()
-        echo = self._ld_echo.get(si)
-        if echo is None:
-            echo = self._ld_echo[si] = ld2410.Echoes(m)
-        rate = self.ld_background.rate(sid)
-        echo.predict(st.time, m, rate)
-        e_pts = echo.points(now)
-        # what the background learns (below, MODEL.md 4.3): the people as the filter saw them before
-        # these frames, per hypothesis the mean they and the background put in, and the probability
-        # that nobody was in view; nothing while learning is paused (pause.py)
-        learn = self.learn_ghosts and not self.pauses.paused(self.now - st.time, self.now)
-        if learn:
-            mus, nobody = [], 0.0
-            for h, hy in enumerate(self._h):
-                mu, none = b0.copy(), 1.0
-                for o in hy.objects():
-                    if id(o) in seen:
-                        mm, S = pts[id(o)]
-                        mu = mu + mm @ S
-                        mass = float(mm.sum())
-                        none *= 1.0 / (1.0 + mass) if isinstance(o, Undetected) else max(1.0 - mass, 0.0)
-                mus.append(mu)
-                nobody += prior_w[h] * none
-        # per hypothesis the people one after the other, the echo sources last
-        memo = {}
-        cache = {}  # (object, what the others put in) -> its ratio and normalizer
-        logf = np.zeros(len(self._h))
-        totals, owns, tracked = [], [], []
-        for h, hy in enumerate(self._h):
-            R = np.zeros(ld2410.CELLS)
-            prefix = ()
-            own = []
-            for o in list(hy.groups.values()) + hy.hidden + [hy.ppp]:
-                if id(o) not in seen:
-                    continue
-                key = (id(o), prefix)
-                hit = memo.get(key)
-                if hit is None:
-                    # with what they put in afterwards (for the unknown ones: the moment-matched intensity)
-                    lr, norm, post = cache[(id(o), R.tobytes())] = self._ld_ratio(o, pts[id(o)], b0 + R, st, lik)
-                    hit = memo[key] = (norm, post)
-                logf[h] += hit[0]
-                own.append((o, hit[1], R))
-                R = R + hit[1]
-                prefix += (id(o),)
-            key = ("echo", R.tobytes())
-            hit = memo.get(key)
-            if hit is None:
-                hit = memo[key] = self._ld_ratio(echo, e_pts, b0 + R, st, lik)[1]
-            logf[h] += hit
-            totals.append(R)
-            owns.append(own)
-            # what the people with tracks put in, and the others as they were before these frames
-            # (the echo sources compete with the unseen people, 4.3)
-            tracked.append(sum((p for o, p, _ in own if isinstance(o, Gauss)), np.zeros(ld2410.CELLS))
-                           + sum((pts[id(o)][0] @ pts[id(o)][1] for o in hy.hidden + [hy.ppp] if id(o) in seen),
-                                 np.zeros(ld2410.CELLS)))
-        base = st.loglik(b0, lik)
-        self._dirty = True  # the mirror's hypotheses and objects change: loaded before the next call
-        for h, hy in enumerate(self._h):
-            hy.logw += base + logf[h]
-        lw = np.log(np.maximum(prior_w, 1e-300)) + logf
-        post_w = np.exp(lw - lw.max())
-        current = (post_w / post_w.sum()) @ np.array(totals) / np.maximum(now, 1e-9)
-        self._ld_memory[si] = current if M is None else a * M + (1 - a) * current
-        log_off = math.log(max(float(echo.p[0]), 1e-300))
-        # each person given the others, mixed over the hypotheses holding them (the last one in a
-        # hypothesis: the same as above)
-        for obj, refs in objs:
-            if id(obj) not in seen:
-                continue
-            hs = sorted(set(refs))
-            q = post_w[hs]
-            if q.sum() <= 0:
-                continue
-            q = q / q.sum()
-            parts, outs = [], []
-            for qh, h in zip(q, hs):
-                k = next(i for i, (o, _, _) in enumerate(owns[h]) if o is obj)
-                rest = owns[h][k][2] if k == len(owns[h]) - 1 else totals[h] - owns[h][k][1]
-                key = (id(obj), rest.tobytes())
-                hit = cache.get(key)
-                if hit is None:
-                    hit = cache[key] = self._ld_ratio(obj, pts[id(obj)], b0 + rest, st, lik)
-                lr, norm, _ = hit
-                # an unseen person and an echo source are alternatives (both rare): where the person
-                # is not, an echo may explain the energies - the person's view weighed against that
-                key = ("echo", rest.tobytes())
-                ze = cache.get(key)
-                if ze is None:
-                    ze = cache[key] = self._ld_ratio(echo, e_pts, b0 + rest, st, lik)[1]
-                lq = math.log(max(qh, 1e-300)) - norm
-                # in view (no echo source) against out of view (an echo source or none)
-                if isinstance(obj, Undetected):
-                    parts.append(lq + lr + log_off - ze)  # an intensity: outside stays as it is
-                else:
-                    parts.append(lq + lr + log_off)
-                    outs.append(lq + ze)
-            parts = np.array(parts)
-            top = parts.max(axis=0)
-            logf_pts = top + np.log(np.exp(parts - top).sum(axis=0))
-            if not isinstance(obj, Undetected):
-                logf_pts -= _logsumexp(outs)  # a person: only the shape changes (outside: 1)
-                # what is out of its view (a Gaussian's component there, _ld_points) stays as it is
-                logf_pts = np.where(pts[id(obj)][0] > 0, logf_pts, 0.0)
-            self._ld_apply(si, obj, np.clip(logf_pts, -700.0, ld2410.LOG_CAP))
-        # the echo sources given the people with tracks and the unseen ones as they were, mixed over
-        # the hypotheses
-        q = post_w / post_w.sum()
-        parts, outs = [], []
-        for qh, h in zip(q, range(len(self._h))):
-            if qh < 1e-12:
-                continue
-            lr, norm, _ = self._ld_ratio(echo, e_pts, b0 + tracked[h], st, lik)
-            lq = math.log(qh) - norm
-            parts.append(lq + lr)
-            outs.append(lq)
-        parts = np.array(parts)
-        top = parts.max(axis=0)
-        echo.weigh(np.clip(top + np.log(np.exp(parts - top).sum(axis=0)) - _logsumexp(outs), -700.0, ld2410.LOG_CAP))
-        if learn:
-            # the background where no echo source is on (as judged with these frames), and the
-            # echo sources' rate where nobody is in view
-            rt = self.runtime.get(sid)
-            quiet = self.now - rt.ld_target_t if rt is not None else 0.0
-            self.ld_background.learn(sid, b, np.array(mus), prior_w, st, lik.alpha, float(echo.p[0]), quiet)
-            self.ld_background.learn_echoes(sid, echo.began(), rate, nobody, st.time)
-        self._normalize()
-
-    def _ld_apply(self, si: int, obj, logf: np.ndarray):
-        """Multiply a person (or the unknown ones) by exp(logf) at the points of _ld_points
-        (elsewhere by 1); logf is capped (ld2410.LOG_CAP), so the factors stay finite."""
-        idx, _, _ = self._ld_tiles(si)
-        n = len(idx)
-        AT = len(self.shapes.tile_amp)
-
-        def tiles(h, g, share):
-            # standing: per level of the amplitude; the factor per detectability is the sum over the
-            # levels given it, and the amplitude's levels given it are reweighed (Swerling III, 4.3).
-            # A tile with little of the person: one factor at its mean amplitude (_ld_points)
-            # the factors at the tiles idx (1 elsewhere: Hidden.weigh_at)
-            if not h.measured:  # g = 1 everywhere (_ld_points)
-                e = np.exp(g)
-                return h.weigh_at(idx, e[:n], e[n:])
-            fw = np.exp(g[:n])
-            fs = np.empty((len(self.shapes.kappa), n))
-            big = self._ld_split(si, h, share)[2]
-            nb = int(big.sum())
-            ib = idx[big]
-            gs = g[n:n + AT * nb].reshape(AT, nb)
-            top = gs.max(axis=0) if nb else np.zeros(0)
-            E = np.exp(gs - top[None, :])  # (A, nb)
-            amp = h.amp[:, :, ib] * E[None, :, :]  # (K, A, nb)
-            tot = amp.sum(axis=1)  # (K, nb)
-            h.amp[:, :, ib] = np.where(tot[:, None, :] > 0, amp / np.where(tot > 0, tot, 1.0)[:, None, :], h.amp[:, :, ib])
-            fs[:, big] = tot * np.exp(top)[None, :]
-            fs[:, ~big] = np.exp(g[n + AT * nb:])[None, :]
-            return h.weigh_at(idx, fw, fs)
-
-        if isinstance(obj, Hidden):
-            tiles(obj, logf, obj.r)
+        b, rate = self.ld_background.b(sid), self.ld_background.rate(sid)
+        time = self._c.ld_stats(si)[0]
+        learn = self.learn_ghosts and not self.pauses.paused(self.now - time, self.now)
+        out = self._call("ld_weigh", si, [float(x) for x in b], float(rate), learn)
+        if out is None:
             return
-        A = len(self.shapes.amp)
-        d_away = tiles(obj.away, logf[A + 1:], obj.a) if obj.away is not None and obj.a > 0 and n else 0.0
-        # the amplitude's levels: their probabilities, and the factor of the standing component
-        top = float(logf[:A].max())
-        f = np.exp(logf[:A] - top)
-        ka = obj.ka * f[None, :]  # with the detectability (MODEL.md 4.3)
-        s = float(ka.sum())
-        if s > 0:
-            obj.ka = ka / s
-        obj.reweigh(np.array([top + math.log(s) if s > 0 else -math.inf, logf[A]]), d_away)
+        mus, prior_w, nobody, off, began, (time, t_e, t_cens, t_target), alpha, target_t = out
+        st = ld2410.Stats()
+        st.time, st.t_e, st.t_cens, st.t_target = time, t_e, t_cens, t_target
+        rt = self.runtime.get(sid)
+        quiet = self.now - target_t if rt is not None else 0.0
+        self.ld_background.learn(sid, b, mus, prior_w, st, alpha, off, quiet)
+        self.ld_background.learn_echoes(sid, began, rate, nobody, time)
 
     def _ld_runtime(self, s, rt, t, ld):
         """LD2410C state for the display (presence with the app's own hold time)."""
