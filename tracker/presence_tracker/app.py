@@ -50,6 +50,30 @@ IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
 SEND_TIMEOUT = 5.0  # s a browser may take for one live message; a slower one is cut off
 DOWN_AFTER = 3  # model failures without RETRY s of running between: the model is down
 RESET_HOLD = 300.0  # s of each sensor's frames the LD2410C background does not learn from after a reset
+# shortcut: a one-time conversion of tracker.json; delete it (and its test) once a release with it has run on
+# Home Assistant (PLAN.md, Sitzung 9). Until 0.39 the LD2410C's measured view of the other rooms (MODEL.md 4.3
+# "Blick des LD2410C", measured 6.-10.10. with tools/ld2410/footprint.py) was part of the model; since 0.40
+# it is the configuration's (Config.ld_view): entered once into a tracker.json without it, for the pairs
+# of its rooms.
+LD_VIEW_0_39 = {"arbeitszimmer<-badezimmer": 0.801, "arbeitszimmer<-flur": 0.98, "esszimmer<-kueche": 0.514,
+                "esszimmer<-wohnzimmer": 0.562, "flur<-arbeitszimmer": 0.308, "flur<-badezimmer": 0.998,
+                "flur<-esszimmer": 0.946, "flur<-kueche": 0.62, "schlafzimmer<-flur": 0.866,
+                "wohnzimmer<-esszimmer": 0.722, "wohnzimmer<-kueche": 0.991}
+
+
+def ld_view_into_config(path: pathlib.Path) -> bool:
+    """Enter LD_VIEW_0_39 into the stored configuration if it has no ld_view yet; whether it did."""
+    if not path.exists():
+        return False
+    d = json.loads(path.read_text())
+    if "ld_view" in d:
+        return False
+    rooms = {z.get("id") for z in d.get("zones", []) if z.get("kind") == "room"}
+    d["ld_view"] = {pair: v for pair, v in LD_VIEW_0_39.items() if set(pair.split("<-")) <= rooms}
+    atomic_write(path, json.dumps(d, indent=1, ensure_ascii=False).encode())
+    return True
+
+
 RETRY = 60.0  # s: while down, the model is rebuilt and tried again this often (a rebuild is seconds of CPU)
 
 
@@ -91,6 +115,8 @@ class App:
         self.images = data_dir / "images"
         self.images.mkdir(parents=True, exist_ok=True)
         self.config_path = data_dir / "tracker.json"
+        if ld_view_into_config(self.config_path):
+            log.info("tracker.json: the LD2410C's measured view of the other rooms entered (until 0.39 the model's)")
         self.config = Config.load(self.config_path)
         if self.config_path.exists():  # stored, it loads as it is: say loudly if the model may fail with it
             try:

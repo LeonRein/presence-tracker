@@ -3,9 +3,8 @@ tests, and private ones in the directory PT_CONFIGS - its plan, raster, tiles, s
 its rule of what is a reflection on a grid of points, are what 0.38.1 built. There they were checked against
 the Python tracker's build (the plan, raster and tiles exactly, the numbers up to rounding) and its rule
 (model.Config.hidden); what is kept of that is a digest per part and configuration (fixtures/core_build.json,
-core_reflections.json, made by fixtures/make/; the private ones' in PT_CONFIGS). What model.py still derives
-for the calibration, the display and the tools (regions, observed and closed rooms, the ways in) must be the
-core's."""
+core_reflections.json, made by fixtures/make/; the private ones' in PT_CONFIGS). The plan the shell, the
+calibration and the tools read (filter.plan: regions, observed and closed rooms) is the core's build."""
 
 import hashlib
 import importlib.util
@@ -18,7 +17,7 @@ import numpy as np
 import pytest
 
 import presence_core
-from presence_tracker.filter import SILENT_AFTER, Tracker
+from presence_tracker.filter import SILENT_AFTER, Tracker, plan
 from presence_tracker.model import Config
 
 from fixture import FIXTURES, fixture
@@ -83,15 +82,15 @@ def test_the_core_builds_the_world_0381_built(name, config, build, reflected):
 
 
 @pytest.mark.parametrize("name, config, build, reflected", CONFIGS, ids=IDS)
-def test_what_model_py_derives_is_the_cores(name, config, build, reflected):
+def test_the_plan_view_is_the_cores_build(name, config, build, reflected):
     core = presence_core.build_export(json.dumps(config.to_dict()), "{}", float(SILENT_AFTER))
+    view = plan(config)
     assert [tuple(r) for r in core["regions"]] == [(rid, r["name"], r["rooms"], r["exits"])
-                                                    for rid, r in config.regions.items()]
-    assert core["observed_rooms"] == [z.id for z in config.observed_rooms()]
-    assert core["closed_rooms"] == len(config.closed_rooms)
-    places = ["observed", *config.regions, "outside"]
-    assert [tuple(p) for p in core["portals"]] == [(places.index(q.region), float(q.watch[0]), float(q.watch[1]))
-                                                    for q in config.portals if q.region in places]
-    # the rooms' own sensors (roomseen.own_room until 0.38): in the digests above ("own_rooms")
+                                                    for rid, r in view["regions"].items()]
+    assert all(r["open"] == (r["exits"] > 0) for r in view["regions"].values())
+    assert view["observed"] == core["observed_rooms"] and view["own_rooms"] == core["own_rooms"]
+    assert len(view["closed"]) == core["closed_rooms"]
+    assert view["places"] == ["observed", *view["regions"], "outside"]
+    assert view["areas"] == [z.id for z in config.zones_of("area")]
     tr = Tracker(config)
-    assert tr.rooms == core["observed_rooms"] and tr.places == places
+    assert tr.plan == view and tr.rooms == view["observed"] and tr.places == view["places"]

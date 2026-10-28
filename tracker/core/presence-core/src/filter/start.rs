@@ -120,10 +120,10 @@ impl PeopleState {
         };
         if self.hyps.is_empty() {
             Err("no hypotheses".into())
-        } else if !self.hyps.iter().all(|(logw, _, _)| logw.is_finite()) {
+        } else if !self.hyps.iter().all(|h| h.logw.is_finite()) {
             Err("a weight that is no number".into())
-        } else if !self.hyps.iter().all(|(_, people, unknown)| {
-            kind(*unknown) == Some(Kind::Intensity) && people.iter().all(|&i| kind(i) == Some(Kind::Person))
+        } else if !self.hyps.iter().all(|h| {
+            kind(h.unknown) == Some(Kind::Intensity) && h.people.iter().all(|&i| kind(i) == Some(Kind::Person))
         }) {
             Err("a person that is no density of one, or unknown ones that are none".into())
         } else if !self.densities.iter().all(fits) {
@@ -167,7 +167,7 @@ impl Filter {
     /// Start from a checked saved state, its weights normalized (Tracker.restore_people). Clear first
     /// (Tracker::clear).
     pub(crate) fn restore(&mut self, CheckedState(state): CheckedState) {
-        let total = logsumexp(&state.hyps.iter().map(|&(logw, _, _)| logw).collect::<Vec<_>>());
+        let total = logsumexp(&state.hyps.iter().map(|h| h.logw).collect::<Vec<_>>());
         let ids: Vec<DensityId> = state
             .densities
             .into_iter()
@@ -181,8 +181,12 @@ impl Filter {
         let hyps = state
             .hyps
             .into_iter()
-            .map(|(logw, people, unknown)| {
-                Hyp::new(logw - total, people.iter().map(|&i| ids[i]).collect(), ids[unknown])
+            .map(|h| {
+                Hyp::new(
+                    h.logw - total,
+                    h.people.iter().map(|&i| ids[i]).collect(),
+                    ids[h.unknown],
+                )
             })
             .collect();
         self.set_hyps(hyps);
@@ -192,6 +196,7 @@ impl Filter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::filter::SavedHyp;
     use crate::filter::densities::DensityShape;
     use crate::testing;
 
@@ -244,23 +249,30 @@ mod tests {
         let mut f = Filter::new(shape, world.sights.len());
         f.start_over(&world, Some(&[Start::Place(Place::Observed)]));
         let PeopleState { hyps, densities } = f.people_state(&world);
-        let state = |hyps: Vec<(f64, Vec<usize>, usize)>| PeopleState {
+        let state = |hyps: Vec<SavedHyp>| PeopleState {
             hyps,
             densities: densities.clone(),
         };
-        let (logw, people, unknown) = hyps[0].clone();
+        let hyp = |logw, people, unknown| SavedHyp { logw, people, unknown };
+        let SavedHyp { logw, people, unknown } = hyps[0].clone();
         for (bad, what) in [
             (state(Vec::new()), "no hypotheses"),
             (
-                state(vec![(f64::NAN, people.clone(), unknown)]),
+                state(vec![hyp(f64::NAN, people.clone(), unknown)]),
                 "a weight that is no number",
             ),
-            (state(vec![(logw, vec![unknown], unknown)]), "unknown ones as a person"),
             (
-                state(vec![(logw, people.clone(), people[0])]),
+                state(vec![hyp(logw, vec![unknown], unknown)]),
+                "unknown ones as a person",
+            ),
+            (
+                state(vec![hyp(logw, people.clone(), people[0])]),
                 "a person as the unknown ones",
             ),
-            (state(vec![(logw, vec![9], unknown)]), "an index beyond the densities"),
+            (
+                state(vec![hyp(logw, vec![9], unknown)]),
+                "an index beyond the densities",
+            ),
         ] {
             assert!(bad.check(&shape).is_err(), "{what}");
         }
@@ -281,7 +293,10 @@ mod tests {
             d.out = 0.0;
         });
         // what fits: the weights normalized
-        let ok = state(vec![(logw + 3.0, people, unknown), (logw + 3.0, Vec::new(), unknown)]);
+        let ok = state(vec![
+            hyp(logw + 3.0, people, unknown),
+            hyp(logw + 3.0, Vec::new(), unknown),
+        ]);
         f.restore(ok.check(&shape).expect("fits"));
         assert!(f.hyps().iter().all(|h| (h.logw + 2f64.ln()).abs() < 1e-15));
     }

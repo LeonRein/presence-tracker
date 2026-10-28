@@ -75,7 +75,7 @@ def main():
     sys.path.insert(0, os.path.abspath(a.tracker))
     for p in a.patch:
         runpy.run_path(p)
-    from presence_tracker.filter import Tracker
+    from presence_tracker.filter import Tracker, plan
     from presence_tracker.frames import Frame, SensorClock
     from presence_tracker.model import Config
     from presence_tracker import pause
@@ -99,9 +99,10 @@ def main():
     end = max(parse_time(r["to"]) for r in reports)
     windows = [(parse_time(r["from"]), parse_time(r["to"]), r) for r in reports]
     c = config.params.light_cost / (config.params.light_cost + 1.0)
-    rooms = [z.id for z in config.observed_rooms()]
+    the_plan = plan(config)
+    rooms = the_plan["observed"]
     zones = [z for z in config.zones_of("room") if z.id in rooms]
-    outside = {z.id for z in config.outside_rooms}  # entry rooms: counts there are not scored
+    outside = {z.id for z in config.zones_of("room") if z.entry}  # entry rooms: counts there are not scored
     seen = {}  # room -> last time an LD2450 measured somebody there (for windows that excuse walks)
 
     tracker = None
@@ -171,7 +172,7 @@ def main():
             counts = tracker.count_distribution()
             places = tracker.place_distribution()
             p = {z: counts[z] for z in rooms}
-            p.update({rid: places[rid] for rid in config.regions})
+            p.update({rid: places[rid] for rid in the_plan["regions"]})
             # what the app publishes as "besetzt" in the observed rooms (MODEL.md 6 "Belegt"); else P > c
             pub = {z: v[0] for z, v in tracker.occupancy().items()} if a.published or a.json else {}
             for r in inside:

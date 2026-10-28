@@ -3,7 +3,7 @@
 
 use pyo3::exceptions::{PyFloatingPointError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{PyDict, PyList};
 
 use crate::frames::PyFrame;
 
@@ -12,12 +12,13 @@ use presence_core::filter::mixture::SegId;
 use presence_core::filter::{NotFinite, Start};
 use presence_core::geometry::Point;
 use presence_core::ld2410::CELLS;
+use presence_core::ld2410::background;
 use presence_core::ld2410::profile::expected;
 use presence_core::learn::pauses::{Pause, Pauses};
 use presence_core::learn::{Learned, LearnedError};
 use presence_core::outputs::{Decision, Source};
 use presence_core::params::{Params, STILL, WALK};
-use presence_core::plan::{Place, RoomIdx};
+use presence_core::plan::{Place, Plan, RoomIdx};
 use presence_core::sensors::SensorSet;
 use presence_core::tracker::{Branched, Event, Fault, Tracker};
 use presence_core::world::World;
@@ -108,6 +109,87 @@ impl PyLearned {
     fn json(&self, py: Python<'_>) -> String {
         py.detach(|| self.0.to_json().to_string())
     }
+}
+
+/// A hypothesis for reading (tests, tools): per person with tracks their track ids, the ghost tracks,
+/// per known person how probably they exist, the mass of the unknown ones outside.
+#[pyclass(module = "presence_core", frozen, get_all)]
+pub struct HypView {
+    logw: f64,
+    people: Vec<Vec<u64>>,
+    ghosts: Vec<u64>,
+    known: Vec<f64>,
+    unknown_out: f64,
+}
+
+/// The tiles for drawing and reading: their fingerprint, the side of a square, per tile the lower left
+/// corner of its square, its observed room (None: in none) and its centre.
+#[pyclass(module = "presence_core", frozen, get_all)]
+pub struct TilesView {
+    fingerprint: String,
+    size: f64,
+    squares: Vec<Point>,
+    rooms: Vec<Option<usize>>,
+    centers: Vec<Point>,
+}
+
+/// A person of the display: id, P per place, lost, how probably they exist, where to draw them (None:
+/// nowhere in view).
+#[pyclass(module = "presence_core", frozen, get_all)]
+pub struct PersonView {
+    id: usize,
+    places: Vec<f64>,
+    lost: bool,
+    r: f64,
+    shown: Option<Shown>,
+}
+
+/// Where a person of the display is drawn: position, velocity, spread (m), P(walking).
+#[pyclass(module = "presence_core", frozen, get_all)]
+#[derive(Clone)] // the getter of PersonView.shown hands Python its own
+pub struct Shown {
+    at: Point,
+    velocity: Point,
+    sigma: f64,
+    walk: f64,
+}
+
+/// The plan of the people model (MODEL.md 2) for the shell, the calibration and the tools: the observed
+/// rooms, the places (observed, the regions, outside), the areas, per sensor its own room (None: none),
+/// the regions without a sensor by id ({name, rooms, open, exits}), the closed rooms (in which the
+/// sensors see nobody of the home).
+fn plan_view<'py>(py: Python<'py>, p: &Plan) -> PyResult<Bound<'py, PyDict>> {
+    let ids = |zones: &[presence_core::plan::ZoneIdx]| -> Vec<&str> {
+        zones.iter().map(|z| p.zones[z.0].id.as_str()).collect()
+    };
+    let regions = PyDict::new(py);
+    for r in &p.regions {
+        let d = PyDict::new(py);
+        d.set_item("name", &r.name)?;
+        d.set_item("rooms", ids(&r.rooms))?;
+        d.set_item("open", r.open())?;
+        d.set_item("exits", r.exits)?;
+        regions.set_item(&r.id, d)?;
+    }
+    let own: Vec<Option<&str>> = p
+        .sensors
+        .iter()
+        .map(|s| s.own_room.map(|k| p.room(k).id.as_str()))
+        .collect();
+    let d = PyDict::new(py);
+    d.set_item("observed", ids(&p.rooms))?;
+    d.set_item("places", p.place_names())?;
+    d.set_item("areas", p.areas().map(|z| z.id.as_str()).collect::<Vec<_>>())?;
+    d.set_item("own_rooms", own)?;
+    d.set_item("regions", regions)?;
+    d.set_item("closed", ids(&p.closed))?;
+    Ok(d)
+}
+
+/// The plan of a configuration (JSON; plan_view), without building a world.
+#[pyfunction]
+pub fn plan<'py>(py: Python<'py>, config: &str) -> PyResult<Bound<'py, PyDict>> {
+    plan_view(py, &Plan::new(&config_from(config)?))
 }
 
 /// The Rust tracker for the Python shell: converts, nothing more (the steps are presence_core's).
@@ -320,23 +402,19 @@ impl Core {
         .err()
     }
 
-    /// The hypotheses for reading: (logw, per person with tracks their track ids, the ghost tracks, per
-    /// known person how probably they exist, the mass of the unknown ones outside).
-    #[allow(clippy::type_complexity)]
-    fn hypotheses(&self) -> Vec<(f64, Vec<Vec<u64>>, Vec<u64>, Vec<f64>, f64)> {
+    /// The hypotheses for reading.
+    fn hypotheses(&self) -> Vec<HypView> {
         let ids = |segs: Vec<SegId>| segs.into_iter().map(|s| s.0).collect();
         self.tracker
             .filter()
             .hypotheses()
             .into_iter()
-            .map(|h| {
-                (
-                    h.logw,
-                    h.people.into_iter().map(ids).collect(),
-                    ids(h.ghosts),
-                    h.known,
-                    h.unknown_out,
-                )
+            .map(|h| HypView {
+                logw: h.logw,
+                people: h.people.into_iter().map(ids).collect(),
+                ghosts: ids(h.ghosts),
+                known: h.known,
+                unknown_out: h.unknown_out,
             })
             .collect()
     }
@@ -351,14 +429,17 @@ impl Core {
             .collect()
     }
 
-    /// The tiles for drawing and reading: the fingerprint, the side of a square, per tile the lower left
-    /// corner of its square, its room (None: in none) and its centre.
-    #[allow(clippy::type_complexity)]
-    fn tiles_view(&self) -> (String, f64, Vec<Point>, Vec<Option<usize>>, Vec<Point>) {
+    /// The tiles for drawing and reading.
+    fn tiles_view(&self) -> TilesView {
         let w = self.tracker.world();
         let t = &w.tiles;
-        let rooms = t.room.iter().map(|r| r.map(|RoomIdx(k)| k)).collect();
-        (w.fingerprint(), SIZE, t.squares.clone(), rooms, t.centers.clone())
+        TilesView {
+            fingerprint: w.fingerprint(),
+            size: SIZE,
+            squares: t.squares.clone(), // the view's own copy, for Python
+            rooms: t.room.iter().map(|r| r.map(|RoomIdx(k)| k)).collect(),
+            centers: t.centers.clone(),
+        }
     }
 
     /// The tile of a point, or of the cell in view nearest to it (None: no tiles).
@@ -488,17 +569,22 @@ impl Core {
             .collect()
     }
 
-    /// The people of the display: (id, P per place, lost, r, (x, y, vx, vy, sigma, walk) or None).
-    #[allow(clippy::type_complexity)]
-    fn persons(&self) -> Vec<(usize, Vec<f64>, bool, f64, Option<(f64, f64, f64, f64, f64, f64)>)> {
+    /// The people of the display.
+    fn persons(&self) -> Vec<PersonView> {
         self.tracker
             .persons()
             .into_iter()
-            .map(|p| {
-                let shown = p
-                    .shown
-                    .map(|s| (s.at[0], s.at[1], s.velocity[0], s.velocity[1], s.sigma, s.walk));
-                (p.id, p.places, p.lost, p.r, shown)
+            .map(|p| PersonView {
+                id: p.id,
+                places: p.places,
+                lost: p.lost,
+                r: p.r,
+                shown: p.shown.map(|s| Shown {
+                    at: s.at,
+                    velocity: s.velocity,
+                    sigma: s.sigma,
+                    walk: s.walk,
+                }),
             })
             .collect()
     }
@@ -563,19 +649,9 @@ impl Core {
         (o.occupied_above(), o.entering_above())
     }
 
-    /// The names of the plan: the observed rooms, the places (observed, regions, outside), the areas,
-    /// per sensor its own room (None: none).
-    #[allow(clippy::type_complexity)]
-    fn names(&self) -> (Vec<String>, Vec<String>, Vec<String>, Vec<Option<String>>) {
-        let p = &self.tracker.world().plan;
-        let places = p.place_names().into_iter().map(String::from).collect();
-        let areas = p.areas().map(|z| z.id.clone()).collect();
-        let own = p
-            .sensors
-            .iter()
-            .map(|s| s.own_room.map(|k| p.room(k).id.clone()))
-            .collect();
-        (p.observed().map(|r| r.id.clone()).collect(), places, areas, own)
+    /// The plan of the world (plan_view).
+    fn plan<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        plan_view(py, &self.tracker.world().plan)
     }
 
     /// Per room id the last time its own LD2450 measured somebody in it.
@@ -606,6 +682,12 @@ pub fn forgetting() -> (f64, f64) {
         presence_core::learn::ghost_map::FORGET,
         presence_core::learn::destination::FORGET,
     )
+}
+
+/// The LD2410C's background (16 cells) before anything is learned, with the default model.
+#[pyfunction]
+pub fn ld_prior() -> [f64; CELLS] {
+    background::prior(&Params::default())
 }
 
 /// The energy a person puts into the 16 cells of an LD2410C at `angle` degrees off its axis and `slant`

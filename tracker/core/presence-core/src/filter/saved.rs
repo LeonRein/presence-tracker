@@ -7,8 +7,8 @@
 use half::f16;
 use serde_json::{Map, Value, json};
 
-use crate::filter::PeopleState;
 use crate::filter::densities::{Amp, DensityData, DensityShape, Kind};
+use crate::filter::{PeopleState, SavedHyp};
 use crate::formats::{field, number, object, pack, unpack};
 use crate::learn::LearnedError;
 
@@ -23,7 +23,7 @@ impl PeopleState {
         let hyps: Vec<Value> = self
             .hyps
             .iter()
-            .map(|(logw, people, unknown)| json!({"logw": logw, "people": people, "unknown": unknown}))
+            .map(|h| json!({"logw": h.logw, "people": h.people, "unknown": h.unknown}))
             .collect();
         Ok(json!({"t": t, "tiles": fingerprint, "densities": densities, "hyps": hyps}))
     }
@@ -46,18 +46,18 @@ impl PeopleState {
                     .iter()
                     .map(|i| index(i, "people"))
                     .collect::<Result<_, _>>()?;
-                Ok((
-                    number(field(h, "logw")?, "logw", f64::NEG_INFINITY)?,
+                Ok(SavedHyp {
+                    logw: number(field(h, "logw")?, "logw", f64::NEG_INFINITY)?,
                     people,
-                    index(field(h, "unknown")?, "unknown")?,
-                ))
+                    unknown: index(field(h, "unknown")?, "unknown")?,
+                })
             })
             .collect::<Result<Vec<_>, LearnedError>>()?;
         let densities = list(field(m, "densities")?, "densities")?
             .iter()
             .enumerate()
             .map(|(k, d)| {
-                let kind = if hyps.iter().any(|&(_, _, u)| u == k) {
+                let kind = if hyps.iter().any(|h| h.unknown == k) {
                     Kind::Intensity
                 } else {
                     Kind::Person
@@ -183,6 +183,10 @@ fn read_density(d: &Map<String, Value>, shape: &DensityShape, kind: Kind) -> Res
 mod tests {
     use super::*;
 
+    fn hyp(logw: f64, people: Vec<usize>, unknown: usize) -> SavedHyp {
+        SavedHyp { logw, people, unknown }
+    }
+
     fn shape() -> DensityShape {
         DensityShape {
             tiles: 3,
@@ -240,7 +244,7 @@ mod tests {
     fn a_saved_state_comes_back_on_its_tiles_only() {
         let s = shape();
         let state = PeopleState {
-            hyps: vec![(-0.1, vec![0], 1), (-2.3, vec![], 1)],
+            hyps: vec![hyp(-0.1, vec![0], 1), hyp(-2.3, vec![], 1)],
             densities: vec![person(&s), unknown(&s)],
         };
         let saved = state.to_json(12.5, "abc").expect("a state");
@@ -277,7 +281,7 @@ mod tests {
     fn what_cannot_be_read_is_named() {
         let s = shape();
         let state = PeopleState {
-            hyps: vec![(0.0, vec![0], 1)],
+            hyps: vec![hyp(0.0, vec![0], 1)],
             densities: vec![person(&s), unknown(&s)],
         };
         let saved = state.to_json(0.0, "f").expect("a state");
@@ -342,7 +346,7 @@ mod tests {
         // read, it is the unknown ones (named so by a hypothesis); as somebody's person check refuses it
         let s = shape();
         let state = PeopleState {
-            hyps: vec![(0.0, vec![1], 1)],
+            hyps: vec![hyp(0.0, vec![1], 1)],
             densities: vec![person(&s), unknown(&s)],
         };
         let saved = state.to_json(0.0, "f").expect("a state");
@@ -357,7 +361,7 @@ mod tests {
         let mut p = person(&s);
         p.walk[0] = f64::NAN;
         let state = PeopleState {
-            hyps: vec![(0.0, vec![0], 1)],
+            hyps: vec![hyp(0.0, vec![0], 1)],
             densities: vec![p, unknown(&s)],
         };
         assert!(state.to_json(0.0, "f").is_err());

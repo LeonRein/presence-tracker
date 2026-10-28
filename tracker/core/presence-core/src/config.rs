@@ -1,5 +1,5 @@
-//! The configuration as the app stores it (model.Config.to_dict(): sensors, zones, walls, doors and
-//! the tracker's parameters; the background image is the UI's), read with serde. Lengths in metres,
+//! The configuration as the app stores it (model.Config.to_dict(): sensors, zones, walls, doors, the
+//! LD2410Cs' measured view and the tracker's parameters; the background image is the UI's), read with serde. Lengths in metres,
 //! angles in degrees, in the house frame. The rooms are already the faces between the walls
 //! (floorplan.sync_rooms runs where the plan is edited, in the shell). Every field the shell always
 //! writes is required: no defaults here that could hide a renamed field.
@@ -21,6 +21,9 @@ pub struct Config {
     pub zones: Vec<ZoneConfig>,
     pub walls: Vec<WallConfig>,
     pub doors: Vec<DoorConfig>,
+    /// per "own<-room" (room ids) how much of what the geometric sight expects an LD2410C in its own
+    /// room gets from a person in the other one (measured, MODEL.md 4.3 "Blick des LD2410C"); missing: 1
+    pub ld_view: BTreeMap<String, f64>,
     pub params: TrackerParams,
 }
 
@@ -382,6 +385,7 @@ impl Config {
         for d in &self.doors {
             checks.push((format!("door {}", d.id), real(d.x) && real(d.y) && positive(d.width)));
         }
+        checks.push(("ld_view".into(), self.ld_view.values().all(|&v| at_least_0(v))));
         let p = &self.params;
         let unit = |x: f64| x > 0.0 && x < 1.0;
         checks.extend([

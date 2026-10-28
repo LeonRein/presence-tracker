@@ -29,9 +29,8 @@ def _cells(moving: float, still: float) -> np.ndarray:
 
 
 def ld_prior() -> np.ndarray:
-    """(16,) the LD2410C's background before anything is learned (the model's ld_background)."""
-    g0, g1, rest, still = MODEL["ld_background"]
-    return np.concatenate([[g0, g1], np.full(7, rest), np.full(7, still)])
+    """(16,) the LD2410C's background before anything is learned (the core's, of the model's ld_background)."""
+    return np.array(presence_core.ld_prior())
 
 # the firmware's default thresholds (moving gates 0-8, still gates 2-8)
 THRESHOLDS = np.array([50, 50, 40, 30, 20, 15, 15, 15, 15, 40, 40, 30, 30, 20, 20, 20], dtype=float)

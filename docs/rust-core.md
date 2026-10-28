@@ -249,6 +249,11 @@ nimmt keine Welt aus Python mehr an (der Parameter `export` ist weg); `build_exp
 behält `WorldExport` für seine eigenen Tests. Was die Python-Orakel sagten, steht in `tracker/tests/fixtures/`
 (einmal mit 0.38.1 erzeugt).
 
+**Aufräumrunde (0.40.0, 28.10.):** Das Abgeleitete aus `model.py` ist weg: Orte, Regionen, beobachtete und geschlossene
+Räume liest jeder aus dem Plan des Kerns (`presence_core.plan(config)`, `Tracker.plan`). Die Sichten der Bindung sind
+benannte Typen (`HypView`, `TilesView`, `PersonView`). Der gemessene Blick des LD2410C (`ld_view`) ist eine Angabe der
+Konfiguration, kein Standard des Modells mehr.
+
 **`presence_tracker.filter.Tracker`** bleibt die Klasse, die App, Werkzeuge und Tests benutzen, mit derselben
 öffentlichen API: Sie reicht durch, formt `ZoneState`, ruft die `listeners` mit den Ereignissen des Kerns und hält
 die Python-Objekte der Hülle (`config`, `pauses`). Die Konfiguration geht als `config.to_dict()` hinein; das

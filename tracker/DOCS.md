@@ -143,6 +143,11 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
 aus dem Betrieb gelernt) und wo er Geister meldet, dazu der gelernte Messfehler nach Abstand. Die App lernt das
 nebenbei; das Tracking nutzt es in dieser Version noch nicht.
 
+Wie viel der LD2410C eines Raums von einer Person in einem anderen Raum mitbekommt, ist gemessen (MODEL.md 4.3
+„Blick des LD2410C“) und steht in `tracker.json` unter `ld_view` („eigener Raum<-anderer Raum“ → Anteil, fehlt: 1).
+Die Oberfläche zeigt es nicht; *Alle auf Standard* lässt es stehen. Eine `tracker.json` von 0.39 oder älter bekommt
+beim ersten Start einmal die Messung von 6.–10.10. eingetragen, für die Paare ihrer Räume (gleiche Raum-IDs).
+
 Alles wird sofort gespeichert (`/data/tracker.json`); eine kurze Meldung sagt *Gespeichert* und, wenn
 das Modell dabei neu startet, *Modell neu gestartet* (bei fast jeder Änderung an Grundriss, Zonen und
 Einstellungen; nicht, wenn nur Sensoren kalibriert oder verschoben wurden, nicht bei Einstellungen, die nur

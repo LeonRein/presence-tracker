@@ -2,6 +2,26 @@
 
 ## Unveröffentlicht
 
+## 0.40.0 (Branch `rust-core`, Aufräumrunde vor Phase 10; nicht live)
+
+Modell unverändert; Spuren der drei Referenzstunden byte-gleich mit 0.39.1 (mit der eingetragenen `ld_view`-Tabelle);
+ab.sh 1200 16,5 s (0.31.1 47,3 s); 141 Rust-, 243 Python-Tests mit PT_CONFIGS; fmt/clippy sauber.
+
+- **Orte nur noch aus dem Kern:** `presence_core.plan(config)` bzw. `Tracker.plan` (beobachtete Räume, Orte, Bereiche,
+  eigener Raum je Sensor, Regionen mit Name/Räumen/offen/Ausgängen, geschlossene Räume). Snapshot, `reconfigure`
+  (gleiche Regionen?), Kalibrierung (`open_rooms`), `tools/replay.py`, `report_eval.py`, `baseline_eval.py` lesen ihn.
+  Aus `model.py` gelöscht: `_places`, `_room_covered`, `observed_rooms`, `regions`, `portals`, `closed_doors`,
+  `closed_rooms`, `outside_rooms`; `model.py` hat nur noch Daten, Prüfung, Speichern (und die Geometrie der
+  Simulation). `test_core_build` prüft jetzt die Sicht gegen den Bau des Kerns; `Core.names()` ist durch `plan()`
+  ersetzt.
+- `sim.ld_prior` ist der Prior des Kerns (`presence_core.ld_prior()`).
+- **Benannte Typen:** `SavedHyp` statt Tupel in `PeopleState`; in der Bindung `HypView`, `TilesView`, `PersonView`
+  (+ `Shown`) statt großer Tupel.
+- **`ld_view` in der Konfiguration:** Der gemessene Blick des LD2410C je Raumpaar (MODEL.md 4.3) ist eine Angabe
+  des Hauses in `tracker.json` (`ld_view`, oberste Ebene wie Wände und Türen; geprüft: Zahl ≥ 0), nicht mehr ein
+  Standard des Modells (der Kern: keine Tabelle = Faktor 1). Einmaliger Umrechner beim Start der App
+  (`app.ld_view_into_config`): eine `tracker.json` ohne `ld_view` bekommt die Tabelle von 0.39 für die Paare ihrer
+  Räume; wird gelöscht, sobald ein Release damit auf HA gelaufen ist.
 ## 0.39.1 (Branch `rust-core`, nach Leons Prüfung von Phase 9; nicht live)
 
 Spuren aller drei Referenzstunden byte-gleich mit 0.39.0 (6133488); ab.sh 1200 16,5 s (0.31.1 47,3 s); fast_eval

@@ -2,8 +2,6 @@
 //! (filtermodel.Shapes). Measured ones and assumptions are explained in filtermodel.py; here only
 //! what the core reads. A model is given as the fields that differ from these defaults.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Deserializer, Serialize};
 
 mod shapes;
@@ -157,9 +155,6 @@ pub struct Params {
     /// a tile holding less of a person standing is weighed at its mean amplitude (filter.LD_TILE_MASS)
     #[serde(deserialize_with = "real")]
     pub ld_tile_mass: f64,
-    /// per "own<-room" how much of what the geometric sight expects an LD2410C gets from a person in
-    /// another room (measured, MODEL.md 4.3 "Blick des LD2410C"); missing: 1
-    pub ld_view: BTreeMap<String, f64>,
     /// the background before anything is learned: moving gates 0, 1, the other moving gates, the still
     /// gates; its weight (s), forgotten with ld_forget s towards the sensor's own level, which is learned
     /// forgotten with ld_anchor_forget s from frames after ld_anchor_quiet s with nothing in sight; the
@@ -286,24 +281,6 @@ impl Default for Params {
             },
             ld_echo_amps: vec![0.3, 1.0, 3.0],
             ld_tile_mass: 1e-4,
-            // the LD2410C's view of another room against its own ("own<-other", MODEL.md 4.3 "Blick des
-            // LD2410C"), measured 6.-10.10. (tools/ld2410/footprint.py, filtermodel.Model.ld_view until 0.38)
-            ld_view: [
-                ("arbeitszimmer<-badezimmer", 0.801),
-                ("arbeitszimmer<-flur", 0.98),
-                ("esszimmer<-kueche", 0.514),
-                ("esszimmer<-wohnzimmer", 0.562),
-                ("flur<-arbeitszimmer", 0.308),
-                ("flur<-badezimmer", 0.998),
-                ("flur<-esszimmer", 0.946),
-                ("flur<-kueche", 0.62),
-                ("schlafzimmer<-flur", 0.866),
-                ("wohnzimmer<-esszimmer", 0.722),
-                ("wohnzimmer<-kueche", 0.991),
-            ]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect(),
             ld_background: [13.0, 9.0, 4.5, 5.0],
             ld_prior_time: 600.0,
             ld_forget: 0.7 * 3600.0,

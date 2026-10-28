@@ -119,12 +119,20 @@ pub struct HypView {
 }
 
 /// What is known about the people, to start from after a restart (MODEL.md 5.3; Tracker.
-/// people_state): per hypothesis its weight (normalized), its known people and the unknown ones as
-/// indices into `densities`.
+/// people_state): the hypotheses and the densities they name.
 #[derive(Debug)]
 pub struct PeopleState {
-    pub hyps: Vec<(f64, Vec<usize>, usize)>,
+    pub hyps: Vec<SavedHyp>,
     pub densities: Vec<DensityData>,
+}
+
+/// A saved hypothesis: its weight (normalized), its known people and the unknown ones as indices into
+/// PeopleState.densities.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SavedHyp {
+    pub logw: f64,
+    pub people: Vec<usize>,
+    pub unknown: usize,
 }
 
 impl Filter {
@@ -293,7 +301,11 @@ impl Filter {
             .iter()
             .map(|hy| {
                 let people = hy.hidden.iter().map(|&u| index(u)).collect();
-                (hy.logw - total, people, index(hy.unknown))
+                SavedHyp {
+                    logw: hy.logw - total,
+                    people,
+                    unknown: index(hy.unknown),
+                }
             })
             .collect();
         let densities = order

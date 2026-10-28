@@ -4,6 +4,7 @@ import pytest
 
 import presence_core
 
+from presence_tracker.filter import plan
 from presence_tracker.floorplan import faces, sight_segments, sync_rooms
 from presence_tracker.geometry import line_of_sight
 from presence_tracker.model import Config
@@ -87,12 +88,15 @@ def test_entry_rooms_are_outside():
     c = Config.from_dict({"walls": [*OUTER, wall((3, 0), (3, 4))], "doors": [{"id": "d", "x": 3.0, "y": 2.0}],
                           "sensors": [{"id": "s", "x": 0.05, "y": 0.05, "heading": 45, "placed": True}]})
     rooms = sorted(c.zones_of("room"), key=lambda z: z.geometry.bounds()[0])
-    assert len(rooms) == 2 and not c.outside_rooms and set(c.regions) == {rooms[1].id}
+    assert len(rooms) == 2 and not any(z.entry for z in rooms) and set(plan(c)["regions"]) == {rooms[1].id}
     d = c.to_dict()
     next(z for z in d["zones"] if z["id"] == rooms[1].id)["entry"] = True
     c = Config.from_dict(d)
-    assert [z.id for z in c.outside_rooms] == [rooms[1].id] and not c.regions
-    assert [z.id for z in c.observed_rooms()] == [rooms[0].id] and [z.id for z in c.home_zones("room")] == [rooms[0].id]
-    assert [p.region for p in c.portals] == ["outside"]
+    p = plan(c)
+    assert not p["regions"] and p["closed"] == [rooms[1].id]
+    assert p["observed"] == [rooms[0].id] and [z.id for z in c.home_zones("room")] == [rooms[0].id]
+    # the one way out of the observed area leads outside (places: observed, outside)
+    core = presence_core.build_export(json.dumps(c.to_dict()), "{}", 30.0)
+    assert [q[0] for q in core["portals"]] == [p["places"].index("outside")]
     # what a sensor sees in there is nobody of the home
     assert presence_core.hidden_at(json.dumps(c.to_dict()), 0, [(3.5, 2.0), (2.5, 2.0)], [(1.0, 0.0)] * 2, 0.4) == [True, False]

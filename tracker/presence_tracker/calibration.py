@@ -57,6 +57,7 @@ import numpy as np
 from .floorplan import wall_pieces
 from .model import Config
 from presence_core import Frame, TrackStage
+from .filter import plan
 from .util import atomic_write
 
 MIN_SPEED = 0.05  # m/s raw radial speed: walking
@@ -209,12 +210,19 @@ def _crossing(p, q, segments) -> np.ndarray:
     return hit
 
 
+def open_rooms(config: Config) -> list:
+    """The rooms in which the sensors may see people of the home: not those of closed regions nor the
+    outside rooms (the core's plan, MODEL.md 2)."""
+    closed = set(plan(config)["closed"])
+    return [z for z in config.zones_of("room") if z.id not in closed]
+
+
 class FreeSpace:
     """Where a sensor can see a person directly: in a room that is not a closed room without a
-    sensor, in its line of sight. On a grid: for every cell outside, the nearest free point."""
+    sensor, in its line of sight (rooms: those not closed, open_rooms). On a grid: for every cell outside,
+    the nearest free point."""
 
-    def __init__(self, config: Config, origin):
-        rooms = [z for z in config.zones_of("room") if z not in config.closed_rooms]
+    def __init__(self, config: Config, rooms: list, origin):
         b = np.array([z.geometry.bounds() for z in rooms])
         self.x0, self.y0 = b[:, 0].min() - 2.0, b[:, 1].min() - 2.0
         x1, y1 = b[:, 2].max() + 2.0, b[:, 3].max() + 2.0
@@ -292,9 +300,10 @@ class Problem:
             q = self._handovers(ends[a_id], ends[b_id], a_id, b_id)
             if q is not None:
                 self.pairs.append(q)
-        self.rooms = bool([z for z in config.zones_of("room") if z not in config.closed_rooms])
-        self.fields = {sid: FreeSpace(config, config.sensor_by_id[sid].sight_origin())
-                       for sid in self.points} if self.rooms else {}
+        rooms = open_rooms(config)
+        self.rooms = bool(rooms)
+        self.fields = {sid: FreeSpace(config, rooms, config.sensor_by_id[sid].sight_origin())
+                       for sid in self.points} if rooms else {}
         self.views = {sid: math.radians(config.sensor_by_id[sid].fov) / 2 * VIEW**2 for sid in self.points}
 
     def z(self, sid, a) -> np.ndarray:

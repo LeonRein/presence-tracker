@@ -18,6 +18,8 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(core::model_defaults, m)?)?;
     m.add_function(wrap_pyfunction!(core::ld_expected, m)?)?;
     m.add_function(wrap_pyfunction!(core::forgetting, m)?)?;
+    m.add_function(wrap_pyfunction!(core::ld_prior, m)?)?;
+    m.add_function(wrap_pyfunction!(core::plan, m)?)?;
     // the hooks of the shell's tests (feature "testing"; maturin develop --features testing)
     #[cfg(feature = "testing")]
     {

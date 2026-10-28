@@ -419,7 +419,7 @@ fn observed(b: &Built, grid: &Grid, ld: &LdSight) -> Vec<f64> {
 /// person there, against its own room (filter.Tracker._ld_view, measured: ld_view); None if nothing is
 /// measured for it.
 fn ld_view(b: &Built, s: &SensorConfig) -> Option<Vec<f64>> {
-    if b.params.ld_view.is_empty() {
+    if b.config.ld_view.is_empty() {
         return None;
     }
     let RoomIdx(own) = b.rooms.at(s.sight_origin())?;
@@ -428,7 +428,7 @@ fn ld_view(b: &Built, s: &SensorConfig) -> Option<Vec<f64>> {
         .plan
         .observed()
         .map(|r| {
-            b.params
+            b.config
                 .ld_view
                 .get(&format!("{own_id}<-{}", r.id))
                 .copied()

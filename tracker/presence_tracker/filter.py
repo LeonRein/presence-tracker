@@ -48,7 +48,15 @@ def _core(call, *args):
         raise CoreError(f"the Rust core failed: {e}") from e
 
 
-__all__ = ["Tracker"]
+__all__ = ["Tracker", "plan"]
+
+
+def plan(config) -> dict:
+    """The core's plan of a configuration (MODEL.md 2), without building a world: "observed" (room ids),
+    "places" (observed, the regions' ids, outside), "areas", "own_rooms" (per sensor, None: none), "regions"
+    (id -> {"name", "rooms", "open", "exits"}), "closed" (the rooms in which the sensors see nobody of the
+    home: those of closed regions and the outside rooms)."""
+    return presence_core.plan(json.dumps(config.to_dict()))
 
 # what only the outputs (MODEL.md 6) or the display read: a change restarts nothing
 OUTPUT_PARAMS = ("target_threshold", "target_thresholds", "light_cost", "seen_hold", "approach_cost", "lead_time",
@@ -125,10 +133,10 @@ class Tracker:
         """The names of the core's plan and its tiles (they change only with the world)."""
         self.sensors = [s.id for s in self.config.sensors]
         self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
-        rooms, places, areas, own = self._c.names()
-        self.rooms, self.places = rooms, places
-        self._own = {sid: r for sid, r in zip(self.sensors, own) if r is not None}
-        self._entry_ids = rooms + areas
+        self.plan = self._c.plan()  # as plan(self.config)
+        self.rooms, self.places = self.plan["observed"], self.plan["places"]
+        self._own = {sid: r for sid, r in zip(self.sensors, self.plan["own_rooms"]) if r is not None}
+        self._entry_ids = self.rooms + self.plan["areas"]
         self._tiles = self._c.tiles_view()
 
     def _world(self) -> tuple:
@@ -248,9 +256,9 @@ class Tracker:
         for z in a["zones"] + b["zones"]:  # nor what the zones are called
             z.pop("name", None)
 
-        def regions(c):
-            return {rid: {k: v for k, v in r.items() if k != "name"} for rid, r in c.regions.items()}
-        if a != b or [s["id"] for s in sa] != [s["id"] for s in sb] or regions(old) != regions(new):
+        def regions(p):
+            return {rid: {k: v for k, v in r.items() if k != "name"} for rid, r in p["regions"].items()}
+        if a != b or [s["id"] for s in sa] != [s["id"] for s in sb] or regions(plan(old)) != regions(plan(new)):
             return None
         return [x["id"] for x, y in zip(sa, sb) if dict(x, name=None) != dict(y, name=None)]
 
@@ -372,9 +380,9 @@ class Tracker:
         tracks and its ghost tracks (hypotheses differing only in the people without a track are one,
         MODEL.md 5.6); known: per known person how probably they exist (1 with a track); unknown_out:
         the mass of the unknown ones outside."""
-        return [{"logw": logw, "key": (frozenset(frozenset(p) for p in people), frozenset(ghosts)),
-                 "known": known, "unknown_out": out}
-                for logw, people, ghosts, known, out in self._call("hypotheses")]
+        return [{"logw": h.logw, "key": (frozenset(frozenset(p) for p in h.people), frozenset(h.ghosts)),
+                 "known": h.known, "unknown_out": h.unknown_out}
+                for h in self._call("hypotheses")]
 
     def tracks(self) -> dict:
         """The filter's live tracks: track id -> sensor id."""
@@ -389,9 +397,9 @@ class Tracker:
         """The tiles (MODEL.md 5.3) for drawing where unseen people may be: "id" (their fingerprint: a
         saved state fits only tiles of the same), the side of a square, per tile the lower left corner
         of its square, its room (id; None: in none), which cuts the square, and its centre."""
-        fingerprint, size, squares, rooms, centers = self._tiles
-        return {"id": fingerprint, "size": size, "squares": squares, "room": [None if r is None else self.rooms[r] for r in rooms],
-                "centers": centers}
+        t = self._tiles
+        return {"id": t.fingerprint, "size": t.size, "squares": t.squares,
+                "room": [None if r is None else self.rooms[r] for r in t.rooms], "centers": t.centers}
 
     def tile_near(self, xy) -> int | None:
         """The tile of a point, or of the cell in view nearest to it (None: no tiles)."""
@@ -466,15 +474,16 @@ class Tracker:
         probable place (the core's numbers, rounded here)."""
         places = self.places
         out = []
-        for pid, pr, lost, r, shown in self._call("persons"):
-            d = {"id": pid, "places": {places[i]: round(v, 3) for i, v in enumerate(pr) if v >= 0.005}, "lost": lost,
-                 "r": round(r, 3)}
-            if shown is None:
+        for p in self._call("persons"):
+            d = {"id": p.id, "places": {places[i]: round(v, 3) for i, v in enumerate(p.places) if v >= 0.005},
+                 "lost": p.lost, "r": round(p.r, 3)}
+            s = p.shown
+            if s is None:
                 d.update({"x": None, "y": None, "vx": 0.0, "vy": 0.0, "sigma": 0.0, "walk": 0.0})
             else:
-                x, y, vx, vy, sigma, walk = shown
+                (x, y), (vx, vy) = s.at, s.velocity
                 d.update({"x": round(x, 3), "y": round(y, 3), "vx": round(vx, 3), "vy": round(vy, 3),
-                          "sigma": round(sigma, 3), "walk": round(walk, 3)})
+                          "sigma": round(s.sigma, 3), "walk": round(s.walk, 3)})
             out.append(d)
         return out
 
@@ -585,12 +594,12 @@ class Tracker:
         dwell = {"median": round(p.dwell_median), "p90": round(p.dwell_median * math.exp(p.dwell_spread * NormalDist().inv_cdf(0.9)))}
         regions = {}
         for rid in self.places[1:-1]:  # the regions without a sensor, as the core has them
-            r, dist = self.config.regions[rid], places[rid]
+            r, dist = self.plan["regions"][rid], places[rid]
             regions[rid] = {"name": r["name"], "rooms": r["rooms"], "open": r["open"],
                             "count": int(np.argmax(dist)),
                             "probabilities": [round(1 - dist[0], 3)] if 1 - dist[0] >= 0.005 else [],
                             "dwell": dwell}
-        return {"t": t, "tracks": tracks, "clouds": clouds, "tiling": self._tiles[0], "sensors": sensors, "regions": regions}
+        return {"t": t, "tracks": tracks, "clouds": clouds, "tiling": self._tiles.fingerprint, "sensors": sensors, "regions": regions}
 
     # ------------------------------------------------------------- learned
 

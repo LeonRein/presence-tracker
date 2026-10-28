@@ -8,8 +8,8 @@ import math
 import pathlib
 from dataclasses import asdict, dataclass, field, fields
 
-from .floorplan import sight_segments, sync_rooms, wall_pieces
-from .geometry import Shape, distance_to_segment, line_of_sight
+from .floorplan import sight_segments, sync_rooms
+from .geometry import Shape, line_of_sight
 from .util import atomic_write
 
 
@@ -276,6 +276,12 @@ def check_config(d: dict):
             _check_points(f"Zone {name}", [z["center"]])
         if "radius" in z and not (_finite(z["radius"]) and z["radius"] >= 0):
             raise ValueError(f"Zone {name}: Radius ist keine Zahl ≥ 0.")
+    view = d.get("ld_view") or {}
+    if not isinstance(view, dict):
+        raise ValueError("Blick des LD2410C ist kein Objekt.")
+    for pair, v in view.items():
+        if not _finite(v) or v < 0:
+            raise ValueError(f"Blick des LD2410C {pair}: keine Zahl ≥ 0 ({_num(v)}).")
     for layer in (d.get("background") or {}).get("layers") or []:
         if not isinstance(layer, dict):
             raise ValueError("Bildebene ist kein Objekt.")
@@ -291,140 +297,22 @@ class Config:
     walls: list = field(default_factory=list)  # [{"points": [a, b], "kind": "wall" | "divider"}], one segment each
     doors: list = field(default_factory=list)  # [{"id", "x", "y", "width"}] on a wall
     background: dict = field(default_factory=dict)  # image placement, see web UI
+    # the LD2410Cs' measured view of other rooms (MODEL.md 4.3 "Blick des LD2410C"): "own<-other" (room ids) ->
+    # the share of what the geometric sight expects; missing: 1. Measured data of the home, like the walls:
+    # no setting, not in params ("Alle auf Standard" keeps it)
+    ld_view: dict = field(default_factory=dict)
     params: TrackerParams = field(default_factory=TrackerParams)
 
     def __post_init__(self):
         self.rebuild()
 
     def rebuild(self):
-        """Recompute derived data after an edit."""
+        """Recompute derived data after an edit. The places of the people model (observed rooms, regions,
+        closed rooms) are the core's plan (filter.plan)."""
         for s in self.sensors:
             s._update()
         self.wall_segments = sight_segments(self.walls, self.doors)
         self.sensor_by_id = {s.id: s for s in self.sensors}
-        self._places()
-
-    def _places(self):
-        """The places of the people model (MODEL.md 2), derived from the plan, not stored.
-
-        Rooms marked as entry (the stairwell) are outside: public space beyond the flat's door, no
-        part of the home. A door into one is a door to the outside, like a door in an outer wall.
-        The other rooms that no sensor covers are grouped into regions connected by doors. A region
-        is *open* if it has ways out (doors to the outside, entry zones drawn in it; "exits" counts
-        them), otherwise *closed* (balcony, kitchen with a single door): whoever comes out of a
-        closed region must have gone in before.
-        Sets self.regions {id: {name, rooms, open, exits}}; self.portals, all ways out of the
-        observed area (circles with .region: a region id or "outside", .closed, .watch);
-        self.closed_doors; self.outside_rooms; self.closed_rooms, the rooms in which the sensors see
-        nobody of the home (those of closed regions, and the outside rooms): what shows up there is
-        a reflection or nobody of the home."""
-        self.regions, self.closed_doors, self.closed_rooms, self.portals = {}, [], [], []
-        self.outside_rooms = [z for z in self.zones_of("room") if z.entry]
-        placed = [s for s in self.sensors if s.enabled and s.placed]
-        rooms = [z for z in self.zones_of("room") if not z.entry]
-        if not placed or not rooms:
-            self.closed_rooms = list(self.outside_rooms)
-            return
-        covered = {z.id: self._room_covered(z, placed) for z in rooms}
-        pieces = wall_pieces(self.walls)
-        walls = [p for p in pieces if p[2] == "wall"]
-
-        def sides(c, piece):
-            """The rooms on both sides of a door or divider; None: outside (no room, or an outside room)."""
-            (ax, ay), (bx, by), _ = piece
-            length = math.hypot(bx - ax, by - ay)
-            nx, ny = -(by - ay) / length, (bx - ax) / length
-            return [next((z for z in rooms if z.contains(c[0] + k * nx, c[1] + k * ny)), None) for k in (0.4, -0.4)]
-
-        links = []  # ([room or None, room or None], door or None)
-        normals = {}  # id(door) -> normal of its wall, pointing to the first side
-        for d in self.doors:
-            c = (d["x"], d["y"])
-            piece = min(walls, key=lambda p: distance_to_segment(c[0], c[1], p[0], p[1]), default=None)
-            if piece is not None:
-                links.append((sides(c, piece), d))
-                (ax, ay), (bx, by), _ = piece
-                length = math.hypot(bx - ax, by - ay)
-                normals[id(d)] = (-(by - ay) / length, (bx - ax) / length)
-        for piece in pieces:
-            if piece[2] == "divider":
-                (ax, ay), (bx, by), _ = piece
-                links.append((sides(((ax + bx) / 2, (ay + by) / 2), piece), None))
-
-        parent = {z.id: z.id for z in rooms if not covered[z.id]}
-
-        def find(r):
-            while parent[r] != r:
-                r = parent[r]
-            return r
-        for (a, b), _ in links:
-            if a is not None and b is not None and a.id in parent and b.id in parent:
-                parent[find(a.id)] = find(b.id)
-
-        groups = {}
-        for rid in parent:
-            groups.setdefault(find(rid), []).append(rid)
-        by_id = {z.id: z for z in rooms}
-        user_entries = self.zones_of("entry")
-
-        def middle(z):
-            x0, y0, x1, y1 = z.geometry.bounds()
-            return (x0 + x1) / 2, (y0 + y1) / 2
-        for root, members in groups.items():
-            exits = sum(1 for (a, b), _ in links if (a is None) != (b is None) and (a or b).id in members)
-            exits += sum(1 for z in user_entries if any(by_id[r].contains(*middle(z)) for r in members))
-            self.regions[root] = {"name": " + ".join(by_id[r].name for r in sorted(members)), "rooms": sorted(members),
-                                  "open": exits > 0, "exits": exits}
-
-        self.closed_rooms = [by_id[r] for region in self.regions.values() if not region["open"] for r in region["rooms"]]
-        self.closed_rooms += self.outside_rooms
-        for (a, b), d in links:
-            if d is None:
-                continue
-            inner = [r for r in (a, b) if r is not None and covered[r.id]]
-            other = [r for r in (a, b) if r is None or not covered[r.id]]
-            if len(inner) != 1 or len(other) != 1:
-                continue
-            region = "outside" if other[0] is None else find(other[0].id)
-            zone = ZoneConfig(f"door-{d['id']}", "Tür", kind="entry", shape="circle", center=[d["x"], d["y"]],
-                              radius=max(1.2, d.get("width", 0.9) / 2 + 0.5))
-            zone.region = region
-            # a point 0.5 m into the observed room: if a sensor sees it, it sees people at the door
-            (nx, ny) = normals[id(d)]
-            k = 0.5 if a is inner[0] else -0.5
-            zone.watch = (d["x"] + k * nx, d["y"] + k * ny)
-            zone.center = (d["x"], d["y"])
-            zone.closed = region != "outside" and not self.regions[region]["open"]
-            self.portals.append(zone)
-            if zone.closed:
-                self.closed_doors.append(zone)
-        # entry zones drawn in the observed area lead outside (in a region they make it open)
-        unseen = [by_id[r] for region in self.regions.values() for r in region["rooms"]]
-        for z in user_entries:
-            if any(r.contains(*middle(z)) for r in unseen):
-                continue
-            x0, y0, x1, y1 = z.geometry.bounds()
-            portal = ZoneConfig(f"entry-{z.id}", z.name, kind="entry", shape="circle",
-                                center=[(x0 + x1) / 2, (y0 + y1) / 2],
-                                radius=max(0.5 * math.hypot(x1 - x0, y1 - y0) + 0.3, 1.0))
-            portal.region, portal.closed, portal.watch = "outside", False, (portal.center[0], portal.center[1])
-            self.portals.append(portal)
-
-    def _room_covered(self, room, sensors) -> bool:
-        """Sensors see most of the room. Seeing a part through a door (31 % of the balcony
-        through the glass door) doesn't make it observed."""
-        x0, y0, x1, y1 = room.geometry.bounds()
-        n = seen = 0
-        y = y0 + 0.2
-        while y < y1:
-            x = x0 + 0.2
-            while x < x1:
-                if room.contains(x, y):
-                    n += 1
-                    seen += any(s.sees(x, y, self.wall_segments) for s in sensors)
-                x += 0.4
-            y += 0.4
-        return n > 0 and seen / n >= 0.6
 
     def zones_of(self, kind: str) -> list:
         return [z for z in self.zones if z.kind == kind]
@@ -433,11 +321,6 @@ class Config:
         """The zones of these kinds that belong to the home: not the outside rooms (the stairwell,
         MODEL.md 2), which get no count, no state and no entity."""
         return [z for z in self.zones if z.kind in kinds and not (z.kind == "room" and z.entry)]
-
-    def observed_rooms(self) -> list:
-        """The rooms of the home that the sensors see (in no region without a sensor)."""
-        unseen = {r for region in self.regions.values() for r in region["rooms"]}
-        return [z for z in self.home_zones("room") if z.id not in unseen]
 
     # --- persistence ---
 
@@ -448,6 +331,7 @@ class Config:
             "walls": self.walls,
             "doors": self.doors,
             "background": self.background,
+            "ld_view": self.ld_view,
             "params": asdict(self.params),
         }
 
@@ -472,6 +356,7 @@ class Config:
             doors=[{"id": str(x.get("id", "")), "x": float(x["x"]), "y": float(x["y"]),
                     "width": float(x.get("width", 0.9))} for x in d.get("doors", [])],
             background=d.get("background", {}),
+            ld_view=d.get("ld_view", {}),
             params=pick(TrackerParams, d.get("params", {})),
         )
 

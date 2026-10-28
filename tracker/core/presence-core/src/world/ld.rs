@@ -73,18 +73,15 @@ mod tests {
             wall([0.0, 4.0], [0.0, 0.0]),
             wall([4.0, 0.0], [4.0, 4.0]),
         ];
-        let c = config(
+        let mut c = config(
             &[("a", "a", [0.05, 2.0], 0.0), ("b", "b", [7.95, 2.0], 180.0)],
             r#"[{"id": "links", "name": "links", "kind": "room", "shape": "rect", "points": [[0, 0], [4, 4]]},
                 {"id": "rechts", "name": "rechts", "kind": "room", "shape": "rect", "points": [[4, 0], [8, 4]]}]"#,
             &format!("[{}]", walls.join(", ")),
             r#"[{"id": "tuer", "x": 4.0, "y": 2.0, "width": 0.9}]"#,
         );
-        let params = Params {
-            ld_view: view.iter().map(|&(k, v)| (k.to_string(), v)).collect(),
-            ..Params::default()
-        };
-        World::build(&c, params, 30.0).expect("a world")
+        c.ld_view = view.iter().map(|&(k, v)| (k.to_string(), v)).collect();
+        World::build(&c, Params::default(), 30.0).expect("a world")
     }
 
     #[test]

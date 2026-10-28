@@ -87,7 +87,7 @@ def main():
         crowd.load_learned(json.load(open(a.learned)))
     if a.people and not crowd.restore_people(json.load(open(a.people))):
         print("--people does not fit the floor plan: starting with nothing known")
-    rooms = [z.id for z in config.observed_rooms()]
+    rooms = crowd.rooms
     names = {z.id: z.name for z in config.zones}
     if a.report:
         first = min(m["t"] for m in messages if m["topic"].endswith("/frame"))

@@ -110,6 +110,7 @@ def _area(**kw):
     (lambda d: d["zones"].append(_area(points=[[1, 1]])), "zwei Ecken"),
     (lambda d: d["zones"].append(_area(id=None)), "ohne ID"),
     (lambda d: d["zones"].append(dict(d["zones"][0])), "doppelt"),
+    (lambda d: d.update(ld_view={"a<-b": -0.5}), "Blick des LD2410C"),
 ])
 def test_what_the_model_cannot_run_with_is_refused_with_400(app, tmp_path, change, message):
     """Until 0.18 a one-point wall gave a 500, and a circle without a center was saved: every tick

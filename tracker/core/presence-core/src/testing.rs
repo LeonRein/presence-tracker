@@ -137,7 +137,7 @@ pub fn config(sensors: &[(&str, &str, Point, f64)], zones: &str, walls: &str, do
         .collect::<Vec<_>>()
         .join(", ");
     let json = format!(
-        r#"{{"sensors": [{sensors}], "zones": {zones}, "walls": {walls}, "doors": {doors}, "params": {PARAMS}}}"#
+        r#"{{"sensors": [{sensors}], "zones": {zones}, "walls": {walls}, "doors": {doors}, "ld_view": {{}}, "params": {PARAMS}}}"#
     );
     Config::from_json(&json).expect("a test configuration")
 }

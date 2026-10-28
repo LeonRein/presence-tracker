@@ -79,8 +79,8 @@ impl Part {
     }
 }
 
-/// The background before anything is learned (ld2410.prior).
-fn prior(p: &Params) -> Cells {
+/// The background before anything is learned (ld2410.prior; the simulation's too).
+pub fn prior(p: &Params) -> Cells {
     let [g0, g1, rest, still] = p.ld_background;
     std::array::from_fn(|c| match c {
         0 => g0,

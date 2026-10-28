@@ -412,3 +412,16 @@ def test_a_refused_floor_plan_keeps_the_people(tmp_path, monkeypatch):
     assert r.status == 400 and app.config.to_dict() == config.to_dict()
     assert json.loads((tmp_path / "people.json").read_text())["tiles"] == fingerprint
     assert app.tracker.started_from is not None and app.tracker.tiles()["id"] == fingerprint
+
+
+def test_the_ld2410c_view_is_entered_into_a_configuration_once(tmp_path):
+    # the one-time conversion of 0.40 (app.ld_view_into_config; goes with it): the pairs of its rooms only
+    path = tmp_path / "tracker.json"
+    path.write_text(json.dumps({"zones": [{"id": "flur", "kind": "room"}, {"id": "kueche", "kind": "room"},
+                                          {"id": "bad", "kind": "area"}]}))
+    assert app_module.ld_view_into_config(path)
+    assert json.loads(path.read_text())["ld_view"] == {"flur<-kueche": 0.62}
+    assert Config.from_dict({**flat_config().to_dict(), "ld_view": {"flur<-kueche": 0.62}}).to_dict()["ld_view"] == {
+        "flur<-kueche": 0.62}
+    path.write_text(json.dumps({"ld_view": {}}))
+    assert not app_module.ld_view_into_config(path) and json.loads(path.read_text()) == {"ld_view": {}}

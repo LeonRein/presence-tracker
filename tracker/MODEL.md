@@ -377,7 +377,7 @@ Das Modell, je Sensor:
   mal Strahl mal Sicht (Wände wie beim LD2450: der Anteil der Person, den der LD2450 im selben Gehäuse
   ohne Wand dazwischen sehen könnte, über ihren Versatz gemittelt wie in 4.1; bis 0.10.0 ja/nein). Ruhig zählt das Verzögerte: M ist, was die Personen
   zuletzt hineingaben (geglättet mit 2 s), w_m sein Anteil im Block; bewegt w_m = 0.
-- **Blick des LD2410C in einen anderen Raum** (gemessen, `Model.ld_view`, `_ld_view`): Die Sicht durch eine
+- **Blick des LD2410C in einen anderen Raum** (gemessen; seit 0.40 eine Angabe des Hauses in `tracker.json`, `ld_view`, wie Wände und Türen; vorher `Model.ld_view`): Die Sicht durch eine
   Türöffnung oder über den Raumteiler ist geometrisch, was dort ankommt, nicht: Je Paar „Sensor ← Raum“ trägt
   die Sicht einen gemessenen Faktor v ≤ 1, S(x) = v_{s,Raum(x)} · Profil · Strahl · Sicht; im eigenen Raum und
   wo nichts gemessen ist v = 1. Gemessen (`tools/ld2410/footprint.py`) mit Bezeichnungen, die nicht vom Filter

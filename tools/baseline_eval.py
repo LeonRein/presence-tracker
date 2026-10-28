@@ -393,6 +393,7 @@ def main():
     import runpy
     for p in a.patch:
         runpy.run_path(p)
+    from presence_tracker.filter import plan
     from presence_tracker.model import Config
     from presence_tracker import pause
 
@@ -412,7 +413,7 @@ def main():
     starts = sorted(parse_time(s) for s in truth["app_starts"])
     g0 = int(starts[0])
     T = int(max(t1 for _, t1, _ in windows) - g0) + 2
-    rooms = [z.id for z in config.observed_rooms()]
+    rooms = plan(config)["observed"]
     c = config.params.light_cost / (config.params.light_cost + 1.0)
 
     if a.data_cache and os.path.exists(a.data_cache):
