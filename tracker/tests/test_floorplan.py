@@ -1,4 +1,8 @@
+import json
+
 import pytest
+
+import presence_core
 
 from presence_tracker.floorplan import faces, sight_segments, sync_rooms
 from presence_tracker.geometry import line_of_sight
@@ -91,5 +95,4 @@ def test_entry_rooms_are_outside():
     assert [z.id for z in c.observed_rooms()] == [rooms[0].id] and [z.id for z in c.home_zones("room")] == [rooms[0].id]
     assert [p.region for p in c.portals] == ["outside"]
     # what a sensor sees in there is nobody of the home
-    s = c.sensors[0]
-    assert c.hidden(s, (3.5, 2.0), (1.0, 0.0), 0.4) and not c.hidden(s, (2.5, 2.0), (1.0, 0.0), 0.4)
+    assert presence_core.hidden_at(json.dumps(c.to_dict()), 0, [(3.5, 2.0), (2.5, 2.0)], [(1.0, 0.0)] * 2, 0.4) == [True, False]

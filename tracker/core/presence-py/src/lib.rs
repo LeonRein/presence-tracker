@@ -22,6 +22,8 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<frames::PyFrame>()?;
     m.add_function(wrap_pyfunction!(core::build_export, m)?)?;
     m.add_function(wrap_pyfunction!(core::hidden_at, m)?)?;
+    m.add_function(wrap_pyfunction!(core::model_defaults, m)?)?;
+    m.add_function(wrap_pyfunction!(core::ld_expected, m)?)?;
     m.add_function(wrap_pyfunction!(panic_for_test, m)?)?;
     // a panic of the core is a BaseException in Python: the shell turns it into an Exception
     m.add("PanicException", m.py().get_type::<PanicException>())?;

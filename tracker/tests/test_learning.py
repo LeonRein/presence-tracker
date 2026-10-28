@@ -2,123 +2,16 @@
 aus dem eigenen Urteil"): the LD2410C background is learned by online EM with the energies that were
 capped taken for what they were, not where an echo source holds the energy; the echo sources' rate
 only where nobody is in view and judged without itself; the destination map is output only
-(test_destination.py)."""
+(test_destination.py). The background's steps by hand: the Rust core (ld2410/background.rs)."""
 
 import numpy as np
 
-from presence_tracker import ld2410
 from presence_tracker.filter import Tracker
-from presence_tracker.filtermodel import Model
-from presence_tracker.sim import Person, SimSensor, simulate
+from presence_tracker.sim import MODEL, Person, SimSensor, ld_prior, simulate
 from presence_tracker.frames import Frame
 
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import walk
-
-
-def _frames(mu, seconds, seed=1):
-    """Stats of `seconds` s of frames whose energies are Gamma(alpha, mean mu) (independent, every
-    0.1 s), capped as the firmware caps them."""
-    m = Model()
-    alpha = ld2410.cell_values(m, *m.ld_shape)
-    rng = np.random.default_rng(seed)
-    st = ld2410.Stats()
-    for _ in range(int(seconds * 10)):
-        e = np.minimum(np.round(rng.gamma(alpha, mu / alpha)), 100.0)
-        st.add(e, 0.1)
-    return st, alpha
-
-
-def test_capped_energies_count_for_what_they_were():
-    # somebody 1.8 m in front of the sensor puts 160 into a still gate whose background is 5: the
-    # firmware reports 100 in most frames. Until 0.20 those counted as 100, and the background's share
-    # of them made it learn 3 instead of 5 (simulation: 5.0 -> 2.2 in an hour, and an energy of 5
-    # after the person left looked like somebody)
-    m = Model()
-    b = ld2410.prior(m)
-    mu = b.copy()
-    mu[9] += 160.0
-    st, alpha = _frames(mu, 3600)
-    assert st.t_cens[9] > 0.5 * st.time
-    bg = ld2410.Background(b, m.ld_prior_time, m.ld_forget)
-    bg.learn("a", b, mu[None, :], np.ones(1), st, alpha)
-    learned = bg.b("a")
-    assert abs(learned[9] / b[9] - 1) < 0.1, learned[9]
-    assert np.all(np.abs(learned / b - 1) < 0.1)
-    # the old share of a capped 100
-    old = (m.ld_prior_time * b[9] + b[9] / mu[9] * (st.t_e[9] + 100 * st.t_cens[9])) / (m.ld_prior_time + st.time)
-    assert old < 0.7 * b[9]
-
-
-def test_no_background_is_learned_while_something_is_seen_or_an_echo_source_holds_the_energy():
-    m = Model()
-    b = ld2410.prior(m)
-    st, alpha = _frames(b * 3, 600)
-    bg = ld2410.Background(b, m.ld_prior_time, m.ld_forget)
-    bg.learn("a", b, b[None, :], np.ones(1), st, alpha, off=0.0)
-    assert np.allclose(bg.b("a"), b)
-    seen = ld2410.Stats()  # the same frames with a target of the LD2450 in sight
-    seen.add(3 * b, 600.0, True)
-    bg.learn("a", b, b[None, :], np.ones(1), seen, alpha)
-    assert np.allclose(bg.b("a"), b)
-    bg.learn("a", b, b[None, :], np.ones(1), st, alpha, off=1.0)
-    assert bg.b("a")[0] > 1.5 * b[0]
-
-
-def test_what_is_not_learned_goes_back_to_the_sensors_own_level():
-    # the background wanders around its sensor's own mean (MODEL.md 4.3). The bedroom's sensor gives 9
-    # where the prior says 5; a night with somebody in sight of its LD2450 teaches nothing, and until
-    # 0.27 the level went back to the prior's 5 by the morning - the empty room's 9 then held an unknown
-    # person there (MODEL.md 10)
-    m = Model()
-    b = ld2410.prior(m)
-    bg = ld2410.Background(b, m.ld_prior_time, m.ld_forget, anchor_forget=m.ld_anchor_forget)
-    for hour in range(6):  # an empty day: 1.8 times the prior
-        st, alpha = _frames(1.8 * b, 3600, seed=hour)
-        bg.learn("a", bg.b("a"), bg.b("a")[None, :], np.ones(1), st, alpha)
-    day = bg.b("a")
-    # the pull towards the anchor is the sensor's own level, not the prior (until 0.27 19 % of the prior
-    # with 0.7 h of forgetting)
-    assert np.all(np.abs(day / (1.8 * b) - 1) < 0.05), day / b
-    night = ld2410.Stats()
-    night.add(3 * b, 600.0, True)  # somebody in sight of the LD2450: nothing learned
-    for _ in range(9 * 6):
-        bg.learn("a", bg.b("a"), bg.b("a")[None, :], np.ones(1), night, alpha)
-    assert np.all(np.abs(bg.b("a") / (1.8 * b) - 1) < 0.05), bg.b("a") / b
-    # a level learned for an hour (somebody the LD2450 did not see) goes back towards the sensor's own,
-    # which holds that hour with its share of the day (1 of 7 h here)
-    st, alpha = _frames(4 * b, 3600, seed=9)
-    bg.learn("a", bg.b("a"), bg.b("a")[None, :], np.ones(1), st, alpha)
-    assert np.all(bg.b("a") > 3 * b)
-    for _ in range(9 * 6):
-        bg.learn("a", bg.b("a"), bg.b("a")[None, :], np.ones(1), night, alpha)
-    assert np.all(np.abs(bg.b("a") / ((6 * 1.8 + 4) / 7 * b) - 1) < 0.1), bg.b("a") / b
-
-
-def test_the_anchor_learns_only_after_a_long_silence_of_the_ld2450():
-    # sleepers and sitters leave the LD2450 gaps of seconds to minutes; what the background learns in
-    # them does not reach the sensor's own level (the anchor), what follows 10 min of silence does
-    m = Model()
-    b = ld2410.prior(m)
-    bg = ld2410.Background(b, m.ld_prior_time, m.ld_forget, anchor_forget=m.ld_anchor_forget,
-                           anchor_quiet=m.ld_anchor_quiet)
-    st, alpha = _frames(3 * b, 3600)
-    bg.learn("a", b, b[None, :], np.ones(1), st, alpha, quiet=90.0)
-    assert np.all(bg.b("a") > 2.5 * b)  # the fast level learns it
-    assert np.allclose(bg.anchor("a"), b)  # the anchor not
-    bg.learn("a", bg.b("a"), bg.b("a")[None, :], np.ones(1), st, alpha, quiet=m.ld_anchor_quiet)
-    assert np.all(bg.anchor("a") > 2.5 * b)
-
-
-def test_the_echo_rate_counts_where_nobody_is_and_without_itself():
-    m = Model()
-    bg = ld2410.Background(ld2410.prior(m), m.ld_prior_time, m.ld_forget, 1e-4, 3600.0)
-    bg.learn_echoes("a", 0.5, 1e-4, nobody=0.0, seconds=3600.0)  # somebody in view: nothing
-    assert abs(bg.rate("a") / 1e-4 - 1) < 1e-12
-    bg.learn_echoes("a", 0.5, 1e-3, nobody=1.0, seconds=3600.0)
-    # judged with 10 times the prior's rate: odds 1 -> 0.1 with the prior's
-    assert abs(bg.echoes["a"] - 1 / 11) < 1e-9
-    assert abs(bg.rate("a") - (0.36 + 1 / 11) / 7200) < 1e-12
 
 
 def _sit(seat, minutes, leave=0.0):
@@ -146,13 +39,12 @@ def test_a_sitter_for_an_hour_is_not_learned_as_background():
     # MODEL.md 4.3, 10: somebody sits 1.8 m in front of sensor a for an hour, the LD2450s rarely see
     # them. The background stays what the empty room gives (until 0.20: gate 2 of sensor a 5.0 ->
     # 2.2, its echo rate 0.33 -> 0.73 per hour), the person stays, and when they leave nobody is left
-    m = Model()
     c = 2 / 3
     tr, occupied, after = _sit((1.3, 1.3), 60, leave=60.0)
-    prior = ld2410.prior(m)
+    prior = ld_prior()
     for s in ("a", "b"):
         assert np.all(np.abs(tr.background(s)[0] / prior - 1) < 0.3), (s, tr.background(s)[0])
-        assert tr.background(s)[1] < 1.3 * m.ld_echo_rate, (s, tr.background(s)[1] * 3600)
+        assert tr.background(s)[1] < 1.3 * MODEL["ld_echo_rate"], (s, tr.background(s)[1] * 3600)
     assert min(occupied) > c, occupied
     assert after < c, after
 
@@ -161,9 +53,8 @@ def test_a_new_sensor_learns_an_empty_room_that_is_louder_than_the_prior():
     # the bedroom sensor of 7.10.: its empty room gave 7.8 in every still gate, the prior is 5. While
     # it learns, nobody may appear there (learning only where the filter sees nobody was tried: a
     # phantom held the energy and the background never learned it, 4 h light in the empty bedroom)
-    m = Model()
     config = flat_config(entry=True)
-    louder = ld2410.prior(m) * 1.56
+    louder = ld_prior() * 1.56
     nobody = Person([(0.0, -1.0, 4.0), (1.0, -1.0, 4.0)])  # out in the stairwell, gone
     tr = Tracker(config, start=0.0, people=["outside"])
     sensors = [SimSensor(s) for s in config.sensors]
@@ -186,7 +77,6 @@ def test_a_sitter_the_model_starts_with_is_not_learned_where_an_echo_source_hold
     # without a track against an echo source the way it weighs the source against them, MODEL.md 9);
     # a's background does not learn their energy (until 0.20: gate 2 5.0 -> 10.6 in an hour). Sensor
     # b, 5 m away, has nothing that explains their energy and learns part of it (MODEL.md 10)
-    m = Model()
     config = flat_config(entry=True)
     seat = (1.3, 1.3)
     p = Person([(0.0, *seat), (3600.0, seat[0] + 0.05, seat[1])])
@@ -194,5 +84,5 @@ def test_a_sitter_the_model_starts_with_is_not_learned_where_an_echo_source_hold
     sensors = [SimSensor(s, still_dropout=1.0, still_gap=900.0) for s in config.sensors]
     for t, sid, frame in simulate([p], sensors, 3600, walls=config.wall_segments):
         tr.process_frame(sid, t, Frame.of(frame))
-    prior = ld2410.prior(m)
+    prior = ld_prior()
     assert np.all(np.abs(tr.background("a")[0] / prior - 1) < 0.3), tr.background("a")[0]

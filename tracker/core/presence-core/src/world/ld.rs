@@ -55,3 +55,66 @@ impl LdSight {
         LdPlace { angle, slant, sight }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::params::Params;
+    use crate::testing::{config, wall};
+    use crate::world::World;
+
+    /// Two rooms 4 x 4 m side by side, a door between at (4, 2), one sensor in each looking at it
+    /// (test_ld2410._two_rooms); the LD2410C's measured view of another room as `view` says.
+    fn two_rooms(view: &[(&str, f64)]) -> World {
+        let walls = [
+            wall([0.0, 0.0], [8.0, 0.0]),
+            wall([8.0, 0.0], [8.0, 4.0]),
+            wall([8.0, 4.0], [0.0, 4.0]),
+            wall([0.0, 4.0], [0.0, 0.0]),
+            wall([4.0, 0.0], [4.0, 4.0]),
+        ];
+        let c = config(
+            &[("a", "a", [0.05, 2.0], 0.0), ("b", "b", [7.95, 2.0], 180.0)],
+            r#"[{"id": "links", "name": "links", "kind": "room", "shape": "rect", "points": [[0, 0], [4, 4]]},
+                {"id": "rechts", "name": "rechts", "kind": "room", "shape": "rect", "points": [[4, 0], [8, 4]]}]"#,
+            &format!("[{}]", walls.join(", ")),
+            r#"[{"id": "tuer", "x": 4.0, "y": 2.0, "width": 0.9}]"#,
+        );
+        let params = Params {
+            ld_view: view.iter().map(|&(k, v)| (k.to_string(), v)).collect(),
+            ..Params::default()
+        };
+        World::build(&c, params, 30.0).expect("a world")
+    }
+
+    #[test]
+    fn the_ld2410c_sees_another_room_as_far_as_measured() {
+        // test_ld2410 (MODEL.md 4.3 "Blick des LD2410C"): the measured view of the other room scales
+        // the sight there; where it gives the LD2410C nothing above FLOOR the place is out of its view
+        // (weighed by 1), its own room keeps the geometric sight
+        let pts = [[2.0, 2.0], [5.0, 2.0]]; // in front of a: its own room, and through the door
+        let sight = |w: &World, si: usize, rooms: &RoomGrid| pts.map(|q| w.ld[si].place(q, rooms).sight);
+        let base = two_rooms(&[]);
+        let s0 = sight(&base, 0, &base.rooms);
+        assert!(s0[0] > 0.5 && s0[1] > 0.5, "{s0:?}");
+        let half = two_rooms(&[("links<-rechts", 0.5)]);
+        let s = sight(&half, 0, &half.rooms);
+        assert!(
+            (s[0] - s0[0]).abs() < 1e-12 && (s[1] - 0.5 * s0[1]).abs() < 1e-12,
+            "{s:?}"
+        );
+        // without the rooms (in no room: all of it) the geometric sight is the same
+        let nowhere = RoomGrid::new(half.raster, vec![None; half.raster.cells()]);
+        assert_eq!(sight(&half, 0, &nowhere), s0);
+        let blind = two_rooms(&[("links<-rechts", 0.0)]);
+        assert_eq!(sight(&blind, 0, &blind.rooms), [s0[0], 0.0]);
+        // the other sensor is untouched; no tile of the other room is in a's view any more
+        assert_eq!(sight(&blind, 1, &blind.rooms), sight(&base, 1, &base.rooms));
+        let rechts = (0..blind.plan.rooms.len())
+            .map(RoomIdx)
+            .find(|&r| blind.plan.room(r).id == "rechts")
+            .expect("the room");
+        let other = |w: &World| w.ld[0].tiles.idx.iter().any(|&c| w.tiles.room[c] == Some(rechts));
+        assert!(other(&base) && !other(&blind));
+    }
+}

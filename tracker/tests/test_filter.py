@@ -3,13 +3,13 @@ sensors, a balcony and a hallway behind doors."""
 
 import numpy as np
 
-from presence_tracker.ghostmap import GhostMap
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
 from presence_tracker.frames import Frame
 
 from test_frames import sim_sensors, walk
+from fixture import fixture
 
 FLUR_DOOR = (0.0, 4.0)
 BALCONY_DOOR = (6.0, 2.0)
@@ -62,14 +62,11 @@ def present(samples, t0, t1):
 
 
 def test_the_world_knows_rooms_regions_and_walls():
+    # the places of points and walls crossed or not: the core's own tests (plan.rs
+    # the_places_of_a_plan_worked_out_by_hand, geometry.rs a_move_across_a_wall_is_mirrored)
     crowd = Tracker(flat_config(), start=0.0, people=["flur"])
-    world = crowd.world
-    assert set(world.places) == {"observed", "balkon", "flur", "outside"}
-    pts = np.array([[3.0, 2.5], [7.0, 2.0], [-1.0, 4.0], [10.0, 10.0]])
-    assert list(world.place_of(pts)) == [0, world.index["balkon"], world.index["flur"], -1]
-    # through the wall: blocked; through the door: not
-    assert world.crosses_wall(np.array([[5.8, 4.0]]), np.array([[6.2, 4.0]]))[0]
-    assert not world.crosses_wall(np.array([[5.8, 2.0]]), np.array([[6.2, 2.0]]))[0]
+    assert set(crowd.places) == {"observed", "balkon", "flur", "outside"} and crowd.rooms == ["wohn"]
+    assert crowd.place_distribution()["flur"][1] == 1.0
 
 
 def test_one_person_comes_in_goes_to_the_balcony_and_comes_back():
@@ -148,15 +145,15 @@ def test_a_recalibrated_sensor_keeps_the_people():
     d["params"].update(light_cost=3.0, approach_cost=0.1, lead_time=3.0, ld2410_hold=5.0, target_threshold=0.7)
     d["zones"][0]["name"] = "Wohnzimmer"
     d["sensors"][1]["name"] = "Ecke"
-    segs, hyps = dict(crowd.segs), [(hy.logw, hy.key()) for hy in crowd.hyps]
-    assert not crowd.reconfigure(Config.from_dict(d)) and crowd.segs == segs
-    assert [(hy.logw, hy.key()) for hy in crowd.hyps] == hyps
+    tracks, hyps = crowd.tracks(), [(hy["logw"], hy["key"]) for hy in crowd.hypotheses()]
+    assert not crowd.reconfigure(Config.from_dict(d)) and crowd.tracks() == tracks
+    assert [(hy["logw"], hy["key"]) for hy in crowd.hypotheses()] == hyps
     c = 3.0 / 4.0
     assert crowd.zone_states()["wohn"].decided == (crowd.zone_states()["wohn"].probability > c)
     # a parameter of the model: it starts over as after a restart, from what it knew (the tracks
     # end, the people go to the tiles, MODEL.md 5.3): both are still there
     other = Config.from_dict({**d, "params": {**d["params"], "range_sigma_base": 0.2}})
-    assert crowd.reconfigure(other) and not crowd.segs and crowd.started_from is not None
+    assert crowd.reconfigure(other) and not crowd.tracks() and crowd.started_from is not None
     dist = crowd.count_distribution()["wohn"]
     assert len(dist) > 2 and dist[2] > 0.9, dist
 
@@ -205,10 +202,8 @@ def test_the_ghost_map_does_not_confirm_itself():
     seat = (4.5, 3.5)
     config = flat_config(entry=True)
     crowd = Tracker(config, start=0.0, people=["outside", "outside"])
-    gm = GhostMap.from_dict(crowd.learned()["ghost_map"])  # the format's reference until phase 9
-    for sid in ("a", "b"):
-        gm.add_birth(sid, seat, 200.0)
-    crowd.use_ghost_map(gm.to_dict())
+    # 200 ghosts at the seat for each sensor, learned by the Python map of 0.38.1 (fixtures/ghosts.json)
+    assert crowd.use_ghost_map(fixture("ghosts.json")["flat_seat"])
     learned = _learned(crowd)
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, seat, (seat[0] + 0.05, seat[1]), start=2, pauses={2: 150}))
     for t, sid, frame in simulate([a], sim_sensors(config, still_dropout=1 / 30, still_gap=40), a.waypoints[-1][0],
@@ -235,7 +230,6 @@ def test_a_sitter_taken_for_ghosts_does_not_become_a_ghost_source():
     prior_rate = crowd.learned()["ghost_map"]["prior_rate"]
     assert sum(p for _, p in learned) > 2, learned  # the case: some of them were taken for ghosts
     assert all(crowd.ghost_rates(s, np.array([seat]))[0][0] < 2 * prior_rate for s in ("a", "b"))
-    assert crowd._ghost_types() == crowd.m.ghost_types
 
 
 def test_a_ghost_in_an_empty_house_is_learned_as_one():
@@ -295,11 +289,19 @@ def test_the_tracks_of_a_sensor_that_died_end():
             crowd.check()
             p.setdefault(int(t), 1 - crowd.count_distribution()["wohn"][0])
             if 50.0 <= t < 60.0:
-                assert any(crowd.segs[s]["si"] == crowd.sidx["a"] for s in crowd.segs)
+                assert "a" in crowd.tracks().values()
             if t >= 67.0:  # its last frame + LOST: no track of a dead sensor is left
-                assert all(crowd.sensors[crowd.segs[s]["si"]] not in dead for s in crowd.segs), (t, dead)
+                assert not set(crowd.tracks().values()) & set(dead), (t, dead)
         for t in (600.0, 1800.0, 3600.0):
             crowd.step(t)
             p[int(t)] = 1 - crowd.count_distribution()["wohn"][0]
         assert p[55] > 0.99
         assert all(p[t] < c for t in p if t >= 200), (dead, {t: round(v, 3) for t, v in p.items() if t >= 200 and v >= c})
+
+
+def test_the_display_tells_how_long_people_stay_in_a_region():
+    # MODEL.md 3.3: stays in a region without a sensor are log-normal, median dwell_median (120 s), spread
+    # dwell_spread (1.5): the 90 % quantile 120 x exp(1.5 x 1.2816) = 820 s (unobserved.Dwell until 0.38)
+    crowd = Tracker(flat_config(), start=0.0, people=["flur"])
+    assert {r["dwell"]["median"] for r in crowd.snapshot()["regions"].values()} == {120}
+    assert {r["dwell"]["p90"] for r in crowd.snapshot()["regions"].values()} == {820}

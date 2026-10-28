@@ -332,7 +332,7 @@ def test_a_nan_is_a_model_failure_never_nobody_there(tmp_path, caplog):
     assert not app.tick(1000.0 + 20.5)  # no raise
     assert app.tracker is not tracker and "not finite" in caplog.text
     with pytest.raises(FloatingPointError):
-        tracker._normalize()
+        tracker._call("normalize", 0.0)  # the core normalizing the weights
     st = ZoneState(probability=math.nan, p_enter=math.nan, eta=math.inf, approaching=True)
     assert not st.finite() and st.to_dict()["probability"] is None  # never raises
 
@@ -419,8 +419,7 @@ def test_a_room_whose_sensors_go_silent_is_unavailable_in_home_assistant(tmp_pat
     sending; after the limit its own availability topic says "offline" (Home Assistant: unavailable),
     the app's stays "online"; with their next frames "online" again. At the connect the room's topic
     goes out before the app says "online"."""
-    from presence_tracker import roomseen
-    monkeypatch.setattr(roomseen, "SILENT_AFTER", 0.5)
+    monkeypatch.setattr(filter_module, "SILENT_AFTER", 0.5)
     flat_config(entry=True).save(tmp_path / "tracker.json")
     app = App(tmp_path, publish=True)
     mqtt = FakeMqtt()
@@ -547,14 +546,14 @@ def test_reset_tracks_sees_whoever_sits_there_again(tmp_path):
         if t >= 60.0 and not done:
             asyncio.run(app.h_reset_tracks(None))
             done = True
-            assert not app.tracker.segs
+            assert not app.tracker.tracks()
             bg = app.tracker.learned()["ld_background"]
             assert set(bg["held"]) == {"a", "b"}
         app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
         app.tick(1000.0 + t)
         p.setdefault(int(t), app.zone_states["wohn"].probability)
     assert all(p[t] > c for t in p if 70 <= t), {t: v for t, v in p.items() if t >= 70 and v <= c}
-    assert app.tracker.segs
+    assert app.tracker.tracks()
     now = app.tracker.learned()["ld_background"]
     assert now["num"] == bg["num"] and now["den"] == bg["den"]  # learned nothing since the reset
     assert app.start_learned["ld_background"]["held"] == bg["held"]  # in a report: the replay holds too

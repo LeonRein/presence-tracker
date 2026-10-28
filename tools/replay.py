@@ -155,7 +155,7 @@ def main():
             line = time.strftime("%H:%M:%S", time.localtime(tt)) + " " + " ".join(
                 f"{names.get(z, z)}={st[z].count}{'*' if st[z].occupied else ''}" for z in rooms if z in st)
             dist = crowd.count_distribution()
-            line += " [" + " ".join(f"{names.get(z, z)[:4]} " + "/".join(f"{q:.2f}" for q in dist[z]) for z in rooms) + f"] H{len(crowd.hyps)}"
+            line += " [" + " ".join(f"{names.get(z, z)[:4]} " + "/".join(f"{q:.2f}" for q in dist[z]) for z in rooms) + f"] H{len(crowd.hyp_weights())}"
             for d in crowd.persons():
                 where = max(d["places"].items(), key=lambda kv: kv[1])
                 pos = "" if d["x"] is None else f" ({d['x']:.1f},{d['y']:.1f}){' unseen' if d['lost'] else ''}"

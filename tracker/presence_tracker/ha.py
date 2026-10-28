@@ -3,7 +3,7 @@ and a fifth ("Ziel") per room (not for an entry room: the stairwell is outside, 
 switch "Lernen pausieren" (pause.py).
 
 Availability: every entity is available while the app is (AVAILABILITY). The entities of a room with an
-own sensor in use (roomseen.py) have a second topic, the room's own (zone_availability): "offline" while
+own sensor in use (the core's room_seen.rs) have a second topic, the room's own (zone_availability): "offline" while
 its own sensors are all silent, so Home Assistant shows "unavailable" - "I don't know" - instead of
 "empty" (MODEL.md 6 "Belegt"). Both must say "online" (availability_mode "all")."""
 

@@ -1232,4 +1232,100 @@ mod tests {
         let none = from_tiles(&world, &mut densities, id, TileFactors::same(&ones), far);
         assert!(none.is_none_or(|(_, l)| l < -1000.0));
     }
+
+    /// A person standing anywhere in view alike, nothing measured (Hidden.at_place(tiles, 0)).
+    fn standing_anywhere(world: &World, densities: &mut Densities) -> DensityId {
+        let id = densities.alloc(Kind::Person);
+        let mut d = densities.get_mut(id);
+        let (s, area) = (d.shape, &world.tiles.area);
+        let total = pairwise_sum(area);
+        let prior = world.shapes.stay_prior(true);
+        for l in 0..s.kinds {
+            for k in 0..s.levels {
+                let w = prior[l * s.levels + k];
+                for (x, a) in d.still[s.still_row(l, k)].iter_mut().zip(area) {
+                    *x = w * a / total;
+                }
+            }
+        }
+        d.normalize();
+        id
+    }
+
+    #[test]
+    fn the_end_of_a_track_is_not_the_end_of_the_stay() {
+        // test_ld2410 (MODEL.md 4.3, 5.4): a stay whose amplitude a track measured keeps it on the
+        // tiles (Swerling III: fixed over a stay), drawn anew only with the detectability or with a new
+        // stay; what nothing measured has g = 1, and back on a track the measured amplitude comes along
+        use crate::motion::walk::{leap, move_densities};
+        let world = World::build(&testing::flat_config(), Params::default(), 30.0).expect("a world");
+        let (sh, tiles, s) = (&world.shapes, &world.tiles, world.density_shape());
+        let mut densities = Densities::new(s);
+        let track = NewTrack {
+            seg: SegId(1),
+            z: [3.0, 3.0],
+            var: 0.01,
+        };
+        let mut g = ghost_source(track, &world.params, sh);
+        g.logw = [(1.0 - 1e-9f64).ln(), 1e-9f64.ln()]; // standing
+        // all of the amplitude at the level nearest 0.3, the detectability as it was
+        let off = |a: usize| (sh.amp[a] - 0.3).abs();
+        let a = (0..s.amps).min_by(|&i, &j| off(i).total_cmp(&off(j))).expect("levels");
+        let kw = g.kw(s.levels);
+        g.ka = (0..s.levels * s.amps)
+            .map(|i| if i % s.amps == a { kw[i / s.amps] } else { 0.0 })
+            .collect();
+        let h = g.to_tiles(&world, &mut densities);
+        assert!(densities.measured(h));
+        // at the densest tile, per level of detectability: the still mass and P(g at level a)
+        let densest = |d: &Densities| {
+            let mass = |c: usize| d.get(h).still_at(&s, c);
+            (0..tiles.n)
+                .max_by(|&i, &j| mass(i).total_cmp(&mass(j)))
+                .expect("tiles")
+        };
+        let c = densest(&densities);
+        let still = |d: &Densities, id| -> Vec<f64> {
+            let per_level = s.still_per_level(d.get(id).still);
+            (0..s.levels).map(|k| per_level[s.level_row(k)][c]).collect()
+        };
+        let at_a = |d: &Densities, id| -> Vec<f64> {
+            let amp = d.get(id).amp.expect("measured");
+            (0..s.levels).map(|k| amp.levels[s.amp_row(k, a)][c]).collect()
+        };
+        assert!(at_a(&densities, h).iter().all(|g| (g - 1.0).abs() < 1e-12));
+        let fresh = standing_anywhere(&world, &mut densities);
+        assert!(!densities.measured(fresh));
+        // a minute on: the stay goes on, a few draw anew (detectability, getting up and sitting down)
+        for _ in 0..60 {
+            move_densities(&world, &mut densities, &[(h, 1.0)]);
+        }
+        assert!(densities.measured(h));
+        let (sh_c, g_h) = (still(&densities, h), at_a(&densities, h));
+        let kept = sh_c.iter().zip(&g_h).map(|(m, g)| m * g).sum::<f64>() / sh_c.iter().sum::<f64>();
+        assert!(0.8 < kept && kept < 1.0, "{kept}");
+        // mixed with somebody nothing measured: by their standing mass
+        let mix = densities.mixture(&[(0.5, h), (0.5, fresh)]);
+        assert!(densities.measured(mix));
+        let sf_c = still(&densities, fresh);
+        for (k, got) in at_a(&densities, mix).into_iter().enumerate() {
+            let want = sh_c[k] * g_h[k] / (sh_c[k] + sf_c[k]);
+            assert!((got - want).abs() < 1e-12, "{k}: {got} {want}");
+        }
+        // a track starts on them again: its amplitude is the measured one
+        let ones = vec![1.0; tiles.n];
+        let again = NewTrack {
+            seg: SegId(2),
+            z: tiles.centers[c],
+            var: 0.01,
+        };
+        let (new, _) = from_tiles(&world, &mut densities, h, TileFactors::same(&ones), again).expect("mass");
+        let mean: f64 = new.amw(s.levels).iter().zip(&sh.amp).map(|(w, g)| w * g).sum();
+        assert!(mean < 0.5, "{mean}");
+        // hours on: what was measured is gone (nothing left measured at all: g = 1 again)
+        leap(&world, &mut densities, h, 6.0 * 3600.0);
+        densities.get_mut(h).settle_amp();
+        let unmeasured = |amp: &Amp| (0..s.levels).all(|k| amp.levels[s.amp_row(k, s.amps)][c] > 0.99);
+        assert!(densities.get(h).amp.is_none_or(unmeasured));
+    }
 }

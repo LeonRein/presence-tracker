@@ -171,7 +171,12 @@ impl Filter {
         let ids: Vec<DensityId> = state
             .densities
             .into_iter()
-            .map(|d| self.objects.densities.insert(d))
+            .map(|d| {
+                let id = self.objects.densities.insert(d);
+                // a person's masses sum to 1 (Hidden.from_dict); the unknown ones are as they were
+                self.objects.densities.get_mut(id).normalize();
+                id
+            })
             .collect();
         let hyps = state
             .hyps

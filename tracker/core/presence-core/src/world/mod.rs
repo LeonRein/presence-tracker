@@ -11,12 +11,13 @@ pub mod tiles;
 
 pub use ld::{LdPlace, LdSight, LdTiles};
 pub use raster::{CELL, Grid, Raster, RoomGrid};
-pub use sight::Sight;
+pub use sight::{SensorMap, Sight};
 pub use targets::EntryTargets;
-pub use tiles::{DoorTile, POINT, Tiles};
+pub use tiles::{AGE_EDGES, DoorTile, POINT, Tiles};
 
 use crate::config::{Config, SensorConfig};
 use crate::filter::densities::DensityShape;
+use crate::formats::{Fingerprint, round_numpy};
 use crate::frames::Reading;
 use crate::geometry::{Point, Walls};
 use crate::ld2410::likelihood::Likelihood;
@@ -304,6 +305,23 @@ impl World {
             ages: self.tiles.ages,
             amps: self.shapes.amps(),
         }
+    }
+
+    /// What a density over these tiles depends on (tiling.Tiling.fingerprint): the tiles (where, how big,
+    /// which room), the places behind the doors and the kinds of stay and detectability. A saved state
+    /// (Tracker::saved_people) fits only tiles with the same fingerprint.
+    pub fn fingerprint(&self) -> String {
+        let t = &self.tiles;
+        let mut f = Fingerprint::default();
+        f.floats(t.centers.iter().flatten().map(|&x| round_numpy(x, 3)))
+            .floats(t.area.iter().map(|&a| round_numpy(a, 4)))
+            .floats(t.room.iter().map(|r| r.map_or(-1.0, |RoomIdx(k)| k as f64)))
+            .floats(t.exits.iter().map(|&e| e as f64))
+            .floats(self.shapes.go.iter().map(|&g| round_numpy(g, 12)))
+            .floats(self.shapes.kappa.iter().map(|&k| round_numpy(k, 9)))
+            .floats(AGE_EDGES)
+            .text(&self.plan.place_names().join("|"));
+        f.hex()
     }
 
     /// How well the best of these sensors can test a person in each tile, 0..1 (tiling.Tiling.

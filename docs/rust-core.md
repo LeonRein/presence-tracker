@@ -241,6 +241,14 @@ Gelernte gibt `learned()` als Kopie (`presence_core.Learned`, `json()` packt ohn
 `use_ghost_map/use_ld_background/use_dest_map` nehmen das gespeicherte JSON. Die Python-Lerner (`ghostmap.py`,
 `destination.py`, `ld2410.Background`) bleiben bis Phase 9 als Orakel der Formate in den Tests.
 
+**Umgesetzt in Phase 9 (28.10.):** Der Python-Kern ist gelöscht (Liste im CHANGELOG 0.39.0). Das Modell sind die
+Standards des Kerns (`Params::default`, `presence_core.model_defaults()`); `Tracker(config, model=dict)` nimmt nur, was
+abweicht. Das Format von `people_state` liest und schreibt der Kern (`filter/saved.rs`). Statt des Spiegels gibt es
+lesende Sichten (`hypotheses`, `tracks`, `tiles_view`, `sensor_map`, `sight`, `observed`, `tile_near`). Die Bindung
+nimmt keine Welt aus Python mehr an (der Parameter `export` ist weg); `build_export` bleibt als Prüfhilfe, der Kern
+behält `WorldExport` für seine eigenen Tests. Was die Python-Orakel sagten, steht in `tracker/tests/fixtures/`
+(einmal mit 0.38.1 erzeugt).
+
 **`presence_tracker.filter.Tracker`** bleibt die Klasse, die App, Werkzeuge und Tests benutzen, mit derselben
 öffentlichen API: Sie reicht durch, formt `ZoneState`, ruft die `listeners` mit den Ereignissen des Kerns und hält
 die Python-Objekte der Hülle (`config`, `pauses`). Die Konfiguration geht als `config.to_dict()` hinein; das

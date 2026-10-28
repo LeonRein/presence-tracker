@@ -7,7 +7,6 @@ import json
 import numpy as np
 
 from presence_tracker import ha
-from presence_tracker.destination import DestinationMap, Geometry
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
@@ -15,6 +14,7 @@ from presence_tracker.frames import Frame
 
 from test_entering import DOOR, two_rooms
 from test_frames import sim_sensors, walk
+from fixture import fixture, unpack
 
 DESK = (1.5, 2.5)
 SOFA = (8.5, 2.5)
@@ -30,10 +30,20 @@ def routine(trips: int, start: float = 1.0):
     return Person(walk(*pts, start=start, pauses=pauses))
 
 
-def dest_map(tr) -> DestinationMap:
-    """The core's destination map, read by the Python map of 0.37.1 (the format's reference until
-    phase 9)."""
-    return DestinationMap.from_dict(tr.learned()["dest_map"])
+def dest_map(tr) -> dict:
+    """The core's destination map as saved: its fingerprint, walks and counts (cells x velocities x
+    outcomes, float32)."""
+    d = tr.learned()["dest_map"]
+    return {**d, "count": unpack(d["count"], "<f4").reshape(d["shape"])}
+
+
+def lookup(dm: dict, vel: str) -> np.ndarray:
+    """The walks counted near (3.5, 2.5) per outcome for a velocity of 1 m/s towards b ("ahead") or a
+    ("back"): the cells there and the velocity cells with their weights as destination.Geometry.around
+    and vel_interp of 0.38.1 had them (fixtures/destinations.json), DestinationMap.lookup."""
+    geo = fixture("destinations.json")
+    (cells, cw), (vc, vw) = geo["around"], geo[vel]
+    return np.einsum("c,v,cvk->k", cw, vw, dm["count"][np.array(cells)[:, None], np.array(vc)[None, :]])
 
 
 def run(person, until, tracker=None):
@@ -71,16 +81,16 @@ def test_the_map_learns_a_routine_and_predicts_it_earlier():
     trips = 10
     a = routine(trips)
     tr, out = run(a, a.waypoints[-1][0] + 1)
-    dm, geo = dest_map(tr), Geometry(tr)
-    assert dm.fingerprint == geo.fingerprint() and dm.count.shape[0] == geo.n  # the core's geometry is Python's
+    dm, geo = dest_map(tr), fixture("destinations.json")
+    assert dm["fingerprint"] == geo["fingerprint"] and dm["count"].shape[0] == geo["n"]  # the geometry of 0.38.1
     b = tr.rooms.index("b")
-    assert dm.walks >= 2 * trips - 2  # walks a -> b, b -> a (and the stops)
+    assert dm["walks"] >= 2 * trips - 2  # walks a -> b, b -> a (and the stops)
     # halfway from the desk to the door, walking towards it: these walks went to b
-    cnt = dm.lookup(*geo.around(3.5, 2.5), 1.0, 0.0)
+    cnt = lookup(dm, "ahead")
     assert cnt.sum() >= 0.4 * trips  # each walk counts up to 1 (less where it passes beside the centre)
     assert cnt[b] / cnt.sum() > 0.9
     # walking away from the door there: none of them went to b
-    back = dm.lookup(*geo.around(3.5, 2.5), -1.0, 0.0)
+    back = lookup(dm, "back")
     assert back[b] < 0.1 * back.sum()
     # one more trip: "Ziel" comes on well before "wird betreten", from the map
     more = Person([(t + a.waypoints[-1][0], x, y) for t, x, y in routine(1).waypoints])
@@ -105,31 +115,31 @@ def test_the_map_is_saved_restored_and_belongs_to_its_floor_plan():
     tr, _ = run(a, a.waypoints[-1][0] + 1)
     saved = json.loads(json.dumps(tr.learned()))
     other = Tracker(two_rooms(), start=0.0, people=["observed"])
-    assert dest_map(other).count.sum() == 0
+    assert dest_map(other)["count"].sum() == 0
     other.load_learned(saved)
     trained = dest_map(tr)
-    assert np.array_equal(dest_map(other).count, trained.count) and trained.count.sum() > 0
-    assert dest_map(other).walks == trained.walks
+    assert np.array_equal(dest_map(other)["count"], trained["count"]) and trained["count"].sum() > 0
+    assert dest_map(other)["walks"] == trained["walks"]
     # a recalibrated sensor keeps it
     d = two_rooms().to_dict()
     d["sensors"][0]["heading"] = 50
     assert not other.reconfigure(Config.from_dict(d))
-    assert np.array_equal(dest_map(other).count, trained.count)
+    assert np.array_equal(dest_map(other)["count"], trained["count"])
     # a threshold neither: the outputs decide differently, the model goes on
     d = two_rooms().to_dict()
     d["sensors"][0]["heading"] = 50
     d["params"]["target_thresholds"] = {"b": 0.6}
     assert not other.reconfigure(Config.from_dict(d))
-    assert np.array_equal(dest_map(other).count, trained.count) and other.threshold("b") == 0.6
+    assert np.array_equal(dest_map(other)["count"], trained["count"]) and other.threshold("b") == 0.6
     # another door starts it over
     d = two_rooms().to_dict()
     d["doors"][0]["y"] = 1.5
     other.reconfigure(Config.from_dict(d))
-    assert dest_map(other).count.sum() == 0
+    assert dest_map(other)["count"].sum() == 0
     # a map of another floor plan is not used
     third = Tracker(Config.from_dict(d), start=0.0, people=["observed"])
     assert not third.use_dest_map(saved["dest_map"])
-    assert dest_map(third).count.sum() == 0
+    assert dest_map(third)["count"].sum() == 0
 
 
 def test_occupancy_is_unchanged_by_the_map():

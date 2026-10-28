@@ -569,4 +569,242 @@ mod tests {
         back.follow(&plan);
         assert!(back.part(0).level.is_none() && back.part(0).held == 2.0);
     }
+
+    // ------------------------------------------------------------ test_learning (ld2410.Background)
+
+    /// The cells' Gamma shapes (ld2410.cell_values(m, *m.ld_shape)).
+    fn alpha(p: &Params) -> Cells {
+        super::super::cell_values(p.ld_shape[0], p.ld_shape[1])
+    }
+
+    /// Stats of `seconds` s of frames whose energies are Gamma(alpha, mean mu), independent every 0.1 s,
+    /// capped as the firmware caps them (test_learning._frames).
+    fn frames(mu: &Cells, seconds: f64, seed: u64, alpha: &Cells) -> Stats {
+        let mut rng = testing::Rng::new(seed);
+        let mut st = Stats::default();
+        for _ in 0..(seconds * 10.0) as usize {
+            let e = std::array::from_fn(|c| (rng.gamma(alpha[c]) * mu[c] / alpha[c]).round_ties_even().min(100.0));
+            st.add(&e, 0.1, false);
+        }
+        st
+    }
+
+    /// These frames as Background.learn took them in test_learning: one hypothesis, P(no echo source
+    /// on) `off`; no echo source began, nobody in view counted.
+    fn em(stats: Stats, off: f64) -> LdLearn {
+        LdLearn {
+            mus: Vec::new(),
+            prior_w: vec![1.0],
+            nobody: 0.0,
+            echo_off: off,
+            began: 0.0,
+            stats,
+            target_t: 0.0,
+        }
+    }
+
+    /// One step of sensor 0 with the background b, the hypothesis' mean mu, the LD2450 quiet for
+    /// `quiet` s.
+    fn step(bg: &mut Background, l: &mut LdLearn, b: Cells, mu: Cells, quiet: f64, p: &Params) {
+        l.mus = vec![mu];
+        let alpha = alpha(p);
+        bg.learn(
+            0,
+            &Weighed {
+                learn: l,
+                b: &b,
+                rate: p.ld_echo_rate,
+                alpha: &alpha,
+                quiet,
+            },
+            p,
+        );
+    }
+
+    /// Whether every cell of x is within `tol` of want, relatively.
+    fn near(x: &Cells, want: &Cells, tol: f64) -> bool {
+        x.iter().zip(want).all(|(a, b)| (a / b - 1.0).abs() < tol)
+    }
+
+    fn times(k: f64, b: &Cells) -> Cells {
+        b.map(|x| k * x)
+    }
+
+    #[test]
+    fn capped_energies_count_for_what_they_were() {
+        // test_learning: somebody 1.8 m in front of the sensor puts 160 into a still gate whose
+        // background is 5: the firmware reports 100 in most frames. Until 0.20 those counted as 100,
+        // and the background's share of them made it learn 3 instead of 5
+        let (mut bg, w) = background();
+        let p = &w.params;
+        let b = prior(p);
+        let mut mu = b;
+        mu[9] += 160.0;
+        let mut l = em(frames(&mu, 3600.0, 1, &alpha(p)), 1.0);
+        let st = &l.stats;
+        assert!(st.t_cens[9] > 0.5 * st.time);
+        // the old share of a capped 100
+        let old =
+            (p.ld_prior_time * b[9] + b[9] / mu[9] * (st.t_e[9] + 100.0 * st.t_cens[9])) / (p.ld_prior_time + st.time);
+        assert!(old < 0.7 * b[9], "{old}");
+        step(&mut bg, &mut l, b, mu, f64::INFINITY, p);
+        let learned = bg.b(0, p);
+        assert!(near(&learned, &b, 0.1), "{learned:?}");
+    }
+
+    #[test]
+    fn no_background_is_learned_while_something_is_seen_or_an_echo_source_holds_the_energy() {
+        let (mut bg, w) = background();
+        let p = &w.params;
+        let b = prior(p);
+        let mut l = em(frames(&times(3.0, &b), 600.0, 1, &alpha(p)), 0.0);
+        step(&mut bg, &mut l, b, b, f64::INFINITY, p);
+        assert!(near(&bg.b(0, p), &b, 1e-12));
+        // the same frames with a target of the LD2450 in sight
+        let mut seen = Stats::default();
+        seen.add(&times(3.0, &b), 600.0, true);
+        step(&mut bg, &mut em(seen, 1.0), b, b, f64::INFINITY, p);
+        assert!(near(&bg.b(0, p), &b, 1e-12));
+        l.echo_off = 1.0;
+        step(&mut bg, &mut l, b, b, f64::INFINITY, p);
+        assert!(bg.b(0, p)[0] > 1.5 * b[0]);
+    }
+
+    #[test]
+    fn what_is_not_learned_goes_back_to_the_sensors_own_level() {
+        // test_learning: the background wanders around its sensor's own mean (MODEL.md 4.3). The
+        // bedroom's sensor gives 9 where the prior says 5; a night with somebody in sight of its LD2450
+        // teaches nothing, and until 0.27 the level went back to the prior's 5 by the morning - the
+        // empty room's 9 then held an unknown person there (MODEL.md 10)
+        let (mut bg, w) = background();
+        let p = &w.params;
+        let (b, alpha) = (prior(p), alpha(p));
+        for hour in 0..6 {
+            // an empty day: 1.8 times the prior
+            let now = bg.b(0, p);
+            step(
+                &mut bg,
+                &mut em(frames(&times(1.8, &b), 3600.0, hour, &alpha), 1.0),
+                now,
+                now,
+                f64::INFINITY,
+                p,
+            );
+        }
+        // the pull towards the anchor is the sensor's own level, not the prior (until 0.27 19 % of the
+        // prior with 0.7 h of forgetting)
+        assert!(near(&bg.b(0, p), &times(1.8, &b), 0.05));
+        // somebody in sight of the LD2450 all night: nothing learned
+        let mut night = Stats::default();
+        night.add(&times(3.0, &b), 600.0, true);
+        let mut night = em(night, 1.0);
+        for _ in 0..9 * 6 {
+            let now = bg.b(0, p);
+            step(&mut bg, &mut night, now, now, f64::INFINITY, p);
+        }
+        assert!(near(&bg.b(0, p), &times(1.8, &b), 0.05));
+        // a level learned for an hour (somebody the LD2450 did not see) goes back towards the sensor's
+        // own, which holds that hour with its share of the day (1 of 7 h here)
+        let now = bg.b(0, p);
+        step(
+            &mut bg,
+            &mut em(frames(&times(4.0, &b), 3600.0, 9, &alpha), 1.0),
+            now,
+            now,
+            f64::INFINITY,
+            p,
+        );
+        assert!(bg.b(0, p).iter().zip(&b).all(|(x, y)| *x > 3.0 * y));
+        for _ in 0..9 * 6 {
+            let now = bg.b(0, p);
+            step(&mut bg, &mut night, now, now, f64::INFINITY, p);
+        }
+        assert!(near(&bg.b(0, p), &times((6.0 * 1.8 + 4.0) / 7.0, &b), 0.1));
+    }
+
+    #[test]
+    fn the_anchor_learns_only_after_a_long_silence_of_the_ld2450() {
+        // test_learning: sleepers and sitters leave the LD2450 gaps of seconds to minutes; what the
+        // background learns in them does not reach the sensor's own level (the anchor), what follows
+        // 10 min of silence does
+        let (mut bg, w) = background();
+        let p = &w.params;
+        let b = prior(p);
+        let mut l = em(frames(&times(3.0, &b), 3600.0, 1, &alpha(p)), 1.0);
+        step(&mut bg, &mut l, b, b, 90.0, p);
+        let above = |x: Cells| x.iter().zip(&b).all(|(x, y)| *x > 2.5 * y);
+        assert!(above(bg.b(0, p)), "the fast level learns it");
+        assert!(near(&bg.anchor(0, p), &b, 1e-12), "the anchor not");
+        let now = bg.b(0, p);
+        step(&mut bg, &mut l, now, now, p.ld_anchor_quiet, p);
+        assert!(above(bg.anchor(0, p)));
+    }
+
+    #[test]
+    fn the_echo_rate_counts_where_nobody_is_and_without_itself() {
+        let (mut bg, _) = background();
+        let p = Params {
+            ld_echo_rate: 1e-4,
+            ld_echo_prior_time: 3600.0,
+            ..Params::default()
+        };
+        let (b, alpha) = (prior(&p), alpha(&p));
+        let mut st = Stats::default();
+        st.add(&b, 3600.0, false);
+        let mut l = em(st, 1.0);
+        l.began = 0.5;
+        let learn = |bg: &mut Background, l: &LdLearn, rate| {
+            let w = Weighed {
+                learn: l,
+                b: &b,
+                rate,
+                alpha: &alpha,
+                quiet: 0.0,
+            };
+            bg.learn(0, &w, &p);
+        };
+        // somebody in view: nothing
+        learn(&mut bg, &l, 1e-4);
+        assert!((bg.rate(0, &p) / 1e-4 - 1.0).abs() < 1e-12);
+        l.nobody = 1.0;
+        learn(&mut bg, &l, 1e-3);
+        // judged with 10 times the prior's rate: odds 1 -> 0.1 with the prior's
+        let e = bg.part(0).echoes.expect("counted");
+        assert!((e.began - 1.0 / 11.0).abs() < 1e-9, "{}", e.began);
+        assert!((bg.rate(0, &p) - (0.36 + 1.0 / 11.0) / 7200.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_level_without_its_time_is_dropped_on_load() {
+        // test_ld2410: a sensor's num without its den (a file broken by hand): until 0.28 kept, and
+        // b() failed at every LD2410C frame of it; now that sensor's level starts from the prior, its
+        // anchor and the other sensor keep what they learned
+        let (mut bg, w) = background();
+        let p = &w.params;
+        let b = prior(p);
+        for si in 0..2 {
+            let mut st = Stats::default();
+            st.add(&times(2.0, &b), 3600.0, false);
+            let mut l = em(st, 1.0);
+            l.mus = vec![b];
+            let alpha = alpha(p);
+            let weighed = Weighed {
+                learn: &l,
+                b: &b,
+                rate: p.ld_echo_rate,
+                alpha: &alpha,
+                quiet: f64::INFINITY,
+            };
+            bg.learn(si, &weighed, p);
+        }
+        let mut v = bg.to_json();
+        let id0 = &w.plan.sensors[0].id;
+        v["den"].as_object_mut().expect("den").remove(id0);
+        let (read, _) = Background::from_json(&v, &w.plan).expect("a background");
+        let (a, other) = (read.part(0), read.part(1));
+        assert!(a.level.is_none() && a.echoes.is_none() && a.anchor.is_some());
+        assert!(other.level.is_some() && other.echoes.is_some());
+        assert_eq!(read.b(0, p), b);
+        assert!(read.b(1, p).iter().all(|x| x.is_finite()));
+    }
 }

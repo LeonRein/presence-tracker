@@ -7,38 +7,28 @@ same about the live tracks are merged (5.6). This is the data association of a P
 (Garcia-Fernandez et al. 2018).
 
 Given a hypothesis, the people are independent:
-  - a person with a live track (measured or held): a Gaussian mixture over standing / walking
-    (gauss.py, 5.2)
-  - a person known from earlier tracks, without one now: a density over the tiles (hidden.py, 5.3)
-  - the people nobody knows of: a Poisson intensity over the tiles (hidden.Undetected, 3.4, 5.5)
+  - a person with a live track (measured or held): a Gaussian mixture over standing / walking (5.2)
+  - a person known from earlier tracks, without one now: a density over the tiles (5.3)
+  - the people nobody knows of: a Poisson intensity over the tiles (3.4, 5.5)
 The number of people is part of the state: people become known by their tracks, and one who is
 almost surely out of the house is given back to the unknown ones.
-Objects are shared by the hypotheses with the same history and updated once; what differs between
-hypotheses makes new objects (copy on write).
+
+All of it - the world built from the configuration, the filter, what it learns, the saved formats - is
+the Rust core (presence_core, docs/rust-core.md). This is its shell: it hands the core the configuration,
+frames, time and pauses, calls the listeners with the core's events and forms the outputs.
 """
 
-import binascii
 import json
 import logging
 import math
-import os
-import zlib
+from statistics import NormalDist
 
 import numpy as np
 
-from .filtermodel import Model, Shapes
 from .frames import Detection, SensorRuntime
-from . import kernels, ld2410
-from .gauss import Gauss
-from .hidden import Hidden, Undetected
 from .pause import Pauses
-from . import roomseen
-from .sensormodel import PD_MAX, SensorModel
-from .tiling import Tiling
-from .unobserved import Dwell
-from .world import CELL, OBSERVED, World
 
-import presence_core  # the Rust core (docs/rust-core.md): since phase 3 the hypotheses and their objects
+import presence_core
 
 
 log = logging.getLogger(__name__)
@@ -57,86 +47,22 @@ def _core(call, *args):
     except presence_core.PanicException as e:
         raise CoreError(f"the Rust core failed: {e}") from e
 
-__all__ = ["Model", "Tracker"]
 
-# "python": the core runs in the world this shell built (its export), not in its own - the aid that checks
-# the core's build (docs/rust-core.md 6; rust-port/cmpworld.py), never in the app
-WORLD = os.environ.get("PT_WORLD", "core")
+__all__ = ["Tracker"]
 
-MAX_STEP = 0.2  # s: motion is cut into parts no longer than this
-GIVE_UP = 0.01  # a known person who exists with less probability (wherever they are: refuted, or where
-                # nothing could test them, Tracker._expire) joins the unknown ones with r x their density:
-                # only P(several of them come back) changes, by <= GIVE_UP^2 / 2 (0.05: 14 % less
-                # computing time, light wrongly off 1.67 instead of 1.17)
-RECYCLE_EVERY = 1.0  # s
-LD_TILE_MASS = 1e-4  # persons: a tile holding less of a person (or of the unknown ones) standing is weighed
-                     # by the LD2410C at its mean amplitude, not level by level (_ld_split; MODEL.md 4.3)
 # what only the outputs (MODEL.md 6) or the display read: a change restarts nothing
 OUTPUT_PARAMS = ("target_threshold", "target_thresholds", "light_cost", "seen_hold", "approach_cost", "lead_time",
                  "ld2410_hold")
-GAP_EXACT = 120.0  # s: the end of a gap in the data is moved as always, what lies before in leaps
-LEAP = 15.0  # s   (_predict_gap; 7.10. 08:06, 8 people, 3 h: rooms within 0.022 of moving all as always)
-MAX_LEAPS = 2000  # longer gaps in longer leaps (8 h of 8 people: 1.7 s CPU; a week in leaps of 5 min,
-                  # 8 h in leaps of 4 min put the rooms up to 0.12 off)
-
-
-class Hyp:
-    """One hypothesis: its weight; per live track whose it is (a group id, or "g" for a ghost); per
-    ghost track the log likelihood of its life per kind of ghost and its source (a Gauss); the
-    people with tracks (group id -> Gauss), the known ones without (Hidden, one per person) and the
-    unknown ones (Undetected)."""
-
-    __slots__ = ("logw", "kind", "ghost", "phantom", "groups", "hidden", "ppp")
-
-    def __init__(self, logw, kind, ghost, groups, hidden, ppp, phantom=None):
-        self.logw = logw
-        self.kind = kind
-        self.ghost = ghost
-        self.phantom = phantom if phantom is not None else {}
-        self.groups = groups
-        self.hidden = hidden
-        self.ppp = ppp
-
-    def child(self, logw) -> "Hyp":
-        return Hyp(logw, dict(self.kind), {s: a.copy() for s, a in self.ghost.items()}, dict(self.groups),
-                   list(self.hidden), self.ppp, dict(self.phantom))
-
-    def people(self) -> list:
-        """The known people: with tracks (they exist), without (Bernoullis, Hidden.r)."""
-        return list(self.groups.values()) + self.hidden
-
-    def objects(self) -> list:
-        """Everything that moves and is weighed: the known people and the unknown ones."""
-        return self.people() + [self.ppp]
-
-    def group_segs(self) -> dict:
-        """group id -> the live tracks the hypothesis says are that person's."""
-        out = {}
-        for s, k in self.kind.items():
-            if k != "g":
-                out.setdefault(k, set()).add(s)
-        return out
-
-    def key(self):
-        """What the hypothesis says about the live tracks. Hypotheses that differ only in the known
-        people without a track (how many, where) are merged (MODEL.md 5.6): a person missing in
-        some of them becomes a Bernoulli with r < 1."""
-        return (frozenset(frozenset(v) for v in self.group_segs().values()),
-                frozenset(s for s, k in self.kind.items() if k == "g"))
-
-
-class _Mirror:
-    """The core's hypotheses as Python objects (Hyp, Gauss, Hidden) for what still reads them in
-    Python - the destination map, tests and tools (docs/rust-core.md 7; thrown away when they are in
-    Rust). Only for reading: nothing goes back into the core. serial: the core's state it shows."""
-
-    __slots__ = ("serial", "hyps", "segs", "live")
+# s without any frame: the board is gone, its room is silent (MODEL.md 6 "Belegt"; room_seen.rs). 30 s, not
+# LOST (6 s, when the filter ends its tracks): in 64 h of recordings 6-20 s gaps of one board while the
+# others sent came 88 times (the WLAN), each would have made its room unavailable for seconds; a board that
+# is gone stays silent for minutes
+SILENT_AFTER = 30.0
 
 
 class _Seen:
-    """The rooms' own LD2450s (roomseen.py, MODEL.md 6 "Belegt") as the core keeps them, for reading:
-    the app's and the tests' view until the plan is in the core (phase 6). Silent after
-    roomseen.SILENT_AFTER s, read at each call."""
+    """The rooms' own LD2450s (MODEL.md 6 "Belegt": the room's own sensor measured somebody in it within
+    the last seen_hold s) as the core keeps them, for reading. Silent after SILENT_AFTER s."""
 
     def __init__(self, tracker):
         self._tr = tracker
@@ -156,9 +82,9 @@ class _Seen:
         return {r for r, w in zip(self._tr.rooms, self._tr._c.watched()) if w}
 
     def silent(self, now: float, start: float | None = None) -> set:
-        """The rooms whose own sensors in use all sent no frame for more than roomseen.SILENT_AFTER s
-        (as it was when the world was built), counted from the model's start for one that sent nothing
-        (not started: nothing silent). start: the model's, kept for the callers."""
+        """The rooms whose own sensors in use all sent no frame for more than SILENT_AFTER s (as it was
+        when the world was built), counted from the model's start for one that sent nothing (not
+        started: nothing silent). start: the model's, kept for the callers."""
         return {r for r, q in zip(self._tr.rooms, self._tr._c.silent(now)) if q}
 
     def online(self, sensor_id: str, now: float, start: float | None = None) -> bool:
@@ -168,17 +94,15 @@ class _Seen:
 
 class Tracker:
     def __init__(self, config, start: float | None = None, n: int | None = None, seed: int = 1, people=None,
-                 sensor_model: SensorModel | None = None, model: Model | None = None):
-        # n and seed are accepted for the tools' sake; nothing here is random
-        self.m = model or Model()
-        self.shapes = Shapes(self.m)
+                 model: dict | None = None):
+        """model: the numbers of the model that differ from the core's (presence_core.model_defaults();
+        infinite ones as floats). n and seed are accepted for the tools' sake; nothing here is random."""
+        self.model = dict(model or {})
         self.config = config
         self.p = config.params
-        self.sensor_model = sensor_model or SensorModel(config)
-        self.dwell = Dwell(self.p)
         self.listeners = []
         self.runtime = {}
-        self._c = None  # the Rust core (presence_core.Core): the filter, its time and what it learns
+        self._c = None  # the Rust core (presence_core.Core): the filter, its world and what it learns
         # Lernen pausieren (pause.py): in these intervals nothing learns (the ghost map, MODEL.md 4.2; the
         # LD2410C background and echo rate, 4.3; the destination map, 6 "Ziel"); the tracking goes on
         self.pauses = Pauses()
@@ -192,132 +116,32 @@ class Tracker:
 
     def _build(self):
         old = self._c
-        self.world = World(self.config)
-        self.sensors = [s.id for s in self.config.sensors]
-        self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
-        self._gcache = {}
-        rooms = self.config.observed_rooms()
-        self.rooms = [z.id for z in rooms]
-        w = self.world
-        self.room_of = np.full((w.nx, w.ny), -1, dtype=np.int16)
-        for k, z in enumerate(rooms):
-            self.room_of[w.zone_mask(z) & (w.labels == OBSERVED)] = k
-        self.tiles = Tiling(self)
-        for si in range(len(self.sensors)):
-            self._g(si, np.zeros((1, 2)))
         self._c = _core(presence_core.Core, *self._world())
-        self._check_world()
-        rooms, places, areas, own = self._c.names()
-        self._own = {sid: r for sid, r in zip(self.sensors, own) if r is not None}
-        self._entry_ids = rooms + areas
+        self._names()
         if old is not None:  # what the rooms' own LD2450s saw, the ids of new tracks, the time and evidence,
             self._c.adopt(old)  # what was learned and the pauses, what the LD2410Cs gathered go on
-        self._mirror = None
 
-    def _check_world(self):
-        """The core built its own world: the shell's, still read by what is not ported yet (the
-        destination map, the saved state's format and fingerprint, the mirror, /api/tiles), must be the
-        same - the rooms and places, and the tiles bit for bit; else a CoreError (nothing would fit)."""
-        rooms, places, _, _ = self._c.names()
-        tl = self.tiles
-        centers, area, room, exits, entries, doors = self._c.tiles()
-        same = (rooms == self.rooms and places == self.world.places
-                and self._c.shape() == (tl.n, tl.R, tl.A)
-                and np.array_equal(np.asarray(centers), np.ravel(tl.centers))
-                and np.array_equal(np.asarray(area), tl.area) and list(room) == [int(r) for r in tl.room]
-                and list(exits) == [int(x) for x in tl.exits] and list(entries) == [int(c) for c in tl.entries]
-                and [list(d) for d in doors] == [[int(c) for c in tl.doors[r]] for r in range(tl.R)])
-        if not same:
-            raise CoreError(f"the core's world {rooms, places, self._c.shape()} is not the shell's")
+    def _names(self):
+        """The names of the core's plan and its tiles (they change only with the world)."""
+        self.sensors = [s.id for s in self.config.sensors]
+        self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
+        rooms, places, areas, own = self._c.names()
+        self.rooms, self.places = rooms, places
+        self._own = {sid: r for sid, r in zip(self.sensors, own) if r is not None}
+        self._entry_ids = rooms + areas
+        self._tiles = self._c.tiles_view()
 
     def _world(self) -> tuple:
         """What the core builds its world of (docs/rust-core.md 1): the configuration and the model as
-        JSON, roomseen.SILENT_AFTER; with PT_WORLD=python also the world as this shell built it."""
-        return (json.dumps(self.config.to_dict()), self._model(), float(roomseen.SILENT_AFTER),
-                self._export() if WORLD == "python" else None)
-
-    def _model(self) -> str:
-        """The model's numbers as JSON, with the filter's constants (params.rs)."""
-        m = self.m
-        names = ("still_noise", "kappa_switch", "speed", "speed_spread", "turn_rate", "walk_length", "arrive_rate",
-                 "guest_rate", "forget_rate", "find_radius", "res_range", "res_cross", "const_share", "tau",
-                 "unseen_life", "white", "pos_every", "find_clutter", "ghost_echo", "hyp_mass", "start_unknown",
-                 "go_share", "go_time", "kappa_shape", "ld_amp_shape", "kappa_amp_corr")
-        # JSON has no infinity: such numbers go as "inf", "-inf", "nan" (params.rs)
-        params = {k: (v if math.isfinite(v) else str(v)) for k in names for v in [float(getattr(m, k))]}
-        params.update(acquire=[[float(x) for x in a] for a in m.acquire], track_life=[float(x) for x in m.track_life],
-                      refind={k: [float(x) for x in v] for k, v in m.refind.items()},
-                      ghost_types=[[float(r), float(life)] for r, life in self._ghost_types()], max_hyps=int(m.max_hyps),
-                      give_up=GIVE_UP, max_step=MAX_STEP, gap_exact=GAP_EXACT, leap=LEAP, max_leaps=MAX_LEAPS,
-                      ld_moving=[[float(x) for x in r] for r in m.ld_moving],
-                      ld_still=[[float(x) for x in r] for r in m.ld_still], ld_beam=[float(x) for x in m.ld_beam],
-                      ld_shape=[float(x) for x in m.ld_shape], ld_tau=[float(x) for x in m.ld_tau],
-                      ld_gain=[float(x) for x in m.ld_gain], ld_burst=[float(x) for x in m.ld_burst],
-                      ld_every=float(m.ld_every), ld_frame=float(m.ld_frame), ld_memory=float(m.ld_memory),
-                      ld_echo_life=float(m.ld_echo_life), ld_echo_stages=int(m.ld_echo_stages),
-                      ld_echo_ranges=[float(x) for x in m.ld_echo_ranges], ld_echo_amps=[float(x) for x in m.ld_echo_amps],
-                      ld_tile_mass=LD_TILE_MASS, stay_points=[float(x) for x in m.stay_points],
-                      kappa_levels=int(m.kappa_levels), ld_amp_levels=int(m.ld_amp_levels),
-                      ld_view={str(k): float(v) for k, v in (m.ld_view or {}).items()},
-                      ghost_prior_ghosts=float(m.ghost_prior_ghosts), ld_background=[float(x) for x in m.ld_background],
-                      ld_prior_time=float(m.ld_prior_time), ld_forget=float(m.ld_forget),
-                      ld_anchor_forget=float(m.ld_anchor_forget), ld_anchor_quiet=float(m.ld_anchor_quiet),
-                      ld_echo_rate=float(m.ld_echo_rate), ld_echo_prior_time=float(m.ld_echo_prior_time),
-                      dest_prior_walks=float(m.dest_prior_walks))
-        return json.dumps(params)
-
-    def _export(self) -> dict:
-        """The world as this shell built it (docs/rust-core.md 6: the WorldExport, the aid that checks
-        the core's build): the model, the shapes, the raster and walls, the tiles, per sensor where it is
-        and its sight."""
-        tl, w, sh = self.tiles, self.world, self.shapes
-
-        def f(a):
-            return np.ascontiguousarray(a, dtype=float)
-
-        def i(a):
-            return np.ascontiguousarray(a, dtype=np.int64)
-        d = tl.door_tiles
-        return dict(
-            params=self._model(), go=f(sh.go), go_w=f(sh.go_w), go_w_ongoing=f(sh.go_w_ongoing), kappa=f(sh.kappa),
-            kappa_w=f(sh.kappa_w), amp=f(sh.amp), ka_w=f(sh.ka_w), amp_given_kappa=f(sh.amp_given_kappa), x0=float(w.x0),
-            y0=float(w.y0), nx=int(w.nx), ny=int(w.ny), walls=f(w.walls), wall_dist=f(w.wall_grid), n=int(tl.n), R=int(tl.R),
-            A=int(tl.A), tick=float(tl.tick), walk_t=f(tl.T_walk_t), into_t=f(tl.T_in_t), centers=f(tl.centers),
-            tile_var=f(tl.var), area=f(tl.area), fine=i(tl.fine), fine_xy=f(tl.fine_xy), door_center=f(tl.centers[d]),
-            door_var=f(tl.var[d]), door_area=f(tl.area[d]), door_rates=f(tl.door_rate[d]), door_ptr=i(tl.door_ptr),
-            door_list=i(tl.door_list), exits=i(tl.exits), entries=i(tl.entry_idx), region_rates=f(tl.region_rates()),
-            widths=f(tl.widths), points=f(tl.points), point_tile=i(tl.point_tile), point_count=f(tl.point_count),
-            sensors=[self._export_sensor(si) for si in range(len(self.sensors))],
-            rooms=f(np.where(self.room_of >= 0, self.room_of, len(self.rooms))), tile_room=i(tl.room),
-            region_start=f([tl.region_start(r) for r in range(tl.R)]).reshape(-1), generator=f(tl.Q))
-
-    def _export_sensor(self, si: int) -> dict:
-        """A sensor for the core: where it is, its sight, how well it tests a person per tile; its
-        LD2410C's axis, height above a person, line of sight, view of the rooms, tiles (_ld_tiles)."""
-        s, tl = self.config.sensors[si], self.tiles
-
-        def f(a):
-            return np.ascontiguousarray(a, dtype=float)
-        self._grid(si)
-        idx, ss, sw = self._ld_tiles(si)
-        view = self._ld_view(si)
-        return dict(at=(float(s.x), float(s.y)), origin=tuple(map(float, s.sight_origin())), grid=f(self._grid(si)),
-                    observed=f(tl.observed((si,))), ld_axis=(float(s._cos), float(s._sin)),
-                    ld_dh2=float((s.height - self.p.target_height) ** 2), ld_los=f(self._gcache[("los", si)]),
-                    ld_view=None if view is None else f(view), ld_idx=np.ascontiguousarray(idx, dtype=np.int64),
-                    ld_still=f(ss), ld_walk=f(sw))
-
-    # the core's state, as the Python filter named it
+        JSON (infinite numbers as "inf"), SILENT_AFTER."""
+        model = {k: (str(v) if isinstance(v, float) and not math.isfinite(v) else v) for k, v in self.model.items()}
+        return json.dumps(self.config.to_dict()), json.dumps(model), float(SILENT_AFTER)
 
     @property
     def _version(self) -> int:
         """What the outputs are cached by: the core counts the moves of everybody and the events that
-        concern all hypotheses (the Python filter's _version: between them the outputs are kept)."""
+        concern all hypotheses."""
         return self._c.epoch
-
-    @property
-    def _flushed(self) -> float:
-        return self._c.flushed
 
     @property
     def loglik(self) -> float:
@@ -326,70 +150,12 @@ class Tracker:
 
     @property
     def loglik_cut(self) -> float:
-        """... the part of it that is mass of hypotheses dropped (_cut)"""
+        """... the part of it that is mass of hypotheses dropped (MODEL.md 5.1)"""
         return self._c.loglik[1]
-
-    # the mirror of the hypotheses (phase 3)
 
     def _call(self, name, *args):
         """A call into the core (through _core: a panic is a CoreError)."""
         return _core(getattr(self._c, name), *args)
-
-    def _view(self) -> _Mirror:
-        """The mirror of the core's state, made anew when the core changed."""
-        m = self._mirror
-        if m is None or m.serial != self._c.serial:
-            m = self._mirror = self._dump()
-        return m
-
-    @property
-    def _h(self) -> list:
-        """The hypotheses for reading (the mirror's)."""
-        return self._view().hyps
-
-    @property
-    def hyps(self) -> list:
-        """The hypotheses as Python objects, for reading (a mirror of the core's: a change in them
-        reaches nothing)."""
-        return self._view().hyps
-
-    @property
-    def segs(self) -> dict:
-        """The live tracks (seg id -> si, t, zt, gt, var, z, z0, born, lost, map_odds), for reading."""
-        return self._view().segs
-
-    @property
-    def _live_by_sensor(self) -> dict:
-        return self._view().live
-
-    def _dump(self) -> _Mirror:
-        dens, mixs, hyps, tracks = _core(self._c.dump)
-        m = _Mirror()
-        m.serial = self._c.serial
-        tl = self.tiles
-        ds, ms = {}, {}
-        for k, (walk, still, region, out, clock, r, amp, keep), intensity in dens:
-            h = (Undetected if intensity else Hidden).__new__(Undetected if intensity else Hidden)
-            h.tiles = tl
-            h.walk, h.still, h.region, h.out, h.clock, h.r, h._amp, h._keep = walk, still, region, out, clock, r, amp, keep
-            ds[k] = h
-        for k, logw, mean, cov, gow, ka, slots, phantom, a, away, t in mixs:
-            g = Gauss(logw, mean, cov, gow, ka, {s: j for s, j, _ in slots}, {s: v for s, _, v in slots}, phantom, a,
-                      None if away is None else ds[away], t)
-            ms[k] = g
-        m.hyps = [Hyp(logw, {s: "g" if o is None else o for s, o in tr}, {s: life for s, life, _ in gh},
-                      {g: ms[j] for g, j in people}, [ds[j] for j in hidden], ds[unknown],
-                      {s: ms[src] for s, _, src in gh})
-                  for logw, tr, gh, people, hidden, unknown in hyps]
-        m.segs, m.live = {}, {si: [] for si in range(len(self.sensors))}
-        for seg, si, (t, zt, gt, var), z, z0, born, lost, odds in tracks:
-            info = {"si": si, "t": t, "zt": zt, "var": var, "z": z, "z0": z0, "born": born,
-                    "lost": None if lost is None else dict(zip(("kind", "t", "z", "u"), lost)), "map_odds": odds}
-            if gt is not None:
-                info["gt"] = gt
-            m.segs[seg] = info
-            m.live[si].append(seg)
-        return m
 
     def reset_people(self, people=None):
         """Start over (in the core): nothing known about the people (MODEL.md 5.3: no known people, the
@@ -399,7 +165,8 @@ class Tracker:
         all of them behind doors more come out of the doors than anybody does, 6./7.10.: light wrongly
         on 0.57 instead of 0.14 of 41); or people at the given places ("anywhere" or a place name),
         nobody unknown (for tests and tools)."""
-        places = None if people is None else [None if w == "anywhere" else self.world.index[w] for w in people]
+        index = {name: i for i, name in enumerate(self.places)}
+        places = None if people is None else [None if w == "anywhere" else index[w] for w in people]
         self._call("reset_people", places)  # no live tracks, nothing of the sensors gathered
         self.started_from = None  # the saved state the people were restored from (restore_people)
 
@@ -414,40 +181,25 @@ class Tracker:
         Live tracks do not survive a restart (the sensors' next frames are a start, 4.1): the
         people with tracks go to the tiles as when their last track ends (5.4), ghost tracks end,
         and the hypotheses that then say the same are merged (5.6) - one per number of known
-        people (in the core, on copies). The time is that of the last move of everybody."""
-        hyps, dens = self._call("people_state")
-        objs = []
-        for walk, still, region, out, clock, r, amp, keep in dens:
-            h = Hidden(self.tiles)
-            h.walk, h.still, h.region, h.out, h.clock, h.r, h._amp, h._keep = walk, still, region, out, clock, r, amp, keep
-            objs.append(h)
-        return {"t": self._flushed, "tiles": self.tiles.fingerprint(), "densities": [o.to_dict() for o in objs],
-                "hyps": [{"logw": lw, "people": people, "unknown": u} for lw, people, u in hyps]}
+        people (in the core, on copies). The time is that of the last move of everybody; the format
+        is the core's (filter/saved.rs)."""
+        return json.loads(self._call("people_state"))
 
     def restore_people(self, state: dict | None) -> bool:
         """Start from a saved state (people_state): the posterior then is the prior now (the PMBM
         recursion goes on from it, B_GarciaFernandez2018), moved on over the time between (a gap in
         the data says nothing, MODEL.md 4.4) - at the first frame if the model has not started yet.
         False, and nothing changed, if there is none or it does not fit the tiles (another floor
-        plan). The shell decodes the format, the core checks and sets it."""
-        if not state or state.get("tiles") != self.tiles.fingerprint():
+        plan) or cannot be read (logged)."""
+        if not state:
             return False
         try:
-            unknown = {int(h["unknown"]) for h in state["hyps"]}
-            objs = [(Undetected if k in unknown else Hidden).from_dict(self.tiles, d)
-                    for k, d in enumerate(state["densities"])]
-            hyps = [(float(h["logw"]), [int(i) for i in h["people"]], int(h["unknown"])) for h in state["hyps"]]
-            t = float(state["t"])
-        except (KeyError, ValueError, TypeError, IndexError, zlib.error, binascii.Error):
+            text = json.dumps(state, allow_nan=False)
+        except (TypeError, ValueError):
             return False
-        if not math.isfinite(t) or any(i < 0 for _, people, u in hyps for i in [*people, u]):
-            return False
-
-        def f(a):
-            return None if a is None else np.ascontiguousarray(a, dtype=float)
-        dens = [(f(o.walk), f(o.still), f(o.region), float(o.out), float(o.r), type(o) is Undetected, f(o._amp))
-                for o in objs]
-        if self._call("restore", t, dens, hyps) is not None:  # what does not fit
+        why = self._call("restore_people", text)
+        if why is not None:
+            log.info("the saved people are not taken: %s", why)
             return False
         self.started_from = state  # moved on over the time since t in the core (at the first frame if not started)
         return True
@@ -469,14 +221,12 @@ class Tracker:
         self.reconfigured_from = state
         self.config = config
         self.p = config.params
-        self.sensor_model.config = config
-        self.sensor_model.rebuild()
         # what was learned follows (in the core): recalibrated sensors keep their parts, a remounted one
         # starts over; the destination map holds while the rooms and doors are the same
         if changed is not None:
-            self._recalibrated(changed)
+            self._tell(self._call("recalibrate", [self.sidx[sid] for sid in changed], *self._world()))
+            self._names()
         else:
-            self.dwell = Dwell(self.p)
             self._build()  # its sensors' tracks start anew: their next frames are a start
             if not self.restore_people(state):
                 self.reset_people()
@@ -484,7 +234,7 @@ class Tracker:
 
     def _changed_sensors(self, old, new):
         """The ids of the sensors that differ between two configurations if nothing else differs
-        (the same sensors, floor plan and parameters, the same observed area), else None."""
+        (the same sensors, floor plan and parameters, the same tiles of the observed area), else None."""
         a, b = old.to_dict(), new.to_dict()
         sa, sb = a.pop("sensors"), b.pop("sensors")
         a.pop("background")
@@ -499,21 +249,11 @@ class Tracker:
             return {rid: {k: v for k, v in r.items() if k != "name"} for rid, r in c.regions.items()}
         if a != b or [s["id"] for s in sa] != [s["id"] for s in sb] or regions(old) != regions(new):
             return None
-        if not np.array_equal(World(new).labels, self.world.labels):
+        # the sensors decide which rooms are observed: the world of the people must be the same
+        json_new = json.dumps(new.to_dict())
+        if _core(presence_core.Core, json_new, *self._world()[1:]).tiles_view()[0] != self._tiles[0]:
             return None
         return [x["id"] for x, y in zip(sa, sb) if dict(x, name=None) != dict(y, name=None)]
-
-    def _recalibrated(self, changed):
-        """Sensors changed, the people's world not (reconfigure): the people stay as they are; the
-        changed sensors' tracks end as at lost data, their next frame counts as a start (in the core);
-        the world the shell checks against is rebuilt for the new sensors."""
-        self.world.config = self.config
-        self._gcache = {}
-        self.tiles.g, self.tiles.dist, self.tiles._observed = {}, {}, {}
-        for si in range(len(self.sensors)):
-            self._g(si, np.zeros((1, 2)))
-        self._tell(self._call("recalibrate", [self.sidx[sid] for sid in changed], *self._world()))
-        self._check_world()
 
     def use_ghost_map(self, gm) -> bool:
         """Use a learned ghost map (MODEL.md 4.2; its dict, as learned()["ghost_map"]) if it was learned
@@ -550,84 +290,6 @@ class Tracker:
         rates, watched = self._call("ghost_rates", self.sidx[sensor_id], [tuple(map(float, p)) for p in pts])
         return np.array(rates), watched
 
-    def _ghost_types(self) -> tuple:
-        """The kinds of ghosts ((rate, mean life s), ...): the model's, not learned online (MODEL.md
-        4.2: how long ghosts live is what tells them from people; learned from the filter's own
-        judgement it followed the people it took for ghosts)."""
-        return self.m.ghost_types
-
-    # ------------------------------------------------------------ geometry
-
-    def _grid(self, si: int) -> np.ndarray:
-        """How well sensor si sees each 0.1 m cell of the world, 0..1 (MODEL.md 4.1)."""
-        grid = self._gcache.get(si)
-        if grid is None:
-            w = self.world
-            sid = self.sensors[si]
-            grid = np.zeros((w.nx, w.ny))
-            for i in range(w.nx):
-                for j in range(w.ny):
-                    if w.labels[i, j] >= 0:
-                        grid[i, j] = self.sensor_model.pd(sid, w.x0 + (i + 0.5) * CELL, w.y0 + (j + 0.5) * CELL) / PD_MAX
-            # the LD2410C sees where the LD2450 in the same housing could see at all (its own beam
-            # aside, ld2410.expected): through no wall
-            los = (grid > 0).astype(float)
-            grid, los = self._spread_sight(si, grid), self._spread_sight(si, los)
-            self._gcache[si] = grid
-            self._gcache[("los", si)] = los
-        return grid
-
-    def _spread_sight(self, si: int, grid: np.ndarray) -> np.ndarray:
-        """The sight of a person, not of a point (MODEL.md 4.1): the sensor measures the person
-        where its track sits on them, z = x + c + o + w, so it sees them as far as it sees that spot:
-        the sight of points, averaged over the offset's distribution around x (Gaussian, per axis
-        the variance of _offset_var at this distance), over what lies on the person's side of the
-        walls (a body does not reach through a wall; through a door gap it does). Without it a
-        wall's shadow is a sharp edge: a person standing in it is invisible though the track that
-        is theirs sits in sight (6.10. 20:55, the hallway seen from the study), and strips of a
-        room the sight just misses hold people no sensor can see (the kitchen along its wall,
-        x 2.2-2.4)."""
-        w = self.world
-        s = self.config.sensors[si]
-        cx = w.x0 + (np.arange(w.nx) + 0.5) * CELL
-        cy = w.y0 + (np.arange(w.ny) + 0.5) * CELL
-        dist = np.hypot(cx[:, None] - s.x, cy[None, :] - s.y)
-        p = self.p
-        var = 0.5 * ((p.range_sigma_base + p.range_sigma_slope * dist) ** 2
-                     + (p.lateral_sigma_base + p.lateral_sigma_slope * dist) ** 2)
-        inside = w.labels == OBSERVED
-        reach_r = 2.5 * math.sqrt(float(var[inside].max())) if inside.any() else 0.0
-        offs, mask = w.reach(min(reach_r, 1.2))
-        num = np.zeros_like(grid)
-        den = np.zeros_like(grid)
-        pad = int(np.abs(offs).max()) if len(offs) else 0
-        gp = np.pad(grid, pad)
-        for k, (di, dj) in enumerate(offs):
-            wk = np.exp(-0.5 * (di * di + dj * dj) * CELL * CELL / var) * mask[k]
-            num += wk * gp[pad + di:pad + di + w.nx, pad + dj:pad + dj + w.ny]
-            den += wk
-        # in the places without a sensor nobody is in view (MODEL.md 2): as the points' sight
-        return np.where((w.labels == OBSERVED) & (den > 0), num / np.maximum(den, 1e-300), grid)
-
-    def _g(self, si: int, pos: np.ndarray) -> np.ndarray:
-        """How well sensor si sees the points (..., 2), 0..1 (MODEL.md 4.1, from the geometry)."""
-        w = self.world
-        return kernels.grid_at(self._grid(si), np.ascontiguousarray(pos, dtype=float).reshape(-1, 2), float(w.x0), float(w.y0),
-                               CELL).reshape(pos.shape[:-1])
-
-    def _polar(self, si: int, pos: np.ndarray) -> tuple:
-        s = self.config.sensors[si]
-        dx, dy = pos[..., 0] - s.x, pos[..., 1] - s.y
-        return np.hypot(dx, dy), np.arctan2(dy, dx)
-
-    def _los(self, si: int, pos: np.ndarray) -> np.ndarray:
-        """How much of a person at the points (n, 2) is in the line of sight of sensor si (0..1,
-        the LD2410C's sight; _grid)."""
-        self._grid(si)
-        w = self.world
-        return kernels.grid_at(self._gcache[("los", si)], np.ascontiguousarray(pos, dtype=float).reshape(-1, 2), float(w.x0),
-                               float(w.y0), CELL)
-
     # ------------------------------------------------------------- frames
 
     def process_frame(self, sensor_id: str, t: float, frame: presence_core.Frame):
@@ -648,9 +310,8 @@ class Tracker:
         self._tell(events)
 
     def _tell(self, events):
-        """The core's events to the listeners, as the Python filter called them: ("watch", (sensor id,
-        dt)), ("track_end", (sensor id, z0, P(ghost), life, data lost)), ("branch", (sensor id, seg, z,
-        found again, [(logw, category)]))."""
+        """The core's events to the listeners: ("watch", (sensor id, dt)), ("track_end", (sensor id, z0,
+        P(ghost), life, data lost)), ("branch", (sensor id, seg, z, found again, [(logw, category)]))."""
         if not self.listeners:
             return
         for kind, si, *rest in events:
@@ -695,113 +356,76 @@ class Tracker:
 
     def step(self, t: float, targets=None):
         """Time goes on to t (MODEL.md 3; in the core): everybody is moved and weighed by the tracks not
-        started meanwhile together, at most MAX_STEP apart; who almost surely does not exist is given
-        back; the walks are counted into the destination map."""
+        started meanwhile together, in parts of at most max_step s; who almost surely does not exist is
+        given back; the walks are counted into the destination map."""
         self._sync_pauses()
         self._tell(self._call("step", t))
 
-    # ------------------------------------------------------------ evidence
-
-    # ------------------------------------------------------- bookkeeping
-
-    def _merge(self):
-        """Hypotheses that now say the same about every live track are one (MODEL.md 5.6; core)."""
-        self._call("merge")
-
-    def _prune(self):
-        """Keep the strongest hypotheses (MODEL.md 5.1; core), strongest first."""
-        self._call("prune")
-
-    def _normalize(self, dropped: float = 0.0):
-        """The hypotheses' weights to sum 1 (core); FloatingPointError if they are not finite (the
-        app's model starts over)."""
-        self._call("normalize", dropped)
+    # ------------------------------------------------------------- reading the filter
 
     def hyp_weights(self) -> np.ndarray:
         """The hypotheses' weights (core), summing to 1."""
         return np.array(self._call("hyp_weights"))
 
+    def hypotheses(self) -> list:
+        """The hypotheses for reading (tests, tools): per hypothesis {"logw", "key", "known",
+        "unknown_out"}. key: what it says about the live tracks - the track sets of its people with
+        tracks and its ghost tracks (hypotheses differing only in the people without a track are one,
+        MODEL.md 5.6); known: per known person how probably they exist (1 with a track); unknown_out:
+        the mass of the unknown ones outside."""
+        return [{"logw": logw, "key": (frozenset(frozenset(p) for p in people), frozenset(ghosts)),
+                 "known": known, "unknown_out": out}
+                for logw, people, ghosts, known, out in self._call("hypotheses")]
+
+    def tracks(self) -> dict:
+        """The filter's live tracks: track id -> sensor id."""
+        return {seg: self.sensors[si] for seg, si in self._call("tracks")}
+
     def check(self):
-        """The bookkeeping's invariants (for tests)."""
-        keys = set()
-        segs = self.segs
-        for hy in self._h:
-            k = hy.key()
-            assert k not in keys, "two hypotheses alike"
-            keys.add(k)
-            assert set(hy.kind) == set(segs), "hypothesis and live tracks differ"
-            gs = hy.group_segs()
-            assert set(gs) == set(hy.groups), "a person with tracks and no object, or the reverse"
-            for gid, obj in hy.groups.items():
-                assert isinstance(obj, Gauss), "a person with tracks not as a Gauss"
-                assert gs[gid] <= obj.segs, "a track of a person without its offset"
-            for s, k in hy.kind.items():
-                if k == "g":
-                    assert s in hy.phantom and s in hy.ghost, "a ghost without its source"
-            assert isinstance(hy.ppp, Undetected), "no unknown people"
-            assert all(type(u) is Hidden for u in hy.hidden), "a known person as an intensity"
-        self._call("check")  # the core's own: holders, pools, the parts gone through a door
+        """The bookkeeping's invariants (in the core: the hypotheses and the live tracks, the holders,
+        the pools, the parts gone through a door); ValueError with what is wrong."""
+        self._call("check")
+
+    def tiles(self) -> dict:
+        """The tiles (MODEL.md 5.3) for drawing where unseen people may be: "id" (their fingerprint: a
+        saved state fits only tiles of the same), the side of a square, per tile the lower left corner
+        of its square, its room (id; None: in none), which cuts the square, and its centre."""
+        fingerprint, size, squares, rooms, centers = self._tiles
+        return {"id": fingerprint, "size": size, "squares": squares, "room": [None if r is None else self.rooms[r] for r in rooms],
+                "centers": centers}
+
+    def tile_near(self, xy) -> int | None:
+        """The tile of a point, or of the cell in view nearest to it (None: no tiles)."""
+        return self._call("tile_near", tuple(map(float, xy)))
+
+    def sight(self, sensor_id: str, pts) -> np.ndarray:
+        """How well the sensor sees a person at the points (n, 2), 0..1 (MODEL.md 4.1)."""
+        return np.array(self._call("sight", self.sidx[sensor_id], [tuple(map(float, p)) for p in pts]))
+
+    def observed(self) -> np.ndarray:
+        """How well the best sensor can test a person in each tile, 0..1 (MODEL.md 5.5)."""
+        return np.array(self._call("observed"))
+
+    def sensor_map(self, sensor_id: str) -> dict:
+        """For the web UI: what one sensor sees from the geometry (its coarse map, MODEL.md 4.1) and the
+        ghost map's rate (ghost tracks per m^2 and hour; None where the sensor doesn't see), the hours
+        it watched."""
+        if sensor_id not in self.sidx:
+            return {}
+        (x0, y0), cell, cols, rows, prior = self._call("sensor_map", self.sidx[sensor_id])
+        prior = np.asarray(prior, dtype=float).reshape(cols, rows)
+        ii, jj = np.meshgrid(np.arange(cols), np.arange(rows), indexing="ij")
+        pts = np.stack([x0 + (ii.ravel() + 0.5) * cell, y0 + (jj.ravel() + 0.5) * cell], axis=1)
+        rate, watched = self.ghost_rates(sensor_id, pts)
+        rate = rate.reshape(cols, rows) * 3600
+        return {"cell": cell, "x0": x0, "y0": y0, "cols": cols, "rows": rows,
+                # [column][row], row 0 = lowest y
+                "prior": [[round(float(v), 3) for v in row] for row in prior],
+                "ghosts": [[round(float(v), 4) if p > 0.05 else None for v, p in zip(row, prow)]
+                           for row, prow in zip(rate, prior)],
+                "watched_h": round(watched / 3600, 1)}
 
     # -------------------------------------------------------------- LD2410C
-
-    def _ld_geometry(self, si: int, pos, view: bool = True) -> tuple:
-        """(degrees off the LD2410C's axis, slant distance, in sight) of the points (n, 2). In sight:
-        the geometric sight times the measured view of the room the point is in (_ld_view; view=False:
-        the geometric sight alone, as the view is measured against it)."""
-        s = self.config.sensors[si]
-        pos = np.asarray(pos, dtype=float).reshape(-1, 2)
-        dx, dy = pos[:, 0] - s.x, pos[:, 1] - s.y
-        ahead = dx * s._cos + dy * s._sin
-        side = dx * s._sin - dy * s._cos
-        angle = np.degrees(np.abs(np.arctan2(side, np.maximum(ahead, 1e-9))))
-        slant = np.sqrt(dx * dx + dy * dy + (s.height - self.p.target_height) ** 2)
-        sight = np.where(ahead > 0, self._los(si, pos), 0.0)
-        if view:
-            v = self._ld_view(si)
-            if v is not None:
-                i, j = self.world.cell_of(pos)
-                sight = sight * v[self.room_of[i, j]]
-        return angle, slant, sight
-
-    def _ld_view(self, si: int):
-        """Per room (index as room_of, the last for none) how much of what the geometric sight
-        expects sensor si's LD2410C gets from a person there, against its own room (MODEL.md 4.3,
-        "Blick des LD2410C"): measured from people the LD2450 of that room tracked while nobody was
-        in the sensor's own room (tools/ld2410/footprint.py), shrunk towards the geometric 1. None:
-        nothing measured for it (the geometric sight everywhere)."""
-        key = ("ld_view", si)
-        if key not in self._gcache:
-            table = self.m.ld_view
-            out = None
-            if table:
-                ox, oy = self.config.sensors[si].sight_origin()
-                i, j = self.world.cell_of(np.array([[ox, oy]]))
-                k = int(self.room_of[i[0], j[0]])
-                if k >= 0:
-                    own = self.rooms[k]
-                    v = np.array([float(table.get(f"{own}<-{r}", 1.0)) for r in self.rooms] + [1.0])
-                    v[k] = 1.0
-                    out = v if (v != 1.0).any() else None
-            self._gcache[key] = out
-        return self._gcache[key]
-
-    def _ld_tiles(self, si: int) -> tuple:
-        """The tiles sensor si's LD2410C sees and what a person there puts into its 16 cells:
-        (tile indices, standing (k, 16), walking (k, 16)), averaged over each tile."""
-        key = ("ld2410", si)
-        hit = self._gcache.get(key)
-        if hit is None:
-            tl = self.tiles
-            if tl.n:
-                angle, slant, sight = self._ld_geometry(si, tl.points)
-                s_still, s_walk = ld2410.expected(self.m, angle, slant, sight)
-                ss, sw = tl.average(s_still.T).T, tl.average(s_walk.T).T
-                idx = np.nonzero(np.maximum(ss, sw).max(axis=1) > ld2410.FLOOR)[0]
-                hit = (idx, ss[idx], sw[idx])
-            else:
-                hit = (np.zeros(0, dtype=int), np.zeros((0, ld2410.CELLS)), np.zeros((0, ld2410.CELLS)))
-            self._gcache[key] = hit
-        return hit
 
     def _ld_runtime(self, s, rt, t, ld):
         """LD2410C state for the display (presence with the app's own hold time)."""
@@ -828,7 +452,7 @@ class Tracker:
     def place_distribution(self) -> dict:
         """place name -> [P(0 people), P(1), ...], and "_house" (anywhere but outside)."""
         c = self._call("place_distribution")
-        out = dict(zip(self.world.places, c))
+        out = dict(zip(self.places, c))
         out["_house"] = c[-1]
         return out
 
@@ -841,7 +465,7 @@ class Tracker:
         (Garcia-Fernandez et al. 2018, sec. VI), for the display: those with a track first. Where to
         draw them: with a measuring track the mean of the mixture, without the densest tile of the most
         probable place (the core's numbers, rounded here)."""
-        places = self.world.places
+        places = self.places
         out = []
         for pid, pr, lost, r, shown in self._call("persons"):
             d = {"id": pid, "places": {places[i]: round(v, 3) for i, v in enumerate(pr) if v >= 0.005}, "lost": lost,
@@ -892,8 +516,8 @@ class Tracker:
     def occupancy(self) -> dict:
         """Observed room id -> (occupied, source), MODEL.md 6 "Belegt" (in the core): P(somebody there)
         above the threshold c = light_cost / (light_cost + 1), or the room's own LD2450 measured
-        somebody in it within the last seen_hold s (roomseen.py). source: "filter", "ld2450", "beide"
-        (both), None if not occupied. Only an output: reads the filter, changes nothing in it."""
+        somebody in it within the last seen_hold s. source: "filter", "ld2450", "beide" (both), None if
+        not occupied. Only an output: reads the filter, changes nothing in it."""
         sources = self._call("occupancy", self.now)
         return {z: (s is not None, s) for z, s in zip(self.rooms, sources)}
 
@@ -907,7 +531,7 @@ class Tracker:
         (occupancy()); its count is then at least 1, and the house's too. A room whose own sensors in
         use all went silent (Tracker.seen.silent) is not available: no data, Home Assistant gets
         "unavailable" instead of its state (ha.py); the state itself is computed as always. The numbers
-        are the core's (zone_numbers); here they become ZoneStates, with "Ziel" (until it is in Rust)."""
+        are the core's (zone_numbers); here they become ZoneStates, with "Ziel"."""
         from .zones import ZoneState
         zones, (count, moving, still) = self._call("zone_numbers", self.now)
         c_enter = self._c.thresholds()[1]
@@ -948,7 +572,7 @@ class Tracker:
         for sid, rt in self.runtime.items():
             last = self._c.last_frame(self.sidx[sid]) if sid in self.sidx else -math.inf
             sensors[sid] = {
-                "online": self.seen.online(sid, t, self.start),  # as Home Assistant's rooms (roomseen.py)
+                "online": self.seen.online(sid, t, self.start),  # as Home Assistant's rooms
                 "detections": [{"x": round(float(d.pos[0]), 3), "y": round(float(d.pos[1]), 3),
                                 "lx": round(d.local[0], 3), "ly": round(d.local[1], 3),
                                 "speed": round(d.speed, 2), "hidden": d.hidden or d.stale}
@@ -957,14 +581,17 @@ class Tracker:
                            "move_gates": rt.move_gates, "still_gates": rt.still_gates},
             }
         places = self.place_distribution()
+        # how long people stay in a region (MODEL.md 3.3): log-normal, the same for every region
+        p = self.p
+        dwell = {"median": round(p.dwell_median), "p90": round(p.dwell_median * math.exp(p.dwell_spread * NormalDist().inv_cdf(0.9)))}
         regions = {}
         for rid, r in self.config.regions.items():
             dist = places.get(rid, [1.0])
             regions[rid] = {"name": r["name"], "rooms": r["rooms"], "open": r["open"],
                             "count": int(np.argmax(dist)),
                             "probabilities": [round(1 - dist[0], 3)] if 1 - dist[0] >= 0.005 else [],
-                            "dwell": self.dwell.stats(rid)}
-        return {"t": t, "tracks": tracks, "clouds": clouds, "tiling": id(self.tiles), "sensors": sensors, "regions": regions}
+                            "dwell": dwell}
+        return {"t": t, "tracks": tracks, "clouds": clouds, "tiling": self._tiles[0], "sensors": sensors, "regions": regions}
 
     # ------------------------------------------------------------- learned
 

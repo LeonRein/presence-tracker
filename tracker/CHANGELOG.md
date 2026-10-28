@@ -2,6 +2,32 @@
 
 ## Unveröffentlicht
 
+## 0.39.0 (Branch `rust-core`, Phase 9: die Python-Hülle fertig, der Python-Kern und numba gelöscht; nicht live)
+
+Spuren aller drei Referenzstunden byte-gleich mit 0.38.1 (nur Umbau); ab.sh 1200 16,8 s (0.31.1 47,8 s); 140 Rust-,
+216 Python-Tests mit PT_CONFIGS (199 ohne);
+fmt/clippy sauber. Das Modell ist unverändert.
+
+- **Gelöscht:** `kernels.py` (numba), `gauss.py`, `hidden.py`, `tiling.py`, `world.py`, `sensormodel.py`, `ghostmap.py`,
+  `destination.py`, `ld2410.py`, `filtermodel.py`, `unobserved.py`, `roomseen.py`, aus `model.py` `Config.hidden` und
+  `remounted`; aus `filter.py` der Spiegel der Hypothesen, der Bau der Welt in Python und seine Prüfung gegen den
+  Kern, die Konstanten des Modells. numba/llvmlite aus `pyproject.toml` und dem `Dockerfile` (das Image bekommt das
+  Kern-Wheel mit Phase 11).
+- **Gespeicherter Zustand der Personen im Kern** (`filter/saved.rs`): das Format von `people.json` (float16, Anteile
+  unter 1e-6 als 0, zlib, base64; der Fingerabdruck der Kacheln als dieselbe Zeichenkette), mit benannten Fehlern
+  beim Lesen; was 0.38.1 schrieb, liest der Kern, und schreibt es mit denselben Massen zurück (Test gegen Fixtures).
+- **Das Modell ist der Kern:** `Tracker(config, model=dict)` mit den Feldern, die vom Standard abweichen;
+  `presence_core.model_defaults()` (vorher einmal geprüft: alle 64 Felder, die die Hülle schickte, gleich), die
+  gemessene Tabelle `ld_view` steht jetzt in den Standards des Kerns. `sim.py` simuliert mit
+  `presence_core.ld_expected` und den Standards.
+- **Lesende Sichten** statt Spiegel und Python-Welt: `hypotheses()`, `tracks()`, `tiles()` (Fingerabdruck als `id`
+  von `/api/tiles` und `tiling` der Live-Daten), `sensor_map()` (die grobe Sicht für die Oberfläche), `sight()`,
+  `observed()`, `tile_near()`. `SILENT_AFTER` steht in `filter.py`.
+- **Tests:** die Innereien-Tests (`test_kernels`, `test_unobserved`, Teile von `test_ld2410`, `test_learning`,
+  `test_hypotheses`) sind Rust-Tests mit denselben Fällen; die übrigen laufen über die API, wo sie Python-Orakel
+  brauchten, gegen Fixtures, die einmal mit 0.38.1 erzeugt wurden (`tests/fixtures/`, README dort); `test_core_build`
+  gegen Digests des Baus und der Spiegelungsregel von 0.38.1. Tabelle „Test → wohin“ in der Übergabe.
+
 ## 0.38.1 (Branch `rust-core`, nach Leons Prüfung von Phase 8, nicht live)
 
 Spuren aller drei Referenzstunden byte-gleich mit 0.38.0 (nur Umbau); ab.sh 1200 16,5 s (0.31.1 48,2 s); 125 Rust-,

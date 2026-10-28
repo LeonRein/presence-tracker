@@ -66,6 +66,9 @@ pub struct Tiles {
     /// per tile its observed room (tiling.Tiling.room; None: in none)
     #[cfg_attr(test, serde(default))]
     pub room: Vec<Option<RoomIdx>>,
+    /// per tile the lower left corner of its square of SIZE m, which its room cuts (for the display)
+    #[cfg_attr(test, serde(default))]
+    pub squares: Vec<Point>,
     /// R x A: per region the age distribution of a stay seen at a random time (Tiling.region_start)
     #[cfg_attr(test, serde(default))]
     pub region_start: Vec<f64>,
@@ -109,6 +112,7 @@ struct Cells {
 struct Layout {
     tile: Vec<usize>,
     keys: Vec<(usize, usize, i64)>,
+    squares: Vec<Point>,
 }
 
 /// Per tile its centroid, the spread of its cells per axis (+ a cell's own) and its area.
@@ -171,7 +175,12 @@ fn layout(cells: &Cells, raster: Raster, rooms: &RoomGrid) -> Layout {
         .iter()
         .map(|c| keys.binary_search(&key(c)).expect("a key"))
         .collect();
-    Layout { tile, keys }
+    let corner = [raster.x0 + i0 as f64 * CELL, raster.y0 + j0 as f64 * CELL];
+    let squares = keys
+        .iter()
+        .map(|&(bi, bj, _)| [corner[0] + (bi * b) as f64 * CELL, corner[1] + (bj * b) as f64 * CELL])
+        .collect();
+    Layout { tile, keys, squares }
 }
 
 fn moments(cells: &Cells, layout: &Layout) -> Moments {
@@ -461,6 +470,7 @@ impl Tiles {
                 .iter()
                 .map(|k| usize::try_from(k.2).ok().map(RoomIdx))
                 .collect(),
+            squares: layout.squares,
             centers: m.centers,
             var: m.var,
             area: m.area,

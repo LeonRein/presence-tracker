@@ -8,15 +8,30 @@ flags the firmware's thresholds on them. Like the firmware, a sensor with nothin
 target, both flags off) sends only a heartbeat every 5 s (MODEL.md 4.4).
 """
 
+import json
 import math
 import random
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import ld2410
-from .filtermodel import Model
+import presence_core
+
 from .model import SensorConfig
+
+CELLS = 16  # the LD2410C's: 9 moving gates, 7 still ones (2-8)
+# the model's numbers (the core's defaults): the LD2410C is simulated as the filter models it
+MODEL = json.loads(presence_core.model_defaults())
+
+
+def _cells(moving: float, still: float) -> np.ndarray:
+    return np.concatenate([np.full(9, float(moving)), np.full(7, float(still))])
+
+
+def ld_prior() -> np.ndarray:
+    """(16,) the LD2410C's background before anything is learned (the model's ld_background)."""
+    g0, g1, rest, still = MODEL["ld_background"]
+    return np.concatenate([[g0, g1], np.full(7, rest), np.full(7, still)])
 
 # the firmware's default thresholds (moving gates 0-8, still gates 2-8)
 THRESHOLDS = np.array([50, 50, 40, 30, 20, 15, 15, 15, 15, 40, 40, 30, 30, 20, 20, 20], dtype=float)
@@ -178,8 +193,8 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
     # LD2410C (MODEL.md 4.3): energy = (background + what the people in its beam put in) x a Gamma
     # factor (mean 1, shape alpha) correlated over the time tau: a chi-square with 2 alpha degrees
     # of freedom from as many Ornstein-Uhlenbeck processes (their squares decorrelate with 2 / tau)
-    m = Model()
-    put = np.zeros(ld2410.CELLS)
+    m = MODEL
+    put = np.zeros(CELLS)
     for person in people:
         p = person.position(t)
         if p is None or not c.sees(p[0], p[1], walls):
@@ -190,33 +205,33 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
         angle = math.degrees(math.atan2(abs(lx), ly))
         slant = math.hypot(math.hypot(lx, ly) * c.scale, c.height - person.height)
         walking = math.hypot(*person.velocity(t)) > 0.3
-        s_still, s_walk = ld2410.expected(m, [angle], [slant], [True])
-        put = put + (s_walk if walking else s_still)[0]
+        s_still, s_walk = presence_core.ld_expected(angle, slant)
+        put = put + np.array(s_walk if walking else s_still)
     # echo sources: begin at the model's prior rate, live Erlang(stages), the profile of a standing
     # person on the axis at a random slant, times a random amplitude
-    if t >= s._ld_echo[0] and rng.random() < m.ld_echo_rate * dt:
-        life = sum(rng.expovariate(m.ld_echo_stages / m.ld_echo_life) for _ in range(m.ld_echo_stages))
-        lo, hi, _ = m.ld_echo_ranges
-        src = ld2410.expected(m, [0.0], [rng.uniform(lo, hi)], [True])[0][0] * rng.choice(m.ld_echo_amps)
+    if t >= s._ld_echo[0] and rng.random() < m["ld_echo_rate"] * dt:
+        life = sum(rng.expovariate(m["ld_echo_stages"] / m["ld_echo_life"]) for _ in range(m["ld_echo_stages"]))
+        lo, hi = m["ld_echo_ranges"]["from"], m["ld_echo_ranges"]["to"]
+        src = np.array(presence_core.ld_expected(0.0, rng.uniform(lo, hi))[0]) * rng.choice(m["ld_echo_amps"])
         s._ld_echo = (t + life, src)
     if t < s._ld_echo[0]:
         put = put + s._ld_echo[1]
     # the still energies follow with the time constant ld_memory, the moving ones at once
-    k = math.exp(-dt / m.ld_memory)
+    k = math.exp(-dt / m["ld_memory"])
     s._ld_lag = put if s._ld_lag is None else k * s._ld_lag + (1 - k) * put
-    bg = ld2410.prior(m) if s.ld_background is None else np.asarray(s.ld_background, dtype=float)
+    bg = ld_prior() if s.ld_background is None else np.asarray(s.ld_background, dtype=float)
     mu = bg + np.concatenate([put[:9], s._ld_lag[9:]])
     # each second all cells of a kind share a gain: 1/u ~ Gamma(kappa, kappa), now and then a burst
     if t >= s._ld_block[0]:
         def gain(kappa):
-            bk, bu, bw = m.ld_burst
+            bk, bu, bw = m["ld_burst"]["shape"], m["ld_burst"]["gain"], m["ld_burst"]["weight"]
             if rng.random() < bw:
                 return 1.0 / max(rng.gammavariate(bk, 1.0 / (bk * bu)), 1e-3)
             return 1.0 / max(rng.gammavariate(kappa, 1.0 / kappa), 1e-3)
-        s._ld_block = (t + m.ld_every, gain(m.ld_gain[0]), gain(m.ld_gain[1]))
+        s._ld_block = (t + m["ld_every"], gain(m["ld_gain"][0]), gain(m["ld_gain"][1]))
     mu = mu * np.concatenate([np.full(9, s._ld_block[1]), np.full(7, s._ld_block[2])])
-    alpha = ld2410.cell_values(m, *m.ld_shape)
-    tau = ld2410.cell_values(m, *m.ld_tau)
+    alpha = _cells(*m["ld_shape"])
+    tau = _cells(*m["ld_tau"])
     if s._ld_gain is None:
         s._ld_gain = [[rng.gauss(0, 1) for _ in range(int(round(2 * a)))] for a in alpha]
     gain = []

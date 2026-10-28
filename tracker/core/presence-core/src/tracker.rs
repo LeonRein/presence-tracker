@@ -302,6 +302,21 @@ impl Tracker {
         self.filter.people_state(&self.world)
     }
 
+    /// What is known about the people in the saved format (people.json; Tracker.people_state), at the
+    /// time of the last move of everybody. Err if a density is no density.
+    pub fn saved_people(&mut self) -> Result<Value, String> {
+        let t = self.filter.flushed();
+        self.people_state().to_json(t, &self.world.fingerprint())
+    }
+
+    /// Start over from a state in the saved format (Tracker.restore_people); Err, and nothing changed,
+    /// if it cannot be read, was saved on other tiles or does not fit.
+    pub fn restore_saved(&mut self, saved: &Value) -> Result<(), String> {
+        let (t, state) = PeopleState::from_json(saved, &self.world.density_shape(), &self.world.fingerprint())
+            .map_err(|e| e.to_string())?;
+        self.restore(state, t)
+    }
+
     /// The LD2450 tracks of all sensors start over (app "Tracks zurücksetzen"): their next frames are a
     /// start, so whoever a sensor is tracking now counts.
     pub fn reset_tracks(&mut self) {

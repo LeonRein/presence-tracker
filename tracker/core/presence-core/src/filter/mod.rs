@@ -15,6 +15,7 @@ pub mod mirror;
 pub mod mixture;
 pub(crate) mod objects;
 pub mod pool;
+pub(crate) mod saved;
 pub(crate) mod small_map;
 mod start;
 pub(crate) mod step;
@@ -26,7 +27,7 @@ mod tests;
 use densities::{DensityData, DensityId, DensityShape};
 use holders::Holders;
 use hyp::{GroupId, Hyp, Owner};
-use mixture::MixtureId;
+use mixture::{MixtureId, SegId};
 use objects::Objects;
 use tracks::Tracks;
 
@@ -102,6 +103,18 @@ impl WalkerCache {
     fn get(&mut self, si: usize, count: impl FnOnce() -> Vec<f64>) -> &[f64] {
         self.per_sensor[si].get_or_insert_with(count)
     }
+}
+
+/// A hypothesis as tests and tools read it (Tracker::hypotheses): its weight, which live tracks are one
+/// person's and which are ghosts, how probably each known person exists (1 with a track), and the mass
+/// of the unknown ones outside.
+#[derive(Debug)]
+pub struct HypView {
+    pub logw: f64,
+    pub people: Vec<Vec<SegId>>,
+    pub ghosts: Vec<SegId>,
+    pub known: Vec<f64>,
+    pub unknown_out: f64,
 }
 
 /// What is known about the people, to start from after a restart (MODEL.md 5.3; Tracker.
@@ -291,6 +304,31 @@ impl Filter {
         // the copies go: nobody holds them
         objects.release_unheld(&self.holders);
         PeopleState { hyps, densities }
+    }
+
+    /// The hypotheses for reading (HypView).
+    pub fn hypotheses(&self) -> Vec<HypView> {
+        let densities = self.objects.densities();
+        self.hyps
+            .iter()
+            .map(|hy| HypView {
+                logw: hy.logw,
+                people: hy.group_segs().into_values().collect(),
+                ghosts: hy
+                    .tracks
+                    .iter()
+                    .filter(|(_, o)| **o == Owner::Ghost)
+                    .map(|(&s, _)| s)
+                    .collect(),
+                known: hy
+                    .people
+                    .values()
+                    .map(|_| 1.0)
+                    .chain(hy.hidden.iter().map(|&u| densities.get(u).r))
+                    .collect(),
+                unknown_out: densities.get(hy.unknown).out,
+            })
+            .collect()
     }
 
     /// The bookkeeping's invariants (Tracker.check, and those of the pools): no two hypotheses

@@ -1,10 +1,7 @@
-//! The filter of the core behind the Python tracker (docs/rust-core.md 7): Rust owns the hypotheses
-//! and their objects and computes the outputs; the world still comes from the Python build
-//! (WorldExport), and the shell orders the steps of a frame. What the shell and its tools still read
-//! of the hypotheses comes as a mirror (dump, read only). The mirror and the world's export are the
-//! throwaway part.
+//! The core behind the Python tracker (docs/rust-core.md 4): the filter, its world and what it learns
+//! are presence_core's; here only the conversion, and the views the shell, its tools and tests read.
 
-use numpy::{PyArray1, PyArrayDyn, PyArrayMethods, PyReadonlyArrayDyn};
+use numpy::{PyArray1, PyArrayDyn, PyArrayMethods};
 use pyo3::exceptions::{PyFloatingPointError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -12,53 +9,21 @@ use pyo3::types::{PyDict, PyList};
 use crate::frames::PyFrame;
 
 use presence_core::config::Config;
-use presence_core::filter::densities::{Amp, DensityData, DensityShape, Kind};
-use presence_core::filter::hyp::Owner;
-use presence_core::filter::pool::PoolId;
-use presence_core::filter::{NotFinite, PeopleState, Start};
+use presence_core::filter::mixture::SegId;
+use presence_core::filter::{NotFinite, Start};
 use presence_core::geometry::Point;
 use presence_core::ld2410::CELLS;
+use presence_core::ld2410::profile::expected;
 use presence_core::learn::pauses::{Pause, Pauses};
 use presence_core::learn::{Learned, LearnedError};
 use presence_core::outputs::{Decision, Source};
-use presence_core::params::{LostKind, Params, Shapes};
+use presence_core::params::{Params, STILL, WALK};
 use presence_core::plan::{Place, RoomIdx};
 use presence_core::sensors::SensorSet;
 use presence_core::tracker::{Branched, Event, Fault, Tracker};
-use presence_core::world::{DoorTile, LdExport, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
+use presence_core::world::World;
+use presence_core::world::tiles::SIZE;
 use serde_json::Value;
-
-fn item<'py>(d: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
-    d.get_item(key)?
-        .ok_or_else(|| PyValueError::new_err(format!("missing {key}")))
-}
-
-fn floats(d: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<f64>> {
-    let a: PyReadonlyArrayDyn<'_, f64> = item(d, key)?.extract()?;
-    Ok(a.as_slice()?.to_vec())
-}
-
-fn ints(d: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<usize>> {
-    let a: PyReadonlyArrayDyn<'_, i64> = item(d, key)?.extract()?;
-    a.as_slice()?
-        .iter()
-        .map(|&i| usize::try_from(i).map_err(|_| PyValueError::new_err(format!("{key}: a negative index"))))
-        .collect()
-}
-
-fn number<'py, T: FromPyObjectOwned<'py>>(d: &Bound<'py, PyDict>, key: &str) -> PyResult<T> {
-    item(d, key)?.extract().map_err(Into::into)
-}
-
-fn points(v: &[f64]) -> Vec<[f64; 2]> {
-    v.as_chunks::<2>().0.to_vec()
-}
-
-/// Indices, -1 for none.
-fn ints_or_none(d: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<Option<usize>>> {
-    let a: PyReadonlyArrayDyn<'_, i64> = item(d, key)?.extract()?;
-    Ok(a.as_slice()?.iter().map(|&k| usize::try_from(k).ok()).collect())
-}
 
 /// The configuration (the JSON of model.Config.to_dict()).
 fn config_from(json: &str) -> PyResult<Config> {
@@ -70,130 +35,9 @@ fn params_from(json: &str) -> PyResult<Params> {
     Params::from_json(json).map_err(|err| PyValueError::new_err(err.to_string()))
 }
 
-/// The world: built here from the configuration and the model, or (the aid that checks the build,
-/// docs/rust-core.md 6) as the Python tracker built it.
-fn world_of(config: &str, model: &str, silent_after: f64, export: Option<&Bound<'_, PyDict>>) -> PyResult<World> {
-    let config = config_from(config)?;
-    match export {
-        None => World::build(&config, params_from(model)?, silent_after).map_err(PyValueError::new_err),
-        Some(e) => World::from_export(export_from(e)?, &config, silent_after).map_err(PyValueError::new_err),
-    }
-}
-
-/// The world as the Python tracker built it (tiling.Tiling, filter._grid, filtermodel).
-fn export_from(e: &Bound<'_, PyDict>) -> PyResult<WorldExport> {
-    let params =
-        Params::from_json(&number::<String>(e, "params")?).map_err(|err| PyValueError::new_err(err.to_string()))?;
-    let shapes = Shapes {
-        go: floats(e, "go")?,
-        go_w: floats(e, "go_w")?,
-        go_w_ongoing: floats(e, "go_w_ongoing")?,
-        kappa: floats(e, "kappa")?,
-        kappa_w: floats(e, "kappa_w")?,
-        amp: floats(e, "amp")?,
-        ka_w: floats(e, "ka_w")?,
-        amp_given_kappa: floats(e, "amp_given_kappa")?,
-    };
-    let raster = Raster {
-        x0: number(e, "x0")?,
-        y0: number(e, "y0")?,
-        nx: number(e, "nx")?,
-        ny: number(e, "ny")?,
-    };
-    let (n, regions): (usize, usize) = (number(e, "n")?, number(e, "R")?);
-    let door_ptr = ints(e, "door_ptr")?;
-    let door_list = ints(e, "door_list")?;
-    let rates = floats(e, "door_rates")?;
-    let door_tiles = points(&floats(e, "door_center")?)
-        .into_iter()
-        .zip(points(&floats(e, "door_var")?))
-        .zip(floats(e, "door_area")?)
-        .zip(rates.chunks_exact(regions + 1))
-        .map(|(((center, var), area), rates)| DoorTile {
-            center,
-            var,
-            area,
-            rates: rates.to_vec(),
-        })
-        .collect();
-    let tiles = Tiles {
-        n,
-        centers: points(&floats(e, "centers")?),
-        var: points(&floats(e, "tile_var")?),
-        area: floats(e, "area")?,
-        fine: ints(e, "fine")?,
-        fine_xy: points(&floats(e, "fine_xy")?),
-        regions,
-        ages: number(e, "A")?,
-        tick: number(e, "tick")?,
-        walk_t: floats(e, "walk_t")?,
-        into_t: floats(e, "into_t")?,
-        door_tiles,
-        region_doors: door_ptr.windows(2).map(|w| door_list[w[0]..w[1]].to_vec()).collect(),
-        exits: ints(e, "exits")?,
-        entries: ints(e, "entries")?,
-        region_rates: floats(e, "region_rates")?,
-        widths: floats(e, "widths")?,
-        points: points(&floats(e, "points")?),
-        point_tile: ints(e, "point_tile")?,
-        point_count: floats(e, "point_count")?,
-        walk_end: Default::default(),
-        room: ints_or_none(e, "tile_room")?
-            .into_iter()
-            .map(|r| r.map(RoomIdx))
-            .collect(),
-        region_start: floats(e, "region_start")?,
-        generator: floats(e, "generator")?,
-    };
-    let sensors = item(e, "sensors")?
-        .try_iter()?
-        .map(|d| sensor_from(&d?.cast_into::<PyDict>()?))
-        .collect::<PyResult<_>>()?;
-    let export = WorldExport {
-        params,
-        shapes,
-        raster,
-        walls: floats(e, "walls")?.as_chunks::<4>().0.to_vec(),
-        wall_dist: floats(e, "wall_dist")?,
-        tiles,
-        sensors,
-        rooms: floats(e, "rooms")?,
-    };
-    Ok(export)
-}
-
-/// A sensor of the world's export: where it is and its sight; its LD2410C's axis, height above a
-/// person, line of sight, measured view of the rooms and tiles.
-fn sensor_from(d: &Bound<'_, PyDict>) -> PyResult<SensorExport> {
-    let pair = |key: &str| -> PyResult<[f64; 2]> {
-        let (x, y): (f64, f64) = number(d, key)?;
-        Ok([x, y])
-    };
-    let rows = |key: &str| -> PyResult<Vec<[f64; CELLS]>> {
-        let v = floats(d, key)?;
-        Ok(v.as_chunks::<CELLS>().0.to_vec())
-    };
-    let view = match item(d, "ld_view")? {
-        v if v.is_none() => None,
-        v => Some(v.extract::<PyReadonlyArrayDyn<'_, f64>>()?.as_slice()?.to_vec()),
-    };
-    Ok(SensorExport {
-        at: pair("at")?,
-        origin: pair("origin")?,
-        grid: floats(d, "grid")?,
-        observed: floats(d, "observed")?,
-        ld: LdExport {
-            axis: pair("ld_axis")?,
-            dh2: number(d, "ld_dh2")?,
-            los: floats(d, "ld_los")?,
-            view,
-            tiles: LdTiles {
-                idx: ints(d, "ld_idx")?,
-                still: rows("ld_still")?,
-                walk: rows("ld_walk")?,
-            },
-        },
-    })
+/// The world of a configuration and a model (JSON), built without the GIL.
+fn world_of(py: Python<'_>, config: &str, model: &str, silent_after: f64) -> PyResult<World> {
+    py.detach(|| World::build(&config_from(config)?, params_from(model)?, silent_after).map_err(PyValueError::new_err))
 }
 
 fn not_finite(e: NotFinite) -> PyErr {
@@ -204,50 +48,6 @@ type Out<'py> = Bound<'py, PyArrayDyn<f64>>;
 
 fn array<'py>(py: Python<'py>, v: &[f64], shape: &[usize]) -> PyResult<Out<'py>> {
     PyArray1::from_slice(py, v).reshape(shape)
-}
-
-fn kind_name(kind: LostKind) -> &'static str {
-    match kind {
-        LostKind::Coast => "coast",
-        LostKind::Frozen => "frozen",
-    }
-}
-
-fn floats_of(a: &PyReadonlyArrayDyn<'_, f64>) -> PyResult<Vec<f64>> {
-    Ok(a.as_slice()?.to_vec())
-}
-
-/// A density of a saved state as the shell decoded it (hidden.Hidden.from_dict): walk, still, region,
-/// out, r, an intensity (the unknown ones), amp.
-type DensityIn<'py> = (
-    PyReadonlyArrayDyn<'py, f64>,
-    PyReadonlyArrayDyn<'py, f64>,
-    PyReadonlyArrayDyn<'py, f64>,
-    f64,
-    f64,
-    bool,
-    Option<PyReadonlyArrayDyn<'py, f64>>,
-);
-
-fn density_in(d: &DensityIn<'_>) -> PyResult<DensityData> {
-    let (walk, still, region, out, r, intensity, amp) = d;
-    let amp = match amp {
-        Some(levels) => Some(Amp {
-            levels: floats_of(levels)?,
-            keep: None,
-        }),
-        None => None,
-    };
-    Ok(DensityData {
-        walk: floats_of(walk)?,
-        still: floats_of(still)?,
-        region: floats_of(region)?,
-        out: *out,
-        clock: 0.0,
-        r: *r,
-        kind: if *intensity { Kind::Intensity } else { Kind::Person },
-        amp,
-    })
 }
 
 fn source_name(source: Source) -> &'static str {
@@ -321,16 +121,9 @@ impl PyLearned {
 #[pyclass(module = "presence_core")]
 pub struct Core {
     tracker: Tracker,
-    /// counts the calls that changed the tracker: the shell's mirror and outputs are current while
-    /// it stays
-    serial: u64,
 }
 
 impl Core {
-    fn changed(&mut self) {
-        self.serial += 1;
-    }
-
     /// si if the world has sensor si, else ValueError (the shell's index; a wrong one is a bug there).
     fn sensor(&self, si: usize) -> PyResult<usize> {
         let n = self.tracker.world().sights.len();
@@ -340,100 +133,26 @@ impl Core {
             Err(PyValueError::new_err(format!("no sensor {si} of {n}")))
         }
     }
-
-    /// (walk, still, region, out, clock, r, amp, keep) of a density.
-    fn density_out<'py>(py: Python<'py>, d: &DensityData, s: &DensityShape) -> PyResult<Bound<'py, PyAny>> {
-        let amp = match &d.amp {
-            Some(a) => Some(array(py, &a.levels, &[s.levels, s.amps + 1, s.tiles])?),
-            None => None,
-        };
-        let keep = match d.amp.as_ref().and_then(|a| a.keep.as_ref()) {
-            Some(k) => Some(array(py, k, &[s.levels, s.tiles])?),
-            None => None,
-        };
-        Ok((
-            array(py, &d.walk, &[s.tiles])?,
-            array(py, &d.still, &[s.kinds, s.levels, s.tiles])?,
-            array(py, &d.region, &[s.regions, s.ages])?,
-            d.out,
-            d.clock,
-            d.r,
-            amp,
-            keep,
-        )
-            .into_pyobject(py)?
-            .into_any())
-    }
 }
 
 // PyO3 extracts the arguments of a method as owned values
 #[allow(clippy::needless_pass_by_value)]
 #[pymethods]
 impl Core {
-    /// A tracker in the world of a configuration and model (JSON); `silent_after`: s until a room's
-    /// own sensor counts as gone. With `export`: in the world the Python tracker built (the check aid).
+    /// A tracker in the world of a configuration and model (JSON: the fields that differ from the
+    /// defaults); `silent_after`: s until a room's own sensor counts as gone.
     #[new]
-    #[pyo3(signature = (config, model, silent_after, export=None))]
-    fn new(
-        py: Python<'_>,
-        config: &str,
-        model: &str,
-        silent_after: f64,
-        export: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Self> {
-        let world = match export {
-            Some(_) => world_of(config, model, silent_after, export)?,
-            None => py.detach(|| {
-                World::build(&config_from(config)?, params_from(model)?, silent_after).map_err(PyValueError::new_err)
-            })?,
-        };
+    fn new(py: Python<'_>, config: &str, model: &str, silent_after: f64) -> PyResult<Self> {
         Ok(Self {
-            tracker: Tracker::new(world),
-            serial: 0,
+            tracker: Tracker::new(world_of(py, config, model, silent_after)?),
         })
     }
 
     /// A world rebuilt on the same tiles (sensors recalibrated, outputs' numbers changed): what is
     /// known stays.
-    #[pyo3(signature = (config, model, silent_after, export=None))]
-    fn set_world(
-        &mut self,
-        config: &str,
-        model: &str,
-        silent_after: f64,
-        export: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<()> {
-        self.tracker
-            .set_world(world_of(config, model, silent_after, export)?)
-            .map_err(PyValueError::new_err)?;
-        self.changed();
-        Ok(())
-    }
-
-    /// The tiles as the shell's tiling has them (it must have the same, bit for bit): centres (n x 2),
-    /// areas, rooms (-1 none), the regions' ways out, the entries, per region its door tiles.
-    #[allow(clippy::type_complexity)]
-    fn tiles(&self) -> (Vec<f64>, Vec<f64>, Vec<i64>, Vec<usize>, Vec<usize>, Vec<Vec<usize>>) {
-        let t = &self.tracker.world().tiles;
-        (
-            t.centers.iter().flatten().copied().collect(),
-            t.area.clone(),
-            t.room.iter().map(|r| r.map_or(-1, |k| k.0 as i64)).collect(),
-            t.exits.clone(),
-            t.entries.clone(),
-            t.region_doors.clone(),
-        )
-    }
-
-    /// (tiles, regions, ages) of the world: the shell's own tiles must be the same.
-    fn shape(&self) -> (usize, usize, usize) {
-        let t = &self.tracker.world().tiles;
-        (t.n, t.regions, t.ages)
-    }
-
-    #[getter]
-    fn serial(&self) -> u64 {
-        self.serial
+    fn set_world(&mut self, py: Python<'_>, config: &str, model: &str, silent_after: f64) -> PyResult<()> {
+        let world = world_of(py, config, model, silent_after)?;
+        self.tracker.set_world(world).map_err(PyValueError::new_err)
     }
 
     /// What the outputs are cached by: the moves of everybody and the events that concern all.
@@ -466,7 +185,6 @@ impl Core {
     /// The model starts at t (a tool's given start).
     fn start_at(&mut self, t: f64) {
         self.tracker.start_at(t);
-        self.changed();
     }
 
     /// A frame of the sensor with this id at t (Tracker::frame): the events for the listeners. ValueError
@@ -480,7 +198,6 @@ impl Core {
     ) -> PyResult<Bound<'py, PyList>> {
         let (tracker, frame) = (&mut self.tracker, &frame.get().0);
         let events = py.detach(|| tracker.frame(id, t, frame));
-        self.changed();
         events_out(py, events.map_err(fault)?)
     }
 
@@ -509,12 +226,10 @@ impl Core {
     fn step<'py>(&mut self, py: Python<'py>, t: f64) -> PyResult<Bound<'py, PyList>> {
         let tracker = &mut self.tracker;
         let events = py.detach(|| tracker.step(t));
-        self.changed();
         events_out(py, events.map_err(not_finite)?)
     }
 
     /// Sensors changed, the people's world not: their tracks end, then the new world (Tracker::recalibrate).
-    #[pyo3(signature = (changed, config, model, silent_after, export=None))]
     fn recalibrate<'py>(
         &mut self,
         py: Python<'py>,
@@ -522,22 +237,19 @@ impl Core {
         config: &str,
         model: &str,
         silent_after: f64,
-        export: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Bound<'py, PyList>> {
         let changed = changed
             .into_iter()
             .map(|si| self.sensor(si))
             .collect::<PyResult<SensorSet>>()?;
-        let world = world_of(config, model, silent_after, export)?;
+        let world = world_of(py, config, model, silent_after)?;
         let events = self.tracker.recalibrate(changed, world);
-        self.changed();
         events_out(py, events.map_err(fault)?)
     }
 
     /// The LD2450 tracks of all sensors start over (their next frames are a start).
     fn reset_tracks(&mut self) {
         self.tracker.reset_tracks();
-        self.changed();
     }
 
     /// The intervals [start, end) in which nothing is learned (end None: still paused).
@@ -553,7 +265,6 @@ impl Core {
     fn use_ghost_map(&mut self, saved: Option<&str>) -> PyResult<bool> {
         let saved = saved.map(json_of).transpose()?;
         let used = self.tracker.use_ghost_map(saved.as_ref()).map_err(learned_error)?;
-        self.changed();
         Ok(used)
     }
 
@@ -563,7 +274,6 @@ impl Core {
     fn use_ld_background(&mut self, saved: Option<&str>) -> PyResult<Vec<String>> {
         let saved = saved.map(json_of).transpose()?;
         let dropped = self.tracker.use_background(saved.as_ref()).map_err(learned_error)?;
-        self.changed();
         Ok(dropped.iter().map(ToString::to_string).collect())
     }
 
@@ -572,7 +282,6 @@ impl Core {
     fn use_dest_map(&mut self, saved: Option<&str>) -> PyResult<bool> {
         let saved = saved.map(json_of).transpose()?;
         let used = self.tracker.use_dest_map(saved.as_ref()).map_err(learned_error)?;
-        self.changed();
         Ok(used)
     }
 
@@ -602,19 +311,8 @@ impl Core {
         Ok(tracks.iter().map(|s| s.0).collect())
     }
 
-    fn merge(&mut self) {
-        self.tracker.merge();
-        self.changed();
-    }
-
-    fn prune(&mut self) -> PyResult<()> {
-        self.changed();
-        self.tracker.prune().map_err(not_finite)
-    }
-
     #[pyo3(signature = (dropped=0.0))]
     fn normalize(&mut self, dropped: f64) -> PyResult<()> {
-        self.changed();
         self.tracker.normalize(dropped).map_err(not_finite)
     }
 
@@ -627,114 +325,88 @@ impl Core {
         self.tracker.filter().check().map_err(PyValueError::new_err)
     }
 
-    /// What is known about the people (Filter::people_state): per hypothesis (logw, people,
-    /// unknown) and the densities (walk, still, region, out, clock, r, amp, keep).
-    #[allow(clippy::type_complexity)]
-    fn people_state<'py>(
-        &mut self,
-        py: Python<'py>,
-    ) -> PyResult<(Vec<(f64, Vec<usize>, usize)>, Vec<Bound<'py, PyAny>>)> {
-        let state = self.tracker.people_state();
-        let shape = self.tracker.world().density_shape();
-        let densities = state
-            .densities
-            .iter()
-            .map(|d| Self::density_out(py, d, &shape))
-            .collect::<PyResult<_>>()?;
-        Ok((state.hyps, densities))
+    /// What is known about the people in the saved format (JSON; Tracker::saved_people).
+    fn people_state(&mut self, py: Python<'_>) -> PyResult<String> {
+        let tracker = &mut self.tracker;
+        let saved = py.detach(|| tracker.saved_people()).map_err(PyValueError::new_err)?;
+        Ok(saved.to_string())
     }
 
-    /// The hypotheses and their objects for the shell's mirror: (densities, mixtures, hyps, tracks).
+    /// Start over from a state in the saved format (JSON): None, or why it was not taken (then nothing
+    /// changed).
+    fn restore_people(&mut self, py: Python<'_>, saved: &str) -> Option<String> {
+        let tracker = &mut self.tracker;
+        py.detach(|| {
+            let saved: Value = serde_json::from_str(saved).map_err(|e| e.to_string())?;
+            tracker.restore_saved(&saved)
+        })
+        .err()
+    }
+
+    /// The hypotheses for reading: (logw, per person with tracks their track ids, the ghost tracks, per
+    /// known person how probably they exist, the mass of the unknown ones outside).
     #[allow(clippy::type_complexity)]
-    fn dump<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<(
-        Vec<Bound<'py, PyAny>>,
-        Vec<Bound<'py, PyAny>>,
-        Vec<Bound<'py, PyAny>>,
-        Vec<Bound<'py, PyAny>>,
-    )> {
-        let filter = self.tracker.filter();
-        let objects = filter.objects();
-        let shape = objects.densities().shape();
-        let mut densities = Vec::new();
-        for &d in objects.densities().ids() {
-            let data = objects.densities().data(d);
-            let intensity = data.kind == Kind::Intensity;
-            let out = Self::density_out(py, &data, &shape)?;
-            densities.push((d.index(), out, intensity).into_pyobject(py)?.into_any());
-        }
-        let (levels, amps) = (shape.levels, shape.amps);
-        let mut mixtures = Vec::new();
-        for m in objects.mixtures().ids() {
-            let mix = objects.mixtures().get(m);
-            let d = mix.dim();
-            let mean: Vec<f64> = mix.modes.iter().flat_map(|k| k.mean.iter().copied()).collect();
-            let cov: Vec<f64> = mix.modes.iter().flat_map(|k| k.cov.iter().copied()).collect();
-            let slots: Vec<(u64, usize, f64)> = mix.slots.iter().map(|(s, sl)| (s.0, sl.index, sl.var)).collect();
-            mixtures.push(
+    fn hypotheses(&self) -> Vec<(f64, Vec<Vec<u64>>, Vec<u64>, Vec<f64>, f64)> {
+        let ids = |segs: Vec<SegId>| segs.into_iter().map(|s| s.0).collect();
+        self.tracker
+            .filter()
+            .hypotheses()
+            .into_iter()
+            .map(|h| {
                 (
-                    m.index(),
-                    array(py, &mix.logw, &[2])?,
-                    array(py, &mean, &[2, 2, d])?,
-                    array(py, &cov, &[2, 2, d, d])?,
-                    array(py, &mix.stay, &[mix.stay.len()])?,
-                    array(py, &mix.ka, &[levels, amps])?,
-                    slots,
-                    mix.phantom,
-                    mix.a,
-                    mix.away.map(|a| a.index()),
-                    mix.t,
+                    h.logw,
+                    h.people.into_iter().map(ids).collect(),
+                    ids(h.ghosts),
+                    h.known,
+                    h.unknown_out,
                 )
-                    .into_pyobject(py)?
-                    .into_any(),
-            );
-        }
-        let mut hyps = Vec::new();
-        for hy in filter.hyps() {
-            let tracks: Vec<(u64, Option<u64>)> = hy
-                .tracks
-                .iter()
-                .map(|(s, o)| {
-                    let owner = match o {
-                        Owner::Person(g) => Some(g.0),
-                        Owner::Ghost => None,
-                    };
-                    (s.0, owner)
-                })
-                .collect();
-            let mut ghosts = Vec::new();
-            for (s, g) in hy.ghosts.iter() {
-                ghosts.push((s.0, array(py, &g.life, &[g.life.len()])?, g.source.index()));
-            }
-            let people: Vec<(u64, usize)> = hy.people.iter().map(|(g, m)| (g.0, m.index())).collect();
-            let hidden: Vec<usize> = hy.hidden.iter().map(|d| d.index()).collect();
-            hyps.push(
-                (hy.logw, tracks, ghosts, people, hidden, hy.unknown.index())
-                    .into_pyobject(py)?
-                    .into_any(),
-            );
-        }
-        let mut tracks = Vec::new();
-        for (s, i) in filter.tracks().iter() {
-            let lost = i.lost.map(|l| (kind_name(l.kind), l.t, (l.z[0], l.z[1]), l.u));
-            tracks.push(
-                (
-                    s.0,
-                    i.si,
-                    (i.t, i.zt, i.gt, i.var),
-                    (i.z[0], i.z[1]),
-                    (i.z0[0], i.z0[1]),
-                    i.born,
-                    lost,
-                    i.map_odds,
-                )
-                    .into_pyobject(py)?
-                    .into_any(),
-            );
-        }
-        Ok((densities, mixtures, hyps, tracks))
+            })
+            .collect()
+    }
+
+    /// The live tracks of the filter: (track id, sensor index).
+    fn tracks(&self) -> Vec<(u64, usize)> {
+        self.tracker
+            .filter()
+            .tracks()
+            .iter()
+            .map(|(s, i)| (s.0, i.si))
+            .collect()
+    }
+
+    /// The tiles for drawing and reading: the fingerprint, the side of a square, per tile the lower left
+    /// corner of its square, its room (None: in none) and its centre.
+    #[allow(clippy::type_complexity)]
+    fn tiles_view(&self) -> (String, f64, Vec<Point>, Vec<Option<usize>>, Vec<Point>) {
+        let w = self.tracker.world();
+        let t = &w.tiles;
+        let rooms = t.room.iter().map(|r| r.map(|RoomIdx(k)| k)).collect();
+        (w.fingerprint(), SIZE, t.squares.clone(), rooms, t.centers.clone())
+    }
+
+    /// The tile of a point, or of the cell in view nearest to it (None: no tiles).
+    fn tile_near(&self, point: Point) -> Option<usize> {
+        self.tracker.world().tiles.cell_near(point)
+    }
+
+    /// The coarse sight map of sensor si for the web UI: (lower left corner, cell side, columns, rows,
+    /// the sight per cell column by column).
+    #[allow(clippy::type_complexity)]
+    fn sensor_map(&self, si: usize) -> PyResult<(Point, f64, usize, usize, Vec<f32>)> {
+        let m = &self.tracker.world().sights[self.sensor(si)?].map;
+        Ok((m.corner, m.cell, m.cols, m.rows, m.prior.clone()))
+    }
+
+    /// How well sensor si sees a person at the points, 0..1 (MODEL.md 4.1).
+    fn sight(&self, si: usize, points: Vec<Point>) -> PyResult<Vec<f64>> {
+        let grid = &self.tracker.world().sights[self.sensor(si)?].grid;
+        Ok(points.iter().map(|&p| grid.at(p)).collect())
+    }
+
+    /// How well the best sensor can test a person in each tile, 0..1 (MODEL.md 5.5).
+    fn observed(&self) -> Vec<f64> {
+        let w = self.tracker.world();
+        w.observed((0..w.sights.len()).collect())
     }
 
     /// The energies of sensor si's last LD2410C frame that counted (16), or None.
@@ -763,29 +435,12 @@ impl Core {
         self.tracker
             .reset_people(people.as_deref())
             .map_err(PyValueError::new_err)?;
-        self.changed();
         Ok(())
-    }
-
-    /// Start over now from a state saved at `saved` the shell decoded (Tracker::restore): the densities
-    /// and per hypothesis (logw, people, unknown) as indices into them. What does not fit (None: it
-    /// fits; then nothing changed).
-    fn restore(
-        &mut self,
-        saved: f64,
-        densities: Vec<DensityIn<'_>>,
-        hyps: Vec<(f64, Vec<usize>, usize)>,
-    ) -> PyResult<Option<String>> {
-        let densities = densities.iter().map(density_in).collect::<PyResult<_>>()?;
-        let refused = self.tracker.restore(PeopleState { hyps, densities }, saved).err();
-        self.changed();
-        Ok(refused)
     }
 
     /// Every hypothesis' weight NaN: the shell's test of a failing model.
     fn spoil_weights_for_test(&mut self) {
         self.tracker.spoil_weights_for_test();
-        self.changed();
     }
 
     /// What an earlier core saw, learned and gathered goes on here (the shell's rebuild).
@@ -938,10 +593,7 @@ impl Core {
     #[allow(clippy::type_complexity)]
     fn names(&self) -> (Vec<String>, Vec<String>, Vec<String>, Vec<Option<String>>) {
         let p = &self.tracker.world().plan;
-        let places = std::iter::once("observed".to_string())
-            .chain(p.regions.iter().map(|r| r.id.clone()))
-            .chain(["outside".to_string()])
-            .collect();
+        let places = p.place_names().into_iter().map(String::from).collect();
         let areas = p.areas().map(|z| z.id.clone()).collect();
         let own = p
             .sensors
@@ -963,6 +615,26 @@ impl Core {
 }
 
 /// The world the core builds of a configuration and model (JSON), as a dict in the format of the
+/// The model's defaults (JSON of Params::default()): what a model given as the fields that differ is
+/// read against (the simulation's numbers).
+#[pyfunction]
+pub fn model_defaults() -> String {
+    serde_json::to_value(Params::default())
+        .expect("the defaults are finite numbers")
+        .to_string()
+}
+
+/// The energy a person puts into the 16 cells of an LD2410C at `angle` degrees off its axis and `slant`
+/// m, in sight, with the default model: (standing, walking) (ld2410/profile.rs; the simulation's).
+#[pyfunction]
+pub fn ld_expected(angle: f64, slant: f64) -> ([f64; CELLS], [f64; CELLS]) {
+    let p = Params::default();
+    (
+        expected(&p, STILL, angle, slant, 1.0),
+        expected(&p, WALK, angle, slant, 1.0),
+    )
+}
+
 /// Python tracker's `_export()` (and the plan): for the aid that checks the build against Python's
 /// (rust-port/cmpworld.py).
 #[pyfunction]
@@ -972,7 +644,7 @@ pub fn build_export<'py>(
     model: &str,
     silent_after: f64,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let w = world_of(config, model, silent_after, None)?;
+    let w = world_of(py, config, model, silent_after)?;
     let (t, sh) = (&w.tiles, &w.shapes);
     let flat = |v: &[[f64; 2]]| -> Vec<f64> { v.iter().flatten().copied().collect() };
     let d = PyDict::new(py);

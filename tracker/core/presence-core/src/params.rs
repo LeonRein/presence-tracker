@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 mod shapes;
 pub use shapes::Shapes;
@@ -40,7 +40,7 @@ pub const P_FA: f64 = 1e-6;
 pub const STILL: usize = 0;
 pub const WALK: usize = 1;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Params {
     // 3.1 standing
@@ -199,7 +199,7 @@ pub enum LostKind {
 
 /// Per kind of loss the time to finding the target again: median s, log-normal spread, the share
 /// never found (filtermodel.Model.refind).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Refind {
     pub coast: [f64; 3],
     pub frozen: [f64; 3],
@@ -286,7 +286,24 @@ impl Default for Params {
             },
             ld_echo_amps: vec![0.3, 1.0, 3.0],
             ld_tile_mass: 1e-4,
-            ld_view: BTreeMap::new(),
+            // the LD2410C's view of another room against its own ("own<-other", MODEL.md 4.3 "Blick des
+            // LD2410C"), measured 6.-10.10. (tools/ld2410/footprint.py, filtermodel.Model.ld_view until 0.38)
+            ld_view: [
+                ("arbeitszimmer<-badezimmer", 0.801),
+                ("arbeitszimmer<-flur", 0.98),
+                ("esszimmer<-kueche", 0.514),
+                ("esszimmer<-wohnzimmer", 0.562),
+                ("flur<-arbeitszimmer", 0.308),
+                ("flur<-badezimmer", 0.998),
+                ("flur<-esszimmer", 0.946),
+                ("flur<-kueche", 0.62),
+                ("schlafzimmer<-flur", 0.866),
+                ("wohnzimmer<-esszimmer", 0.722),
+                ("wohnzimmer<-kueche", 0.991),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
             ld_background: [13.0, 9.0, 4.5, 5.0],
             ld_prior_time: 600.0,
             ld_forget: 0.7 * 3600.0,
@@ -477,7 +494,7 @@ impl OutputParams {
 /// What a person puts into a kind of cell of the LD2410C (MODEL.md 4.3, measured 6.10.): a r^-n
 /// times the main lobe, a Gaussian of width sigma centred delta behind the person, and beyond the
 /// centre the tail mixed in by `tail`, falling off over ell (m). Read as the model's list.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct Profile {
     pub a: f64,
     pub n: f64,
@@ -501,7 +518,7 @@ impl Profile {
 }
 
 /// The bursts of the LD2410C's common gain: 1/u ~ Gamma(shape, rate shape x gain) with this weight.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct Burst {
     pub shape: f64,
     pub gain: f64,
@@ -509,7 +526,7 @@ pub struct Burst {
 }
 
 /// The slants (m) of the echo sources: from, to (with it), step.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct Slants {
     pub from: f64,
     pub to: f64,

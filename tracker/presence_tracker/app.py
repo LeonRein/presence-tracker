@@ -525,7 +525,7 @@ class App:
     def live_message(self) -> str:
         snap = self.tracker.snapshot()
         snap["zones"] = {k: v.to_dict() for k, v in self.zone_states.items()}
-        # rooms whose own sensors went silent: unavailable in Home Assistant (roomseen.py)
+        # rooms whose own sensors went silent: unavailable in Home Assistant (the core's room_seen.rs)
         snap["unavailable"] = sorted(k for k, v in self.zone_states.items() if not v.available)
         snap["status"] = self.sensor_status
         snap["calibration"] = self._calibration_status()
@@ -746,8 +746,7 @@ class App:
 
     async def h_sensormodel(self, request):
         """What one sensor sees (from the geometry) and where it starts ghost tracks (learned)."""
-        return web.json_response({"maps": self.tracker.sensor_model.maps(request.query.get("sensor", ""),
-                                                                         self.tracker.ghost_rates)})
+        return web.json_response({"maps": self.tracker.sensor_map(request.query.get("sensor", ""))})
 
     async def h_import_learned(self, request):
         """Take over a ghost map learned elsewhere, e.g. offline from recordings: {"ghost_map":
@@ -762,11 +761,9 @@ class App:
     async def h_tiles(self, request):
         """The tiles (MODEL.md 5.3), for drawing where unseen people may be: per tile its square
         (lower left corner) and its room, which cuts the square."""
-        tiles = self.tracker.tiles
-        rooms = self.tracker.rooms
-        return web.json_response({"id": id(tiles), "size": tiles.square,
-                                  "tiles": [[round(float(x), 2), round(float(y), 2), rooms[int(r)]]
-                                            for (x, y), r in zip(tiles.squares, tiles.room)]})
+        tiles = self.tracker.tiles()
+        return web.json_response({"id": tiles["id"], "size": tiles["size"],
+                                  "tiles": [[round(x, 2), round(y, 2), r] for (x, y), r in zip(tiles["squares"], tiles["room"])]})
 
     # ------------------------------------------------------------ error reports
 

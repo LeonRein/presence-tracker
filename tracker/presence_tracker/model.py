@@ -14,25 +14,6 @@ from .util import atomic_write
 
 
 SIGHT_OFFSET = 0.2  # m, see SensorConfig.sight_origin
-# A sensor counts as mounted elsewhere (remounted), not only estimated anew (recalibrated), when its
-# drawn place or height moves by more than REMOUNT_SHIFT or its heading by more than REMOUNT_TURN.
-# The calibration (calibration.py) changes heading, scale and mirror only, the heading within its
-# prior of +-20 deg around the drawn one (here 320 -> 324 deg, 324.4 -> 321.6 deg; the old app
-# proposed -15 deg); a drawing put right lies within its error (MODEL.md 4.1: 0.2-0.3 m). Mounted on
-# another wall or in another corner, a sensor is further off; turned to look elsewhere, more than a
-# quarter of its 120 deg view. Assumed, not measured (MODEL.md 4.2).
-REMOUNT_SHIFT = 0.5  # m
-REMOUNT_TURN = 30.0  # deg
-
-
-def remounted(old: tuple, s: "SensorConfig") -> bool:
-    """Is sensor s, with the pose old = (x, y, heading, height, ...) it had, mounted elsewhere now?
-    Scale and mirror are how its measurements are read, not where it hangs: never a remount."""
-    x, y, heading, height = old[:4]
-    return (math.sqrt((x - s.x) ** 2 + (y - s.y) ** 2 + (height - s.height) ** 2) > REMOUNT_SHIFT
-            or abs((heading - s.heading + 180) % 360 - 180) > REMOUNT_TURN)
-
-
 @dataclass
 class SensorConfig:
     id: str  # ESPHome name, also the MQTT topic: presence/<id>/frame
@@ -119,7 +100,7 @@ class TrackerParams:
     lateral_sigma_base: float = 0.10  # m, across it
     lateral_sigma_slope: float = 0.05
     wall_margin: float = 0.4  # m, detections farther behind a wall or outside all rooms are reflections
-    # rooms without a sensor, see unobserved.py (assumed)
+    # rooms without a sensor (MODEL.md 3.3, assumed)
     dwell_median: float = 120.0  # s, typical stay in such a room
     dwell_spread: float = 1.5  # spread of ln(duration), wide: long stays stay possible
     # LD2410C
@@ -128,7 +109,7 @@ class TrackerParams:
     light_cost: float = 2.0  # a second of light without anybody costs as much as this many seconds dark
                              # with somebody there (assumed; Leon: light without a person is the worst)
     # "Belegt" (MODEL.md 6): occupied also while the room's own LD2450 measured somebody in it within
-    # this many s (roomseen.py); 0: the filter alone. 10 s: measured on the truth of 6.-8.10.
+    # this many s (the core's room_seen.rs); 0: the filter alone. 10 s: measured on the truth of 6.-8.10.
     seen_hold: float = 10.0  # s
     # "wird betreten" (MODEL.md 6): P(a walker enters within lead_time) above approach_cost / (approach_cost
     # + 1); approach_cost: a light switched on in vain costs as much as this many entries into a dark room.
@@ -457,44 +438,6 @@ class Config:
         """The rooms of the home that the sensors see (in no region without a sensor)."""
         unseen = {r for region in self.regions.values() for r in region["rooms"]}
         return [z for z in self.home_zones("room") if z.id not in unseen]
-
-    def hidden(self, s: SensorConfig, pos, u, margin: float) -> bool:
-        """The radar can't see through the (concrete) walls: a point more than `margin` behind
-        one, outside all rooms or inside a closed room without a sensor is a reflection.
-        u: unit vector from the sensor to the point."""
-        rooms = self.zones_of("room")
-        if rooms and not any(z.contains(pos[0], pos[1], margin) for z in rooms):
-            return True
-        # a closed room without a sensor (balcony) is not observed, not even through its glass
-        # door: what shows up in there is a reflection; people are counted at the door instead
-        if any(z.contains(pos[0], pos[1], -margin) for z in self.closed_rooms):
-            return True
-        # behind a wall by more than margin: no point within margin of it is in sight (the
-        # measurement error of a person who is). Not only back along the line of sight: a sensor
-        # that hangs on a wall looks along it, and a target 5 cm beyond that wall lies 0.4 m behind
-        # it along the line of sight (MODEL.md 4.1)
-        o = s.sight_origin()
-        p = (float(pos[0]), float(pos[1]))
-        segs = self.wall_segments
-        if line_of_sight(o, p, segs):
-            return False
-        cands = [(p[0] - float(u[0]) * margin, p[1] - float(u[1]) * margin)]
-        for a, b in segs:
-            ax, ay, bx, by = float(a[0]), float(a[1]), float(b[0]), float(b[1])
-            dx, dy = bx - ax, by - ay
-            L2 = dx * dx + dy * dy
-            if L2 <= 0:
-                continue
-            t = min(max(((p[0] - ax) * dx + (p[1] - ay) * dy) / L2, 0.0), 1.0)
-            fx, fy = ax + t * dx, ay + t * dy
-            if math.hypot(p[0] - fx, p[1] - fy) > margin:
-                continue
-            # the foot on the wall, a centimetre to the sensor's side of it
-            nx, ny = -dy, dx
-            side = (o[0] - fx) * nx + (o[1] - fy) * ny
-            k = (0.01 if side >= 0 else -0.01) / math.sqrt(L2)
-            cands.append((fx + nx * k, fy + ny * k))
-        return not any(line_of_sight(o, c, segs) for c in cands)
 
     # --- persistence ---
 

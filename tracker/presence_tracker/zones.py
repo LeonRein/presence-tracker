@@ -36,8 +36,8 @@ class ZoneState:
     target_person: int | None = None  # their id in the display
     probability: float | None = None  # P(somebody is in there), where the filter knows it
     decided: bool | None = None  # occupied by the decision (MODEL.md 6): the probability, or the room's own LD2450
-    source: str | None = None  # what decided "occupied": "filter", "ld2450" (roomseen.py) or "beide"
-    # False: the room's own sensors all went silent (roomseen.py), Home Assistant gets "unavailable"
+    source: str | None = None  # what decided "occupied": "filter", "ld2450" (the core's room_seen.rs) or "beide"
+    # False: the room's own sensors all went silent (the core's room_seen.rs), Home Assistant gets "unavailable"
     # (ha.py); not in to_dict, the state goes out as always
     available: bool = True
 

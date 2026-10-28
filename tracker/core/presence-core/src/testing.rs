@@ -35,6 +35,19 @@ impl Rng {
         let (u, v) = (1.0 - self.uniform(), self.uniform());
         (-2.0 * u.ln()).sqrt() * (2.0 * std::f64::consts::PI * v).cos()
     }
+
+    /// Gamma(shape, scale 1) for shape >= 1 (Marsaglia & Tsang 2000).
+    pub fn gamma(&mut self, shape: f64) -> f64 {
+        let d = shape - 1.0 / 3.0;
+        let c = 1.0 / (9.0 * d).sqrt();
+        loop {
+            let x = self.normal();
+            let v = (1.0 + c * x).powi(3);
+            if v > 0.0 && self.uniform().ln() < 0.5 * x * x + d - d * v + d * v.ln() {
+                return d * v;
+            }
+        }
+    }
 }
 
 use crate::config::Config;
@@ -245,6 +258,10 @@ pub fn flat_export() -> WorldExport {
         point_tile,
         point_count,
         room: vec![Some(RoomIdx(0)); n],
+        squares: tile_centers
+            .iter()
+            .map(|c| [c[0] - TILE / 2.0, c[1] - TILE / 2.0])
+            .collect(),
         region_start: Vec::new(),
         generator: Vec::new(),
         walk_end: Default::default(),

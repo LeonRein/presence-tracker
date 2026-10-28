@@ -140,9 +140,14 @@ pub struct SensorPlan {
     pub pose: Pose,
 }
 
-/// m: a sensor whose drawn place or height moved more than this hangs elsewhere (model.REMOUNT_SHIFT)
+/// m: a sensor whose drawn place or height moved more than this hangs elsewhere (remounted), not only
+/// estimated anew (recalibrated). The calibration changes heading, scale and mirror only, the heading within
+/// its prior of +-20 deg around the drawn one (320 -> 324 deg, 324.4 -> 321.6 deg); a drawing put right lies
+/// within its error (MODEL.md 4.1: 0.2-0.3 m). Mounted on another wall or in another corner, a sensor is
+/// further off; turned to look elsewhere, more than a quarter of its 120 deg view. Assumed, not measured
+/// (MODEL.md 4.2).
 const REMOUNT_SHIFT: f64 = 0.5;
-/// degrees: ... or whose heading turned more than this (model.REMOUNT_TURN)
+/// degrees: ... or whose heading turned more than this
 const REMOUNT_TURN: f64 = 30.0;
 
 /// How a sensor hangs and how its reports are read (ghostmap.pose_of): what the learned parts of a
@@ -398,6 +403,14 @@ impl Plan {
                 .map(|(piece, _)| piece)
                 .collect(),
         }
+    }
+
+    /// The names of the places: "observed", the regions' ids, "outside" (world.World.places).
+    pub fn place_names(&self) -> Vec<&str> {
+        std::iter::once("observed")
+            .chain(self.regions.iter().map(|r| r.id.as_str()))
+            .chain(["outside"])
+            .collect()
     }
 
     /// The number of places: observed, the regions, outside.

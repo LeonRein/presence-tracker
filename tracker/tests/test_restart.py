@@ -8,28 +8,19 @@ import math
 import numpy as np
 
 from presence_tracker.filter import Tracker
-from presence_tracker.hidden import Hidden, Undetected
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
 from presence_tracker.frames import Frame
 
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
+from fixture import fixture, unpack
 
 
 def sitting_two(config, end):
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.6, 1.0), start=1, pauses={2: end}))
     b = Person(walk((-1.0, 4.0), FLUR_DOOR, (2.0, 2.5), (2.1, 2.5), start=20, pauses={2: end}))
     return [a, b]
-
-
-def saved(tracker, people, t: float = 0.0) -> dict:
-    """A saved state (Tracker.people_state's format) of one hypothesis: these known people (Hidden),
-    nobody unknown - how a test puts people where it wants them (the core's state is written only by
-    the filter)."""
-    tl = tracker.tiles
-    return {"t": t, "tiles": tl.fingerprint(), "densities": [h.to_dict() for h in people] + [Undetected.none(tl).to_dict()],
-            "hyps": [{"logw": 0.0, "people": list(range(len(people))), "unknown": len(people)}]}
 
 
 def two_in_the_room(dist) -> float:
@@ -84,7 +75,7 @@ def test_the_saved_state_round_trips_and_needs_the_same_tiles():
     d["sensors"].append({"id": "c", "x": -1.95, "y": 3.05, "heading": 45, "placed": True})
     d["zones"] = [{**z, "entry": False} for z in d["zones"]]
     other = Tracker(Config.from_dict(d))
-    assert other.tiles.n > again.tiles.n
+    assert len(other.tiles()["squares"]) > len(again.tiles()["squares"])
     before = other.people_state()
     assert not other.restore_people(state) and other.started_from is None
     assert other.people_state() == before
@@ -98,26 +89,18 @@ def test_a_gap_moves_everybody_on():
     # nothing, 4.4); the leaps of a long gap agree with moving all of it as always
     config = flat_config(entry=True)
     crowd = Tracker(config, start=0.0, people=["outside"])
-    h = Hidden(crowd.tiles)
-    h.still[:, :, crowd.tiles.cell_near((3.0, 2.5))] = crowd.shapes.stay_prior(ongoing=True)
-    h._normalize()
-    assert crowd.restore_people(saved(crowd, [h]))
+    assert crowd.restore_people(fixture("people.json")["sitter"])  # standing in the tile at (3, 2.5)
     state = crowd.people_state()
 
     def after(gap, exact=False):
-        from presence_tracker import filter as F
-        from presence_tracker.filtermodel import Model
-        m = Model()
-        m.unseen_life = math.inf  # the motion alone (records nothing tests expire over a gap too, MODEL.md 5.5)
-        old = F.GAP_EXACT
-        F.GAP_EXACT = gap + 1 if exact else old  # a parameter of the core: given when it is built
-        try:
-            tr = Tracker(config, model=m)
-            tr.restore_people(state)
-            tr.process_frame("a", gap, Frame.of({"targets": []}))
-        finally:
-            F.GAP_EXACT = old
-        return tr.hyps[0].hidden[0].places()
+        """Where the one person is after the gap: per place (observed, regions, outside) their mass."""
+        model = {"unseen_life": math.inf}  # the motion alone (records nothing tests expire over a gap too, MODEL.md 5.5)
+        if exact:
+            model["gap_exact"] = gap + 1
+        tr = Tracker(config, model=model)
+        tr.restore_people(state)
+        tr.process_frame("a", gap, Frame.of({"targets": []}))
+        return np.array([1 - d[0] for place, d in tr.place_distribution().items() if place != "_house"])
 
     short, day = after(60.0), after(86400.0)
     assert short[0] > 0.99
@@ -167,27 +150,43 @@ def test_nothing_known_finds_who_sits_in_view_at_the_start():
 
 def test_saving_the_people_changes_nothing():
     # people_state is read at every save (10 min, app.py): until 0.28 reading a stored LD2410C
-    # amplitude applied its deferred mixing (Hidden.amp) in the model's own densities - the live run
-    # then went another way than a replay of the same frames (rounding, MEASURED_CUT). The core
-    # works on copies (its own test: a person with a track and a part gone through a door)
-    from presence_tracker.gauss import Gauss
-    crowd = Tracker(flat_config(), start=0.0)
-    m, sh, tl = crowd.m, crowd.shapes, crowd.tiles
-    g = Gauss.source(1, np.array([3.0, 3.0]), 0.01, m, sh)
-    g.logw = np.log(np.array([1.0 - 1e-9, 1e-9]))  # standing
-    a = int(np.argmin(abs(sh.amp - 0.3)))
-    ka = np.zeros_like(g.ka)
-    ka[:, a] = g.kw
-    g.ka = ka
-    h, other = g.to_tiles(tl), g.to_tiles(tl)
-    assert h.measured and crowd.restore_people(saved(crowd, [h, other]))
-    for k in range(1, 26):  # moving on defers the mixing of the amplitude (Hidden._keep)
-        crowd.step(0.2 * k)
+    # amplitude applied its deferred mixing in the model's own densities - the live run then went
+    # another way than a replay of the same frames (rounding, MEASURED_CUT). The core works on copies
+    # (its own test: a person with a track and a part gone through a door). Two standing with an
+    # amplitude a track measured (fixtures/people.json), moved on, which defers the mixing: saving
+    # between the steps changes nothing of the run
+    def run(save):
+        crowd = Tracker(flat_config(), start=0.0)
+        assert crowd.restore_people(fixture("people.json")["measured"])
+        states = []
+        for k in range(1, 26):
+            crowd.step(0.2 * k)
+            if save:
+                states.append(crowd.people_state())
+        return crowd, states
+    saving, states = run(True)
+    plain, _ = run(False)
+    assert all("amp" in d for d in states[-1]["densities"][:2])  # still measured
+    assert states[-1] == saving.people_state() == plain.people_state()
+    assert np.array_equal(saving.hyp_weights(), plain.hyp_weights())
+    assert saving.count_distribution() == plain.count_distribution()
 
-    def raw():
-        return [np.copy(x) for u in crowd._h[0].hidden for x in (u._amp, u._keep, u.still)]
-    first = crowd.people_state()
-    before = raw()
-    assert crowd.people_state() == first
-    assert all(np.array_equal(x, y) for x, y in zip(raw(), before))
-    assert all(u._keep is not None for u in crowd._h[0].hidden)
+
+def test_a_state_saved_by_0381_is_read_and_written_alike():
+    # the format (hidden.Hidden.to_dict until 0.38.1) is the core's now: what 0.38.1 saved, the core
+    # reads on the same tiles (their fingerprint is the same string) and writes back with the same
+    # masses (float16; a person scaled to sum 1 again; the zlib bytes may differ)
+    from test_existence import _nook_config
+    for name, config in (("nook", _nook_config()), ("sitter", flat_config(entry=True)), ("measured", flat_config())):
+        saved = fixture("people.json")[name]
+        tr = Tracker(config)
+        assert tr.tiles()["id"] == saved["tiles"]
+        assert tr.restore_people(saved)
+        again = tr.people_state()
+        assert again["hyps"] == saved["hyps"] and again["tiles"] == saved["tiles"]
+        for a, b in zip(again["densities"], saved["densities"], strict=True):
+            assert set(a) == set(b) and a["r"] == b["r"] and a["out"] == b["out"], name
+            for k in ("walk", "still", "region"):
+                assert np.allclose(unpack(a[k]) * a["scale"], unpack(b[k]) * b["scale"], rtol=1e-3, atol=1e-9), (name, k)
+            if "amp" in b:
+                assert np.allclose(unpack(a["amp"]), unpack(b["amp"]), rtol=1e-3), name

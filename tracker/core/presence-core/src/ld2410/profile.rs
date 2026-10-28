@@ -34,7 +34,7 @@ mod tests {
 
     #[test]
     fn the_profile_peaks_at_the_persons_gate_and_falls_with_distance() {
-        // test_ld2410: a person at 3 m puts most into gate 3 (moving) and falls off with distance
+        // test_ld2410: a person puts most into the gates at their distance, less the farther they are
         let p = Params::default();
         for mode in [STILL, WALK] {
             let near = expected(&p, mode, 0.0, 2.0, 1.0);
@@ -43,6 +43,15 @@ mod tests {
             assert!(peak == 2 || peak == 3, "{peak}");
             assert!(far[..MOVING].iter().sum::<f64>() < near[..MOVING].iter().sum::<f64>());
         }
+        // standing at 1.5 m most goes into still gate 2 or 3, at 4.5 m into 5 or 6, far less of it
+        let gate =
+            |e: &[f64; CELLS]| (MOVING..CELLS).max_by(|&a, &b| e[a].total_cmp(&e[b])).expect("cells") - MOVING + 2;
+        let top = |e: &[f64]| e.iter().copied().fold(0.0, f64::max);
+        let (near, far) = (expected(&p, STILL, 0.0, 1.5, 1.0), expected(&p, STILL, 0.0, 4.5, 1.0));
+        assert!(matches!(gate(&near), 2 | 3) && matches!(gate(&far), 5 | 6));
+        assert!(top(&near) > 5.0 * top(&far));
+        // walking puts more into the moving gates than standing
+        assert!(top(&expected(&p, WALK, 0.0, 3.0, 1.0)[..MOVING]) > top(&expected(&p, STILL, 0.0, 3.0, 1.0)[..MOVING]));
         // out of the beam: nothing
         assert!(expected(&p, STILL, 80.0, 2.0, 1.0).iter().all(|&x| x == 0.0));
         assert!(expected(&p, STILL, 0.0, 2.0, 0.0).iter().all(|&x| x == 0.0));

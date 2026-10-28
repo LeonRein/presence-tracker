@@ -38,7 +38,7 @@ def test_who_walks_out_through_the_stairwell_door_is_outside():
     # who left: their record expires out there, where no sensor can test it (MODEL.md 5.5); they do
     # not become an unknown person
     # out of the house who comes back at the rate of coming home for a day
-    ppp_out = max(hy.ppp.out for hy in crowd.hyps)
+    ppp_out = max(hy["unknown_out"] for hy in crowd.hypotheses())
     assert ppp_out < 0.05, ppp_out
     # the person is out (or forgotten, MODEL.md 5.5): not in the flat
     for d in crowd.persons():

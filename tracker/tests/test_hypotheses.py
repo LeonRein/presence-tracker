@@ -1,41 +1,18 @@
-"""The posterior grids of a stay's detectability and amplitude (MODEL.md 4.1, 4.3): the grid keeps
-long unseen sitting as likely as the Gamma prior says, and the joint prior of detectability and
-amplitude has the measured marginals. The bookkeeping of the hypotheses (5.1, 5.6: merged before the
+"""A sitter no LD2450 sees for a quarter of an hour stays (MODEL.md 4.1, 4.3). The grids of a stay's
+detectability and amplitude (the grid keeps long unseen sitting as the Gamma prior says, the joint prior
+has the measured marginals) are tested in the Rust core (params/shapes.rs); so is the bookkeeping of the hypotheses (5.1, 5.6: merged before the
 cut, the cut and the evidence, a track's end with its ghost alternative all but gone, shifting the
 odds) is tested in the Rust core (core/presence-core/src/filter/tests.rs, merge.rs)."""
 
-import math
 
-import numpy as np
 
 from presence_tracker.filter import Tracker
-from presence_tracker.filtermodel import Model, Shapes, copula_cells, gamma_log_grid
 from presence_tracker.sim import Person, simulate
 from presence_tracker.frames import Frame
 
 from test_existence import known
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
-
-
-def test_the_detectability_grid_keeps_long_unseen_sitting_as_the_prior_says():
-    # E[exp(-kappa s)] of the grid against the Gamma(1) prior's 1 / (1 + s), s = rate x time unseen up
-    # to 300 (a still person near one sensor, 0.034 /s, for 2.5 h): within 25 % everywhere (the
-    # three Gauss-Laguerre nodes until 0.21: 0.40 at s = 20, 10 min, and 1e-7 at s = 70)
-    s = np.exp(np.linspace(math.log(0.1), math.log(300.0), 40))
-    sh = Shapes(Model())
-    ratio = (sh.kappa_w[None, :] * np.exp(-np.outer(s, sh.kappa))).sum(axis=1) * (1 + s)
-    assert ratio.min() > 0.75 and ratio.max() < 1.01, ratio
-
-
-def test_detectability_and_amplitude_are_drawn_together():
-    sh = Shapes(Model())
-    assert np.allclose(sh.ka_w.sum(axis=1), sh.kappa_w) and np.allclose(sh.ka_w.sum(axis=0), sh.amp_w)
-    eg = sh.amp_given_kappa @ sh.amp
-    assert np.all(np.diff(eg) > 0), eg  # who is seen less reflects less
-    assert np.allclose(copula_cells(sh.kappa_w, sh.amp_w, 0.0), np.outer(sh.kappa_w, sh.amp_w))
-    k, w = gamma_log_grid(6.0, 9)
-    assert abs(float(w @ k) - 1) < 1e-9
 
 
 def test_a_sitter_no_ld2450_sees_for_a_quarter_of_an_hour_stays():

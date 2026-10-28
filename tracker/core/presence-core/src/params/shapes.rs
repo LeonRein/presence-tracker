@@ -330,4 +330,65 @@ mod tests {
         // a stay of a day is in the slowest kind (rate ~ 1 / day)
         assert!(sh.go[0] < 1e-4 && sh.go[4] > 0.1);
     }
+
+    #[test]
+    fn the_detectability_grid_keeps_long_unseen_sitting_as_the_prior_says() {
+        // test_hypotheses: E[exp(-kappa s)] of the grid against the Gamma(1) prior's 1 / (1 + s), s =
+        // rate x time unseen up to 300 (a still person near one sensor, 0.034 /s, for 2.5 h): within
+        // 25 % everywhere (the three Gauss-Laguerre nodes until 0.21: 0.40 at s = 20, 10 min, and 1e-7
+        // at s = 70)
+        let sh = Shapes::new(&Params::default());
+        for s in linspace(0.1f64.ln(), 300f64.ln(), 40).into_iter().map(f64::exp) {
+            let e: f64 = sh.kappa.iter().zip(&sh.kappa_w).map(|(k, w)| w * (-k * s).exp()).sum();
+            let ratio = e * (1.0 + s);
+            assert!(ratio > 0.75 && ratio < 1.01, "{s}: {ratio}");
+        }
+    }
+
+    #[test]
+    fn detectability_and_amplitude_are_drawn_together() {
+        // test_hypotheses: the joint prior has both grids as its marginals, who is seen less reflects
+        // less, and without correlation it is the product
+        let p = Params::default();
+        let sh = Shapes::new(&p);
+        let (_, amp_w) = gamma_log_grid(p.ld_amp_shape, p.ld_amp_levels);
+        let amps = sh.amps();
+        for (a, &w) in amp_w.iter().enumerate() {
+            let column: f64 = sh.ka_w.iter().skip(a).step_by(amps).sum();
+            assert!((column - w).abs() < 1e-12, "{a}");
+        }
+        let eg: Vec<f64> = sh
+            .amp_given_kappa
+            .chunks_exact(amps)
+            .map(|row| row.iter().zip(&sh.amp).map(|(w, g)| w * g).sum())
+            .collect();
+        assert!(eg.windows(2).all(|x| x[1] > x[0]), "{eg:?}");
+        let independent = copula_cells(&sh.kappa_w, &amp_w, 0.0);
+        for (k, &wk) in sh.kappa_w.iter().enumerate() {
+            for (a, &wa) in amp_w.iter().enumerate() {
+                assert_eq!(independent[k * amps + a], wk * wa);
+            }
+        }
+        let (k, w) = gamma_log_grid(6.0, 9);
+        assert!((k.iter().zip(&w).map(|(k, w)| k * w).sum::<f64>() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_amplitude_grid_is_the_prior_on_a_grid_in_log_g() {
+        // test_ld2410 (MODEL.md 4.3): the posterior of a stay's amplitude g on a grid in log g with the
+        // prior's mass per cell, Gamma(6, 6): mean 1, variance 1/6. The quadrature's lowest node was
+        // 0.58: a person giving back a third of the profile (7.10. 22:12, Bad) was explained worse than
+        // an echo source at its level 0.3 (likelihood.rs, the_amplitude_grid_carries_a_weak_reflector)
+        let p = Params::default();
+        let (amp, w) = gamma_log_grid(p.ld_amp_shape, p.ld_amp_levels);
+        assert_eq!(amp, Shapes::new(&p).amp);
+        let moment = |f: &dyn Fn(f64) -> f64| amp.iter().zip(&w).map(|(&g, w)| w * f(g)).sum::<f64>();
+        assert!((moment(&|g| g) - 1.0).abs() < 1e-6);
+        assert!((moment(&|g| (g - 1.0).powi(2)) - 1.0 / p.ld_amp_shape).abs() < 0.02);
+        let (lo, hi) = (
+            amp.iter().copied().fold(f64::INFINITY, f64::min),
+            amp.iter().copied().fold(0.0, f64::max),
+        );
+        assert!(lo < 0.3 && hi > 2.0, "{lo} {hi}");
+    }
 }

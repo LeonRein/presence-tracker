@@ -5,14 +5,13 @@ do not see for minutes stays, and no strip of a room is out of every sensor's si
 import numpy as np
 
 from presence_tracker.filter import Tracker
-from presence_tracker.hidden import Hidden
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
 from presence_tracker.frames import Frame
 
 from test_filter import BALCONY_DOOR, FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
-from test_restart import saved
+from fixture import fixture
 
 
 def in_house(crowd) -> float:
@@ -24,7 +23,7 @@ def in_house(crowd) -> float:
 def known(crowd) -> float:
     """E[known people that exist]."""
     w = crowd.hyp_weights()
-    return float(sum(wi * sum(getattr(o, "r", 1.0) for o in h.people()) for wi, h in zip(w, crowd.hyps)))
+    return float(sum(wi * sum(h["known"]) for wi, h in zip(w, crowd.hypotheses())))
 
 
 def test_a_reflection_leaves_nobody_behind():
@@ -89,8 +88,7 @@ def test_a_person_in_a_walls_shadow_is_partly_seen():
     d = flat_config().to_dict()
     d["walls"].append({"points": [[3.0, 2.5], [3.0, 5.0]], "kind": "wall"})
     crowd = Tracker(Config.from_dict(d), start=0.0)
-    si = crowd.sidx["a"]
-    g = crowd._g(si, np.array([[2.5, 4.0], [3.15, 3.0], [4.5, 4.5], [7.0, 2.0]]))
+    g = crowd.sight("a", np.array([[2.5, 4.0], [3.15, 3.0], [4.5, 4.5], [7.0, 2.0]]))
     assert g[0] > 0.9  # in plain sight
     assert 0.1 < g[1] < 0.9  # just inside the shadow
     assert g[2] < 0.05  # far inside
@@ -105,32 +103,27 @@ def _nook_config():
     return Config.from_dict(d)
 
 
-def _nook(tl):
-    return [tl.cell_near((x, 4.5)) for x in (4.5, 5.0, 5.5, 5.8)]
+def _nook(crowd):
+    return [crowd.tile_near((x, 4.5)) for x in (4.5, 5.0, 5.5, 5.8)]
 
 
 def test_the_nook_is_unobserved():
     # how well the best sensor sees a person in each tile (MODEL.md 5.5): 0 in the nook, 1 in
     # plain view, in between at the nook's opening
     crowd = Tracker(_nook_config(), start=0.0, people=["outside"])
-    tl = crowd.tiles
-    o = tl.observed(range(len(crowd.sensors)))
-    assert all(o[c] < 0.02 for c in _nook(tl)), [o[c] for c in _nook(tl)]
-    assert o[tl.cell_near((3.0, 2.0))] > 0.95 and o[tl.cell_near((1.0, 4.5))] > 0.95
-    assert 0.1 < o[tl.cell_near((3.6, 4.5))] < 0.9
+    o = crowd.observed()
+    assert all(o[c] < 0.02 for c in _nook(crowd)), [o[c] for c in _nook(crowd)]
+    assert o[crowd.tile_near((3.0, 2.0))] > 0.95 and o[crowd.tile_near((1.0, 4.5))] > 0.95
+    assert 0.1 < o[crowd.tile_near((3.6, 4.5))] < 0.9
 
 
-def _hold_in_nook(r, minutes):
-    """Somebody in the nook who exists with probability r, standing; then for this long no sensor
-    measures anything. P(somebody in the room) afterwards."""
+def _hold_in_nook(minutes):
+    """Somebody known for sure in the nook, standing (the stays' prior at the nook's tiles: a state
+    saved with 0.38.1, fixtures/people.json); then for this long no sensor measures anything.
+    P(somebody in the room) afterwards."""
     config = _nook_config()
     crowd = Tracker(config, start=0.0, people=["outside"])
-    h = Hidden(crowd.tiles)
-    for c in _nook(crowd.tiles):
-        h.still[:, :, c] = crowd.shapes.stay_prior(ongoing=True)
-    h.r = r
-    h._normalize()
-    assert crowd.restore_people(saved(crowd, [h]))
+    assert crowd.restore_people(fixture("people.json")["nook"])
     for t, sid, frame in simulate([], sim_sensors(config), 60 * minutes, rate=2.0, walls=config.wall_segments):
         crowd.process_frame(sid, t, Frame.of(frame))
     return 1 - crowd.count_distribution()["wohn"][0]
@@ -141,7 +134,7 @@ def test_nobody_stays_in_a_blind_spot_without_support():
     # could ever contradict them there, and the long stays (MODEL.md 3.1) would hold them for hours
     # (2 % of stays last more than an hour). Their record expires where nothing can test it (MODEL.md
     # 5.5): ten minutes later the room is dark
-    assert _hold_in_nook(1.0, 10) < 0.05
+    assert _hold_in_nook(10) < 0.05
 
 
 def test_a_sitter_nothing_supports_for_two_minutes_stays():

@@ -1,5 +1,5 @@
 """MODEL.md 6 "Belegt": a room is occupied by the filter's probability or while its own LD2450 measures
-somebody in it (roomseen.py); only an output."""
+somebody in it (the core's room_seen.rs); only an output."""
 
 import asyncio
 import json
@@ -9,21 +9,21 @@ import pytest
 from presence_tracker import ha
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
-from presence_tracker import roomseen
+from presence_tracker import filter as filter_module
 from presence_tracker.frames import Frame
 
-LOST = 6.0  # the timing tests below run with a short silence limit (the app's: roomseen.SILENT_AFTER)
+LOST = 6.0  # the timing tests below run with a short silence limit (the app's: filter.SILENT_AFTER)
 
 
 @pytest.fixture(autouse=True)
 def short_silence(monkeypatch):
-    monkeypatch.setattr(roomseen, "SILENT_AFTER", LOST)
+    monkeypatch.setattr(filter_module, "SILENT_AFTER", LOST)
 
 
 def test_the_silence_limit_outlasts_the_wlan_gaps(monkeypatch):
     """The app's limit (30 s): a board's 6-20 s WLAN gap leaves its room available, a board gone not."""
     monkeypatch.undo()
-    assert roomseen.SILENT_AFTER == 30.0
+    assert filter_module.SILENT_AFTER == 30.0
     tr = Tracker(open_plan())
     k = feed_both(tr, 0.0, 10.0)
     k = feed_both(tr, 10.0, 30.0, wohn=False, k0=k)
@@ -233,7 +233,7 @@ def test_a_room_whose_own_sensor_went_silent_is_unavailable():
 
 
 def test_the_web_ui_calls_a_sensor_offline_exactly_when_home_assistant_does():
-    """One definition (roomseen.SILENT_AFTER, counted from the model's start for a sensor that sent
+    """One definition (filter.SILENT_AFTER, counted from the model's start for a sensor that sent
     nothing): until 0.28 the live view said "offline" after 15 s (and right after "Neu beginnen" for
     every sensor), Home Assistant after 30 s - the header said 1/2 while the room was still there."""
     tr = Tracker(open_plan())

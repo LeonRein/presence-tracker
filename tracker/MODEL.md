@@ -45,7 +45,7 @@ Annahme über Einträge ohne Beleg, keine Bewegung. Das gilt auch in einem gesch
 
 ## 2. Die Welt
 
-Aus dem Grundriss (`model.py`, `world.py`):
+Aus dem Grundriss (`model.py`; im Kern `plan.rs`, `world/`):
 - **Beobachteter Bereich:** Räume, die die Sensoren zu mindestens 60 % sehen.
 - **Bereiche ohne Sensor *Rₖ*:** übrige Räume der Wohnung, über Türen zusammengefasst. *Offen*, wenn
   eine Tür von dort nach draußen führt oder eine Eingangszone darin liegt, sonst *geschlossen* (Balkon,
@@ -105,7 +105,7 @@ Prozess wie eine Diffusion aus, je Achse mit `D = E[s²] / (2 λ_d) = (s² + Str
 
 ### 3.3 Türen, Bereiche ohne Sensor, außer Haus
 - Aufenthalt in *Rₖ*: log-normal, Median 2 min / Streuung von ln(Dauer) 1,5, für jeden Bereich gleich
-  (angenommen; `unobserved.py`). Nicht gelernt: Wann jemand hinein- und herausging, kennt der Filter
+  (angenommen; `TrackerParams.dwell_*`, im Kern `world/tiles.rs`). Nicht gelernt: Wann jemand hinein- und herausging, kennt der Filter
   nur als Wahrscheinlichkeit; seine Urteile als Dauern zu zählen, lernte seine Fehler. Zu schätzen
   über die Evidenz (7). Endet der Aufenthalt, geht man durch eine der Türen des Bereichs, jede gleich
   wahrscheinlich: gehend in den beobachteten Bereich oder durch eine Tür nach draußen außer Haus.
@@ -163,7 +163,7 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   über ihre Regression. Sieht er keinen der Punkte, werden sie an der Wand
   gespiegelt wie die Bewegung (3.2). Das ist die Likelihood mal „in Sicht“ als 0/1 (nur Wände, nicht
   das Blickfeld); die Gewichte der Hypothesen ändert der Schnitt nicht.
-  Die Regel „LD2450 des Raums“ (6, `roomseen.py`) bleibt beim Ziel: Ein Ziel jenseits der Wand liegt im
+  Die Regel „LD2450 des Raums“ (6, `room_seen.rs`) bleibt beim Ziel: Ein Ziel jenseits der Wand liegt im
   Nachbarraum und zählt dort nicht, weil nur der eigene Sensor eines Raums zählt.
 - Die drei Plätze rücken auf; Ziele werden über die Nähe verknüpft (≤ 0,6 m je Frame).
 - Gehaltene Frames sind keine Messung: ≥ 3 Frames mit derselben Geschwindigkeit ≠ 0 (der Sensor lässt
@@ -176,7 +176,7 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 - `P_m(r)`: Swerling-I-Kurve über der Radargleichung, `P(r) = P_FA^(1/(1 + SNR₅₀ (r₅₀/r)⁴))`,
   P_FA = 10⁻⁶. ρ, r₅₀ per Maximum-Likelihood (gemessen, 17 h): steht 0,034 /s, 5,0 m; geht 0,51 /s,
   4,55 m. Für Sitzende ist die Form eine empirische Wahl (der LD2450 unterdrückt Ruhendes).
-- `g_s(x)`: Sicht nach Winkel, Reichweite und Wänden (`sensormodel.py`): voll bis 15°
+- `g_s(x)`: Sicht nach Winkel, Reichweite und Wänden (`world/build.rs`, `prior_pd`): voll bis 15°
   vor dem Rand des Blickfelds, 0,5 am Rand, 0 bei 15° jenseits; voll bis Reichweite + 1 m, dann
   Abfall mit e je 1,5 m (gemessen 5.10. an Gehenden).
   **Sicht einer Person, nicht eines Punkts** (seit 7.10., `Tracker._spread_sight`): Der Sensor misst
@@ -252,7 +252,7 @@ des Sensors (5.3): Seine Spuren enden ohne Information, sein nächster Frame ist
 ### 4.2 Geister
 Eine Spur, die zu keiner Person gehört.
 - **Entstehen** je Sensor mit `λ_s(x) + λ_e · (erwartete Gehende im Blickfeld)` je m² und s.
-  - `λ_s(x)`: **Geisterkarte** (`ghostmap.py`), je Sensor und Zelle (0,4 m) ein Poisson-Prozess mit
+  - `λ_s(x)`: **Geisterkarte** (`learn/ghost_map.rs`), je Sensor und Zelle (0,4 m) ein Poisson-Prozess mit
     Gamma-Prior (J_Luber2014 Kap. 6, Gl. 6.8–6.13). Prior-Mittel 1,8·10⁻⁵ /m²/s (geschätzt 6.10. per
     EM auf 21 h), Gewicht ein Geist je Zelle (die Form α = 1 der Gamma-Verteilung wie J_Luber2014
     Gl. 6.13; bei dieser Rate entspricht das 96 h Beobachtung, bis 0.12.0 waren es 4 h = 0,04 Geister,
@@ -289,7 +289,7 @@ Eine Spur, die zu keiner Person gehört.
   Zeitkonstante 14 Tage. Die Oberfläche zeigt sie je
   Sensor. `tools/ghostmap.py` rechnet dasselbe
   offline auf gewählten Zeitfenstern.
-- **Im Rahmen des Sensors** (`ghostmap.py`, nach 0.27): Jeder Sensor hat seinen Teil der Karte in seinem
+- **Im Rahmen des Sensors** (`learn/ghost_map.rs`, nach 0.27): Jeder Sensor hat seinen Teil der Karte in seinem
   eigenen Rahmen, auf dem Boden, Maßstab herausgerechnet, x-Achse wie der LD2450 sie meldet
   (`SensorConfig.to_local`; Zellen 0,4 m, bis 8 m seitlich und nach vorn). Wo ein Sensor Geister sieht,
   ist eine Eigenschaft seines Blicks: Reflexionen an Wänden und Möbeln, wie er sie sieht, Mehrwege am
@@ -316,7 +316,7 @@ Eine Spur, die zu keiner Person gehört.
   die Echorate des LD2410C (4.3), die Zielkarte (6) und die Kalibrierdaten (10); das Verfolgen bleibt.
 
 ### 4.3 LD2410C
-Gemessen wird seine **Energie je Entfernungsring** (0,75 m Schrägentfernung, `ld2410.py`): bewegt in Ring
+Gemessen wird seine **Energie je Entfernungsring** (0,75 m Schrägentfernung, `ld2410/`): bewegt in Ring
 0–8, ruhig in Ring 2–8 (ruhig 0 und 1 sind immer 0), 0–100, 16 Zahlen je Frame. Seine Flags und die
 gemeldete Entfernung zählen nicht (10). Gemessen 6.10. (4,3 h, 5 Sensoren, `tools/ld2410/`), Bezug die
 Ziele des LD2450 im selben Gehäuse (der unterdrückt Sitzende und hat Geister: nur zum Bedingen):
@@ -605,7 +605,7 @@ Frame jedes Sensors alles vorgerückt: etwa 23-mal je Sekunde, ein Hauptteil der
   die unbekannten, gemischt über die Hypothesen.
 
 ### 5.2 Personen mit Spur: Gauß-Mischung (IMM)
-`gauss.py`. Gilt, solange eine Person mindestens eine laufende Spur hat (gemessen oder gehalten).
+`filter/mixture.rs`, `motion/imm.rs`. Gilt, solange eine Person mindestens eine laufende Spur hat (gemessen oder gehalten).
 Zwei Komponenten *steht* / *geht*, je ein Kalman-Filter über Position, Geschwindigkeit und je Spur
 (c, o); *steht* führt die Wahrscheinlichkeiten der Aufenthaltsarten und Erkennbarkeitsstufen. Je
 Schritt (Buch_SarkkaSvensson2023 S. 352; B_Li2019 Gl. 26–33):
@@ -633,7 +633,7 @@ Schritt (Buch_SarkkaSvensson2023 S. 352; B_Li2019 Gl. 26–33):
    keinen solchen Teil: Dort ist eine Tür nur eine Lücke in der Wand.
 
 ### 5.3 Personen ohne Spur: Kacheln
-`tiling.py`, `hidden.py`. Punktmassenfilter (0_Arulampalam2002 Abschn. II-B) über Kacheln statt über
+`world/tiles.rs`, `filter/densities.rs`. Punktmassenfilter (0_Arulampalam2002 Abschn. II-B) über Kacheln statt über
 ein gleichmäßiges Raster:
 - **Kacheln:** Quadrate von 0,4 m, an den Raumgrenzen geschnitten (ein Quadrat über eine Wand sind zwei
   Kacheln). Innerhalb einer Kachel wird der Ort nicht unterschieden: gleichverteilt. Wo ein Ort
@@ -805,7 +805,7 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
   `light_cost` = K_an / K_dunkel = 2 (angenommen: Licht ohne Person ist der schlimmste Fehler), also
   c = 2/3. Das verzögerte Ausschalten bleibt in Home Assistant (bzw. Node-RED): Die App schaltet keine
   Lichter, sie liefert je Raum *besetzt*, *wird betreten* (unten) und die Wahrscheinlichkeiten dazu.
-  **Oder der LD2450 des Raums misst jemanden** (`Tracker.occupancy`, `roomseen.py`): Ein beobachteter
+  **Oder der LD2450 des Raums misst jemanden** (`Tracker.occupancy`, `room_seen.rs`): Ein beobachteter
   Raum ist auch belegt, solange der LD2450 dieses Raums in den letzten `T_seen` = `seen_hold` = 10 s ein
   *gemessenes* Ziel im Raum hatte. Gemessen heißt, was der Filter selbst als Messung nimmt (4.1): nicht
   gehalten (eingefroren oder fortgeschrieben), nicht hinter einer Wand oder außerhalb aller Räume, nicht am
@@ -877,7 +877,7 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
   c_v = 0,048 entspricht einer gemessenen Trefferquote um 0,25.
   Bis 0.15.0 war „wird betreten“ ein Flag aus den Personen der wahrscheinlichsten Hypothese: ihr Mittel
   1 s geradeaus (ab 0,3 m/s), durch Wände hindurch.
-- **Ziel** (`Tracker.targets`, `destination.py`, je beobachtetem Raum): P(ein Gehender geht als Nächstes
+- **Ziel** (`Tracker.targets`, `learn/destination.rs`, je beobachtetem Raum): P(ein Gehender geht als Nächstes
   in diesen Raum), ohne Horizont. Zwei Quellen:
   - *Die Bewegung:* `p_enter` von *wird betreten* (oben), unverändert.
   - *Die gelernte Karte, wohin Gänge gingen* (eine ortsabhängige Karte der Raumnutzung aus Spuren,
@@ -895,7 +895,7 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
   - *Gelernt in der App aus den eigenen Gehenden* (wie die Geisterkarte 4.2): je Hypothese und Person mit
     Spur, gewichtet mit dem Gewicht der Hypothese und P(geht) (weiche Zählungen über alle behaltenen
     Hypothesen, 10 „Geisterkarte“). Weich sind nur die Schritte: Der Ausgang eines Gangs (wo die Person
-    nach der Tür ist) kommt aus der schwersten Hypothese, die sie hält (`destination.py`, `observe`). Eine Person ist ihre früheste laufende Spur; endet sie, übernimmt den
+    nach der Tür ist) kommt aus der schwersten Hypothese, die sie hält (`learn/destination.rs`, `observe`). Eine Person ist ihre früheste laufende Spur; endet sie, übernimmt den
     Gang, wer binnen 1,5 s höchstens 1 m daneben auftaucht (Übergabe an einer Tür). Der Ausgang: der Raum
     oder Bereich, in dem die Person zwei Takte nach einer Tür ist, oder „bleibt“ nach 2 s mit P(geht) <
     ½. Ein Gang, dessen Spuren enden, ohne dass jemand ihn übernimmt, zählt nicht. Vergessen mit 14 Tagen.

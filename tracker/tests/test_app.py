@@ -10,11 +10,10 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from presence_tracker import app as app_module, code_hash
 from presence_tracker.app import App
-from presence_tracker import ld2410
 from presence_tracker.filter import Tracker
 from presence_tracker.frames import Frame, SensorClock
 from presence_tracker.model import Config
-from presence_tracker.sim import Person, simulate
+from presence_tracker.sim import Person, ld_prior, simulate
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
 
@@ -45,7 +44,7 @@ def test_a_report_replays_to_what_the_app_showed(tmp_path):
     config.save(tmp_path / "tracker.json")
     app = App(tmp_path, publish=False)
     bg = app.tracker.learned()["ld_background"]  # learned beyond the prior before the start,
-    bg["num"]["a"], bg["den"]["a"] = list(2 * ld2410.prior(app.tracker.m) * 600.0), 600.0
+    bg["num"]["a"], bg["den"]["a"] = list(2 * ld_prior() * 600.0), 600.0
     bg["echoes"]["a"], bg["quiet"]["a"] = 0.5, 600.0
     app.tracker.use_ld_background(bg)
     app._model_started(None)  # as if loaded from ld2410.json
@@ -394,7 +393,7 @@ def test_a_refused_floor_plan_keeps_the_people(tmp_path, monkeypatch):
     for t, sid, frame in simulate([sit], sim_sensors(config), 60.0, walls=config.wall_segments):
         app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
         app.tick(1000.0 + t)
-    fingerprint = app.tracker.tiles.fingerprint()
+    fingerprint = app.tracker.tiles()["id"]
     d = config.to_dict()
     d["sensors"].append({"id": "c", "x": -1.95, "y": 3.05, "heading": 45, "placed": True})
     d["zones"] = [{**z, "entry": False} for z in d["zones"]]
@@ -412,4 +411,4 @@ def test_a_refused_floor_plan_keeps_the_people(tmp_path, monkeypatch):
     r = asyncio.run(app.h_put_config(Request()))
     assert r.status == 400 and app.config.to_dict() == config.to_dict()
     assert json.loads((tmp_path / "people.json").read_text())["tiles"] == fingerprint
-    assert app.tracker.started_from is not None and app.tracker.tiles.fingerprint() == fingerprint
+    assert app.tracker.started_from is not None and app.tracker.tiles()["id"] == fingerprint

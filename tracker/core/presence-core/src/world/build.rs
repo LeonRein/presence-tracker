@@ -4,6 +4,7 @@
 //! function of what is built before.
 
 use super::raster::{CELL, Grid, Raster, RoomGrid};
+use super::sight::SensorMap;
 use super::{LdSight, LdTiles, Sight, Tiles};
 use crate::config::{Config, SensorConfig, TrackerParams};
 use crate::geometry::{Point, Walls};
@@ -223,6 +224,20 @@ impl CoarseSight {
         Self { lo, hi, grid }
     }
 
+    fn into_map(self) -> SensorMap {
+        let size = |k: usize| usize::try_from(self.hi[k] - self.lo[k]).unwrap_or(0);
+        SensorMap {
+            corner: [
+                coarse_centre(self.lo[0]) - COARSE / 2.0,
+                coarse_centre(self.lo[1]) - COARSE / 2.0,
+            ],
+            cell: COARSE,
+            cols: size(0),
+            rows: size(1),
+            prior: self.grid,
+        }
+    }
+
     fn pd(&self, s: &SensorConfig, plan: &Plan, p: Point) -> f64 {
         let (i, j) = (coarse_cell(p[0]), coarse_cell(p[1]));
         if self.lo[0] <= i && i < self.hi[0] && self.lo[1] <= j && j < self.hi[1] {
@@ -282,7 +297,8 @@ pub(super) struct Built<'a> {
 
 /// A sensor's sight of a person per cell and its LD2410C (filter.Tracker._grid, _export_sensor).
 pub(super) fn sensor(b: &Built, s: &SensorConfig) -> (Sight, LdSight) {
-    let (points, los) = point_sight(b, s);
+    let coarse = CoarseSight::new(s, b.plan);
+    let (points, los) = point_sight(b, s, &coarse);
     let reach = Reach::new(&b.raster, b.labels, b.walls, reach_of(b, s));
     let var = offset_var(&b.raster, &b.config.params, s);
     let grid = Grid::new(b.raster, spread(&b.raster, b.labels, &reach, &var, &points));
@@ -298,13 +314,14 @@ pub(super) fn sensor(b: &Built, s: &SensorConfig) -> (Sight, LdSight) {
     };
     ld.tiles = ld_tiles(b, &ld);
     let observed = observed(b, &grid, &ld);
-    (Sight::new(s.at(), s.sight_origin(), grid, observed), ld)
+    let mut sight = Sight::new(s.at(), s.sight_origin(), grid, observed);
+    sight.map = coarse.into_map();
+    (sight, ld)
 }
 
 /// The sight of the points of each cell in a place, 0..1 (Tracker._grid before it is spread), and where
 /// it is above 0 the LD2410C in the same housing can see too: through no wall.
-fn point_sight(b: &Built, s: &SensorConfig) -> (Vec<f64>, Vec<f64>) {
-    let coarse = CoarseSight::new(s, b.plan);
+fn point_sight(b: &Built, s: &SensorConfig, coarse: &CoarseSight) -> (Vec<f64>, Vec<f64>) {
     let points: Vec<f64> = cells(&b.raster)
         .zip(b.labels)
         .map(|(c, l)| {

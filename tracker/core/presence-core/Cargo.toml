@@ -13,6 +13,7 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 libm = "0.2"
 base64 = "0.22"
 sha1_smol = "1"
+half = "2"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [dev-dependencies]

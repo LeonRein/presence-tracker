@@ -69,6 +69,8 @@ pub enum LearnedError {
     Packed(PackedFault),
     /// a destination map of another floor plan (its rooms, doors, regions)
     OtherPlan,
+    /// a saved state of the people on other tiles (another floor plan or model)
+    OtherTiles,
 }
 
 impl fmt::Display for LearnedError {
@@ -81,6 +83,7 @@ impl fmt::Display for LearnedError {
             }
             Self::Packed(fault) => write!(f, "the packed numbers: {fault}"),
             Self::OtherPlan => write!(f, "a destination map of another floor plan"),
+            Self::OtherTiles => write!(f, "a saved state of other tiles"),
         }
     }
 }

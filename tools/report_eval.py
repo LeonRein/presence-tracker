@@ -181,7 +181,7 @@ def main():
                 samples[r["name"]].append((m["t"], q, pub))  # (not p: the next window would get the filter too)
             if a.trace:
                 print(time.strftime("%H:%M:%S", time.localtime(m["t"])) + " "
-                      + " ".join(f"{z[:5]} {1 - v[0]:.2f}" for z, v in p.items()) + f" H{len(tracker.hyps)}"
+                      + " ".join(f"{z[:5]} {1 - v[0]:.2f}" for z, v in p.items()) + f" H{len(tracker.hyp_weights())}"
                       + "".join(f" | P{d['id']} {max(d['places'].items(), key=lambda kv: kv[1])[0][:6]}"
                                 + ("" if d["x"] is None else f" ({d['x']:.1f},{d['y']:.1f}){' unseen' if d['lost'] else ''}")
                                 for d in tracker.persons()), flush=True)
