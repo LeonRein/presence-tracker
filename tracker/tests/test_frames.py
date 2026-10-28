@@ -1,4 +1,4 @@
-"""From LD2450 frames to detections (frames.py), plus helpers for the scene tests."""
+"""From LD2450 frames to detections (in the core: frames.rs), plus helpers for the scene tests."""
 
 import json
 import math
@@ -6,7 +6,7 @@ import math
 import numpy as np
 import pytest
 
-from presence_tracker.frames import SensorClock, detections
+from presence_tracker.frames import SensorClock
 from presence_tracker.model import Config, SensorConfig, ZoneConfig
 from presence_tracker.filter import Tracker
 from presence_tracker.sim import SimSensor
@@ -43,6 +43,13 @@ def walk(*points, start=0.0, speed=1.0, pauses=None):
     return out
 
 
+def detections(config: Config, s: SensorConfig, frame: dict) -> list:
+    """The detections of one frame of sensor s as a tracker reads it."""
+    tr = Tracker(config, start=0.0)
+    tr.process_frame(s.id, 0.0, frame)
+    return tr.runtime[s.id].detections
+
+
 def test_sensor_clock_removes_jitter():
     clock = SensorClock()
     times = []
@@ -51,14 +58,6 @@ def test_sensor_clock_removes_jitter():
         times.append(clock(recv, 5000 + k * 90))
     diffs = {round(b - a, 3) for a, b in zip(times[10:], times[11:])}
     assert diffs <= {0.09, 0.091, 0.089}
-
-
-@pytest.mark.parametrize("mirror", [False, True])
-def test_sensor_transform_roundtrip(mirror):
-    s = SensorConfig("x", x=1, y=2, heading=30, height=1.5, mirror=mirror)
-    wx, wy, ground, slant = s.to_world(0.5, 3.0, 1.5)
-    lx, ly = s.to_local(wx, wy)
-    assert lx == pytest.approx(0.5) and ly == pytest.approx(3.0)
 
 
 def test_detections_behind_a_wall_are_reflections():
@@ -127,10 +126,15 @@ def _changed(**change) -> Config:
     return config
 
 
+def _floor(config, raw) -> np.ndarray:
+    """Where sensor a's target at raw (m, its frame) is on the floor, as an array of one point."""
+    frame = {"targets": [{"slot": 1, "x": round(raw[0] * 1000), "y": round(raw[1] * 1000), "speed": 0}]}
+    return np.array([detections(config, config.sensors[0], frame)[0].pos])
+
+
 def _ghost_source(tr, raw=(0.6, 4.0), n=30):
     """A reflection the LD2450 a reports at raw (m, its frame) n times in a day."""
-    s = tr.config.sensors[0]
-    spot = np.array([s.to_world(*raw, tr.p.target_height)[:2]])
+    spot = _floor(tr.config, raw)
     for _ in range(n):
         tr.ghost_map.add_birth("a", spot[0], 1.0)
     tr.ghost_map.add_watch("a", 86400.0)
@@ -155,7 +159,7 @@ def test_a_recalibrated_sensor_keeps_its_ghost_map_in_its_frame():
         tr.reconfigure(new)
         assert tr.ghost_map is gm and gm.time["a"] == 86400.0, change
         s = new.sensors[0]
-        moved = np.array([s.to_world(*raw, tr.p.target_height)[:2]])
+        moved = _floor(new, raw)
         # the same cell of its frame; per m^2 of the floor as much less as a cell covers more of it
         k0 = gm.prior_rate * 0.16 * gm.prior_time
         area = lambda scale: k0 / gm.prior_rate + (0.4 * scale) ** 2 * 86400.0  # noqa: E731
@@ -165,8 +169,7 @@ def test_a_recalibrated_sensor_keeps_its_ghost_map_in_its_frame():
     tr = Tracker(room_config())
     spot = _ghost_source(tr, raw)
     tr.reconfigure(_changed(heading=55))
-    s = tr.config.sensors[0]
-    moved = np.array([s.to_world(*raw, tr.p.target_height)[:2]])
+    moved = _floor(tr.config, raw)
     assert np.hypot(*(moved - spot)[0]) > 0.6
     assert tr.ghost_map.rate("a", moved)[0] > 3 * tr.ghost_map.rate("a", spot)[0]
 

@@ -4,6 +4,7 @@ use pyo3::panic::PanicException;
 use pyo3::prelude::*;
 
 mod core;
+mod frames;
 
 /// Panics with this message: lets the shell's tests check that a panic of the core starts the model
 /// over like any other error of the model.
@@ -15,6 +16,9 @@ fn panic_for_test(message: &str) {
 #[pymodule]
 fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<core::Core>()?;
+    m.add_class::<frames::PyClock>()?;
+    m.add_class::<frames::TrackStage>()?;
+    m.add_function(wrap_pyfunction!(frames::check_frame, m)?)?;
     m.add_function(wrap_pyfunction!(core::build_export, m)?)?;
     m.add_function(wrap_pyfunction!(core::hidden_at, m)?)?;
     m.add_function(wrap_pyfunction!(panic_for_test, m)?)?;

@@ -9,6 +9,8 @@ use pyo3::exceptions::{PyFloatingPointError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
+use crate::frames;
+
 use presence_core::config::Config;
 use presence_core::filter::branch::{Found, Frame};
 use presence_core::filter::densities::{Amp, DensityData, DensityShape, Kind};
@@ -23,7 +25,7 @@ use presence_core::outputs::{Decision, Source};
 use presence_core::params::{LostKind, Params, Shapes};
 use presence_core::plan::{Place, RoomIdx};
 use presence_core::sensors::SensorSet;
-use presence_core::tracker::{TrackEvents, Tracker};
+use presence_core::tracker::Tracker;
 use presence_core::world::{DoorTile, LdExport, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
 
 fn item<'py>(d: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
@@ -202,14 +204,6 @@ type Out<'py> = Bound<'py, PyArrayDyn<f64>>;
 
 fn array<'py>(py: Python<'py>, v: &[f64], shape: &[usize]) -> PyResult<Out<'py>> {
     PyArray1::from_slice(py, v).reshape(shape)
-}
-
-fn lost_kind(kind: &str) -> PyResult<LostKind> {
-    match kind {
-        "coast" => Ok(LostKind::Coast),
-        "frozen" => Ok(LostKind::Frozen),
-        _ => Err(PyValueError::new_err(format!("unknown kind of lost track {kind}"))),
-    }
 }
 
 fn kind_name(kind: LostKind) -> &'static str {
@@ -427,38 +421,81 @@ impl Core {
         self.changed();
     }
 
-    /// Step 2 of a frame: measured (seg, x, y), lost (seg, kind, x, y), held (seg, x, y); returns
-    /// the tracks found again (seg, x, y).
-    fn track_events(
+    /// A frame of sensor si at t (a dict as from JSON; ValueError, and nothing changed, if it is none):
+    /// {"detections": [{pos, local, speed, hidden, stale}], "born": [(seg, x, y)], "ended": [seg],
+    /// "data_lost"}. Kept in the core for the steps of its evidence.
+    fn frame<'py>(
         &mut self,
+        py: Python<'py>,
         si: usize,
         t: f64,
-        measured: Vec<(u64, f64, f64)>,
-        lost: Vec<(u64, String, f64, f64)>,
-        held: Vec<(u64, f64, f64)>,
-    ) -> PyResult<Vec<(u64, f64, f64)>> {
-        let events = TrackEvents {
-            measured: measured.into_iter().map(|(s, x, y)| (SegId(s), [x, y])).collect(),
-            lost: lost
-                .into_iter()
-                .map(|(s, kind, x, y)| Ok((SegId(s), lost_kind(&kind)?, [x, y])))
-                .collect::<PyResult<_>>()?,
-            held: held.into_iter().map(|(s, x, y)| (SegId(s), [x, y])).collect(),
-        };
-        let refound = self.tracker.track_events(si, t, &events);
+        frame: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let frame = frames::frame_of(frame)?;
+        let read = self
+            .tracker
+            .frame(si, t, &frame)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let detections = PyList::empty(py);
+        for (j, d) in read.detections.iter().enumerate() {
+            let det = PyDict::new(py);
+            det.set_item("pos", (d.pos[0], d.pos[1]))?;
+            let [lx, ly] = d.target.local();
+            det.set_item("local", (lx, ly))?;
+            det.set_item("speed", d.speed)?;
+            det.set_item("hidden", d.hidden)?;
+            // held by the LD2450 (coasted, frozen): no measurement
+            det.set_item("stale", !d.hidden && !read.events.measures(j))?;
+            detections.append(det)?;
+        }
+        let at = |det: usize| read.detections[det].pos;
+        let born: Vec<(u64, f64, f64)> = read
+            .events
+            .born
+            .iter()
+            .map(|b| (b.seg.0, at(b.det)[0], at(b.det)[1]))
+            .collect();
+        let ended: Vec<u64> = read.events.ended.iter().map(|s| s.0).collect();
+        let out = PyDict::new(py);
+        out.set_item("detections", detections)?;
+        out.set_item("born", born)?;
+        out.set_item("ended", ended)?;
+        out.set_item("data_lost", read.events.data_lost)?;
         self.changed();
-        Ok(refound.into_iter().map(|(s, [x, y])| (s.0, x, y)).collect())
+        Ok(out)
+    }
+
+    /// Whether the last frame of sensor si concerns everybody (a track born, ended or found again).
+    fn concerns_all(&self, si: usize) -> bool {
+        self.tracker.concerns_all(si)
+    }
+
+    /// Step 2 of sensor si's last frame: its measured, lost and held tracks; returns the tracks found
+    /// again (seg, x, y).
+    fn track_events(&mut self, si: usize, t: f64) -> Vec<(u64, f64, f64)> {
+        let refound = self.tracker.track_events(si, t);
+        self.changed();
+        refound.into_iter().map(|(s, [x, y])| (s.0, x, y)).collect()
+    }
+
+    /// The sensors silent for more than LOST s at t with live tracks: (si, last frame + LOST, the
+    /// tracks); their LD2450 tracks are forgotten.
+    fn data_lost(&mut self, t: f64) -> Vec<(usize, f64, Vec<u64>)> {
+        let lost = self.tracker.data_lost(t);
+        self.changed();
+        lost.into_iter()
+            .map(|d| (d.si, d.since, d.live.into_iter().map(|s| s.0).collect()))
+            .collect()
+    }
+
+    /// The LD2450 tracks of sensor si start over (its next frame is a start).
+    fn reset_tracks(&mut self, si: usize) {
+        self.tracker.reset_tracks(si);
+        self.changed();
     }
 
     fn has_track(&self, seg: u64) -> bool {
         self.tracker.filter().tracks().get(SegId(seg)).is_some()
-    }
-
-    /// Whether any of these tracks is live and held lost.
-    fn any_lost(&self, segs: Vec<u64>) -> bool {
-        let tracks = self.tracker.filter().tracks();
-        segs.into_iter()
-            .any(|s| tracks.get(SegId(s)).is_some_and(|i| i.lost.is_some()))
     }
 
     fn live_tracks(&self, si: usize) -> Vec<u64> {
@@ -663,11 +700,9 @@ impl Core {
         Ok((densities, mixtures, hyps, tracks))
     }
 
-    /// The energies of a frame of sensor si's LD2410C (move_gates, still_gates; None: none in it),
-    /// and whether the housing's LD2450 has something in sight.
-    fn ld_frame(&mut self, si: usize, t: f64, gates: Option<([f64; 9], [f64; 9])>, target: bool) {
-        self.tracker
-            .ld_frame(si, t, gates.as_ref().map(|(m, s)| (m, s)), target);
+    /// The LD2410C part of sensor si's last frame, if it has one.
+    fn ld_frame(&mut self, si: usize, t: f64) {
+        self.tracker.ld_frame(si, t);
         self.changed();
     }
 
@@ -777,9 +812,8 @@ impl Core {
     }
 
     /// What the rooms' own LD2450s saw in an earlier core goes on here (the shell's rebuild).
-    fn adopt_seen(&mut self, mut old: PyRefMut<'_, Core>) {
-        let seen = old.tracker.take_seen();
-        self.tracker.adopt_seen(seen);
+    fn adopt(&mut self, mut old: PyRefMut<'_, Core>) {
+        self.tracker.adopt(&mut old.tracker);
     }
 
     // ---------------------------------------------------------------- outputs (MODEL.md 6)
@@ -906,12 +940,6 @@ impl Core {
     /// A frame of the sensor with this id at t, whatever is in it.
     fn heard_from(&mut self, id: &str, t: f64) {
         self.tracker.heard_from(id, t);
-    }
-
-    /// The targets sensor si measured in a frame at t (not held, not hidden, not at the mount).
-    fn seen_frame(&mut self, si: usize, t: f64, measured: Vec<(f64, f64)>) {
-        let measured: Vec<Point> = measured.into_iter().map(|(x, y)| [x, y]).collect();
-        self.tracker.seen_frame(si, t, &measured);
     }
 
     /// Whether the sensor with this id sent a frame lately (start: the model's, None: not started).
@@ -1094,6 +1122,6 @@ pub fn hidden_at(config: &str, si: usize, points: Vec<Point>, us: Vec<Point>, ma
     Ok(points
         .iter()
         .zip(&us)
-        .map(|(&p, &u)| plan.hidden(s, p, u, margin))
+        .map(|(&p, &u)| plan.hidden(s.sight_origin(), p, u, margin))
         .collect())
 }

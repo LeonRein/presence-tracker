@@ -18,7 +18,6 @@ hypotheses makes new objects (copy on write).
 """
 
 import binascii
-import itertools
 import json
 import math
 import os
@@ -27,7 +26,7 @@ import zlib
 import numpy as np
 
 from .filtermodel import FRAME, IDLE, Model, Shapes
-from .frames import SensorRuntime, detections as frame_detections
+from .frames import Detection, SensorRuntime
 from . import kernels, ld2410
 from .gauss import Gauss
 from .hidden import Hidden, Undetected
@@ -35,7 +34,6 @@ from . import destination
 from .pause import Pauses
 from . import roomseen
 from .sensormodel import PD_MAX, SensorModel
-from .sensortracks import LOST, SensorTracks
 from .tiling import Tiling
 from .unobserved import Dwell
 from .world import CELL, OBSERVED, World
@@ -63,7 +61,6 @@ __all__ = ["Model", "Tracker"]
 WORLD = os.environ.get("PT_WORLD", "core")
 
 MAX_STEP = 0.2  # s: motion is cut into parts no longer than this
-MOUNT_RADIUS = 0.3  # m: targets this close to a sensor come from its mount
 GIVE_UP = 0.01  # a known person who exists with less probability (wherever they are: refuted, or where
                 # nothing could test them, Tracker._expire) joins the unknown ones with r x their density:
                 # only P(several of them come back) changes, by <= GIVE_UP^2 / 2 (0.05: 14 % less
@@ -181,7 +178,6 @@ class Tracker:
         self.now = start or 0.0
         self.start = start
         self._c = None  # the Rust core (presence_core.Core): the hypotheses and their objects
-        self._ids = itertools.count(1)
         self.ghost_map = None  # where each sensor starts ghost tracks (ghostmap.py)
         # what each LD2410C sees without anybody (ld2410.py, learned online, MODEL.md 4.3)
         self.ld_background = ld2410.Background(ld2410.prior(self.m), self.m.ld_prior_time, self.m.ld_forget,
@@ -208,7 +204,6 @@ class Tracker:
         self.world = World(self.config)
         self.sensors = [s.id for s in self.config.sensors]
         self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
-        self.tracks = {sid: SensorTracks(sid, self._ids) for sid in self.sensors}
         self._gcache = {}
         self._ghost_total = {}
         rooms = self.config.observed_rooms()
@@ -228,8 +223,8 @@ class Tracker:
         rooms, places, areas, own = self._c.names()
         self._own = {sid: r for sid, r in zip(self.sensors, own) if r is not None}
         self._entry_ids = rooms + areas
-        if old is not None:  # what the rooms' own LD2450s saw goes on
-            self._c.adopt_seen(old)
+        if old is not None:  # what the rooms' own LD2450s saw goes on, and the ids of new tracks
+            self._c.adopt(old)
         for si, sid in enumerate(self.sensors):
             if sid in collected:
                 self._c.set_ld_collect(si, collected[sid])
@@ -434,6 +429,14 @@ class Tracker:
         self._forget()
         self.started_from = None  # the saved state the people were restored from (restore_people)
 
+    def reset_tracks(self):
+        """The sensors' own tracks start over, as after lost data (MODEL.md 4.1): their next frames are a
+        start, so whoever a sensor is tracking now counts (app "Tracks zurücksetzen")."""
+        for si in range(len(self.sensors)):
+            self._call("reset_tracks", si)
+        for rt in self.runtime.values():
+            rt.last_frame = -math.inf
+
     def _forget(self):
         """What the shell keeps of a run, after the core started over (reset_people, restore_people)."""
         self._recycled = self.now
@@ -564,7 +567,7 @@ class Tracker:
             si = self.sidx[sid]
             for seg in self._c.live_tracks(si):
                 self._end(si, seg, self.now, True)
-            self.tracks[sid] = SensorTracks(sid, self._ids)
+            self._call("reset_tracks", si)
             if sid in self.runtime:
                 self.runtime[sid].last_frame = -math.inf  # the next frame is a start (_evidence)
             self._call("ld_reset", si)
@@ -714,26 +717,18 @@ class Tracker:
         if sensor is None:
             rt.last_frame = t
             return
-        dets = frame_detections(self.config, sensor, frame)
-        for d in dets:
-            if math.hypot(d.pos[0] - sensor.x, d.pos[1] - sensor.y) < MOUNT_RADIUS:
-                d.hidden = True
-        rt.detections = dets
-        self._ld_runtime(sensor, rt, t, frame.get("ld2410") or {})
+        si = self.sidx[sensor_id]
         self._end_silent(t)  # this sensor's own tracks too, if its last frame is too long ago
-        ev = self.tracks[sensor_id].update(t, frame, dets) if sensor_id in self.tracks else None
-        measured = {id(d) for _, d in ev.born + ev.measured} if ev else set()
-        for d in dets:
-            d.stale = not d.hidden and id(d) not in measured
-        # its own room is seen if it measured somebody in it (output only, roomseen.py)
-        self._call("seen_frame", self.sidx[sensor_id], t,
-                   [(float(d.pos[0]), float(d.pos[1])) for d in dets if not d.hidden and not d.stale])
+        # in the core: the detections, the sensor's own tracks (ld2450/tracks.rs), its room seen if it measured
+        # somebody in it (output only, roomseen.py); kept there for the steps of the evidence
+        ev = self._call("frame", si, t, frame)
+        rt.detections = [Detection.of(d) for d in ev["detections"]]
+        self._ld_runtime(sensor, rt, t, frame.get("ld2410") or {})
         for listener in self.listeners:
-            listener("frame", (sensor, t, dets))
-        if ev is None or not sensor.enabled or not sensor.placed:
+            listener("frame", (sensor, t, rt.detections))
+        if not sensor.enabled or not sensor.placed:
             rt.last_frame = t
             return
-        si = self.sidx[sensor_id]
         if t > self.now:
             # the time since this sensor's last frame counts as watched by it (MODEL.md 4.4)
             self.step(t)
@@ -741,8 +736,8 @@ class Tracker:
         gap = t - prev
         delta = gap if gap <= IDLE else 0.0  # longer: lost data, says nothing
         self._evidence(si, t, delta, ev)
-        if "ld2410" in frame:
-            self._ld_frame(si, rt, t, frame["ld2410"] or {})
+        self._call("ld_frame", si, t)  # the LD2410C part of the frame, if it has one
+        rt.ld_e = self._c.ld_last(si)
 
     def step(self, t: float, targets=None):
         """Time goes on to t (MODEL.md 3). Everybody is moved and weighed by the tracks not started
@@ -771,18 +766,11 @@ class Tracker:
         waiting for that frame. Until 0.18 they lived on while it was silent: a board that died while
         tracking somebody held them as a person with a track (existence 1, not fading) for hours, the
         room occupied after they had left."""
-        for si, sid in enumerate(self.sensors):
-            tracks = self.tracks.get(sid)
-            if tracks is None or t - tracks.last <= LOST:
-                continue
-            live = self._c.live_tracks(si)
-            if not live:
-                continue
-            t_end = max(tracks.last + LOST, self.now)
+        for si, since, live in self._call("data_lost", t):  # its next frame is a start (lost data, _evidence)
+            t_end = max(since, self.now)
             self._flush(t_end, event=True)  # the end weighs and releases everybody: all at its time
             for seg in live:
                 self._end(si, seg, t_end, True)
-            tracks.raw = []  # its next frame is a start (lost data, _evidence)
             self._merge()
             self._normalize()
 
@@ -823,8 +811,7 @@ class Tracker:
         """What the frame says (MODEL.md 4.1, 4.2), in the core step by step; the ghost map learns
         in between (docs/rust-core.md 2.0)."""
         censored = delta <= 0
-        events = censored or ev.born or ev.ended or self._c.any_lost([seg for seg, _ in ev.measured])
-        if events:
+        if censored or self._c.concerns_all(si):
             self._flush(t, event=True)  # these weigh, branch or merge everybody: all at t
         self._send_sensors()
         # 1. no ghost track was born meanwhile (echoes come with walkers in view)
@@ -838,12 +825,10 @@ class Tracker:
             for listener in self.listeners if learn else ():
                 listener("watch", (self.sensors[si], delta))
         # 2. the sensor's tracks: measured (or found again), lost, still held, gone
-        refound = self._call("track_events", si, t, [(seg, float(d.pos[0]), float(d.pos[1])) for seg, d in ev.measured],
-                             [(seg, kind, float(d.pos[0]), float(d.pos[1])) for seg, kind, d in ev.lost],
-                             [(seg, float(d.pos[0]), float(d.pos[1])) for seg, d in ev.held])
-        ended = [seg for seg in ev.ended if self._c.has_track(seg)]
+        refound = self._call("track_events", si, t)
+        ended = [seg for seg in ev["ended"] if self._c.has_track(seg)]
         for seg in ended:
-            self._end(si, seg, t, ev.data_lost)
+            self._end(si, seg, t, ev["data_lost"])
         if ended:
             self._merge()
         # 3. nothing seen before (start, lost data): a person there now is tracked with the share of
@@ -851,13 +836,12 @@ class Tracker:
         if censored:
             self._call("censor", si)
         # 4. new tracks, and lost ones found again; the map at a birth includes this frame's ends
-        if refound or ev.born:
+        if refound or ev["born"]:
             found = [(seg, x, y, 0.0, 0.0) for seg, x, y in refound]
-            found += [(seg, float(d.pos[0]), float(d.pos[1]), self._offset_var(si, d.pos), self._ghost_rate(si, d.pos))
-                      for seg, d in ev.born]
+            found += [(seg, x, y, self._offset_var(si, (x, y)), self._ghost_rate(si, (x, y))) for seg, x, y in ev["born"]]
             last = FRAME if censored else min(delta, FRAME)
-            cats = self._call("branch_all", si, t, last, censored, [seg for seg, _ in ev.born], self.ghost_map.prior_rate,
-                              found)
+            cats = self._call("branch_all", si, t, last, censored, [seg for seg, _, _ in ev["born"]],
+                              self.ghost_map.prior_rate, found)
             for k, (seg, x, y, _, _) in enumerate(found):
                 for listener in self.listeners if cats[k] else ():
                     listener("branch", (self.sensors[si], seg, np.array([x, y]), k < len(refound), cats[k]))
@@ -972,15 +956,6 @@ class Tracker:
                     out = v if (v != 1.0).any() else None
             self._gcache[key] = out
         return self._gcache[key]
-
-    def _ld_frame(self, si, rt, t, ld):
-        """The LD2410C's energies of this frame (MODEL.md 4.3), gathered in the core until they are
-        weighed (every ld_every s, with the next move of everybody)."""
-        mg, sg = ld.get("move_gates"), ld.get("still_gates")
-        gates = (list(map(float, mg)), list(map(float, sg))) if mg and sg and len(mg) == 9 and len(sg) == 9 else None
-        target = any(not d.hidden for d in rt.detections)  # the LD2450 of the housing has something in sight
-        self._call("ld_frame", si, t, gates, target)
-        rt.ld_e = self._c.ld_last(si)
 
     def _ld_tiles(self, si: int) -> tuple:
         """The tiles sensor si's LD2410C sees and what a person there puts into its 16 cells:

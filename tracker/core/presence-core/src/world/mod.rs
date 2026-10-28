@@ -17,6 +17,7 @@ pub use tiles::{DoorTile, POINT, Tiles};
 
 use crate::config::Config;
 use crate::filter::densities::DensityShape;
+use crate::frames::{Mount, Reading};
 use crate::geometry::{Point, Walls};
 use crate::ld2410::likelihood::Likelihood;
 use crate::ld2450::rates::RateModel;
@@ -40,6 +41,10 @@ pub struct World {
     pub sights: Vec<Sight>,
     /// per sensor its LD2410C
     pub ld: Vec<LdSight>,
+    /// per sensor how it hangs: what turns its targets into floor positions
+    pub mounts: Vec<Mount>,
+    /// what reading the frames needs of the tracker's parameters
+    pub reading: Reading,
     /// per cell in view its observed room
     pub rooms: RoomGrid,
     /// the LD2410C's likelihood (its tables are built once)
@@ -211,6 +216,8 @@ impl World {
             tiles,
             sights,
             ld,
+            mounts: config.sensors.iter().map(Mount::of).collect(),
+            reading: Reading::of(&config.params),
             rooms,
             plan,
         })
@@ -273,6 +280,8 @@ impl World {
             tiles: e.tiles,
             sights,
             ld,
+            mounts: config.sensors.iter().map(Mount::of).collect(),
+            reading: Reading::of(&config.params),
             rooms,
             plan,
         })

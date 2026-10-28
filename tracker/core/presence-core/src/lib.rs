@@ -4,9 +4,10 @@
 
 pub mod config;
 pub mod filter;
+pub mod frames;
 pub mod geometry;
 pub mod ld2410;
-pub(crate) mod ld2450;
+pub mod ld2450;
 pub(crate) mod linalg;
 pub(crate) mod motion;
 pub mod outputs;

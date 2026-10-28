@@ -2,7 +2,7 @@
 
 A room is occupied if P(somebody there) is above its threshold or the room's own LD2450 had a measured
 target inside the room within the last seen_hold s. Measured: not held by the sensor (frozen, coasted:
-sensortracks.py), not behind a wall or outside all rooms (frames.py), not at the mount (filter.MOUNT_RADIUS),
+the core's ld2450/tracks.rs), not behind a wall or outside all rooms, not at the mount (frames.rs),
 in short what the filter itself takes as a measurement (Detection: not hidden, not stale). Inside: the
 first observed room whose outline holds the point is this room (as tools/baseline_eval.py counted it).
 

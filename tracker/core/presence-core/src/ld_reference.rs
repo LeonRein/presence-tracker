@@ -279,12 +279,8 @@ fn the_ld2410c_weighs_as_the_python_filter() {
             let fr = &frames[next];
             let (moving, still) = (gates(&fr["moving"]), gates(&fr["still"]));
             let si = fr["si"].as_u64().expect("si") as usize;
-            tracker.ld_frame(
-                si,
-                f(&fr["t"]),
-                Some((&moving, &still)),
-                fr["target"].as_bool().expect("bool"),
-            );
+            let g = crate::frames::LdGates { moving, still };
+            tracker.gather_ld(si, f(&fr["t"]), Some(&g), fr["target"].as_bool().expect("bool"));
             next += 1;
         }
         let weighed = round["weighed"].as_array().expect("weighed");

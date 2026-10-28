@@ -41,7 +41,7 @@ then the drawing (the sensor's position, the walls) is off, and calibrating woul
 error elsewhere.
 
 Calibrator: the session in the app. It keeps the measured targets of every frame (via the
-LD2450's own tracks, sensortracks.py), independent of the poses, and solves on request.
+LD2450's own tracks, the core's TrackStage), independent of the poses, and solves on request.
 `tools/calibrate_offline.py` feeds recordings through the same code.
 """
 
@@ -56,7 +56,7 @@ import numpy as np
 
 from .floorplan import wall_pieces
 from .model import Config
-from .sensortracks import SensorTracks
+from presence_core import TrackStage
 from .util import atomic_write
 
 MIN_SPEED = 0.05  # m/s raw radial speed: walking
@@ -111,25 +111,22 @@ T, SEG, LX, LY, V, SINGLE = range(6)  # columns of the measurement rows
 
 # ------------------------------------------------------------------------------ measurements
 
-def track_frame(tracks: dict, ids, rows: dict, sensor_id: str, t: float, frame: dict, paused: bool = False,
+def track_frame(stage: TrackStage, rows: dict, sensor_id: str, t: float, frame: dict, paused: bool = False,
                 skip: set | None = None):
     """One LD2450 frame into rows of its walking targets (t, track, raw x, raw y (m), raw radial
     speed (m/s), whether it is the only moving target of its frame), through the sensor's own
-    tracks: coasted and frozen frames are no measurement (sensortracks.py, MODEL.md 4.1). paused
-    (learning paused, pause.py): no rows, and the tracks walking now go into skip, whose rows are
-    never kept (else such a track's first row after the pause would look like a start, a handover)."""
-    dets = [SimpleNamespace(slot=tg.get("slot", 0), local=(tg["x"] / 1000, tg["y"] / 1000), hidden=False)
-            for tg in frame.get("targets", []) if tg["y"] > 0]
-    ev = tracks.setdefault(sensor_id, SensorTracks(sensor_id, ids)).update(t, frame, dets)
-    speed = {tg.get("slot", 0): tg.get("speed", 0) / 1000 for tg in frame.get("targets", [])}
-    meas = [(seg, d, speed.get(d.slot, 0.0)) for seg, d in ev.born + ev.measured]
-    moving = sum(abs(v) >= MIN_SPEED for _, _, v in meas)
-    for seg, d, v in meas:
+    tracks (the core's, one stage for all boards): coasted and frozen frames are no measurement
+    (MODEL.md 4.1). paused (learning paused, pause.py): no rows, and the tracks walking now go into
+    skip, whose rows are never kept (else such a track's first row after the pause would look like a
+    start, a handover)."""
+    meas = stage.update(sensor_id, t, frame)
+    moving = sum(abs(v) >= MIN_SPEED for _, _, _, v in meas)
+    for seg, lx, ly, v in meas:
         if abs(v) >= MIN_SPEED:  # only walking counts (pairs, handovers, floor plan)
             if paused and skip is not None:
                 skip.add(seg)
             if not paused and (skip is None or seg not in skip):
-                rows[sensor_id].append((t, seg, d.local[0], d.local[1], v, moving == 1))
+                rows[sensor_id].append((t, seg, lx, ly, v, moving == 1))
 
 
 def thin(t: np.ndarray, key: np.ndarray, every: float) -> np.ndarray:
@@ -154,7 +151,7 @@ def walking_times(config: Config, sid: str, a: np.ndarray) -> np.ndarray:
 
 
 def ground(s, lx, ly, mirror: bool, target_height: float) -> np.ndarray:
-    """Raw LD2450 meters -> floor point in the sensor frame as complex x + iy (as SensorConfig.to_world
+    """Raw LD2450 meters -> floor point in the sensor frame as complex x + iy (as the core's Mount.to_world
     without scale and pose)."""
     x = -lx if mirror else lx
     slant = np.hypot(x, ly)
@@ -890,7 +887,7 @@ class Calibrator:
     def reset(self):
         self._rows: dict[str, list] = collections.defaultdict(list)
         self._chunks: dict[str, list] = collections.defaultdict(list)
-        self._tracks, self._ids = {}, itertools.count()
+        self._tracks = TrackStage(0)  # the boards' own tracks, track numbers from 0
         self._skip = set()  # tracks walking while learning was paused: none of their rows kept
         self._status, self._status_t = None, -math.inf
         self._gen = getattr(self, "_gen", 0) + 1  # a count started before a reset is not taken over
@@ -900,12 +897,12 @@ class Calibrator:
         """A raw LD2450 frame (the MQTT payload) at the sensor's frame time. learn False (learning
         paused, pause.py): the sensor's tracks go on, its measurements are not kept."""
         if not learn:
-            track_frame(self._tracks, self._ids, self._rows, sensor_id, t, frame, True, self._skip)
+            track_frame(self._tracks, self._rows, sensor_id, t, frame, True, self._skip)
             return
         if self.since is None:
             self.since = t
         rows = self._rows[sensor_id]
-        track_frame(self._tracks, self._ids, self._rows, sensor_id, t, frame, False, self._skip)
+        track_frame(self._tracks, self._rows, sensor_id, t, frame, False, self._skip)
         if len(rows) >= self.CHUNK:
             chunks = self._chunks[sensor_id]
             chunks.append(np.array(rows, float))
@@ -942,7 +939,7 @@ class Calibrator:
                 if key.startswith("s_") and len(f[key]):
                     self._chunks[key[2:]].append(np.array(f[key], float))
                     last = max(last, int(f[key][:, SEG].max()))
-        self._ids = itertools.count(last + 1)
+        self._tracks = TrackStage(last + 1)
 
     def _parts(self) -> dict:
         """Per sensor the packed arrays (never changed afterwards) and a copy of the rows gathered

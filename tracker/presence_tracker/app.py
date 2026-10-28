@@ -29,7 +29,6 @@ from .ghostmap import GhostMap
 from .pause import Pauses
 from .sources import Clock, ReplayClock, mqtt_source, replay_source
 from .frames import SensorClock, parse_frame
-from .sensortracks import SensorTracks
 from .util import Throttled, atomic_write
 
 log = logging.getLogger(__name__)
@@ -897,10 +896,7 @@ class App:
         LD2410C learned them as background. That learns nothing for RESET_HOLD s now either."""
         tr = self.tracker
         tr.reset_people()
-        for sid in tr.tracks:
-            tr.tracks[sid] = SensorTracks(sid, tr._ids)
-        for rt in tr.runtime.values():
-            rt.last_frame = -math.inf
+        tr.reset_tracks()
         tr.ld_background.pause(RESET_HOLD)
         self._model_started(tr.now)
         return web.json_response({"ok": True})

@@ -4,8 +4,9 @@ the sensor's side of it."""
 import numpy as np
 
 from presence_tracker.filter import Tracker
-from presence_tracker.frames import detections
 from presence_tracker.model import Config
+
+from test_frames import detections
 
 
 def two_rooms() -> Config:

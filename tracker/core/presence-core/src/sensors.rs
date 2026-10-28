@@ -1,7 +1,9 @@
 //! What the filter knows of each sensor while it runs (MODEL.md 4.4): whether its frames count, when
-//! its last frame came, its LD2410C.
+//! its last frame came, its LD2450's own tracks and its last frame, its LD2410C.
 
+use crate::frames::{Detection, Ld2410};
 use crate::ld2410::sensor::LdSensor;
+use crate::ld2450::tracks::{Ld2450Tracks, TrackEvents};
 use crate::params::{IDLE, Params};
 
 #[derive(Debug, Clone)]
@@ -11,6 +13,8 @@ pub struct SensorState {
     /// time of its last frame (-inf: none yet)
     pub last_frame: f64,
     pub ld: LdSensor,
+    pub tracks: Ld2450Tracks,
+    pub frame: SensorFrame,
 }
 
 impl SensorState {
@@ -20,7 +24,34 @@ impl SensorState {
             active: false,
             last_frame: f64::NEG_INFINITY,
             ld: LdSensor::new(p),
+            tracks: Ld2450Tracks::default(),
+            frame: SensorFrame::default(),
         }
+    }
+}
+
+/// A sensor's last frame as the tracker read it: its targets in the house frame, what they said about
+/// its tracks, its LD2410C part (default: no frame yet).
+#[derive(Debug, Default, Clone)]
+pub struct SensorFrame {
+    pub detections: Vec<Detection>,
+    pub events: TrackEvents,
+    pub ld2410: Ld2410,
+}
+
+impl SensorFrame {
+    /// The detections its LD2450 measured (in a track: not hidden, not held), in the frame's order.
+    pub fn measured(&self) -> impl Iterator<Item = &Detection> {
+        self.detections
+            .iter()
+            .enumerate()
+            .filter(|&(j, _)| self.events.measures(j))
+            .map(|(_, d)| d)
+    }
+
+    /// Whether its LD2450 has anything in sight that can be a person (the LD2410C's anchor).
+    pub fn target_in_sight(&self) -> bool {
+        self.detections.iter().any(|d| !d.hidden)
     }
 }
 

@@ -4,7 +4,6 @@ test per row of the table. The last row (nothing in a pause) is test_pause's."""
 import numpy as np
 
 from presence_tracker.filter import Tracker
-from presence_tracker.sensortracks import Events
 from presence_tracker.sim import Person, SimSensor, simulate
 
 from test_filter import FLUR_DOOR, flat_config
@@ -47,9 +46,13 @@ def _in_order(log, *names):
 def test_the_ghost_map_learns_a_birth_before_a_track_born_in_the_same_frame_reads_it():
     # row 1: the total rate before the watch, add_watch and fade, the births of the tracks ended in
     # this frame, then the rate at the new track's birth
-    tr, _ = _walked(12.0)
-    si = next(si for si, sid in enumerate(tr.sensors) if tr.tracks.get(sid) and tr.tracks[sid].raw)
-    seg = next(r.seg for r in tr.tracks[tr.sensors[si]].raw if r.seg is not None and tr._c.has_track(r.seg))
+    tr, frames = _walked(12.0)
+    # the next frame of a sensor tracking the person, its target 1 m closer to the sensor: no
+    # continuation (more than the LD2450 tracks' gate), its track ends and a new one is born
+    t, sid, frame = next((t, sid, f) for t, sid, f in frames
+                         if f["targets"] and tr._c.live_tracks(tr.sidx[sid]))
+    first = frame["targets"][0]
+    frame = dict(frame, targets=[dict(first, y=first["y"] - 1000)] + frame["targets"][1:])
     log = []
     gm = tr.ghost_map
     for name in ("add_watch", "fade", "add_birth"):
@@ -58,10 +61,7 @@ def test_the_ghost_map_learns_a_birth_before_a_track_born_in_the_same_frame_read
     _spy(log, tr, "_ghost_rate", "rate_at_birth")
     _spy(log, tr, "_call", lambda name, *a: name)
     _spy(log, tr, "_end", "end")
-    born = type("D", (), {"pos": np.array([3.0, 2.0])})()
-    t = tr.now + 0.1
-    tr.now = t
-    tr._evidence(si, t, 0.1, Events(born=[(seg + 1000, born)], ended=[seg]))
+    tr.process_frame(sid, t, frame)
     assert _in_order(log, "rate_total", "watch", "add_watch", "fade", "end", "add_birth", "rate_at_birth",
                      "branch_all")
 

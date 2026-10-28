@@ -393,12 +393,12 @@ impl Plan {
             .and_then(Zone::place)
     }
 
-    /// Whether a target of sensor s at p (u: the unit vector from the sensor to it) is a reflection
-    /// (Config.hidden): outside all rooms by more than margin, inside a closed room without a sensor
+    /// Whether a target at p of a sensor whose sight lines start at origin (u: the unit vector from the
+    /// sensor to it) is a reflection (Config.hidden): outside all rooms by more than margin, inside a closed room without a sensor
     /// (the balcony: people are counted at its door), or behind a wall by more than margin - no point
     /// within margin of it is in sight, not only back along the line of sight (a sensor on a wall looks
     /// along it, MODEL.md 4.1).
-    pub fn hidden(&self, s: &SensorConfig, p: Point, u: Point, margin: f64) -> bool {
+    pub fn hidden(&self, origin: Point, p: Point, u: Point, margin: f64) -> bool {
         let mut rooms = self.zones.iter().filter(|z| z.is_room()).peekable();
         if rooms.peek().is_some() && !rooms.any(|z| z.shape.contains(p, margin)) {
             return true;
@@ -410,8 +410,7 @@ impl Plan {
         {
             return true;
         }
-        let o = s.sight_origin();
-        if line_of_sight(o, p, &self.walls) {
+        if line_of_sight(origin, p, &self.walls) {
             return false;
         }
         let mut candidates = vec![[p[0] - u[0] * margin, p[1] - u[1] * margin]];
@@ -428,11 +427,11 @@ impl Plan {
             }
             // the foot on the wall, a centimetre to the sensor's side of it
             let (nx, ny) = (-dy, dx);
-            let side = (o[0] - fx) * nx + (o[1] - fy) * ny;
+            let side = (origin[0] - fx) * nx + (origin[1] - fy) * ny;
             let k = (if side >= 0.0 { 0.01 } else { -0.01 }) / l2.sqrt();
             candidates.push([fx + nx * k, fy + ny * k]);
         }
-        !candidates.iter().any(|&c| line_of_sight(o, c, &self.walls))
+        !candidates.iter().any(|&c| line_of_sight(origin, c, &self.walls))
     }
 }
 
@@ -665,8 +664,8 @@ mod tests {
             let d = py_hypot(p[0] - s.x, p[1] - s.y);
             [(p[0] - s.x) / d, (p[1] - s.y) / d]
         };
-        assert!(plan.hidden(s, [7.5, 1.0], unit([7.5, 1.0]), 0.4));
-        assert!(!plan.hidden(s, [3.0, 3.0], unit([3.0, 3.0]), 0.4));
+        assert!(plan.hidden(s.sight_origin(), [7.5, 1.0], unit([7.5, 1.0]), 0.4));
+        assert!(!plan.hidden(s.sight_origin(), [3.0, 3.0], unit([3.0, 3.0]), 0.4));
     }
 
     #[test]

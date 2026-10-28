@@ -2,6 +2,33 @@
 
 ## Unveröffentlicht
 
+## 0.37.0 (Branch `rust-core`, Phase 7 des Rust-Ports, nicht live)
+
+Der Kern liest die Frames selbst (docs/rust-core.md 1, 7): Nutzlast prüfen, Bildzeit, Detektionen und die Spurstufe
+des LD2450. Spuren aller drei Referenzstunden byte-gleich mit 0.36.1; ab.sh 1200 19,4 s (0.31.1 48,0 s: −60 %;
+0.36.1 20,7 s).
+
+- **`frames.rs`:** `Frame::parse`/`from_json` (ein Prüfer für Bytes und für das Dict der Hülle) mit benannten Fehlern
+  (`FrameError`: kein JSON, kein Objekt, uptime_ms, targets, Ziel k, doppelter Slot, mehr als 3 Ziele, ld2410,
+  Gates, Abstände; nicht endliche Zahlen schon bei der Umwandlung aus Python); `Ld2410 { Absent, NoGates,
+  Gates }` statt „Schlüssel da“ + `None`. `SensorClock` (Anker als `Option<Anchor>`), `Mount::to_world`,
+  `detections` mit `MOUNT_RADIUS`; die ungenutzten `R`, `radial` und der Azimut fallen weg.
+- **`ld2450/tracks.rs`:** die Spurstufe des LD2450 (sensortracks.py) mit `RawTrack { Unborn, Live { seg, lost } }`,
+  `TrackEvents` mit Indizes in die Detektionen, `SegIds` (eine Folge je Tracker, über Neubauten weiter: `adopt`).
+- **Tracker:** `frame(si, t, &Frame)` liest den Frame, aktualisiert die Spuren und „seinen Raum gesehen“ und behält ihn
+  als letzten Frame des Sensors; `track_events`, `concerns_all` (statt `any_lost`), `ld_frame` lesen daraus, statt
+  Positionen aus Python zurückzubekommen. `data_lost(t)` (heute `_end_silent`), `reset_tracks(si)`;
+  `Plan::hidden` nimmt den Ursprung der Sichtlinien statt der Sensorkonfiguration.
+- **Bindung/Hülle:** `presence_core.check_frame`, `SensorClock` (Python-Klasse mit `offset`/`last_up`),
+  `TrackStage` für die Kalibrierung; `frames.parse_frame` nutzt den Prüfer des Kerns; `Tracker.reset_tracks()` (App
+  „Tracks zurücksetzen“). Gelöscht: `sensortracks.py`, `frames.detections`, `SensorConfig.to_world`,
+  `filter.MOUNT_RADIUS`, `Core.seen_frame/any_lost/adopt_seen`.
+- **Tests:** Rust neu (12, jetzt 99): jeder Prüffehler, Frame und LD2410C-Teil, Uhr (Jitter, Kriechen, Neustart, Sprung),
+  `to_world` von Hand und Rundweg, verdeckte Detektionen, Spurstufe (Slots rücken auf, Coasten/Einfrieren,
+  verdeckt nicht geboren, Datenverlust), Tracker (`frame`, `data_lost` nur mit lebenden Spuren, IDs über `adopt`).
+  Python: test_sensortracks und der Rundweg nach Rust; test_frames/test_sight über den Tracker;
+  test_learning_order Zeile 1 mit einem echten Frame (Ziel springt: Ende und Geburt im selben Frame).
+
 ## 0.36.1 (Branch `rust-core`, nach Leons Prüfung von Phase 6, nicht live)
 
 - **H1:** Die Welt ist nach dem Bau unveränderlich: `walk_end` als `OnceLock` in `Tiles` (`walk_end(&Params)`,
