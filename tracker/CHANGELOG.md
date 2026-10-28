@@ -2,6 +2,31 @@
 
 ## Unveröffentlicht
 
+## 0.39.1 (Branch `rust-core`, nach Leons Prüfung von Phase 9; nicht live)
+
+Spuren aller drei Referenzstunden byte-gleich mit 0.39.0 (6133488); ab.sh 1200 16,5 s (0.31.1 47,3 s); fast_eval
+full --stages 2: Wahrheit 0,48 / 3,28 min wie 0.31.1, gegen 0.38.0 0,0 min Licht anders über 96 h; 141 Rust-, 241
+Python-Tests mit PT_CONFIGS (205 ohne); fmt/clippy sauber, mit und ohne Feature `testing`. Modell unverändert.
+
+- **H1:** `test_core_build` vergleicht wieder, was `model.py` noch ableitet (Regionen, beobachtete und geschlossene
+  Räume, Ausgänge/Pforten), mit dem Plan des Kerns, für jede Konfiguration auch in `PT_CONFIGS`; der eigene Raum je
+  Sensor steht in den Digests. Der Snapshot baut die Regionen aus den Orten des Kerns, ohne Ersatzwert.
+- **H2, M2:** Die Fixtures sind reproduzierbar: `tests/fixtures/make/make_0381.py` und `core_build.py` laufen auf
+  29c2fe1 (dort neu erzeugt: `people.json` und `ghosts.json` byte-gleich); README mit Herkunft und Erzeugung. Der
+  Bau-Digest ist einer je Teil (Schlüssel von `build_export`, je Sensor), die Spiegelungsregel einer je Sensor; ein
+  Bruch nennt den Teil. `devdata/` (privat, nicht im Repo) zählt nicht mehr zu den Konfigurationen des Repos.
+- **M1:** von Python 0.38.1 geschriebene Fixtures für `ld2410.json` (zwei Sensoren, Pegel, Anker, Echos, gehalten)
+  und eine Zielkarte mit Zählungen, in beiden Richtungen geprüft (der Kern liest wie Python und schreibt dasselbe
+  zurück).
+- **M3:** `filter/mirror.rs`, `WorldExport`/`from_export` nur noch in Tests; aus der Bindung `set_world`, `flushed`,
+  `live_tracks` gestrichen; die Hooks der Python-Tests (`normalize`, `spoil_weights_for_test`, `ld_last`,
+  `panic_for_test`, `build_export`, `hidden_at`) hinter dem Feature `testing` (`maturin develop --features testing`;
+  numpy nur dafür); Doku der Bindung berichtigt.
+- **M4:** `forgetting()` im Kern für `fast/compose.py` (läuft auf 0.39 mit `model_defaults()`).
+- **N1:** `recalibrate` prüft die neue Welt, bevor es etwas ändert; die Hülle baut keinen zweiten Kern zur Probe
+  mehr, sondern beginnt neu, wenn der Kern ablehnt. **N3:** Plan-Test „durch die Tür keine Wand“. `saved.rs`: `r`
+  ab 0 gelesen; eine Dichte in beiden Rollen wird abgelehnt (Test). Veraltete Verweise berichtigt.
+
 ## 0.39.0 (Branch `rust-core`, Phase 9: die Python-Hülle fertig, der Python-Kern und numba gelöscht; nicht live)
 
 Spuren aller drei Referenzstunden byte-gleich mit 0.38.1 (nur Umbau); ab.sh 1200 16,8 s (0.31.1 47,8 s); 140 Rust-,

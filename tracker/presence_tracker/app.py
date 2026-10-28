@@ -444,7 +444,7 @@ class App:
     def _learned_files(self) -> list:
         """What was learned and is known about the people, as it is now - taken in the loop, the model
         changes with every frame: [(file, its bytes, or a function packing a copy)]. A part that fails
-        is logged and left out; a people's state the model refuses to save (not finite, hidden.py) is a
+        is logged and left out; a people's state the model refuses to save (not finite: the core's filter/saved.rs) is a
         model failure (_model_failed: it starts over from the last save)."""
         files = []
         part = self._learned_packer(self.tracker.learned_snapshot())

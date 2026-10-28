@@ -1,5 +1,5 @@
 """"Ziel" (MODEL.md 6): where a walker goes next, from their motion ("wird betreten") and the map of
-where walks went, learned by the app (destination.py). Two rooms with sensors, a door between them
+where walks went, learned by the app (the core's learn/destination.rs). Two rooms with sensors, a door between them
 (test_entering)."""
 
 import json
@@ -158,3 +158,18 @@ def test_occupancy_is_unchanged_by_the_map():
         assert l0 == l1 == l2
         assert s0.approaching == s1.approaching == s2.approaching and s0.p_enter == s1.p_enter == s2.p_enter
         assert s0.occupied == s1.occupied == s2.occupied and s0.probability == s1.probability == s2.probability
+
+
+def test_a_map_saved_by_0381_is_read_and_written_alike():
+    # what destination.DestinationMap of 0.38.1 wrote (two trips desk -> sofa and back; fixtures/
+    # destinations.json): the core takes it for these rooms and writes it back with the same counts, and
+    # asked where the walks near the door went, they say what they said to the Python map
+    dest = fixture("destinations.json")
+    tr = Tracker(two_rooms(), start=0.0, people=["observed"])
+    assert tr.use_dest_map(dest["map"])
+    again = tr.learned()["dest_map"]
+    assert {k: v for k, v in again.items() if k != "count"} == {k: v for k, v in dest["map"].items() if k != "count"}
+    dm = dest_map(tr)
+    assert np.array_equal(dm["count"], unpack(dest["map"]["count"], "<f4").reshape(dest["map"]["shape"]))
+    for vel in ("ahead", "back"):
+        assert np.allclose(lookup(dm, vel), dest["map_lookup"][vel], rtol=1e-12, atol=0), vel

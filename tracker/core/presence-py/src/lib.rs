@@ -5,13 +5,8 @@ use pyo3::prelude::*;
 
 mod core;
 mod frames;
-
-/// Panics with this message: lets the shell's tests check that a panic of the core starts the model
-/// over like any other error of the model.
-#[pyfunction]
-fn panic_for_test(message: &str) {
-    panic!("{message}");
-}
+#[cfg(feature = "testing")]
+mod testing;
 
 #[pymodule]
 fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -20,11 +15,16 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<frames::PyClock>()?;
     m.add_class::<frames::PyTrackStage>()?;
     m.add_class::<frames::PyFrame>()?;
-    m.add_function(wrap_pyfunction!(core::build_export, m)?)?;
-    m.add_function(wrap_pyfunction!(core::hidden_at, m)?)?;
     m.add_function(wrap_pyfunction!(core::model_defaults, m)?)?;
     m.add_function(wrap_pyfunction!(core::ld_expected, m)?)?;
-    m.add_function(wrap_pyfunction!(panic_for_test, m)?)?;
+    m.add_function(wrap_pyfunction!(core::forgetting, m)?)?;
+    // the hooks of the shell's tests (feature "testing"; maturin develop --features testing)
+    #[cfg(feature = "testing")]
+    {
+        m.add_function(wrap_pyfunction!(testing::build_export, m)?)?;
+        m.add_function(wrap_pyfunction!(testing::hidden_at, m)?)?;
+        m.add_function(wrap_pyfunction!(testing::panic_for_test, m)?)?;
+    }
     // a panic of the core is a BaseException in Python: the shell turns it into an Exception
     m.add("PanicException", m.py().get_type::<PanicException>())?;
     Ok(())

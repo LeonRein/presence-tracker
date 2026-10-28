@@ -27,7 +27,7 @@ const NY: usize = 20; // RANGE / CELL
 /// (MODEL.md 4.1): the counts are spread over the cells with this much (Park et al. 2020, sec. 1)
 const SPREAD: f64 = 0.3;
 /// s: what was learned fades with this time constant (assumed)
-const FORGET: f64 = 14.0 * 86400.0;
+pub const FORGET: f64 = 14.0 * 86400.0;
 /// s between two fadings
 const DECAY_EVERY: f64 = 60.0;
 /// sight above this counts as watched (filter.Tracker._ghost_rate_total)

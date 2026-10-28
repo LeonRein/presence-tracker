@@ -741,6 +741,17 @@ mod tests {
                 (Place::Region(RegionIdx(1)), [5.5, 4.0])
             ]
         );
+        // the walls a person meets (world.World.crosses_wall): none through the door to the bath, one beside it
+        let walls = crate::geometry::Walls::new(
+            plan.walls
+                .iter()
+                .map(|w| [w[0][0], w[0][1], w[1][0], w[1][1]])
+                .collect(),
+        );
+        assert_eq!(
+            walls.crosses(&[[5.8, 1.5], [5.8, 0.5]], &[[6.2, 1.5], [6.2, 0.5]]),
+            [false, true]
+        );
         // the sensor named like the room is its own; every room has its place
         assert_eq!(plan.sensors[0].own_room, Some(RoomIdx(0)));
         let place = |p: Point| plan.place_at(p);

@@ -1,11 +1,14 @@
 """The core builds the world itself (docs/rust-core.md 6): for every configuration at hand - those of the
-tests, the repository's devdata, and private ones in the directory PT_CONFIGS - its plan, raster, tiles,
-sight and LD2410C tiles, and its rule of what is a reflection on a grid of points, are what 0.38.1 built.
-There they were checked against the Python tracker's build (the plan, raster and tiles exactly, the
-numbers up to rounding) and its rule (model.Config.hidden); what is kept of that is a digest per
-configuration (fixtures/core_build.json, core_reflections.json; the private ones' in PT_CONFIGS)."""
+tests, and private ones in the directory PT_CONFIGS - its plan, raster, tiles, sight and LD2410C tiles, and
+its rule of what is a reflection on a grid of points, are what 0.38.1 built. There they were checked against
+the Python tracker's build (the plan, raster and tiles exactly, the numbers up to rounding) and its rule
+(model.Config.hidden); what is kept of that is a digest per part and configuration (fixtures/core_build.json,
+core_reflections.json, made by fixtures/make/; the private ones' in PT_CONFIGS). What model.py still derives
+for the calibration, the display and the tools (regions, observed and closed rooms, the ways in) must be the
+core's."""
 
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -18,21 +21,22 @@ import presence_core
 from presence_tracker.filter import SILENT_AFTER, Tracker
 from presence_tracker.model import Config
 
-from fixture import fixture
+from fixture import FIXTURES, fixture
 from test_existence import _nook_config
 from test_filter import flat_config
 from test_frames import room_config
 from test_roomseen import open_plan
 
 PRIVATE = os.environ.get("PT_CONFIGS")
+_spec = importlib.util.spec_from_file_location("core_build", FIXTURES / "make" / "core_build.py")
+core_build = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(core_build)
 
 
 def configs():
-    """(name, config, the digests it must have: (build, reflections))."""
+    """(name, config, its digests: {part: sha1}, {sensor: sha1 of its reflections})."""
     out = [("flat", flat_config()), ("flat entry", flat_config(entry=True)), ("room", room_config()),
            ("nook", _nook_config()), ("open plan", open_plan())]
-    for path in sorted(pathlib.Path(__file__).parent.parent.glob("devdata/*.json")):
-        out.append((path.name, Config.from_dict(json.loads(path.read_text()))))
     digests = [fixture("core_build.json"), fixture("core_reflections.json")]
     if PRIVATE:
         for path in sorted(pathlib.Path(PRIVATE).glob("*.json")):
@@ -44,46 +48,50 @@ def configs():
     return [(name, config, digests[0][name], digests[1][name]) for name, config in out]
 
 
-def build_digest(config) -> str:
-    """sha1 of what the core builds (presence_core.build_export) and of the tiles' fingerprint."""
-    core = presence_core.build_export(json.dumps(config.to_dict()), "{}", float(SILENT_AFTER))
-    h = hashlib.sha1()
-    h.update(json.dumps({k: v for k, v in core.items() if not isinstance(v, np.ndarray) and k != "sensors"},
-                        sort_keys=True, default=str).encode())
-    for k in sorted(core):
-        if isinstance(core[k], np.ndarray):
-            h.update(k.encode() + np.ascontiguousarray(core[k], dtype=float).tobytes())
-    for s in core["sensors"]:
-        for k in sorted(s):
-            v = s[k]
-            h.update(k.encode() + (b"-" if v is None else np.ascontiguousarray(v, dtype=float).tobytes()))
-    h.update(Tracker(config).tiles()["id"].encode())
-    return h.hexdigest()
-
-
-def reflections_digest(config) -> str:
-    """sha1 of the rule of reflections (presence_core.hidden_at) per sensor on a grid of points 0.37 m
+def reflections(config) -> dict:
+    """Per sensor a sha1 of the rule of reflections (presence_core.hidden_at) on a grid of points 0.37 m
     apart around the rooms, each looked at from the sensor."""
     rooms = config.zones_of("room")
     if not rooms or not config.sensors:
-        return ""
+        return {}
     x0, y0 = min(z.geometry.bounds()[0] for z in rooms) - 1, min(z.geometry.bounds()[1] for z in rooms) - 1
     x1, y1 = max(z.geometry.bounds()[2] for z in rooms) + 1, max(z.geometry.bounds()[3] for z in rooms) + 1
     points = [(x, y) for x in np.arange(x0, x1, 0.37) for y in np.arange(y0, y1, 0.37)]
-    h = hashlib.sha1()
+    out = {}
     for si, s in enumerate(config.sensors):
         us = []
         for x, y in points:
             d = math.hypot(x - s.x, y - s.y)
             us.append(((x - s.x) / d, (y - s.y) / d) if d > 0 else (1.0, 0.0))
-        got = presence_core.hidden_at(json.dumps(config.to_dict()), si, points, us, config.params.wall_margin)
-        h.update(bytes(got))
-    return h.hexdigest()
+        hidden = presence_core.hidden_at(json.dumps(config.to_dict()), si, points, us, config.params.wall_margin)
+        out[s.id] = hashlib.sha1(bytes(hidden)).hexdigest()[:16]
+    return out
 
 
-@pytest.mark.parametrize("name, config, build, reflections", configs(), ids=lambda v: v if isinstance(v, str) else "")
-def test_the_core_builds_the_world_0381_built(name, config, build, reflections):
-    assert build_digest(config) == build
-    assert reflections_digest(config) == reflections
+CONFIGS = configs()
+IDS = [name for name, *_ in CONFIGS]
+
+
+@pytest.mark.parametrize("name, config, build, reflected", CONFIGS, ids=IDS)
+def test_the_core_builds_the_world_0381_built(name, config, build, reflected):
+    got = core_build.digests(config, "{}", Tracker(config).tiles()["id"])
+    assert sorted(got) == sorted(build)
+    assert [k for k in build if got[k] != build[k]] == []  # the parts that differ
+    assert reflections(config) == reflected
     # the zones of the outputs are the home's, each by its own name (an outside room among them shifts nothing)
     assert set(Tracker(config).zone_states()) - {"_total"} == {z.id for z in config.home_zones("room", "area")}
+
+
+@pytest.mark.parametrize("name, config, build, reflected", CONFIGS, ids=IDS)
+def test_what_model_py_derives_is_the_cores(name, config, build, reflected):
+    core = presence_core.build_export(json.dumps(config.to_dict()), "{}", float(SILENT_AFTER))
+    assert [tuple(r) for r in core["regions"]] == [(rid, r["name"], r["rooms"], r["exits"])
+                                                    for rid, r in config.regions.items()]
+    assert core["observed_rooms"] == [z.id for z in config.observed_rooms()]
+    assert core["closed_rooms"] == len(config.closed_rooms)
+    places = ["observed", *config.regions, "outside"]
+    assert [tuple(p) for p in core["portals"]] == [(places.index(q.region), float(q.watch[0]), float(q.watch[1]))
+                                                    for q in config.portals if q.region in places]
+    # the rooms' own sensors (roomseen.own_room until 0.38): in the digests above ("own_rooms")
+    tr = Tracker(config)
+    assert tr.rooms == core["observed_rooms"] and tr.places == places

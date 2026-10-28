@@ -11,6 +11,7 @@ pub mod hyp;
 mod ld_weigh;
 pub(crate) mod merge;
 #[cfg(test)]
+#[cfg(test)]
 pub mod mirror;
 pub mod mixture;
 pub(crate) mod objects;
@@ -223,6 +224,7 @@ impl Filter {
     }
 
     /// Every hypothesis' weight NaN (a test of what the shell does then).
+    #[cfg(any(test, feature = "testing"))]
     pub fn spoil_weights_for_test(&mut self) {
         for hy in &mut self.hyps {
             hy.logw = f64::NAN;

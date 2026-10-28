@@ -192,13 +192,13 @@ impl Tracker {
     /// changed, if the densities would not fit it: another shape of a density, other tiles
     /// (Tiles::same_as) or another number of sensors.
     pub fn set_world(&mut self, world: World) -> Result<(), String> {
-        let (old, new) = (&self.world, &world);
-        if new.density_shape() != old.density_shape()
-            || !new.tiles.same_as(&old.tiles)
-            || new.sights.len() != old.sights.len()
-        {
-            return Err("the new world has other tiles or sensors: the people do not fit it".into());
-        }
+        self.fits(&world)?;
+        self.install(world);
+        Ok(())
+    }
+
+    /// The new world of the same people (fits).
+    fn install(&mut self, world: World) {
         self.world = world;
         for (s, plan) in self.sensors.iter_mut().zip(&self.world.plan.sensors) {
             s.active = plan.in_use;
@@ -207,6 +207,17 @@ impl Tracker {
         self.learned.follow(&self.world);
         self.filter.void_cache();
         self.outputs = OutputCache::default();
+    }
+
+    /// Whether the people of this world live in that one too: the same tiles and sensors (Err says not).
+    fn fits(&self, world: &World) -> Result<(), String> {
+        let (old, new) = (&self.world, world);
+        if new.density_shape() != old.density_shape()
+            || !new.tiles.same_as(&old.tiles)
+            || new.sights.len() != old.sights.len()
+        {
+            return Err("the new world has other tiles or sensors: the people do not fit it".into());
+        }
         Ok(())
     }
 
@@ -711,6 +722,9 @@ impl Tracker {
     /// the changed sensors' tracks end as at lost data (the ghost map learns from them), their next
     /// frame is a start, their LD2410C starts over; then the new world.
     pub fn recalibrate(&mut self, changed: SensorSet, world: World) -> Result<Vec<Event>, Fault> {
+        // checked first: a world the people do not fit (the sensors changed which rooms are observed)
+        // changes nothing here, the shell starts the model over instead
+        self.fits(&world).map_err(|_| CallError::World)?;
         let mut events = Vec::new();
         let now = self.clock.now;
         if changed.iter().any(|si| !self.filter.tracks().of(si).is_empty()) {
@@ -728,7 +742,7 @@ impl Tracker {
             self.filter.prune(&self.world.params)?;
             self.filter.normalize(0.0)?;
         }
-        self.set_world(world).map_err(|_| CallError::World)?;
+        self.install(world);
         Ok(events)
     }
 
@@ -852,7 +866,7 @@ impl Tracker {
     }
 
     /// Spoils every hypothesis' weight (NaN): what the app does then (the shell's test).
-    #[doc(hidden)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn spoil_weights_for_test(&mut self) {
         self.filter.spoil_weights_for_test();
     }

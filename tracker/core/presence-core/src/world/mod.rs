@@ -58,8 +58,9 @@ pub struct World {
     pub destinations: DestGeometry,
 }
 
-/// What the Python tracker built (docs/rust-core.md 6): the world handed over while the build is
-/// still Python, and later the aid that checks the build in Rust against it.
+#[cfg(test)]
+/// What the Python tracker of 0.38.1 built (docs/rust-core.md 6): a world given as arrays, for the core's
+/// tests (their fixtures of the Python build and the small test worlds).
 #[derive(Debug)]
 #[cfg_attr(test, derive(serde::Deserialize))]
 pub struct WorldExport {
@@ -74,6 +75,7 @@ pub struct WorldExport {
     pub rooms: Vec<f64>,
 }
 
+#[cfg(test)]
 /// A sensor as the Python tracker built it: where it is, where its sight lines start, its sight per
 /// cell and how well it can test a person per tile.
 #[derive(Debug)]
@@ -86,6 +88,7 @@ pub struct SensorExport {
     pub ld: LdExport,
 }
 
+#[cfg(test)]
 /// A sensor's LD2410C as the Python tracker built it (LdSight with its line of sight per cell).
 #[derive(Debug)]
 #[cfg_attr(test, derive(serde::Deserialize))]
@@ -97,6 +100,7 @@ pub struct LdExport {
     pub tiles: LdTiles,
 }
 
+#[cfg(test)]
 impl WorldExport {
     /// Whether the export fits together: the model's numbers, the arrays' lengths, the indices in
     /// range, each cell's room one of the rooms of a sensor's view (Err names what does not).
@@ -228,6 +232,7 @@ impl World {
         })
     }
 
+    #[cfg(test)]
     /// The world of a checked export (the aid that checks the build against Python's, docs/rust-core.md
     /// 6): the plan from the configuration, the rest as Python built it.
     pub fn from_export(e: WorldExport, config: &Config, silent_after: f64) -> Result<Self, String> {

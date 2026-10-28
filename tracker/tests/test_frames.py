@@ -11,6 +11,8 @@ from presence_tracker.model import Config, SensorConfig, ZoneConfig
 from presence_tracker.filter import Tracker
 from presence_tracker.sim import SimSensor, ld_prior
 
+from fixture import fixture
+
 
 def room_config() -> Config:
     return Config(
@@ -95,7 +97,6 @@ def test_behind_a_wall_is_measured_across_it_not_along_the_line_of_sight():
 def _learn_ghosts(tr, name):
     """A ghost map learned by the Python map of 0.38.1 (ghostmap.GhostMap.add_birth/add_watch) from the
     tracker's own, saved in fixtures/ghosts.json and handed to the core: the core reads that format."""
-    from fixture import fixture
     assert tr.use_ghost_map(fixture("ghosts.json")[name])
 
 
@@ -121,7 +122,6 @@ def test_a_few_ghosts_do_not_make_a_spot_a_ghost_source_many_do():
 
 def test_a_map_learned_with_another_prior_starts_over():
     tr = Tracker(room_config())
-    from fixture import fixture
     other = fixture("ghosts.json")["room_other_prior"]  # one birth, the prior's time / 24
     assert not tr.use_ghost_map(other) and not tr.learned()["ghost_map"]["count"]
 
@@ -145,7 +145,6 @@ def _ghost_source(tr, raw=(0.6, 4.0), n=30):
     """A reflection the LD2450 a reports at raw (m, its frame) n times in a day."""
     spot = _floor(tr.config, raw)
     _learn_ghosts(tr, "room_source")  # with spot, raw and n as here, b: 5 at (3, 2.5), a day watched each
-    from fixture import fixture
     assert np.array_equal(spot[0], fixture("ghosts.json")["room_source_spot"]) and (raw, n) == ((0.6, 4.0), 30)
     return spot
 
@@ -204,7 +203,6 @@ def test_a_remounted_sensor_starts_its_part_of_the_ghost_map_over():
 
 
 def test_a_saved_ghost_map_reads_back_the_same():
-    from fixture import fixture
     tr = Tracker(room_config())
     centre = np.array([[2.2, 2.6]])
     _learn_ghosts(tr, "room_spot")  # a day watched, 12 ghosts at the centre
@@ -243,3 +241,16 @@ def test_the_ld2410c_background_stays_with_a_recalibration_not_with_a_remount():
         for sid in ("a", "b"):
             assert [x.tolist() if hasattr(x, "tolist") else x for x in again.background(sid)] == \
                 [x.tolist() if hasattr(x, "tolist") else x for x in tr.background(sid)]
+
+
+def test_a_background_saved_by_0381_is_read_and_written_alike():
+    # what ld2410.Background of 0.38.1 wrote (two sensors, each with its level, anchor and echoes, one held
+    # after "Tracks zurücksetzen"; fixtures/ld2410.json): the core reads it as that read it - the
+    # background, with the anchor it goes back to, and the echo rate - and writes it back the same
+    ld = fixture("ld2410.json")
+    tr = Tracker(room_config())
+    assert tr.use_ld_background(ld["background"]) == []
+    for sid in ("a", "b"):
+        b, rate = tr.background(sid)
+        assert np.allclose(b, ld["b"][sid], rtol=1e-12, atol=0) and rate == pytest.approx(ld["rate"][sid], rel=1e-12)
+    assert tr.learned()["ld_background"] == ld["background"]

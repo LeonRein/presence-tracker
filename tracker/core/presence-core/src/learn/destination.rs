@@ -51,7 +51,7 @@ const LINK_DIST: f64 = 1.0;
 const MAX_PENDING: f64 = 60.0;
 /// a walker with less weight (hypothesis x P(walking)) is not counted
 const MIN_WEIGHT: f64 = 0.02;
-const FORGET: f64 = 14.0 * 86400.0;
+pub const FORGET: f64 = 14.0 * 86400.0;
 const DECAY_EVERY: f64 = 60.0;
 /// m: the kernel reaches this far
 const NEAR: f64 = 2.5 * BW_POS;

@@ -216,25 +216,28 @@ class Tracker:
         self.reconfigured_from = None
         self._sync_pauses()  # the ends of the changed sensors' tracks learn, or not, as at any time
         changed = self._changed_sensors(self.config, config)
-        state = self.people_state() if changed is None else None
-        # if what follows fails half-way (new tiles, old people), the app saves this (app.h_put_config)
-        self.reconfigured_from = state
-        self.config = config
-        self.p = config.params
+        self.config, self.p = config, config.params
         # what was learned follows (in the core): recalibrated sensors keep their parts, a remounted one
         # starts over; the destination map holds while the rooms and doors are the same
         if changed is not None:
-            self._tell(self._call("recalibrate", [self.sidx[sid] for sid in changed], *self._world()))
-            self._names()
-        else:
-            self._build()  # its sensors' tracks start anew: their next frames are a start
-            if not self.restore_people(state):
-                self.reset_people()
-        return changed is None
+            try:  # the people stay if they live in the new world too (the core checks first, then changes)
+                self._tell(self._call("recalibrate", [self.sidx[sid] for sid in changed], *self._world()))
+                self._names()
+                return False
+            except ValueError:  # the sensors changed which rooms are observed: another world for the people
+                changed = None
+        state = self.people_state()
+        # if what follows fails half-way (new tiles, old people), the app saves this (app.h_put_config)
+        self.reconfigured_from = state
+        self._build()  # its sensors' tracks start anew: their next frames are a start
+        if not self.restore_people(state):
+            self.reset_people()
+        return True
 
     def _changed_sensors(self, old, new):
         """The ids of the sensors that differ between two configurations if nothing else differs
-        (the same sensors, floor plan and parameters, the same tiles of the observed area), else None."""
+        (the same sensors, floor plan and parameters), else None. Whether the observed area stays the same
+        the core checks (recalibrate)."""
         a, b = old.to_dict(), new.to_dict()
         sa, sb = a.pop("sensors"), b.pop("sensors")
         a.pop("background")
@@ -248,10 +251,6 @@ class Tracker:
         def regions(c):
             return {rid: {k: v for k, v in r.items() if k != "name"} for rid, r in c.regions.items()}
         if a != b or [s["id"] for s in sa] != [s["id"] for s in sb] or regions(old) != regions(new):
-            return None
-        # the sensors decide which rooms are observed: the world of the people must be the same
-        json_new = json.dumps(new.to_dict())
-        if _core(presence_core.Core, json_new, *self._world()[1:]).tiles_view()[0] != self._tiles[0]:
             return None
         return [x["id"] for x, y in zip(sa, sb) if dict(x, name=None) != dict(y, name=None)]
 
@@ -585,8 +584,8 @@ class Tracker:
         p = self.p
         dwell = {"median": round(p.dwell_median), "p90": round(p.dwell_median * math.exp(p.dwell_spread * NormalDist().inv_cdf(0.9)))}
         regions = {}
-        for rid, r in self.config.regions.items():
-            dist = places.get(rid, [1.0])
+        for rid in self.places[1:-1]:  # the regions without a sensor, as the core has them
+            r, dist = self.config.regions[rid], places[rid]
             regions[rid] = {"name": r["name"], "rooms": r["rooms"], "open": r["open"],
                             "count": int(np.argmax(dist)),
                             "probabilities": [round(1 - dist[0], 3)] if 1 - dist[0] >= 0.005 else [],
@@ -607,7 +606,7 @@ class Tracker:
         """Take over what was learned (learned()), each part present: the ghost map if learned with the
         prior the model has now, the destination map if with these rooms and doors (ValueError if one
         cannot be read)."""
-        if data.get("ghost_map"):  # learned offline (tools/ghostmap.py), per sensor unless mounted elsewhere since
+        if data.get("ghost_map"):  # per sensor unless mounted elsewhere since (offline: tools/ghostmap.py, an old tree)
             self.use_ghost_map(data["ghost_map"])
         if data.get("ld_background"):
             for why in self.use_ld_background(data["ld_background"]):

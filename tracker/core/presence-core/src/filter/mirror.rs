@@ -1,7 +1,6 @@
-//! Loading the hypotheses from the Python shell's mirror (docs/rust-core.md 7, phases 3-5; feature
-//! "mirror"): what the LD2410C and the outputs still compute in Python, and tests that set a state,
-//! come back here. Everything is checked before anything changes; the bookkeeping's invariants after.
-//! Thrown away when nothing writes the mirror any more (after phase 5).
+//! Hypotheses set from outside (tests only): the reference test of the LD2410C weighing against the Python
+//! filter (ld_reference.rs) loads its state this way. Everything is checked before anything changes; the
+//! bookkeeping's invariants after.
 
 use crate::filter::Filter;
 use crate::filter::densities::{DensityData, DensityId, Kind};

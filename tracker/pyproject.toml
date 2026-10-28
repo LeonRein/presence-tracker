@@ -19,5 +19,7 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
+# the tests need the core with its test hooks:
+# uv run maturin develop --uv --release --features testing -m core/presence-py/Cargo.toml
 testpaths = ["tests"]
 pythonpath = [".", "tests"]

@@ -19,5 +19,9 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 [dev-dependencies]
 matrixmultiply = "0.3"
 
+[features]
+# what only the shell's tests call (Tracker::spoil_weights_for_test)
+testing = []
+
 [lints]
 workspace = true

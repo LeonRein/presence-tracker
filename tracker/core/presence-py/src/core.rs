@@ -1,10 +1,9 @@
 //! The core behind the Python tracker (docs/rust-core.md 4): the filter, its world and what it learns
 //! are presence_core's; here only the conversion, and the views the shell, its tools and tests read.
 
-use numpy::{PyArray1, PyArrayDyn, PyArrayMethods};
 use pyo3::exceptions::{PyFloatingPointError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::PyList;
 
 use crate::frames::PyFrame;
 
@@ -26,7 +25,7 @@ use presence_core::world::tiles::SIZE;
 use serde_json::Value;
 
 /// The configuration (the JSON of model.Config.to_dict()).
-fn config_from(json: &str) -> PyResult<Config> {
+pub(crate) fn config_from(json: &str) -> PyResult<Config> {
     Config::from_json(json).map_err(PyValueError::new_err)
 }
 
@@ -36,18 +35,12 @@ fn params_from(json: &str) -> PyResult<Params> {
 }
 
 /// The world of a configuration and a model (JSON), built without the GIL.
-fn world_of(py: Python<'_>, config: &str, model: &str, silent_after: f64) -> PyResult<World> {
+pub(crate) fn world_of(py: Python<'_>, config: &str, model: &str, silent_after: f64) -> PyResult<World> {
     py.detach(|| World::build(&config_from(config)?, params_from(model)?, silent_after).map_err(PyValueError::new_err))
 }
 
 fn not_finite(e: NotFinite) -> PyErr {
     PyFloatingPointError::new_err(e.to_string())
-}
-
-type Out<'py> = Bound<'py, PyArrayDyn<f64>>;
-
-fn array<'py>(py: Python<'py>, v: &[f64], shape: &[usize]) -> PyResult<Out<'py>> {
-    PyArray1::from_slice(py, v).reshape(shape)
 }
 
 fn source_name(source: Source) -> &'static str {
@@ -148,22 +141,10 @@ impl Core {
         })
     }
 
-    /// A world rebuilt on the same tiles (sensors recalibrated, outputs' numbers changed): what is
-    /// known stays.
-    fn set_world(&mut self, py: Python<'_>, config: &str, model: &str, silent_after: f64) -> PyResult<()> {
-        let world = world_of(py, config, model, silent_after)?;
-        self.tracker.set_world(world).map_err(PyValueError::new_err)
-    }
-
     /// What the outputs are cached by: the moves of everybody and the events that concern all.
     #[getter]
     fn epoch(&self) -> u64 {
         self.tracker.filter().epoch()
-    }
-
-    #[getter]
-    fn flushed(&self) -> f64 {
-        self.tracker.filter().flushed()
     }
 
     #[getter]
@@ -306,11 +287,7 @@ impl Core {
         Ok((b.to_vec(), rate))
     }
 
-    fn live_tracks(&self, si: usize) -> PyResult<Vec<u64>> {
-        let tracks = self.tracker.filter().tracks().of(self.sensor(si)?);
-        Ok(tracks.iter().map(|s| s.0).collect())
-    }
-
+    #[cfg(feature = "testing")]
     #[pyo3(signature = (dropped=0.0))]
     fn normalize(&mut self, dropped: f64) -> PyResult<()> {
         self.tracker.normalize(dropped).map_err(not_finite)
@@ -410,12 +387,9 @@ impl Core {
     }
 
     /// The energies of sensor si's last LD2410C frame that counted (16), or None.
-    fn ld_last<'py>(&self, py: Python<'py>, si: usize) -> PyResult<Option<Out<'py>>> {
-        self.tracker
-            .ld_collect(self.sensor(si)?)
-            .last
-            .map(|e| array(py, &e, &[CELLS]))
-            .transpose()
+    #[cfg(feature = "testing")]
+    fn ld_last(&self, si: usize) -> PyResult<Option<[f64; CELLS]>> {
+        Ok(self.tracker.ld_collect(self.sensor(si)?).last)
     }
 
     // ---------------------------------------------------------------- starts
@@ -439,6 +413,7 @@ impl Core {
     }
 
     /// Every hypothesis' weight NaN: the shell's test of a failing model.
+    #[cfg(feature = "testing")]
     fn spoil_weights_for_test(&mut self) {
         self.tracker.spoil_weights_for_test();
     }
@@ -614,7 +589,6 @@ impl Core {
     }
 }
 
-/// The world the core builds of a configuration and model (JSON), as a dict in the format of the
 /// The model's defaults (JSON of Params::default()): what a model given as the fields that differ is
 /// read against (the simulation's numbers).
 #[pyfunction]
@@ -622,6 +596,16 @@ pub fn model_defaults() -> String {
     serde_json::to_value(Params::default())
         .expect("the defaults are finite numbers")
         .to_string()
+}
+
+/// s: how long what the ghost map and the destination map learned lasts (each fades with it; the tools that
+/// compose learned states).
+#[pyfunction]
+pub fn forgetting() -> (f64, f64) {
+    (
+        presence_core::learn::ghost_map::FORGET,
+        presence_core::learn::destination::FORGET,
+    )
 }
 
 /// The energy a person puts into the 16 cells of an LD2410C at `angle` degrees off its axis and `slant`
@@ -633,148 +617,4 @@ pub fn ld_expected(angle: f64, slant: f64) -> ([f64; CELLS], [f64; CELLS]) {
         expected(&p, STILL, angle, slant, 1.0),
         expected(&p, WALK, angle, slant, 1.0),
     )
-}
-
-/// Python tracker's `_export()` (and the plan): for the aid that checks the build against Python's
-/// (rust-port/cmpworld.py).
-#[pyfunction]
-pub fn build_export<'py>(
-    py: Python<'py>,
-    config: &str,
-    model: &str,
-    silent_after: f64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let w = world_of(py, config, model, silent_after)?;
-    let (t, sh) = (&w.tiles, &w.shapes);
-    let flat = |v: &[[f64; 2]]| -> Vec<f64> { v.iter().flatten().copied().collect() };
-    let d = PyDict::new(py);
-    let a = |v: &[f64]| array(py, v, &[v.len()]);
-    d.set_item("x0", w.raster.x0)?;
-    d.set_item("y0", w.raster.y0)?;
-    d.set_item("nx", w.raster.nx)?;
-    d.set_item("ny", w.raster.ny)?;
-    d.set_item(
-        "walls",
-        a(&w.plan
-            .walls
-            .iter()
-            .flat_map(|s| [s[0][0], s[0][1], s[1][0], s[1][1]])
-            .collect::<Vec<_>>())?,
-    )?;
-    d.set_item("wall_dist", a(w.wall_dist.values())?)?;
-    // per cell its observed room, the number of rooms for none (as the Python tracker exports it)
-    let none = w.plan.rooms.len() as f64;
-    let rooms: Vec<f64> = w.rooms.cells().iter().map(|r| r.map_or(none, |k| k.0 as f64)).collect();
-    d.set_item("rooms", a(&rooms)?)?;
-    for (k, v) in [
-        ("go", &sh.go),
-        ("go_w", &sh.go_w),
-        ("go_w_ongoing", &sh.go_w_ongoing),
-        ("kappa", &sh.kappa),
-        ("kappa_w", &sh.kappa_w),
-        ("amp", &sh.amp),
-        ("ka_w", &sh.ka_w),
-        ("amp_given_kappa", &sh.amp_given_kappa),
-    ] {
-        d.set_item(k, a(v)?)?;
-    }
-    d.set_item("n", t.n)?;
-    d.set_item("R", t.regions)?;
-    d.set_item("A", t.ages)?;
-    d.set_item("centers", a(&flat(&t.centers))?)?;
-    d.set_item("tile_var", a(&flat(&t.var))?)?;
-    d.set_item("area", a(&t.area)?)?;
-    d.set_item("fine", t.fine.clone())?;
-    d.set_item("walk_t", a(&t.walk_t)?)?;
-    d.set_item("into_t", a(&t.into_t)?)?;
-    d.set_item("generator", a(&t.generator)?)?;
-    d.set_item(
-        "door_rates",
-        a(&t.door_tiles
-            .iter()
-            .flat_map(|x| x.rates.iter().copied())
-            .collect::<Vec<_>>())?,
-    )?;
-    d.set_item("region_doors", t.region_doors.clone())?;
-    d.set_item("exits", t.exits.clone())?;
-    d.set_item("entries", t.entries.clone())?;
-    d.set_item("region_rates", a(&t.region_rates)?)?;
-    d.set_item("region_start", a(&t.region_start)?)?;
-    d.set_item("widths", a(&t.widths)?)?;
-    d.set_item("points", a(&flat(&t.points))?)?;
-    d.set_item("point_tile", t.point_tile.clone())?;
-    d.set_item(
-        "tile_room",
-        t.room.iter().map(|r| r.map_or(-1, |k| k.0 as i64)).collect::<Vec<_>>(),
-    )?;
-    let sensors = PyList::empty(py);
-    for (s, ld) in w.sights.iter().zip(&w.ld) {
-        let e = PyDict::new(py);
-        e.set_item("grid", a(s.grid.values())?)?;
-        e.set_item("observed", a(&s.observed)?)?;
-        e.set_item("ld_los", a(ld.los.values())?)?;
-        e.set_item("ld_view", ld.view.as_ref().map(|v| a(v)).transpose()?)?;
-        e.set_item("ld_idx", ld.tiles.idx.clone())?;
-        e.set_item(
-            "ld_still",
-            a(&ld.tiles.still.iter().flatten().copied().collect::<Vec<_>>())?,
-        )?;
-        e.set_item(
-            "ld_walk",
-            a(&ld.tiles.walk.iter().flatten().copied().collect::<Vec<_>>())?,
-        )?;
-        sensors.append(e)?;
-    }
-    d.set_item("sensors", sensors)?;
-    let p = &w.plan;
-    d.set_item(
-        "regions",
-        p.regions
-            .iter()
-            .map(|r| {
-                let rooms: Vec<&str> = r.rooms.iter().map(|z| p.zones[z.0].id.as_str()).collect();
-                (r.id.as_str(), r.name.as_str(), rooms, r.exits)
-            })
-            .collect::<Vec<_>>(),
-    )?;
-    d.set_item(
-        "observed_rooms",
-        p.observed().map(|r| r.id.as_str()).collect::<Vec<_>>(),
-    )?;
-    d.set_item(
-        "own_rooms",
-        p.sensors
-            .iter()
-            .map(|s| s.own_room.map(|k| p.room(k).id.as_str()))
-            .collect::<Vec<_>>(),
-    )?;
-    d.set_item(
-        "portals",
-        p.portals
-            .iter()
-            .map(|q| (q.place.index(p.regions.len()), q.watch[0], q.watch[1]))
-            .collect::<Vec<_>>(),
-    )?;
-    d.set_item("closed_rooms", p.closed.len())?;
-    d.set_item("walk_end", a(w.tiles.walk_end(&w.params))?)?;
-    Ok(d)
-}
-
-/// Per point whether a target of sensor si there is a reflection (Plan::hidden; the aid that checks
-/// the plan against model.Config.hidden): `us` the unit vectors from the sensor to the points. (PyO3
-/// extracts the arguments as owned values.)
-#[allow(clippy::needless_pass_by_value)]
-#[pyfunction]
-pub fn hidden_at(config: &str, si: usize, points: Vec<Point>, us: Vec<Point>, margin: f64) -> PyResult<Vec<bool>> {
-    let config = config_from(config)?;
-    let plan = presence_core::plan::Plan::new(&config);
-    let s = config
-        .sensors
-        .get(si)
-        .ok_or_else(|| PyValueError::new_err("no such sensor"))?;
-    Ok(points
-        .iter()
-        .zip(&us)
-        .map(|(&p, &u)| plan.hidden(s.sight_origin(), p, u, margin))
-        .collect())
 }

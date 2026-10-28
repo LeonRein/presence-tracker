@@ -164,7 +164,7 @@ fn read_density(d: &Map<String, Value>, shape: &DensityShape, kind: Kind) -> Res
         }
     };
     let r = match (kind, d.get("r")) {
-        (Kind::Person, Some(r)) => number(r, "r", f64::NEG_INFINITY)?,
+        (Kind::Person, Some(r)) => number(r, "r", 0.0)?, // at most 1: PeopleState::check
         _ => 1.0,
     };
     Ok(DensityData {
@@ -335,6 +335,20 @@ mod tests {
         b["densities"][0]["amp"] = json!(zero);
         let (_, back) = PeopleState::from_json(&b, &s, "f").expect("readable");
         assert_eq!(back.densities[0].amp.as_ref().expect("given").levels, s.amp_prior());
+    }
+
+    #[test]
+    fn a_density_both_a_person_and_the_unknown_ones_is_refused() {
+        // read, it is the unknown ones (named so by a hypothesis); as somebody's person check refuses it
+        let s = shape();
+        let state = PeopleState {
+            hyps: vec![(0.0, vec![1], 1)],
+            densities: vec![person(&s), unknown(&s)],
+        };
+        let saved = state.to_json(0.0, "f").expect("a state");
+        let (_, back) = PeopleState::from_json(&saved, &s, "f").expect("readable");
+        assert_eq!(back.densities[1].kind, Kind::Intensity);
+        assert!(back.check(&s).is_err());
     }
 
     #[test]
