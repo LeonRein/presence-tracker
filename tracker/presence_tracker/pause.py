@@ -44,6 +44,7 @@ class Pauses:
         self.intervals = [[float(s), None if e is None else float(e)] for s, e in (intervals or [])]
         self.intervals.sort(key=lambda iv: iv[0])
         self.known = []
+        self.changes = 0  # counts the changes (the tracker hands the pauses to its core after each)
 
     @property
     def on(self) -> bool:
@@ -63,6 +64,7 @@ class Pauses:
         else:
             start = self.intervals[-1][0]
             self.intervals[-1][1] = max(float(t), start)
+        self.changes += 1
         return True
 
     def add(self, start: float, end: float | None):
@@ -77,6 +79,7 @@ class Pauses:
             else:
                 merged.append([s, e])
         self.known = merged
+        self.changes += 1
 
     def paused(self, t0: float, t1: float | None = None) -> bool:
         """Is any time of [t0, t1] (t1 None: the moment t0) in a pause?"""
@@ -93,6 +96,7 @@ class Pauses:
     def prune(self, before: float):
         """Forget the intervals that ended before this."""
         self.intervals = [iv for iv in self.intervals if iv[1] is None or iv[1] >= before]
+        self.changes += 1
 
     def to_dict(self) -> dict:
         return {"intervals": [[s, e] for s, e in self.intervals]}

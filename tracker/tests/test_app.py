@@ -10,6 +10,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from presence_tracker import app as app_module, code_hash
 from presence_tracker.app import App
+from presence_tracker import ld2410
 from presence_tracker.filter import Tracker
 from presence_tracker.frames import Frame, SensorClock
 from presence_tracker.model import Config
@@ -43,9 +44,10 @@ def test_a_report_replays_to_what_the_app_showed(tmp_path):
     config = flat_config(entry=True)
     config.save(tmp_path / "tracker.json")
     app = App(tmp_path, publish=False)
-    bg = app.tracker.ld_background  # learned beyond the prior before the start,
-    bg.num["a"], bg.den["a"] = 2 * bg.prior * 600.0, 600.0
-    bg.learn_echoes("a", 0.5, bg.echo_rate, 1.0, 600.0)
+    bg = app.tracker.learned()["ld_background"]  # learned beyond the prior before the start,
+    bg["num"]["a"], bg["den"]["a"] = list(2 * ld2410.prior(app.tracker.m) * 600.0), 600.0
+    bg["echoes"]["a"], bg["quiet"]["a"] = 0.5, 600.0
+    app.tracker.use_ld_background(bg)
     app._model_started(None)  # as if loaded from ld2410.json
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), (4.5, 1.0), start=5, pauses={2: 20, 3: 60}))
     next_tick = 0.0
@@ -83,7 +85,7 @@ def test_a_report_replays_to_what_the_app_showed(tmp_path):
     # replayed like tools/replay.py --report
     replay = Tracker(Config.from_dict(meta["config"]))
     replay.load_learned(meta)
-    assert replay.ld_background.to_dict() == meta["ld_background"]
+    assert replay.learned()["ld_background"] == meta["ld_background"]
     clocks = collections.defaultdict(SensorClock)
     k = 0
     diff = 0.0
@@ -396,12 +398,12 @@ def test_a_refused_floor_plan_keeps_the_people(tmp_path, monkeypatch):
     d = config.to_dict()
     d["sensors"].append({"id": "c", "x": -1.95, "y": 3.05, "heading": 45, "placed": True})
     d["zones"] = [{**z, "entry": False} for z in d["zones"]]
-    real = Tracker.use_dest_map
+    real = Tracker.restore_people
 
-    def use_dest_map(self, dm):  # fails once, after reconfigure built the new tiles
-        monkeypatch.setattr(Tracker, "use_dest_map", real)
+    def restore_people(self, state):  # fails once, after reconfigure built the new tiles
+        monkeypatch.setattr(Tracker, "restore_people", real)
         raise ValueError("broken")
-    monkeypatch.setattr(Tracker, "use_dest_map", use_dest_map)
+    monkeypatch.setattr(Tracker, "restore_people", restore_people)
 
     class Request:
         async def json(self):

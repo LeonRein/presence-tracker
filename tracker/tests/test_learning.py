@@ -151,8 +151,8 @@ def test_a_sitter_for_an_hour_is_not_learned_as_background():
     tr, occupied, after = _sit((1.3, 1.3), 60, leave=60.0)
     prior = ld2410.prior(m)
     for s in ("a", "b"):
-        assert np.all(np.abs(tr.ld_background.b(s) / prior - 1) < 0.3), (s, tr.ld_background.b(s))
-        assert tr.ld_background.rate(s) < 1.3 * m.ld_echo_rate, (s, tr.ld_background.rate(s) * 3600)
+        assert np.all(np.abs(tr.background(s)[0] / prior - 1) < 0.3), (s, tr.background(s)[0])
+        assert tr.background(s)[1] < 1.3 * m.ld_echo_rate, (s, tr.background(s)[1] * 3600)
     assert min(occupied) > c, occupied
     assert after < c, after
 
@@ -176,8 +176,8 @@ def test_a_new_sensor_learns_an_empty_room_that_is_louder_than_the_prior():
             worst = max(worst, 1 - tr.count_distribution()["wohn"][0])
     assert worst < 2 / 3, worst
     for s in ("a", "b"):  # from 0.64 of it (the prior) to the empty room
-        ratio = tr.ld_background.b(s)[9:] / louder[9:]
-        assert abs(ratio.mean() - 1) < 0.1 and np.all(np.abs(ratio - 1) < 0.25), tr.ld_background.b(s)
+        ratio = tr.background(s)[0][9:] / louder[9:]
+        assert abs(ratio.mean() - 1) < 0.1 and np.all(np.abs(ratio - 1) < 0.25), tr.background(s)[0]
 
 
 def test_a_sitter_the_model_starts_with_is_not_learned_where_an_echo_source_holds_them():
@@ -195,4 +195,4 @@ def test_a_sitter_the_model_starts_with_is_not_learned_where_an_echo_source_hold
     for t, sid, frame in simulate([p], sensors, 3600, walls=config.wall_segments):
         tr.process_frame(sid, t, Frame.of(frame))
     prior = ld2410.prior(m)
-    assert np.all(np.abs(tr.ld_background.b("a") / prior - 1) < 0.3), tr.ld_background.b("a")
+    assert np.all(np.abs(tr.background("a")[0] / prior - 1) < 0.3), tr.background("a")[0]

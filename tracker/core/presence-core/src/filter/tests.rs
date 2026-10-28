@@ -151,14 +151,9 @@ fn the_people_without_a_track_are_paired_by_their_distance() {
 /// The world's two sensors, both watching since t.
 fn watching(t: f64) -> Vec<SensorState> {
     let p = crate::params::Params::default();
-    vec![
-        SensorState {
-            active: true,
-            last_frame: t,
-            ..SensorState::new(&p)
-        };
-        2
-    ]
+    let mut s = SensorState::new(&p, true);
+    s.tracks.update(t, &[], &mut crate::ld2450::tracks::SegIds::default());
+    vec![s; 2]
 }
 
 fn frame(t: f64, skip: &[SegId]) -> Frame<'_> {

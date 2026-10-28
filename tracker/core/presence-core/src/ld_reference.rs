@@ -290,7 +290,7 @@ fn the_ld2410c_weighs_as_the_python_filter() {
             let si = w["si"].as_u64().expect("si") as usize;
             let at = format!("round {r}, sensor {si}");
             let learned = tracker
-                .ld_weigh(si, &cells(&w["b"]), f(&w["rate"]))
+                .weigh_ld_with(si, &cells(&w["b"]), f(&w["rate"]))
                 .expect("finite")
                 .expect("frames");
             let want = &w["learned"];

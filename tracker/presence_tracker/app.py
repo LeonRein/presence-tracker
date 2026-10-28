@@ -24,8 +24,6 @@ from . import calibration, pause
 from .calibration import Calibrator
 from .model import Config, check_config, limits_dict
 from .filter import Tracker
-from .destination import DestinationMap
-from .ghostmap import GhostMap
 from .pause import Pauses
 from .sources import Clock, ReplayClock, mqtt_source, replay_source
 from .frames import Frame, SensorClock
@@ -189,34 +187,15 @@ class App:
         self.tracker.pauses = self.pauses  # Lernen pausieren: the app's switch (pause.py)
         # where the sensors start ghost tracks (learned online, MODEL.md 4.2), each sensor's part in its
         # own frame: it follows a recalibrated sensor, a sensor mounted elsewhere starts its part over
-        gm_path = self.data_dir / "ghostmap.json"
-        if gm_path.exists():
-            try:
-                if not self.tracker.use_ghost_map(GhostMap.load(gm_path)):
-                    log.info("ghost map learned with another prior: starting a new one")
-            except Exception as e:  # noqa: BLE001 - the map from the prior (Tracker) holds
-                log.warning("ghostmap.json unreadable (%r), starting a new ghost map", e)
-                self.tracker.use_ghost_map(None)
+        self._load_learned("ghostmap.json", self.tracker.use_ghost_map, "ghost map",
+                           "learned with another prior: starting a new one")
         # what each LD2410C sees without anybody (learned online, MODEL.md 4.3), per sensor while it
         # hangs where it hung (a recalibration keeps it)
-        ld_path = self.data_dir / "ld2410.json"
-        if ld_path.exists():
-            try:
-                self.tracker.ld_background.load(ld_path)
-            except Exception as e:  # noqa: BLE001
-                log.warning("ld2410.json unreadable (%r), starting from the prior", e)
-                self.tracker.ld_background.load_dict({})
-            self.tracker.ld_background.use(self.config)
+        self._load_learned("ld2410.json", self.tracker.use_ld_background, "LD2410C background")
         # where walks go (learned online, MODEL.md 6 "Ziel"): it holds while the rooms and doors are the
         # same, else it starts empty
-        dest_path = self.data_dir / "destinations.json"
-        if dest_path.exists():
-            try:
-                if not self.tracker.use_dest_map(DestinationMap.from_dict(json.loads(dest_path.read_text()))):
-                    log.info("destination map learned with other rooms or doors: starting a new one")
-            except Exception as e:  # noqa: BLE001
-                log.warning("destinations.json unreadable (%r), starting an empty destination map", e)
-                self.tracker.use_dest_map(None)
+        self._load_learned("destinations.json", self.tracker.use_dest_map, "destination map",
+                           "learned with other rooms or doors: starting a new one")
         # what was known about the people when the app stopped (MODEL.md 5.3), moved on over the
         # time it did not run; without it (first start, another floor plan) nothing is known
         people_path = self.data_dir / "people.json"
@@ -446,15 +425,29 @@ class App:
             return False
         return True
 
+    def _load_learned(self, name: str, use, what: str, not_used: str | None = None):
+        """A learned part from its file in the data directory, if there is one: used by the tracker (it
+        checks it); unreadable, the tracker starts the part over (logged)."""
+        path = self.data_dir / name
+        if not path.exists():
+            return
+        try:
+            if use(json.loads(path.read_text())) is False and not_used:
+                log.info("%s %s", what, not_used)
+        except Exception as e:  # noqa: BLE001 - the part from the prior / empty holds
+            log.warning("%s unreadable (%r), starting a new %s", name, e, what)
+            use(None)
+
     def _learned_files(self) -> list:
         """What was learned and is known about the people, as it is now - taken in the loop, the model
         changes with every frame: [(file, its bytes, or a function packing a copy)]. A part that fails
         is logged and left out; a people's state the model refuses to save (not finite, hidden.py) is a
         model failure (_model_failed: it starts over from the last save)."""
         files = []
-        parts = [("ghostmap.json", lambda: json.dumps(self.tracker.ghost_map.to_dict()).encode()),
-                 ("ld2410.json", lambda: json.dumps(self.tracker.ld_background.to_dict()).encode()),
-                 ("destinations.json", self._destinations_packer),
+        part = self._learned_packer(self.tracker.learned_snapshot())
+        parts = [("ghostmap.json", lambda: part("ghost_map")),
+                 ("ld2410.json", lambda: part("ld_background")),
+                 ("destinations.json", lambda: part("dest_map")),
                  ("people.json", self._people_bytes),
                  ("pause.json", self._pause_bytes),
                  ("calibration.npz", self.calibrator.snapshot)]
@@ -470,10 +463,19 @@ class App:
                 files.append((self.data_dir / name, data))
         return files
 
-    def _destinations_packer(self):
-        """The destination map copied now, compressed in the thread that writes it."""
-        pack = self.tracker.dest_map.snapshot()
-        return lambda: json.dumps(pack()).encode()
+    @staticmethod
+    def _learned_packer(learned):
+        """Per part of a copy of what was learned a function packing it, all packed at once at the first
+        call - in the thread that writes them (the destination map's compression takes milliseconds)."""
+        packed = {}
+
+        def part(name: str):
+            def pack() -> bytes:
+                if not packed:
+                    packed.update(json.loads(learned.json()))
+                return json.dumps(packed[name]).encode()
+            return pack
+        return part
 
     @staticmethod
     def _write_files(files: list):
@@ -742,18 +744,17 @@ class App:
     async def h_sensormodel(self, request):
         """What one sensor sees (from the geometry) and where it starts ghost tracks (learned)."""
         return web.json_response({"maps": self.tracker.sensor_model.maps(request.query.get("sensor", ""),
-                                                                         self.tracker.ghost_map)})
+                                                                         self.tracker.ghost_rates)})
 
     async def h_import_learned(self, request):
         """Take over a ghost map learned elsewhere, e.g. offline from recordings: {"ghost_map":
         <tools/ghostmap.py output>}. Replaces the current one."""
         data = await request.json()
         if "ghost_map" in data:
-            gm = GhostMap.from_dict(data["ghost_map"])
-            gm.save(self.data_dir / "ghostmap.json")
-            used = self.tracker.use_ghost_map(gm)
+            used = self.tracker.use_ghost_map(data["ghost_map"])  # ValueError if it cannot be read
+            atomic_write(self.data_dir / "ghostmap.json", json.dumps(data["ghost_map"]).encode())
             log.info("ghost map imported, %s", "in use" if used else "not used: learned with another prior")
-        return web.json_response({"ghost_map": self.tracker.ghost_map is not None})
+        return web.json_response({"ghost_map": True})
 
     async def h_tiles(self, request):
         """The tiles (MODEL.md 5.3), for drawing where unseen people may be: per tile its square
@@ -897,7 +898,7 @@ class App:
         tr = self.tracker
         tr.reset_people()
         tr.reset_tracks()
-        tr.ld_background.pause(RESET_HOLD)
+        tr.hold_background(RESET_HOLD)
         self._model_started(tr.now)
         return web.json_response({"ok": True})
 

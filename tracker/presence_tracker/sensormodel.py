@@ -89,9 +89,9 @@ class SensorModel:
         s = self.config.sensor_by_id.get(sensor_id)
         return self.prior_pd(s, x, y) if s is not None and s.placed and s.enabled else 0.0
 
-    def maps(self, sensor_id: str, ghost_map=None) -> dict:
-        """For the UI: the sight over the house and, if given, the ghost map's rate (ghost tracks
-        per m^2 and hour; None where the sensor doesn't see)."""
+    def maps(self, sensor_id: str, ghost_rates=None) -> dict:
+        """For the UI: the sight over the house and, if given (Tracker.ghost_rates), the ghost map's
+        rate (ghost tracks per m^2 and hour; None where the sensor doesn't see)."""
         if sensor_id not in self.prior:
             return {}
         i0, j0, i1, j1 = self.box
@@ -103,11 +103,12 @@ class SensorModel:
             # [column][row], row 0 = lowest y
             "prior": [[round(float(v), 3) for v in row] for row in prior],
         }
-        if ghost_map is not None:
+        if ghost_rates is not None:
             ii, jj = np.meshgrid(np.arange(i0, i1), np.arange(j0, j1), indexing="ij")
             pts = np.stack([ORIGIN[0] + (ii.ravel() + 0.5) * CELL, ORIGIN[1] + (jj.ravel() + 0.5) * CELL], axis=1)
-            rate = ghost_map.rate(sensor_id, pts).reshape(ii.shape) * 3600
+            rate, watched = ghost_rates(sensor_id, pts)
+            rate = rate.reshape(ii.shape) * 3600
             out["ghosts"] = [[round(float(v), 4) if p > 0.05 else None for v, p in zip(row, prow)]
                              for row, prow in zip(rate, prior)]
-            out["watched_h"] = round(ghost_map.time.get(sensor_id, 0.0) / 3600, 1)
+            out["watched_h"] = round(watched / 3600, 1)
         return out

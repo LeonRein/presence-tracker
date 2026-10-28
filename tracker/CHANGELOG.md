@@ -2,6 +2,49 @@
 
 ## Unveröffentlicht
 
+## 0.38.0 (Branch `rust-core`, Phase 8 des Rust-Ports, nicht live)
+
+Der Kern lernt selbst: Geisterkarte, LD2410C-Hintergrund mit Anker und Echorate, Zielkarte samt „Ziel“, an genau den
+Stellen von 0.37.1 (docs/rust-core.md 2.0); die Pausen sind seine Eingabe. Damit ordnet niemand mehr außerhalb die
+Schritte eines Frames: `Tracker::frame` und `Tracker::step` tun alles, was `process_frame`/`step` taten.
+Spuren (ein BLAS-Thread, numpy wie inge): 7.10. bitgleich mit 0.37.1; 8.10. und 10.10. weichen ab t = 76 s bzw. 19 s
+um 1e-18 bzw. 1e-16 ab (Rundung beim Lernen des Hintergrunds, wachsend bis 7e-4/4e-4) und kippen an den bekannten
+Kippstellen: 8.10. ab 459 s (gegen ref_0311 jetzt nur 0,012 und 0 Raum-Sekunden, 0.37.1 hatte 0,070 und 6), 10.10. ab
+1305 s mit den 844 Raum-Sekunden, die schon ein anderes BLAS-Produkt dort auslöste (PLAN.md). Die Gegenprobe mit
+fast_eval steht aus (Abnahme). ab.sh 1200: 16,5 s (0.31.1 48,1 s: −66 %; 0.37.1 19,5 s). 123 Rust-, 228 Python-Tests
+(262 mit PT_CONFIGS).
+
+- **Lernen im Kern** (`learn/`, `ld2410/background.rs`): `GhostMap` (Teile je Sensor in dessen Rahmen, Glätten,
+  Vergessen, Rate und Gesamtrate je Sensor, Folgen der Posen: umgehängt = neu), `Background` (Niveau und Anker als
+  `Level`, Echos als `EchoCount`, Halten nach „Tracks zurücksetzen“, Lernen und Echorate in einem Schritt), `DestGeometry`
+  (in der Welt; Zellen, Räume über Trennwände, Nachbarn ohne Wand, Türen, Fingerabdruck = Pythons Zeichenkette),
+  `DestMap`, `Learner` (Gänge, Übergabe, Stehen) und `targets` („Ziel“ als Ausgabe im Kern, im Ausgabe-Cache).
+  `Learned` bündelt die drei; jeder Schritt leiht nur den Lerner, den er füttert. `Pauses` (Intervalle, geprüft).
+- **Lernreihenfolge als Rust-Tests**, je Zeile von Entwurf 2.0 einer (Geburt liest die Karte nach den Enden desselben
+  Frames; Hintergrund mit b und Mitteln vom Anfang der Bewertung; Echorate-Korrektur mit der vorher gelesenen Rate;
+  Zielkarte nach Bewegen und Zurückgeben; in einer Pause nichts). `tests/test_learning_order.py` entfällt dafür.
+- **M4 (REVIEW_phase7):** Die Zeit des letzten Frames steht nur noch in der Spurstufe des Sensors (`Ld2450Tracks`),
+  `SensorState::last_frame` liest sie; `set_sensors`, `rt.last_frame` und `active` aus der Hülle entfallen (`active` =
+  `SensorPlan.in_use`). `delta`/zensiert, das Filtern der beendeten Spuren, `_evidence`, `_end_silent`, `_flush` mit der
+  LD2410C-Bewertung, `_recycle`, `_predict_gap`, der Start beim ersten Frame und `_recalibrated` sind im Kern
+  (`frame`, `step`, `recalibrate`, `restore(state, gespeichert)`).
+- **Ereignisse statt Rückrufe:** `frame`/`step`/`recalibrate` geben `Event::{Watch, TrackEnd, Branch}` zurück; die Hülle
+  ruft damit die Listener wie bisher (Nutzlasten gleich). Ein Unterschied: Der Listener „frame“ hört jetzt nach den
+  Schritten des Frames statt davor.
+- **Formate unverändert** (`formats.rs`: numpys und Pythons Runden, base64/zlib, sha1-Fingerabdruck): ghostmap.json,
+  ld2410.json, destinations.json werden vom Kern gelesen und geschrieben; Eingaben von außen werden geprüft
+  (`LearnedError` mit Namen: Feld, Gitter, Größe je Sensor, gepackte Zahlen, anderer Grundriss), Größen vor dem Anlegen.
+  Strenger als 0.37.1: ein Hintergrund mit einem kaputten Teil wird ganz abgelehnt (die App beginnt ihn neu) statt den
+  Teil still zu verwerfen; Teile ohne Pose werden nicht gelesen. Python von 0.37.1 (`ghostmap.GhostMap`,
+  `ld2410.Background`, `destination.DestinationMap`/`Geometry`) liest, was der Kern schreibt – die Tests prüfen das, die
+  Python-Klassen bleiben dafür bis Phase 9.
+- **Hülle/App:** `use_ghost_map/use_ld_background/use_dest_map` nehmen Dicts (oder None), `learned()`/`load_learned`,
+  `learned_snapshot().json()` packt im Schreib-Thread, `hold_background`, `background(sid)`, `ghost_rates`;
+  `sensormodel.maps` nimmt `ghost_rates`; `Pauses.changes` zählt Änderungen, die Hülle reicht sie dann an den Kern.
+  `report_eval`/`baseline_eval` geben `learned()` weiter. Neue Modellparameter im JSON des Kerns: `ghost_prior_ghosts`,
+  `ld_background`, `ld_prior_time`, `ld_forget`, `ld_anchor_forget`, `ld_anchor_quiet`, `ld_echo_rate`,
+  `ld_echo_prior_time`, `dest_prior_walks`; `target_threshold(s)` in den Ausgabeparametern.
+
 ## 0.37.1 (Branch `rust-core`, nach Leons Prüfung von Phase 7, nicht live)
 
 Spuren aller drei Referenzstunden byte-gleich mit 0.37.0; ab.sh 1200 19,5 s (0.31.1 48,0 s: −59 %; `Frame.of` mitgezählt);

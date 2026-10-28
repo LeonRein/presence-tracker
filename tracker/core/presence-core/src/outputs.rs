@@ -10,6 +10,7 @@ use crate::filter::holders::Obj;
 use crate::filter::mixture::Mixture;
 use crate::filter::objects::Objects;
 use crate::geometry::Point;
+use crate::learn::destination::{self, DestMap, Target};
 use crate::motion::imm::walk_ahead;
 use crate::params::WALK;
 use crate::plan::{Place, RoomIdx, Zone, ZoneRole};
@@ -34,6 +35,7 @@ pub struct OutputCache {
     counts: Option<Distributions>,
     places: Option<Distributions>,
     entering: Option<Vec<Entering>>,
+    targets: Option<Vec<Target>>,
 }
 
 impl OutputCache {
@@ -59,6 +61,15 @@ impl OutputCache {
     pub fn entering(&mut self, filter: &Filter, world: &World) -> &[Entering] {
         self.entering
             .get_or_insert_with(|| entering(filter, world, world.outputs.lead_time))
+    }
+
+    /// "Ziel" (after "wird betreten", its prior).
+    pub fn targets(&mut self, filter: &Filter, world: &World, map: &DestMap) -> &[Target] {
+        if self.targets.is_none() {
+            let entering = self.entering(filter, world);
+            self.targets = Some(destination::targets(filter, world, map, entering));
+        }
+        self.targets.as_deref().expect("just computed")
     }
 
     /// The three at once (for the zones), each computed if missing, in this order.
@@ -160,9 +171,9 @@ fn density_places(d: &DensityRef, shape: DensityShape) -> Vec<f64> {
     out
 }
 
-/// Probability per place of an object (Tracker._place_probs): a mixture is in view but for its part
+/// Probability per place of an object (Tracker._place_probs, Hidden.places): a mixture is in view but for its part
 /// gone through a door.
-fn place_probs(objects: &Objects, obj: Obj) -> Vec<f64> {
+pub(crate) fn places_of(objects: &Objects, obj: Obj) -> Vec<f64> {
     let densities = objects.densities();
     let shape = densities.shape();
     match obj {
@@ -296,7 +307,7 @@ pub fn count_distribution(filter: &Filter, world: &World) -> Distributions {
 pub fn place_distribution(filter: &Filter) -> Distributions {
     let objects = filter.objects();
     counts(filter, |obj| {
-        let mut p = place_probs(objects, obj);
+        let mut p = places_of(objects, obj);
         let house = pairwise_sum(&p[..p.len() - 1]);
         p.push(house);
         p
@@ -401,7 +412,7 @@ pub fn persons(filter: &Filter, world: &World) -> Vec<Person> {
     shown_people(filter)
         .into_iter()
         .map(|(id, obj)| {
-            let places = place_probs(objects, obj);
+            let places = places_of(objects, obj);
             let in_view = argmax(&places) == 0;
             let (lost, r, shown) = match obj {
                 Obj::Density(d) => {
@@ -937,11 +948,8 @@ mod tests {
     #[test]
     fn a_person_at_a_place_is_counted_there() {
         let mut tr = Tracker::new(testing::flat());
-        tr.reset_people(
-            0.0,
-            Some(&[Start::Place(Place::Observed), Start::Place(Place::Outside)]),
-        )
-        .expect("places");
+        tr.reset_people(Some(&[Start::Place(Place::Observed), Start::Place(Place::Outside)]))
+            .expect("places");
         // the room wohn and in view: one person
         let counts = tr.count_distribution().clone();
         assert!(
@@ -965,8 +973,7 @@ mod tests {
     #[test]
     fn the_outputs_are_computed_once_per_epoch_and_never_pass_for_another() {
         let mut tr = Tracker::new(testing::flat());
-        tr.reset_people(0.0, Some(&[Start::Place(Place::Observed)]))
-            .expect("places");
+        tr.reset_people(Some(&[Start::Place(Place::Observed)])).expect("places");
         let before = tr.count_distribution().clone();
         let epoch = tr.filter().epoch();
         // the person goes out without a new epoch (as a weighing does between moves): the outputs
@@ -977,12 +984,11 @@ mod tests {
         assert_eq!(f.epoch(), epoch);
         assert_eq!(tr.count_distribution(), &before);
         // a new epoch: computed anew
-        tr.event(0.0);
+        tr.filter_mut().void_cache();
         assert!(tr.count_distribution()[0][0] > 0.99);
         // starting over is a new epoch, and the counter never goes back
         let at = tr.filter().epoch();
-        tr.reset_people(0.0, Some(&[Start::Place(Place::Observed)]))
-            .expect("places");
+        tr.reset_people(Some(&[Start::Place(Place::Observed)])).expect("places");
         assert!(tr.filter().epoch() > at);
         assert_eq!(tr.count_distribution(), &before);
     }
@@ -991,7 +997,7 @@ mod tests {
     /// hypothesis, with the unknown ones none).
     fn walking(at: Point, v: Point) -> Tracker {
         let mut tr = Tracker::new(testing::flat());
-        tr.reset_people(0.0, Some(&[])).expect("places");
+        tr.reset_people(Some(&[])).expect("places");
         let s = testing::shapes();
         let mut modes = [Kalman::zeros(2), Kalman::zeros(2)];
         for (k, g) in modes.iter_mut().enumerate() {
@@ -1112,8 +1118,8 @@ mod tests {
         // the holders: the walker, the known one, the unknown ones
         let (m, d) = (tr.filter().holders().objects()[0], tr.filter().holders().objects()[1]);
         assert!((in_view(tr.world(), objects, m).iter().sum::<f64>() - 0.75).abs() < 1e-12);
-        assert!(close(&place_probs(objects, m), &[0.75, 0.25], 1e-15));
-        assert!(close(&place_probs(objects, d), &[0.4, 0.0], 1e-15));
+        assert!(close(&places_of(objects, m), &[0.75, 0.25], 1e-15));
+        assert!(close(&places_of(objects, d), &[0.4, 0.0], 1e-15));
         // the display: the first hypothesis' people that rather exist than not - the walker, not the
         // known one (r 0.4); its cloud the standing Gaussian with 3/4, no tiles (its part is out)
         let shown = tr.persons();
@@ -1127,7 +1133,7 @@ mod tests {
     #[test]
     fn a_person_without_a_track_is_shown_at_the_densest_tile() {
         let mut tr = Tracker::new(testing::flat());
-        tr.reset_people(0.0, Some(&[])).expect("places");
+        tr.reset_people(Some(&[])).expect("places");
         let world = testing::flat();
         let f = tr.filter_mut();
         let d = f
@@ -1160,7 +1166,8 @@ mod tests {
         // a person with a track standing in the sofa area (walking at 0 m/s: still): the room counts
         // them by the filter and is occupied by it; the area counts the display's person in it
         let mut tr = walking([1.0, 4.0], [0.0, 0.0]);
-        let (zones, house) = tr.zone_numbers(0.0, Some(0.0));
+        tr.start_at(0.0);
+        let (zones, house) = tr.zone_numbers(0.0);
         let (room, sofa) = (zones[0], zones[1]);
         assert_eq!((room.count, room.moving, room.still), (1, 0, 1));
         assert!((room.probability.expect("the filter's") - 1.0).abs() < 1e-12);
@@ -1172,7 +1179,7 @@ mod tests {
         assert!(sofa.entering.is_some() && room.entering.is_some() && !sofa.approaching);
         assert_eq!((house.count, house.moving, house.still), (1, 0, 1));
         // nothing heard from its own sensor for longer than silent_after: not available
-        let (zones, _) = tr.zone_numbers(31.0, Some(0.0));
+        let (zones, _) = tr.zone_numbers(31.0);
         assert!(!zones[0].available && zones[1].available);
     }
 

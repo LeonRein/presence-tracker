@@ -4,6 +4,7 @@
 //! moving 0..8 and still 2..8. Each energy ~ Gamma(shape alpha, mean mu), 100 censored, with mu =
 //! background + sum over the people of their expected energy (incoherent superposition).
 
+pub mod background;
 pub mod echoes;
 pub mod likelihood;
 pub mod profile;

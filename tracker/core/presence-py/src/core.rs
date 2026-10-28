@@ -12,21 +12,21 @@ use pyo3::types::{PyDict, PyList};
 use crate::frames::PyFrame;
 
 use presence_core::config::Config;
-use presence_core::filter::branch::{Found, Frame};
 use presence_core::filter::densities::{Amp, DensityData, DensityShape, Kind};
 use presence_core::filter::hyp::Owner;
-use presence_core::filter::mixture::{NewTrack, SegId};
 use presence_core::filter::pool::PoolId;
 use presence_core::filter::{NotFinite, PeopleState, Start};
 use presence_core::geometry::Point;
 use presence_core::ld2410::CELLS;
-use presence_core::ld2410::sensor::LdCollect;
+use presence_core::learn::pauses::{Pause, Pauses};
+use presence_core::learn::{Learned, LearnedError};
 use presence_core::outputs::{Decision, Source};
 use presence_core::params::{LostKind, Params, Shapes};
 use presence_core::plan::{Place, RoomIdx};
 use presence_core::sensors::SensorSet;
-use presence_core::tracker::Tracker;
+use presence_core::tracker::{Event, Fault, Tracker};
 use presence_core::world::{DoorTile, LdExport, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
+use serde_json::Value;
 
 fn item<'py>(d: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
     d.get_item(key)?
@@ -258,6 +258,65 @@ fn source_name(source: Source) -> &'static str {
     }
 }
 
+fn fault(e: Fault) -> PyErr {
+    match e {
+        Fault::Call(e) => PyValueError::new_err(e.to_string()),
+        Fault::NotFinite(e) => not_finite(e),
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)] // map_err hands the error over by value
+fn learned_error(e: LearnedError) -> PyErr {
+    PyValueError::new_err(e.to_string())
+}
+
+fn json_of(text: &str) -> PyResult<Value> {
+    serde_json::from_str(text).map_err(|e| PyValueError::new_err(format!("not readable: {e}")))
+}
+
+/// The events for the shell's listeners: ("watch", si, delta), ("track_end", si, (x, y), p_ghost, life,
+/// data_lost), ("branch", si, seg, (x, y), refind, [(logw, category)]).
+fn events_out(py: Python<'_>, events: Vec<Event>) -> PyResult<Bound<'_, PyList>> {
+    let out = PyList::empty(py);
+    for e in events {
+        match e {
+            Event::Watch { si, delta } => out.append(("watch", si, delta))?,
+            Event::TrackEnd {
+                si,
+                z0,
+                p_ghost,
+                life,
+                data_lost,
+            } => out.append(("track_end", si, (z0[0], z0[1]), p_ghost, life, data_lost))?,
+            Event::Branch {
+                si,
+                seg,
+                z,
+                refind,
+                children,
+                ..
+            } => {
+                let children: Vec<(f64, &str)> = children.into_iter().map(|(w, c)| (w, c.name())).collect();
+                out.append(("branch", si, seg.0, (z[0], z[1]), refind, children))?
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// What was learned, copied from the tracker (Core.learned): packed in its saved formats by json(),
+/// which lets other threads run meanwhile (the app writes it in a thread).
+#[pyclass(module = "presence_core", name = "Learned", frozen)]
+pub struct PyLearned(Learned);
+
+#[pymethods]
+impl PyLearned {
+    /// {"ghost_map", "ld_background", "dest_map"} as JSON.
+    fn json(&self, py: Python<'_>) -> String {
+        py.detach(|| self.0.to_json().to_string())
+    }
+}
+
 /// The Rust tracker for the Python shell: converts, nothing more (the steps are presence_core's).
 #[pyclass(module = "presence_core")]
 pub struct Core {
@@ -372,11 +431,6 @@ impl Core {
         (t.n, t.regions, t.ages)
     }
 
-    /// Per sensor whether its frames count and when its last frame came.
-    fn set_sensors(&mut self, sensors: Vec<(bool, f64)>) {
-        self.tracker.set_sensors(&sensors);
-    }
-
     #[getter]
     fn serial(&self) -> u64 {
         self.serial
@@ -393,132 +447,162 @@ impl Core {
         self.tracker.filter().flushed()
     }
 
-    #[setter]
-    fn set_flushed(&mut self, t: f64) {
-        self.tracker.set_flushed(t);
-        self.changed();
-    }
-
     #[getter]
     fn loglik(&self) -> (f64, f64) {
         self.tracker.filter().loglik()
     }
 
-    #[setter]
-    fn set_loglik(&mut self, v: (f64, f64)) {
-        self.tracker.set_loglik(v);
+    /// When the model started (None: not yet) and its time now.
+    #[getter]
+    fn start(&self) -> Option<f64> {
+        self.tracker.start()
     }
 
-    fn clear(&mut self, t: f64) {
-        self.tracker.clear(t);
+    #[getter]
+    fn now(&self) -> f64 {
+        self.tracker.now()
+    }
+
+    /// The model starts at t (a tool's given start).
+    fn start_at(&mut self, t: f64) {
+        self.tracker.start_at(t);
         self.changed();
     }
 
-    fn flush(&mut self, py: Python<'_>, t: f64) {
-        let tracker = &mut self.tracker;
-        py.detach(|| tracker.flush(t));
-        self.changed();
-    }
-
-    fn event(&mut self, py: Python<'_>, t: f64) {
-        let tracker = &mut self.tracker;
-        py.detach(|| tracker.event(t));
-        self.changed();
-    }
-
-    fn watch(&mut self, si: usize, delta: f64, ghost_total: f64) -> PyResult<()> {
-        self.tracker.watch(self.sensor(si)?, delta, ghost_total);
-        self.changed();
-        Ok(())
-    }
-
-    /// A checked frame of sensor si at t (ValueError, and nothing changed, for a sensor there is not or
-    /// a time that is no number): {"detections": [{pos, local, speed, hidden, stale}], "born": [(seg,
-    /// x, y)], "ended": [seg], "data_lost"}. Kept in the core for the steps of its evidence.
+    /// A frame of the sensor with this id at t (Tracker::frame): the events for the listeners. ValueError
+    /// for a time that is no number, FloatingPointError if the weights are no numbers.
     fn frame<'py>(
         &mut self,
         py: Python<'py>,
-        si: usize,
+        id: &str,
         t: f64,
         frame: &Bound<'py, PyFrame>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let read = self
-            .tracker
-            .frame(si, t, &frame.get().0)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let detections = PyList::empty(py);
-        for (j, d) in read.detections.iter().enumerate() {
-            let det = PyDict::new(py);
-            det.set_item("pos", (d.pos[0], d.pos[1]))?;
-            let [lx, ly] = d.target.local();
-            det.set_item("local", (lx, ly))?;
-            det.set_item("speed", d.speed)?;
-            det.set_item("hidden", d.hidden)?;
-            // held by the LD2450 (coasted, frozen): no measurement
-            det.set_item("stale", !d.hidden && !read.events.measures(j))?;
-            detections.append(det)?;
-        }
-        let at = |det: usize| read.detections[det].pos;
-        let born: Vec<(u64, f64, f64)> = read
-            .events
-            .born
+    ) -> PyResult<Bound<'py, PyList>> {
+        let (tracker, frame) = (&mut self.tracker, &frame.get().0);
+        let events = py.detach(|| tracker.frame(id, t, frame));
+        self.changed();
+        events_out(py, events.map_err(fault)?)
+    }
+
+    /// The detections of sensor si's last frame: (x, y, lx, ly, speed, hidden, stale - held by the LD2450,
+    /// no measurement).
+    #[allow(clippy::type_complexity)]
+    fn detections(&self, si: usize) -> PyResult<Vec<(f64, f64, f64, f64, f64, bool, bool)>> {
+        let read = self.tracker.sensor_frame(self.sensor(si)?);
+        Ok(read
+            .detections
             .iter()
-            .map(|b| (b.seg.0, at(b.det)[0], at(b.det)[1]))
-            .collect();
-        let ended: Vec<u64> = read.events.ended.iter().map(|s| s.0).collect();
-        let out = PyDict::new(py);
-        out.set_item("detections", detections)?;
-        out.set_item("born", born)?;
-        out.set_item("ended", ended)?;
-        out.set_item("data_lost", read.events.data_lost)?;
+            .zip(&read.measured)
+            .map(|(d, &measured)| {
+                let [lx, ly] = d.target.local();
+                (d.pos[0], d.pos[1], lx, ly, d.speed, d.hidden, !d.hidden && !measured)
+            })
+            .collect())
+    }
+
+    /// Time of sensor si's last frame (-inf: none since the start or its tracks' reset).
+    fn last_frame(&self, si: usize) -> PyResult<f64> {
+        Ok(self.tracker.last_frame(self.sensor(si)?))
+    }
+
+    /// Time goes on to t (Tracker::step): the events for the listeners.
+    fn step<'py>(&mut self, py: Python<'py>, t: f64) -> PyResult<Bound<'py, PyList>> {
+        let tracker = &mut self.tracker;
+        let events = py.detach(|| tracker.step(t));
         self.changed();
-        Ok(out)
+        events_out(py, events.map_err(not_finite)?)
     }
 
-    /// Whether the last frame of sensor si concerns everybody (a track born, ended or found again).
-    fn concerns_all(&self, si: usize) -> PyResult<bool> {
-        Ok(self.tracker.concerns_all(self.sensor(si)?))
-    }
-
-    /// Step 2 of sensor si's last frame: its measured, lost and held tracks (taken out: a second call
-    /// does nothing); returns the tracks found again (seg, x, y).
-    fn track_events(&mut self, si: usize) -> PyResult<Vec<(u64, f64, f64)>> {
-        let refound = self.tracker.track_events(self.sensor(si)?);
+    /// Sensors changed, the people's world not: their tracks end, then the new world (Tracker::recalibrate).
+    #[pyo3(signature = (changed, config, model, silent_after, export=None))]
+    fn recalibrate<'py>(
+        &mut self,
+        py: Python<'py>,
+        changed: Vec<usize>,
+        config: &str,
+        model: &str,
+        silent_after: f64,
+        export: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let changed = changed
+            .into_iter()
+            .map(|si| self.sensor(si))
+            .collect::<PyResult<SensorSet>>()?;
+        let world = world_of(config, model, silent_after, export)?;
+        let events = self.tracker.recalibrate(changed, world);
         self.changed();
-        Ok(refound.into_iter().map(|(s, [x, y])| (s.0, x, y)).collect())
+        events_out(py, events.map_err(fault)?)
     }
 
-    /// The sensors silent for more than LOST s at t with live tracks: (si, last frame + LOST, the
-    /// tracks); their LD2450 tracks are forgotten.
-    fn data_lost(&mut self, t: f64) -> Vec<(usize, f64, Vec<u64>)> {
-        let lost = self.tracker.data_lost(t);
+    /// The LD2450 tracks of all sensors start over (their next frames are a start).
+    fn reset_tracks(&mut self) {
+        self.tracker.reset_tracks();
         self.changed();
-        lost.into_iter()
-            .map(|d| (d.si, d.since, d.live.into_iter().map(|s| s.0).collect()))
-            .collect()
     }
 
-    /// The LD2450 tracks of sensor si start over (its next frame is a start).
-    fn reset_tracks(&mut self, si: usize) -> PyResult<()> {
-        self.tracker.reset_tracks(self.sensor(si)?);
+    /// The intervals [start, end) in which nothing is learned (end None: still paused).
+    fn set_pauses(&mut self, pauses: Vec<(f64, Option<f64>)>) -> PyResult<()> {
+        let pauses = pauses.into_iter().map(|(start, end)| Pause { start, end }).collect();
+        self.tracker.set_pauses(Pauses::new(pauses).map_err(learned_error)?);
+        Ok(())
+    }
+
+    /// Use a saved ghost map (its JSON; None: the prior's): whether it is used (learned with this prior).
+    #[pyo3(signature = (saved=None))]
+    fn use_ghost_map(&mut self, saved: Option<&str>) -> PyResult<bool> {
+        let saved = saved.map(json_of).transpose()?;
+        let used = self.tracker.use_ghost_map(saved.as_ref()).map_err(learned_error)?;
+        self.changed();
+        Ok(used)
+    }
+
+    /// Use a saved LD2410C background (its JSON; None: nothing learned).
+    #[pyo3(signature = (saved=None))]
+    fn use_ld_background(&mut self, saved: Option<&str>) -> PyResult<()> {
+        let saved = saved.map(json_of).transpose()?;
+        self.tracker.use_background(saved.as_ref()).map_err(learned_error)?;
         self.changed();
         Ok(())
     }
 
-    fn has_track(&self, seg: u64) -> bool {
-        self.tracker.filter().tracks().get(SegId(seg)).is_some()
+    /// Use a saved destination map (its JSON; None: empty): whether it is used (learned on this plan).
+    #[pyo3(signature = (saved=None))]
+    fn use_dest_map(&mut self, saved: Option<&str>) -> PyResult<bool> {
+        let saved = saved.map(json_of).transpose()?;
+        let used = self.tracker.use_dest_map(saved.as_ref()).map_err(learned_error)?;
+        self.changed();
+        Ok(used)
+    }
+
+    /// A copy of what was learned, to be packed (json()) without the tracker, e.g. in a thread.
+    fn learned(&self) -> PyLearned {
+        PyLearned(self.tracker.learned().clone()) // a snapshot: the model goes on meanwhile
+    }
+
+    /// The LD2410Cs learn nothing from their next `seconds` s of frames.
+    fn hold_background(&mut self, seconds: f64) {
+        self.tracker.hold_background(seconds);
+    }
+
+    /// The ghost map's rate (per m^2 and s) of sensor si at the points, and s it watched.
+    fn ghost_rates(&self, si: usize, points: Vec<Point>) -> PyResult<(Vec<f64>, f64)> {
+        Ok(self.tracker.ghost_rates(self.sensor(si)?, &points))
+    }
+
+    /// The background of sensor si's LD2410C (16 cells) and its echo sources' rate (per s).
+    fn background(&self, si: usize) -> PyResult<(Vec<f64>, f64)> {
+        let (b, rate) = self.tracker.background(self.sensor(si)?);
+        Ok((b.to_vec(), rate))
+    }
+
+    /// The destination map's walks counted.
+    fn dest_walks(&self) -> f64 {
+        self.tracker.learned().destinations.walks()
     }
 
     fn live_tracks(&self, si: usize) -> PyResult<Vec<u64>> {
         let tracks = self.tracker.filter().tracks().of(self.sensor(si)?);
         Ok(tracks.iter().map(|s| s.0).collect())
-    }
-
-    /// A track ends: (z0, P(ghost), life, born) for what the ghost map learns; None if not live.
-    fn end(&mut self, seg: u64, t: f64, data_lost: bool) -> Option<((f64, f64), f64, f64, f64)> {
-        let e = self.tracker.end(SegId(seg), t, data_lost);
-        self.changed();
-        e.map(|e| ((e.z0[0], e.z0[1]), e.p_ghost, e.life, e.born))
     }
 
     fn merge(&mut self) {
@@ -535,63 +619,6 @@ impl Core {
     fn normalize(&mut self, dropped: f64) -> PyResult<()> {
         self.changed();
         self.tracker.normalize(dropped).map_err(not_finite)
-    }
-
-    fn censor(&mut self, si: usize) -> PyResult<()> {
-        self.tracker.censor(self.sensor(si)?);
-        self.changed();
-        Ok(())
-    }
-
-    /// Step 4 of a frame: per track found (seg, x, y, var, map_rate) the children's weights and
-    /// what each says.
-    #[allow(clippy::too_many_arguments)]
-    fn branch_all(
-        &mut self,
-        si: usize,
-        t: f64,
-        last: f64,
-        censored: bool,
-        skip: Vec<u64>,
-        prior_rate: f64,
-        found: Vec<(u64, f64, f64, f64, f64)>,
-    ) -> PyResult<Vec<Vec<(f64, &'static str)>>> {
-        let skip: Vec<SegId> = skip.into_iter().map(SegId).collect();
-        let frame = Frame {
-            si: self.sensor(si)?,
-            t,
-            last,
-            censored,
-            skip: &skip,
-            prior_rate,
-        };
-        let found: Vec<Found> = found
-            .into_iter()
-            .map(|(seg, x, y, var, map_rate)| Found {
-                track: NewTrack {
-                    seg: SegId(seg),
-                    z: [x, y],
-                    var,
-                },
-                map_rate,
-            })
-            .collect();
-        self.changed();
-        let out = self.tracker.branch_all(&frame, &found).map_err(not_finite)?;
-        Ok(out
-            .into_iter()
-            .map(|cs| cs.into_iter().map(|(w, c)| (w, c.name())).collect())
-            .collect())
-    }
-
-    fn recycle(&mut self) -> bool {
-        self.changed();
-        self.tracker.recycle()
-    }
-
-    fn predict_gap(&mut self, gap: f64, placed: Vec<usize>) {
-        self.tracker.predict_gap(gap, placed.into_iter().collect::<SensorSet>());
-        self.changed();
     }
 
     fn hyp_weights(&self) -> Vec<f64> {
@@ -713,14 +740,6 @@ impl Core {
         Ok((densities, mixtures, hyps, tracks))
     }
 
-    /// The LD2410C part of sensor si's last frame, if it has one (taken out: a second call does
-    /// nothing).
-    fn ld_frame(&mut self, si: usize) -> PyResult<()> {
-        self.tracker.ld_frame(self.sensor(si)?);
-        self.changed();
-        Ok(())
-    }
-
     /// The energies of sensor si's last LD2410C frame that counted (16), or None.
     fn ld_last<'py>(&self, py: Python<'py>, si: usize) -> PyResult<Option<Out<'py>>> {
         self.tracker
@@ -730,70 +749,12 @@ impl Core {
             .transpose()
     }
 
-    /// What sensor si's LD2410C frames left: (t, last energies, target_t).
-    fn ld_collect(&self, si: usize) -> PyResult<(f64, Option<Vec<f64>>, f64)> {
-        let c = self.tracker.ld_collect(self.sensor(si)?);
-        Ok((c.t, c.last.map(|e| e.to_vec()), c.target_t))
-    }
-
-    fn set_ld_collect(&mut self, si: usize, collect: (f64, Option<[f64; CELLS]>, f64)) -> PyResult<()> {
-        let (t, last, target_t) = collect;
-        self.tracker
-            .set_ld_collect(self.sensor(si)?, LdCollect { t, last, target_t });
-        Ok(())
-    }
-
-    /// The sensors whose LD2410C has gathered long enough to be weighed.
-    fn ld_due(&self) -> Vec<usize> {
-        self.tracker.ld_due()
-    }
-
-    /// Weighs by the LD2410C si's frames given its background b and its echo sources' rate; what the
-    /// background learns (mus (H x 16), prior_w, nobody, echo_off, began, the frames' time, t_e,
-    /// t_cens and t_target, alpha, target_t), or None if there were no frames.
-    fn ld_weigh<'py>(
-        &mut self,
-        py: Python<'py>,
-        si: usize,
-        b: [f64; CELLS],
-        rate: f64,
-    ) -> PyResult<Option<Bound<'py, PyDict>>> {
-        let si = self.sensor(si)?;
-        self.changed();
-        let Some(l) = self.tracker.ld_weigh(si, &b, rate).map_err(not_finite)? else {
-            return Ok(None);
-        };
-        let mus: Vec<f64> = l.mus.iter().flatten().copied().collect();
-        let st = &l.stats;
-        let out = PyDict::new(py);
-        out.set_item("mus", array(py, &mus, &[l.mus.len(), CELLS])?)?;
-        out.set_item("prior_w", array(py, &l.prior_w, &[l.prior_w.len()])?)?;
-        out.set_item("nobody", l.nobody)?;
-        out.set_item("echo_off", l.echo_off)?;
-        out.set_item("began", l.began)?;
-        out.set_item("time", st.time)?;
-        out.set_item("t_e", array(py, &st.t_e, &[CELLS])?)?;
-        out.set_item("t_cens", array(py, &st.t_cens, &[CELLS])?)?;
-        out.set_item("t_target", st.t_target)?;
-        out.set_item("alpha", array(py, &self.tracker.world().ld_lik.alpha, &[CELLS])?)?;
-        out.set_item("target_t", l.target_t)?;
-        Ok(Some(out))
-    }
-
-    /// The LD2410C of sensor si starts over (recalibrated).
-    fn ld_reset(&mut self, si: usize) -> PyResult<()> {
-        self.tracker.ld_reset(self.sensor(si)?);
-        self.changed();
-        Ok(())
-    }
-
     // ---------------------------------------------------------------- starts
 
-    /// Start over at t (Tracker::reset_people): nothing known (people None), or known people at
-    /// these places (a place's index, None: anywhere) and nobody unknown; ValueError for a place there
-    /// is not.
-    #[pyo3(signature = (t, people=None))]
-    fn reset_people(&mut self, t: f64, people: Option<Vec<Option<usize>>>) -> PyResult<()> {
+    /// Start over now (Tracker::reset_people): nothing known (people None), or known people at these
+    /// places (a place's index, None: anywhere) and nobody unknown; ValueError for a place there is not.
+    #[pyo3(signature = (people=None))]
+    fn reset_people(&mut self, people: Option<Vec<Option<usize>>>) -> PyResult<()> {
         let regions = self.tracker.world().plan.regions.len();
         let start = |p: Option<usize>| match p {
             None => Ok(Start::Anywhere),
@@ -803,23 +764,23 @@ impl Core {
         };
         let people: Option<Vec<Start>> = people.map(|v| v.into_iter().map(start).collect()).transpose()?;
         self.tracker
-            .reset_people(t, people.as_deref())
+            .reset_people(people.as_deref())
             .map_err(PyValueError::new_err)?;
         self.changed();
         Ok(())
     }
 
-    /// Start over at t from a saved state the shell decoded (Tracker::restore): the densities and per
-    /// hypothesis (logw, people, unknown) as indices into them. What does not fit (None: it fits; then
-    /// nothing changed).
+    /// Start over now from a state saved at `saved` the shell decoded (Tracker::restore): the densities
+    /// and per hypothesis (logw, people, unknown) as indices into them. What does not fit (None: it
+    /// fits; then nothing changed).
     fn restore(
         &mut self,
-        t: f64,
+        saved: f64,
         densities: Vec<DensityIn<'_>>,
         hyps: Vec<(f64, Vec<usize>, usize)>,
     ) -> PyResult<Option<String>> {
         let densities = densities.iter().map(density_in).collect::<PyResult<_>>()?;
-        let refused = self.tracker.restore(t, PeopleState { hyps, densities }).err();
+        let refused = self.tracker.restore(PeopleState { hyps, densities }, saved).err();
         self.changed();
         Ok(refused)
     }
@@ -830,7 +791,7 @@ impl Core {
         self.changed();
     }
 
-    /// What the rooms' own LD2450s saw in an earlier core goes on here (the shell's rebuild).
+    /// What an earlier core saw, learned and gathered goes on here (the shell's rebuild).
     fn adopt(&mut self, mut old: PyRefMut<'_, Core>) {
         self.tracker.adopt(&mut old.tracker);
     }
@@ -860,6 +821,34 @@ impl Core {
         py.detach(|| tracker.entering())
             .iter()
             .map(|e| (e.p, e.distance, e.eta, e.person))
+            .collect()
+    }
+
+    /// Per observed room "Ziel": (p, on, map, weight, walks, from (room id), distance, eta, person).
+    #[allow(clippy::type_complexity)]
+    fn targets(
+        &mut self,
+        py: Python<'_>,
+    ) -> Vec<(
+        f64,
+        bool,
+        f64,
+        f64,
+        f64,
+        Option<String>,
+        Option<f64>,
+        Option<f64>,
+        Option<usize>,
+    )> {
+        let tracker = &mut self.tracker;
+        let targets = py.detach(|| tracker.targets().to_vec());
+        let plan = &self.tracker.world().plan;
+        targets
+            .into_iter()
+            .map(|t| {
+                let from = t.from.map(|k| plan.room(k).id.clone());
+                (t.p, t.on, t.map, t.weight, t.walks, from, t.distance, t.eta, t.person)
+            })
             .collect()
     }
 
@@ -897,30 +886,6 @@ impl Core {
             .collect()
     }
 
-    /// The people with tracks walking with P(walking) >= ENTER_MIN_WALK, (P(walking), x, y, vx, vy); per
-    /// hypothesis the walkers it holds with their place among its people; the most probable hypothesis.
-    #[allow(clippy::type_complexity)]
-    fn walkers(&self) -> (Vec<(f64, f64, f64, f64, f64)>, Vec<Vec<(usize, usize)>>, usize) {
-        let found = self.tracker.walkers();
-        let walkers = found
-            .walkers
-            .iter()
-            .map(|w| (w.walking, w.at[0], w.at[1], w.velocity[0], w.velocity[1]))
-            .collect();
-        let held = found
-            .held
-            .iter()
-            .map(|h| h.iter().map(|x| (x.walker, x.place)).collect())
-            .collect();
-        (walkers, held, found.best)
-    }
-
-    /// The thresholds of the outputs: of P(somebody there) for occupied, of p_enter for "wird betreten".
-    fn thresholds(&self) -> (f64, f64) {
-        let o = &self.tracker.world().outputs;
-        (o.occupied_above(), o.entering_above())
-    }
-
     /// Per zone of the home (in the plan's order: the configuration's) its id and numbers - count,
     /// probability, decided (None: no decision; else (occupied, source)), moving, still, entering
     /// (p, distance, eta, person), approaching, available -, and the house's (count, moving, still).
@@ -929,10 +894,9 @@ impl Core {
         &mut self,
         py: Python<'py>,
         now: f64,
-        start: Option<f64>,
     ) -> PyResult<(Bound<'py, PyList>, (usize, usize, usize))> {
         let tracker = &mut self.tracker;
-        let (zones, house) = py.detach(|| tracker.zone_numbers(now, start));
+        let (zones, house) = py.detach(|| tracker.zone_numbers(now));
         let out = PyList::empty(py);
         for (z, n) in self.tracker.world().plan.home().zip(&zones) {
             let decided = match n.decided {
@@ -956,19 +920,20 @@ impl Core {
         Ok((out, (house.count, house.moving, house.still)))
     }
 
-    /// A frame of the sensor with this id at t, whatever is in it.
-    fn heard_from(&mut self, id: &str, t: f64) {
-        self.tracker.heard_from(id, t);
-    }
-
-    /// Whether the sensor with this id sent a frame lately (start: the model's, None: not started).
-    fn online(&self, id: &str, now: f64, start: Option<f64>) -> bool {
-        self.tracker.online(id, now, start)
+    /// Whether the sensor with this id sent a frame lately.
+    fn online(&self, id: &str, now: f64) -> bool {
+        self.tracker.online(id, now)
     }
 
     /// Per observed room whether its own sensors in use all went silent.
-    fn silent(&self, now: f64, start: Option<f64>) -> Vec<bool> {
-        self.tracker.silent(now, start)
+    fn silent(&self, now: f64) -> Vec<bool> {
+        self.tracker.silent(now)
+    }
+
+    /// The thresholds of the outputs: of P(somebody there) for occupied, of p_enter for "wird betreten".
+    fn thresholds(&self) -> (f64, f64) {
+        let o = &self.tracker.world().outputs;
+        (o.occupied_above(), o.entering_above())
     }
 
     /// The names of the plan: the observed rooms, the places (observed, regions, outside), the areas,

@@ -58,7 +58,8 @@ def _run(tr, person, until, config):
 
 
 def _learned(tr) -> tuple:
-    return (sum(tr.ghost_map.time.values()), sum(tr.ld_background.den.values()), tr.dest_map.walks)
+    d = tr.learned()
+    return (sum(d["ghost_map"]["time"].values()), sum(d["ld_background"]["den"].values()), d["dest_map"]["walks"])
 
 
 def test_nothing_is_learned_while_paused_and_the_tracking_is_that_without_learning():
@@ -68,8 +69,8 @@ def test_nothing_is_learned_while_paused_and_the_tracking_is_that_without_learni
     free = Tracker(config, start=0.0, people=["observed"])
     out_free = _run(free, a, until, config)
     assert all(x > 0 for x in _learned(free))  # the run teaches all three
-    off = Tracker(config, start=0.0, people=["observed"])
-    off.learn_ghosts = off.learn_dest = False
+    off = Tracker(config, start=0.0, people=["observed"])  # learning off: a pause the tools know beforehand
+    off.pauses.add(0.0, None)
     out_off = _run(off, a, until, config)
     paused = Tracker(config, start=0.0, people=["observed"])
     paused.pauses = Pauses([[0.0, None]])
@@ -77,7 +78,7 @@ def test_nothing_is_learned_while_paused_and_the_tracking_is_that_without_learni
     paused.listeners.append(lambda kind, d: births.append(kind) if kind in ("watch", "track_end") else None)
     out_paused = _run(paused, a, until, config)
     assert _learned(paused) == (0.0, 0.0, 0.0) and not births
-    assert paused.ghost_map.to_dict() == off.ghost_map.to_dict()
+    assert paused.learned() == off.learned()
     # the tracking: as with learning off, exactly (what was learned weighs in, MODEL.md 4.2)
     assert all(x == y for p, q in zip(out_paused, out_off) for x, y in zip(p.values(), q.values()))
     assert len(out_paused) == len(out_free)

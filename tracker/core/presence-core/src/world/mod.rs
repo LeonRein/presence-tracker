@@ -21,6 +21,7 @@ use crate::frames::Reading;
 use crate::geometry::{Point, Walls};
 use crate::ld2410::likelihood::Likelihood;
 use crate::ld2450::rates::RateModel;
+use crate::learn::destination::DestGeometry;
 use crate::params::{OutputParams, Params, Shapes};
 use crate::plan::{Plan, RoomIdx};
 use crate::sensors::SensorSet;
@@ -52,6 +53,8 @@ pub struct World {
     pub plan: Plan,
     /// the zones of "wird betreten"
     pub targets: EntryTargets,
+    /// the cells and outcomes of the destination map ("Ziel")
+    pub destinations: DestGeometry,
 }
 
 /// What the Python tracker built (docs/rust-core.md 6): the world handed over while the build is
@@ -204,6 +207,7 @@ impl World {
             s.set_rates(&rates, &tiles);
         }
         Ok(Self {
+            destinations: DestGeometry::new(&plan, &raster, &labels, &rooms, &walls),
             targets: EntryTargets::new(&plan, raster, &rooms, &tiles),
             ld_lik: Likelihood::new(&params),
             shapes: Shapes::new(&params),
@@ -267,7 +271,10 @@ impl World {
                 (s, ld)
             })
             .unzip();
+        let walls = Walls::new(e.walls);
+        let labels = build::labels_of(&plan, &raster);
         Ok(Self {
+            destinations: DestGeometry::new(&plan, &raster, &labels, &rooms, &walls),
             targets: EntryTargets::new(&plan, raster, &rooms, &e.tiles),
             ld_lik: Likelihood::new(&e.params),
             params: e.params,
@@ -275,7 +282,7 @@ impl World {
             shapes: e.shapes,
             rates,
             raster,
-            walls: Walls::new(e.walls),
+            walls,
             wall_dist: Grid::new(raster, e.wall_dist),
             tiles: e.tiles,
             sights,

@@ -7,7 +7,7 @@ import json
 import numpy as np
 
 from presence_tracker import ha
-from presence_tracker.destination import DestinationMap
+from presence_tracker.destination import DestinationMap, Geometry
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
@@ -30,11 +30,16 @@ def routine(trips: int, start: float = 1.0):
     return Person(walk(*pts, start=start, pauses=pauses))
 
 
-def run(person, until, tracker=None, learn=True):
+def dest_map(tr) -> DestinationMap:
+    """The core's destination map, read by the Python map of 0.37.1 (the format's reference until
+    phase 9)."""
+    return DestinationMap.from_dict(tr.learned()["dest_map"])
+
+
+def run(person, until, tracker=None):
     """The tracker after the run, and per step (t, zone states of b, count distribution)."""
     config = two_rooms()
     tr = tracker or Tracker(config, start=0.0, people=["observed"])
-    tr.learn_dest = learn
     out, nxt = [], 0.0
     for t, sid, frame in simulate([person], sim_sensors(config), until, walls=config.wall_segments):
         tr.process_frame(sid, t, Frame.of(frame))
@@ -66,7 +71,8 @@ def test_the_map_learns_a_routine_and_predicts_it_earlier():
     trips = 10
     a = routine(trips)
     tr, out = run(a, a.waypoints[-1][0] + 1)
-    dm, geo = tr.dest_map, tr.dest_geo
+    dm, geo = dest_map(tr), Geometry(tr)
+    assert dm.fingerprint == geo.fingerprint() and dm.count.shape[0] == geo.n  # the core's geometry is Python's
     b = tr.rooms.index("b")
     assert dm.walks >= 2 * trips - 2  # walks a -> b, b -> a (and the stops)
     # halfway from the desk to the door, walking towards it: these walks went to b
@@ -99,40 +105,42 @@ def test_the_map_is_saved_restored_and_belongs_to_its_floor_plan():
     tr, _ = run(a, a.waypoints[-1][0] + 1)
     saved = json.loads(json.dumps(tr.learned()))
     other = Tracker(two_rooms(), start=0.0, people=["observed"])
-    assert other.dest_map.count.sum() == 0
+    assert dest_map(other).count.sum() == 0
     other.load_learned(saved)
-    assert np.array_equal(other.dest_map.count, tr.dest_map.count)
-    assert other.dest_map.walks == tr.dest_map.walks
+    trained = dest_map(tr)
+    assert np.array_equal(dest_map(other).count, trained.count) and trained.count.sum() > 0
+    assert dest_map(other).walks == trained.walks
     # a recalibrated sensor keeps it
     d = two_rooms().to_dict()
     d["sensors"][0]["heading"] = 50
     assert not other.reconfigure(Config.from_dict(d))
-    assert np.array_equal(other.dest_map.count, tr.dest_map.count)
+    assert np.array_equal(dest_map(other).count, trained.count)
     # a threshold neither: the outputs decide differently, the model goes on
     d = two_rooms().to_dict()
     d["sensors"][0]["heading"] = 50
     d["params"]["target_thresholds"] = {"b": 0.6}
     assert not other.reconfigure(Config.from_dict(d))
-    assert np.array_equal(other.dest_map.count, tr.dest_map.count) and other.threshold("b") == 0.6
+    assert np.array_equal(dest_map(other).count, trained.count) and other.threshold("b") == 0.6
     # another door starts it over
     d = two_rooms().to_dict()
     d["doors"][0]["y"] = 1.5
     other.reconfigure(Config.from_dict(d))
-    assert other.dest_map.count.sum() == 0
+    assert dest_map(other).count.sum() == 0
     # a map of another floor plan is not used
     third = Tracker(Config.from_dict(d), start=0.0, people=["observed"])
-    assert not third.use_dest_map(DestinationMap.from_dict(saved["dest_map"]))
-    assert third.dest_map.count.sum() == 0
+    assert not third.use_dest_map(saved["dest_map"])
+    assert dest_map(third).count.sum() == 0
 
 
 def test_occupancy_is_unchanged_by_the_map():
     a = routine(3)
     end = a.waypoints[-1][0] + 1
-    trained, _ = run(a, end)
-    _, plain = run(a, end, learn=False)
-    _, learning = run(a, end, learn=True)
+    trained, learning = run(a, end)
+    plain = Tracker(two_rooms(), start=0.0, people=["observed"])  # the walks counted, the map left empty:
+    plain.listeners.append(lambda kind, d: plain.use_dest_map(None) if kind == "watch" else None)
+    _, plain = run(a, end, tracker=plain)
     t = Tracker(two_rooms(), start=0.0, people=["observed"])
-    t.use_dest_map(trained.dest_map)
+    assert t.use_dest_map(trained.learned()["dest_map"])
     _, primed = run(a, end, tracker=t)
     for (t0, s0, c0, l0), (t1, s1, c1, l1), (t2, s2, c2, l2) in zip(plain, learning, primed):
         assert t0 == t1 == t2

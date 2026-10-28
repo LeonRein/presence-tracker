@@ -3,6 +3,7 @@ sensors, a balcony and a hallway behind doors."""
 
 import numpy as np
 
+from presence_tracker.ghostmap import GhostMap
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
@@ -204,8 +205,10 @@ def test_the_ghost_map_does_not_confirm_itself():
     seat = (4.5, 3.5)
     config = flat_config(entry=True)
     crowd = Tracker(config, start=0.0, people=["outside", "outside"])
+    gm = GhostMap.from_dict(crowd.learned()["ghost_map"])  # the format's reference until phase 9
     for sid in ("a", "b"):
-        crowd.ghost_map.add_birth(sid, seat, 200.0)
+        gm.add_birth(sid, seat, 200.0)
+    crowd.use_ghost_map(gm.to_dict())
     learned = _learned(crowd)
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, seat, (seat[0] + 0.05, seat[1]), start=2, pauses={2: 150}))
     for t, sid, frame in simulate([a], sim_sensors(config, still_dropout=1 / 30, still_gap=40), a.waypoints[-1][0],
@@ -229,9 +232,9 @@ def test_a_sitter_taken_for_ghosts_does_not_become_a_ghost_source():
     for t, sid, frame in simulate([a], sim_sensors(config, still_dropout=1 / 60, ld2410=False), 600,
                                   walls=config.wall_segments):
         crowd.process_frame(sid, t, Frame.of(frame))
-    gm = crowd.ghost_map
+    prior_rate = crowd.learned()["ghost_map"]["prior_rate"]
     assert sum(p for _, p in learned) > 2, learned  # the case: some of them were taken for ghosts
-    assert all(gm.rate(s, np.array([seat]))[0] < 2 * gm.prior_rate for s in ("a", "b"))
+    assert all(crowd.ghost_rates(s, np.array([seat]))[0][0] < 2 * prior_rate for s in ("a", "b"))
     assert crowd._ghost_types() == crowd.m.ghost_types
 
 

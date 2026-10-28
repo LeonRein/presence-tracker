@@ -48,6 +48,10 @@ impl Grid {
         Self { raster, values }
     }
 
+    pub fn raster(&self) -> &Raster {
+        &self.raster
+    }
+
     pub fn values(&self) -> &[f64] {
         &self.values
     }

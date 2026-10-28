@@ -233,6 +233,14 @@ innerhalb ±32767, Gates beide oder keine, je 9 Energien 0..=100), sonst ValueEr
 nehmen nur diesen Typ; ein ungültiger Frame erreicht den Tracker nicht. Die Anzeige liest `Frame.ld2410` (Flags,
 Abstände, Gates), die Uhr `Frame.uptime_ms`.
 
+**Entschieden in Phase 8 (28.10.):** Die Zeit des letzten Frames steht nur in der Spurstufe des Sensors
+(`Ld2450Tracks`; `SensorState::last_frame` liest sie, die Kalibrierung hat ihre eigene); `Tracker::frame(id, t, &Frame)`
+und `Tracker::step(t)` tun alles, was `process_frame`/`step` taten, und geben die Ereignisse für die Listener zurück
+(`Watch`, `TrackEnd`, `Branch`); die Hülle ruft die Listener damit (der Listener „frame“ hört nach den Schritten). Das
+Gelernte gibt `learned()` als Kopie (`presence_core.Learned`, `json()` packt ohne den Tracker, im Thread der App);
+`use_ghost_map/use_ld_background/use_dest_map` nehmen das gespeicherte JSON. Die Python-Lerner (`ghostmap.py`,
+`destination.py`, `ld2410.Background`) bleiben bis Phase 9 als Orakel der Formate in den Tests.
+
 **`presence_tracker.filter.Tracker`** bleibt die Klasse, die App, Werkzeuge und Tests benutzen, mit derselben
 öffentlichen API: Sie reicht durch, formt `ZoneState`, ruft die `listeners` mit den Ereignissen des Kerns und hält
 die Python-Objekte der Hülle (`config`, `pauses`). Die Konfiguration geht als `config.to_dict()` hinein; das

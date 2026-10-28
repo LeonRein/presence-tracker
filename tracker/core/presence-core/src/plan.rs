@@ -7,6 +7,7 @@
 
 use crate::config::{Config, SensorConfig, WallKind, ZoneConfig, ZoneKind};
 use crate::geometry::{Point, Shape, distance_to_segment, line_of_sight};
+use crate::learn::Pose;
 use crate::vmath::{py_dist, py_hypot};
 
 /// m: a door belongs to a wall piece this close to its centre (floorplan.DOOR_REACH)
@@ -136,6 +137,8 @@ pub struct SensorPlan {
     pub id: String,
     pub own_room: Option<RoomIdx>,
     pub in_use: bool,
+    /// how it hangs: what its learned parts are kept in (learn::Pose)
+    pub pose: Pose,
 }
 
 #[derive(Debug)]
@@ -152,6 +155,8 @@ pub struct Plan {
     pub sensors: Vec<SensorPlan>,
     /// the walls that block the radar's sight and the people: real walls without their door openings
     pub walls: Vec<[Point; 2]>,
+    /// the dividers: open boundaries between rooms (no walls)
+    pub dividers: Vec<[Point; 2]>,
 }
 
 /// A door or divider between rooms: the rooms on its sides (None: outside); a door's centre and its
@@ -339,6 +344,7 @@ impl Plan {
                 id: s.id.clone(),
                 own_room: own_room(s, &observed),
                 in_use: s.in_use(),
+                pose: Pose::of(s),
             })
             .collect();
         Self {
@@ -349,6 +355,10 @@ impl Plan {
             portals,
             sensors,
             walls,
+            dividers: pieces(config)
+                .filter(|&(_, kind)| kind == WallKind::Divider)
+                .map(|(piece, _)| piece)
+                .collect(),
         }
     }
 

@@ -110,6 +110,9 @@ pub struct Params {
     #[serde(deserialize_with = "real")]
     pub ghost_echo: f64,
     pub ghost_types: Vec<[f64; 2]>,
+    /// the ghost map's prior: in each cell the weight of this many ghosts (MODEL.md 4.2)
+    #[serde(deserialize_with = "real")]
+    pub ghost_prior_ghosts: f64,
     // 5.3 nothing known: the unknown people expected at a start
     #[serde(deserialize_with = "real")]
     pub start_unknown: f64,
@@ -157,6 +160,26 @@ pub struct Params {
     /// per "own<-room" how much of what the geometric sight expects an LD2410C gets from a person in
     /// another room (measured, MODEL.md 4.3 "Blick des LD2410C"); missing: 1
     pub ld_view: BTreeMap<String, f64>,
+    /// the background before anything is learned: moving gates 0, 1, the other moving gates, the still
+    /// gates; its weight (s), forgotten with ld_forget s towards the sensor's own level, which is learned
+    /// forgotten with ld_anchor_forget s from frames after ld_anchor_quiet s with nothing in sight; the
+    /// echo sources' rate (per s) with the weight ld_echo_prior_time s (MODEL.md 4.3)
+    pub ld_background: [f64; 4],
+    #[serde(deserialize_with = "real")]
+    pub ld_prior_time: f64,
+    #[serde(deserialize_with = "real")]
+    pub ld_forget: f64,
+    #[serde(deserialize_with = "real")]
+    pub ld_anchor_forget: f64,
+    #[serde(deserialize_with = "real")]
+    pub ld_anchor_quiet: f64,
+    #[serde(deserialize_with = "real")]
+    pub ld_echo_rate: f64,
+    #[serde(deserialize_with = "real")]
+    pub ld_echo_prior_time: f64,
+    /// "Ziel": per walker this many walks of prior weight on its own motion (MODEL.md 6)
+    #[serde(deserialize_with = "real")]
+    pub dest_prior_walks: f64,
     /// s: the end of a gap in the data is moved as always, what lies before in leaps of `leap` s,
     /// at most `max_leaps` of them (filter.GAP_EXACT, LEAP, MAX_LEAPS)
     #[serde(deserialize_with = "real")]
@@ -227,6 +250,7 @@ impl Default for Params {
             },
             ghost_echo: 3e-4,
             ghost_types: vec![[0.4 * 1.8e-5, 3.0], [0.6 * 1.8e-5, 39.0]],
+            ghost_prior_ghosts: 1.0,
             start_unknown: 1.0,
             unseen_life: 120.0,
             max_hyps: 12,
@@ -263,6 +287,14 @@ impl Default for Params {
             ld_echo_amps: vec![0.3, 1.0, 3.0],
             ld_tile_mass: 1e-4,
             ld_view: BTreeMap::new(),
+            ld_background: [13.0, 9.0, 4.5, 5.0],
+            ld_prior_time: 600.0,
+            ld_forget: 0.7 * 3600.0,
+            ld_anchor_forget: 24.0 * 3600.0,
+            ld_anchor_quiet: 600.0,
+            ld_echo_rate: 1.0 / (3.0 * 3600.0),
+            ld_echo_prior_time: 3.0 * 3600.0,
+            dest_prior_walks: 1.0,
             gap_exact: 120.0,
             leap: 15.0,
             max_leaps: 2000,
@@ -300,6 +332,13 @@ impl Params {
             ("ld_burst.gain", self.ld_burst.gain),
             ("ld_echo_ranges.from", self.ld_echo_ranges.from),
             ("ld_echo_ranges.step", self.ld_echo_ranges.step),
+            ("ghost_prior_ghosts", self.ghost_prior_ghosts),
+            ("ld_prior_time", self.ld_prior_time),
+            ("ld_forget", self.ld_forget),
+            ("ld_anchor_forget", self.ld_anchor_forget),
+            ("ld_echo_rate", self.ld_echo_rate),
+            ("ld_echo_prior_time", self.ld_echo_prior_time),
+            ("dest_prior_walks", self.dest_prior_walks),
         ];
         let profiles = self.ld_moving.iter().chain(&self.ld_still);
         let checks = positive
@@ -318,6 +357,12 @@ impl Params {
                     !self.ld_echo_amps.is_empty() && self.ld_echo_amps.iter().all(|&a| a > 0.0),
                 ),
                 ("ld_tile_mass", self.ld_tile_mass >= 0.0),
+                (
+                    "ld_background",
+                    self.ld_background.iter().all(|&b| b > 0.0 && b.is_finite()),
+                ),
+                ("ld_anchor_quiet", self.ld_anchor_quiet >= 0.0),
+                ("ghost_types", self.ghost_types.iter().map(|t| t[0]).sum::<f64>() > 0.0),
                 (
                     "start_unknown",
                     self.start_unknown >= 0.0 && self.start_unknown.is_finite(),
@@ -359,7 +404,7 @@ impl Params {
 
 /// What only the outputs read (MODEL.md 6; filter.OUTPUT_PARAMS, roomseen.SILENT_AFTER): a change of
 /// them restarts nothing, but it is a new world (the outputs' cache is void).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OutputParams {
     /// a second of light without anybody costs as much as this many seconds dark: occupied above
     /// light_cost / (light_cost + 1)
@@ -371,6 +416,9 @@ pub struct OutputParams {
     pub approach_cost: f64,
     /// s without a frame: a room's own sensor is gone, the room silent
     pub silent_after: f64,
+    /// "Ziel": on above this, per room id its own if it has one (MODEL.md 6)
+    pub target_threshold: f64,
+    pub target_thresholds: std::collections::BTreeMap<String, f64>,
 }
 
 impl OutputParams {
@@ -381,6 +429,8 @@ impl OutputParams {
             lead_time: p.lead_time,
             approach_cost: p.approach_cost,
             silent_after,
+            target_threshold: p.target_threshold,
+            target_thresholds: p.target_thresholds.clone(), // the world's own copy of the configuration's
         }
     }
 
@@ -405,6 +455,17 @@ impl OutputParams {
     /// The threshold of P(somebody there) for occupied (MODEL.md 6: the Bayes decision).
     pub fn occupied_above(&self) -> f64 {
         self.light_cost / (self.light_cost + 1.0)
+    }
+
+    /// The threshold of "Ziel" in a room: its own, else the default, kept inside (0, 1)
+    /// (filter.Tracker.threshold).
+    pub fn target_above(&self, room: &str) -> f64 {
+        let c = self
+            .target_thresholds
+            .get(room)
+            .copied()
+            .unwrap_or(self.target_threshold);
+        c.clamp(1e-6, 1.0 - 1e-6)
     }
 
     /// The threshold of p_enter for "wird betreten".

@@ -16,6 +16,7 @@ fn panic_for_test(message: &str) {
 #[pymodule]
 fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<core::Core>()?;
+    m.add_class::<core::PyLearned>()?;
     m.add_class::<frames::PyClock>()?;
     m.add_class::<frames::PyTrackStage>()?;
     m.add_class::<frames::PyFrame>()?;

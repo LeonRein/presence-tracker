@@ -6,7 +6,9 @@ import math
 import numpy as np
 import pytest
 
+from presence_tracker import ld2410
 from presence_tracker.frames import Frame, SensorClock
+from presence_tracker.ghostmap import GhostMap
 from presence_tracker.model import Config, SensorConfig, ZoneConfig
 from presence_tracker.filter import Tracker
 from presence_tracker.sim import SimSensor
@@ -92,29 +94,47 @@ def test_behind_a_wall_is_measured_across_it_not_along_the_line_of_sight():
     assert hidden == [False, False, True]
 
 
+def _learn_ghosts(tr, learn):
+    """The tracker's ghost map, learned by `learn` as the Python map did (ghostmap.GhostMap: the format's
+    reference until phase 9) and handed back to the core."""
+    gm = GhostMap.from_dict(tr.learned()["ghost_map"])
+    learn(gm)
+    tr.use_ghost_map(gm.to_dict())
+
+
+def _rate(tr, sid, pts) -> np.ndarray:
+    return tr.ghost_rates(sid, np.asarray(pts, dtype=float).reshape(-1, 2))[0]
+
+
+def _prior_rate(tr) -> float:
+    return tr.learned()["ghost_map"]["prior_rate"]
+
+
 def test_a_few_ghosts_do_not_make_a_spot_a_ghost_source_many_do():
     # MODEL.md 4.2: the prior weighs one ghost per cell. Three tracks taken for ghosts in 2.5 h (a seat
     # the filter got wrong, 6.10.) made the spot 13 times the prior with the weight of 4 h of watching;
     # a reflection that shows up 30 times a day is still learned
     tr = Tracker(room_config())
-    gm = tr.ghost_map
     spot = np.array([[2.0, 2.0]])
-    for _ in range(3):
-        gm.add_birth("a", spot[0], 1.0)
-    gm.add_watch("a", 2.5 * 3600)
-    assert 1.0 < gm.rate("a", spot)[0] / gm.prior_rate < 2.5
-    for _ in range(27):
-        gm.add_birth("a", spot[0], 1.0)
-    gm.add_watch("a", 21.5 * 3600)
-    assert gm.rate("a", spot)[0] / gm.prior_rate > 5
+
+    def ghosts(n, hours):
+        def learn(gm):
+            for _ in range(n):
+                gm.add_birth("a", spot[0], 1.0)
+            gm.add_watch("a", hours * 3600)
+        return learn
+    _learn_ghosts(tr, ghosts(3, 2.5))
+    assert 1.0 < _rate(tr, "a", spot)[0] / _prior_rate(tr) < 2.5
+    _learn_ghosts(tr, ghosts(27, 21.5))
+    assert _rate(tr, "a", spot)[0] / _prior_rate(tr) > 5
 
 
 def test_a_map_learned_with_another_prior_starts_over():
     tr = Tracker(room_config())
-    gm = tr.ghost_map
+    gm = GhostMap.from_dict(tr.learned()["ghost_map"])
     gm.add_birth("a", (2.0, 2.0), 1.0)
     gm.prior_time /= 24
-    assert not tr.use_ghost_map(gm) and not tr.ghost_map.count
+    assert not tr.use_ghost_map(gm.to_dict()) and not tr.learned()["ghost_map"]["count"]
 
 
 def _changed(**change) -> Config:
@@ -135,11 +155,14 @@ def _floor(config, raw) -> np.ndarray:
 def _ghost_source(tr, raw=(0.6, 4.0), n=30):
     """A reflection the LD2450 a reports at raw (m, its frame) n times in a day."""
     spot = _floor(tr.config, raw)
-    for _ in range(n):
-        tr.ghost_map.add_birth("a", spot[0], 1.0)
-    tr.ghost_map.add_watch("a", 86400.0)
-    tr.ghost_map.add_watch("b", 86400.0)
-    tr.ghost_map.add_birth("b", (3.0, 2.5), 5.0)
+
+    def learn(gm):
+        for _ in range(n):
+            gm.add_birth("a", spot[0], 1.0)
+        gm.add_watch("a", 86400.0)
+        gm.add_watch("b", 86400.0)
+        gm.add_birth("b", (3.0, 2.5), 5.0)
+    _learn_ghosts(tr, learn)
     return spot
 
 
@@ -150,40 +173,41 @@ def test_a_recalibrated_sensor_keeps_its_ghost_map_in_its_frame():
     for change in ({"heading": 48}, {"heading": 42}, {"scale": 1.05}, {"scale": 0.95},
                    {"heading": 48, "scale": 1.05}, {"heading": 55}, {"x": 0.35}, {"mirror": True}):
         tr = Tracker(room_config())
-        gm = tr.ghost_map
         spot = _ghost_source(tr, raw)
-        before = gm.rate("a", spot)[0]
-        b_before = gm.rate("b", np.array([[3.0, 2.5]]))[0]
-        assert before > 5 * gm.prior_rate
+        before = _rate(tr, "a", spot)[0]
+        b_before = _rate(tr, "b", [[3.0, 2.5]])[0]
+        d = tr.learned()["ghost_map"]
+        prior_rate, prior_time = d["prior_rate"], d["prior_time"]
+        assert before > 5 * prior_rate
         new = _changed(**change)
         tr.reconfigure(new)
-        assert tr.ghost_map is gm and gm.time["a"] == 86400.0, change
+        assert tr.learned()["ghost_map"]["time"]["a"] == 86400.0, change
         s = new.sensors[0]
         moved = _floor(new, raw)
         # the same cell of its frame; per m^2 of the floor as much less as a cell covers more of it
-        k0 = gm.prior_rate * 0.16 * gm.prior_time
-        area = lambda scale: k0 / gm.prior_rate + (0.4 * scale) ** 2 * 86400.0  # noqa: E731
-        assert gm.rate("a", moved)[0] == pytest.approx(before * area(1.0) / area(s.scale), rel=1e-9), change
-        assert gm.rate("b", np.array([[3.0, 2.5]]))[0] == b_before  # the other sensor: untouched
+        k0 = prior_rate * 0.16 * prior_time
+        area = lambda scale: k0 / prior_rate + (0.4 * scale) ** 2 * 86400.0  # noqa: E731
+        assert _rate(tr, "a", moved)[0] == pytest.approx(before * area(1.0) / area(s.scale), rel=1e-9), change
+        assert _rate(tr, "b", [[3.0, 2.5]])[0] == b_before  # the other sensor: untouched
     # turned by 10 deg the reflection 4 m away lands 0.7 m off: the map goes along
     tr = Tracker(room_config())
     spot = _ghost_source(tr, raw)
     tr.reconfigure(_changed(heading=55))
     moved = _floor(tr.config, raw)
     assert np.hypot(*(moved - spot)[0]) > 0.6
-    assert tr.ghost_map.rate("a", moved)[0] > 3 * tr.ghost_map.rate("a", spot)[0]
+    assert _rate(tr, "a", moved)[0] > 3 * _rate(tr, "a", spot)[0]
 
 
 def test_a_remounted_sensor_starts_its_part_of_the_ghost_map_over():
     for change in ({"x": 1.0}, {"x": 0.45, "y": 0.45}, {"heading": 80}, {"heading": 10}, {"height": 2.2}):
         tr = Tracker(room_config())
-        gm = tr.ghost_map
         _ghost_source(tr)
-        b_before = gm.rate("b", np.array([[3.0, 2.5]]))[0]
+        b_before = _rate(tr, "b", [[3.0, 2.5]])[0]
         tr.reconfigure(_changed(**change))
-        assert "a" not in gm.count and "a" not in gm.time, change
-        assert gm.rate("a", np.array([[2.0, 2.0]]))[0] == pytest.approx(gm.prior_rate)
-        assert gm.rate("b", np.array([[3.0, 2.5]]))[0] == b_before, change  # the other one keeps its part
+        d = tr.learned()["ghost_map"]
+        assert "a" not in d["count"] and d["time"].get("a", 0.0) == 0.0, change
+        assert _rate(tr, "a", [[2.0, 2.0]])[0] == pytest.approx(_prior_rate(tr))
+        assert _rate(tr, "b", [[3.0, 2.5]])[0] == b_before, change  # the other one keeps its part
     # a sensor removed takes its part along; a new one starts from the prior
     tr = Tracker(room_config())
     _ghost_source(tr)
@@ -191,23 +215,29 @@ def test_a_remounted_sensor_starts_its_part_of_the_ghost_map_over():
     config.sensors = [config.sensors[1], SensorConfig("c", x=3.0, y=4.95, heading=270, placed=True)]
     config.rebuild()
     tr.reconfigure(config)
-    assert set(tr.ghost_map.poses) == {"b", "c"} and set(tr.ghost_map.count) == {"b"}
+    d = tr.learned()["ghost_map"]
+    assert set(d["poses"]) == {"b", "c"} and set(d["count"]) == {"b"}
 
 
 def test_a_saved_ghost_map_reads_back_the_same():
-    from presence_tracker.ghostmap import GhostMap
     tr = Tracker(room_config())
-    gm = tr.ghost_map
-    gm.add_watch("a", 86400.0)
-    gm.add_birth("a", np.array([[2.2, 2.6]]), 12.0)
     centre = np.array([[2.2, 2.6]])
-    assert gm.rate("a", centre)[0] > 3 * gm.prior_rate
-    again = GhostMap.from_dict(json.loads(json.dumps(gm.to_dict())))
-    assert again.use(tr.config) == [] and again.rate("a", centre)[0] == pytest.approx(gm.rate("a", centre)[0])
+
+    def learn(gm):
+        gm.add_watch("a", 86400.0)
+        gm.add_birth("a", centre, 12.0)
+    _learn_ghosts(tr, learn)
+    assert _rate(tr, "a", centre)[0] > 3 * _prior_rate(tr)
+    saved = json.loads(json.dumps(tr.learned()["ghost_map"]))
+    again = Tracker(room_config())
+    assert again.use_ghost_map(saved) and _rate(again, "a", centre)[0] == _rate(tr, "a", centre)[0]
+    # the Python map of 0.37.1 reads what the core wrote, the same
+    gm = GhostMap.from_dict(saved)
+    assert gm.use(tr.config) == [] and gm.rate("a", centre)[0] == pytest.approx(_rate(tr, "a", centre)[0], rel=1e-12)
     # a map of 0.27 or earlier (counts in the house frame) is not read: the app starts a new one
-    with pytest.raises(KeyError):
-        GhostMap.from_dict({"x0": 0.0, "y0": 0.0, "nx": 1, "ny": 1, "prior_rate": gm.prior_rate,
-                            "prior_time": gm.prior_time, "time": {}, "poses": {}, "count": {}})
+    with pytest.raises(ValueError, match="cell"):
+        again.use_ghost_map({"x0": 0.0, "y0": 0.0, "nx": 1, "ny": 1, "prior_rate": saved["prior_rate"],
+                             "prior_time": saved["prior_time"], "time": {}, "poses": {}, "count": {}})
 
 
 def test_the_ld2410c_background_stays_with_a_recalibration_not_with_a_remount():
@@ -215,12 +245,21 @@ def test_the_ld2410c_background_stays_with_a_recalibration_not_with_a_remount():
     for change, kept in (({"heading": 48, "scale": 1.05}, True), ({"x": 0.3, "mirror": True}, True),
                          ({"x": 1.0}, False), ({"heading": 90}, False)):
         tr = Tracker(room_config())
-        bg = tr.ld_background
-        bg.num["a"] = bg.prior * 3600.0 * 2
-        bg.den["a"] = 3600.0
-        bg.num["b"] = bg.prior * 3600.0 * 3
-        bg.den["b"] = 3600.0
-        learned_a, learned_b = bg.b("a").copy(), bg.b("b").copy()
+        prior = ld2410.prior(tr.m)
+        bg = tr.learned()["ld_background"]
+        bg["num"]["a"], bg["den"]["a"] = list(prior * 3600.0 * 2), 3600.0
+        bg["num"]["b"], bg["den"]["b"] = list(prior * 3600.0 * 3), 3600.0
+        tr.use_ld_background(bg)
+        learned = tr.learned()["ld_background"]
         tr.reconfigure(_changed(**change))
-        assert np.array_equal(bg.b("a"), learned_a if kept else bg.prior), change
-        assert np.array_equal(bg.b("b"), learned_b)
+        now = tr.learned()["ld_background"]
+        assert now["num"].get("a") == (learned["num"]["a"] if kept else None), change
+        assert now["num"]["b"] == learned["num"]["b"]
+        # the Python background of 0.37.1 reads what the core wrote, the same
+        m = tr.m
+        old = ld2410.Background(prior, m.ld_prior_time, m.ld_forget, m.ld_echo_rate, m.ld_echo_prior_time,
+                                m.ld_anchor_forget, m.ld_anchor_quiet)
+        old.load_dict(now)
+        for sid in ("a", "b"):
+            b, rate = tr.background(sid)
+            assert np.allclose(old.b(sid), b, rtol=1e-12) and old.rate(sid) == pytest.approx(rate, rel=1e-12)

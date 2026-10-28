@@ -268,9 +268,9 @@ def test_a_broken_file_is_nothing_learned_for_its_part_only(tmp_path, caplog, na
     else:
         assert not again.calibrator.data()
     if name == "ghostmap.json":
-        assert not again.tracker.ghost_map.count
+        assert not again.tracker.learned()["ghost_map"]["count"]
     if name == "ld2410.json":
-        assert not again.tracker.ld_background.num
+        assert not again.tracker.learned()["ld_background"]["num"]
     run_a_while(again, 20.0)
     assert again.tick(1000.0 + 20.0)
 
@@ -348,7 +348,7 @@ def test_a_panic_of_the_rust_core_is_a_model_failure(tmp_path, monkeypatch, capl
     tracker = app.tracker
 
     class Panicking:
-        """The tracker's core, but moving everybody panics."""
+        """The tracker's core, but time going on panics."""
 
         def __init__(self, inner):
             self.inner = inner
@@ -356,7 +356,7 @@ def test_a_panic_of_the_rust_core_is_a_model_failure(tmp_path, monkeypatch, capl
         def __getattr__(self, name):
             return getattr(self.inner, name)
 
-        def flush(self, *args):
+        def step(self, *args):
             core.panic_for_test("a bug in the core")
     monkeypatch.setattr(tracker, "_c", Panicking(tracker._c))
     assert not app.tick(1000.0 + 20.5)  # no raise
@@ -548,14 +548,14 @@ def test_reset_tracks_sees_whoever_sits_there_again(tmp_path):
             asyncio.run(app.h_reset_tracks(None))
             done = True
             assert not app.tracker.segs
-            bg = json.loads(json.dumps(app.tracker.ld_background.to_dict()))
+            bg = app.tracker.learned()["ld_background"]
             assert set(bg["held"]) == {"a", "b"}
         app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
         app.tick(1000.0 + t)
         p.setdefault(int(t), app.zone_states["wohn"].probability)
     assert all(p[t] > c for t in p if 70 <= t), {t: v for t, v in p.items() if t >= 70 and v <= c}
     assert app.tracker.segs
-    now = app.tracker.ld_background.to_dict()
+    now = app.tracker.learned()["ld_background"]
     assert now["num"] == bg["num"] and now["den"] == bg["den"]  # learned nothing since the reset
     assert app.start_learned["ld_background"]["held"] == bg["held"]  # in a report: the replay holds too
 

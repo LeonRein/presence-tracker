@@ -169,7 +169,7 @@ def filter_series(a, config_of, configs, truth, rooms, g0, T, pauses):
     P = np.full((T, len(rooms)), np.nan, dtype=np.float32)
     O = np.zeros((T, len(rooms)), dtype=bool) if hasattr(Tracker, "occupancy") else None
     tracker = None
-    gm = ldb = dm = None
+    learned = None
     clocks = collections.defaultdict(SensorClock)
     next_start, next_step, last_k = 0, 0.0, -1
     t_cpu = time.process_time()
@@ -181,17 +181,12 @@ def filter_series(a, config_of, configs, truth, rooms, g0, T, pauses):
         while next_start < len(starts) and m["t"] >= starts[next_start]:
             people = None
             if tracker is not None:
-                gm, ldb = tracker.ghost_map, getattr(tracker, "ld_background", None)
-                dm = getattr(tracker, "dest_map", None)
+                learned = tracker.learned()
                 people = None if starts[next_start] in fresh else json.loads(json.dumps(tracker.people_state()))
             tracker = Tracker(config_of(m["t"]))
             tracker.pauses = pauses
-            if gm is not None:
-                tracker.use_ghost_map(gm)
-            if ldb is not None:
-                tracker.use_ld_background(ldb)
-            if dm is not None:
-                tracker.use_dest_map(dm)
+            if learned is not None:
+                tracker.load_learned(learned)
             if people is not None and not tracker.restore_people(people):
                 print("the saved people do not fit: nothing known", file=sys.stderr)
             clocks.clear()

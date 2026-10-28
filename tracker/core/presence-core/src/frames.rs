@@ -166,11 +166,13 @@ impl fmt::Display for FrameError {
 
 impl std::error::Error for FrameError {}
 
-/// A call with what no frame can be: a sensor there is not, a time that is no number.
+/// A call with what no frame can be: a sensor there is not, a time that is no number; or a new world
+/// the people do not fit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallError {
     NoSensor(usize),
     Time,
+    World,
 }
 
 impl fmt::Display for CallError {
@@ -178,6 +180,7 @@ impl fmt::Display for CallError {
         match self {
             Self::NoSensor(si) => write!(f, "no sensor {si}"),
             Self::Time => write!(f, "the frame's time is no number"),
+            Self::World => write!(f, "the new world has other tiles or sensors: the people do not fit it"),
         }
     }
 }
@@ -376,6 +379,10 @@ pub struct Reading {
     pub target_height: f64,
     /// m: how far behind a wall or outside a room a target may be and still be measured
     pub wall_margin: f64,
+    /// m: the spread of where a track sits on a person along and across the line of sight, at the
+    /// sensor and per m of distance (MODEL.md 4.1)
+    pub range_sigma: [f64; 2],
+    pub lateral_sigma: [f64; 2],
 }
 
 impl Reading {
@@ -383,7 +390,17 @@ impl Reading {
         Self {
             target_height: p.target_height,
             wall_margin: p.wall_margin,
+            range_sigma: [p.range_sigma_base, p.range_sigma_slope],
+            lateral_sigma: [p.lateral_sigma_base, p.lateral_sigma_slope],
         }
+    }
+
+    /// Variance (per axis, m^2) of where a track sits on a person this far from the sensor
+    /// (filter.Tracker._offset_var).
+    pub fn offset_var(&self, dist: f64) -> f64 {
+        let along = self.range_sigma[0] + self.range_sigma[1] * dist;
+        let across = self.lateral_sigma[0] + self.lateral_sigma[1] * dist;
+        0.5 * (along * along + across * across)
     }
 }
 

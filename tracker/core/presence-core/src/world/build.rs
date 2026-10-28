@@ -322,13 +322,9 @@ fn point_sight(b: &Built, s: &SensorConfig) -> (Vec<f64>, Vec<f64>) {
 /// Per cell the variance (per axis) of where a track sits on a person at this distance from the
 /// sensor: the measured spread along and across the line of sight (MODEL.md 4.1).
 fn offset_var(raster: &Raster, p: &TrackerParams, s: &SensorConfig) -> Vec<f64> {
+    let reading = crate::frames::Reading::of(p);
     cells(raster)
-        .map(|c| {
-            let dist = (c[0] - s.x).hypot(c[1] - s.y);
-            let along = p.range_sigma_base + p.range_sigma_slope * dist;
-            let across = p.lateral_sigma_base + p.lateral_sigma_slope * dist;
-            0.5 * (along * along + across * across)
-        })
+        .map(|c| reading.offset_var((c[0] - s.x).hypot(c[1] - s.y)))
         .collect()
 }
 

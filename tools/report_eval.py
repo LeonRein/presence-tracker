@@ -105,7 +105,7 @@ def main():
     seen = {}  # room -> last time an LD2450 measured somebody there (for windows that excuse walks)
 
     tracker = None
-    gm = ldb = dm = None
+    learned = None
     clocks = collections.defaultdict(SensorClock)
     samples = collections.defaultdict(list)  # report name -> [(t, {room: P(somebody)})]
     next_start = 0
@@ -137,17 +137,12 @@ def main():
                     loglik += tracker.loglik
                     cut += getattr(tracker, "loglik_cut", 0.0)
                     segments.append(tracker.loglik)
-                    gm, ldb = tracker.ghost_map, getattr(tracker, "ld_background", None)
-                    dm = getattr(tracker, "dest_map", None)
+                    learned = tracker.learned()
                     people = None if a.forget or starts[next_start] in fresh else json.loads(json.dumps(tracker.people_state()))
                 tracker = Tracker(config_of(m["t"]))
                 tracker.pauses = pauses
-                if gm is not None:
-                    tracker.use_ghost_map(gm)
-                if ldb is not None:
-                    tracker.use_ld_background(ldb)
-                if dm is not None:
-                    tracker.use_dest_map(dm)
+                if learned is not None:
+                    tracker.load_learned(learned)
                 if people is not None and not tracker.restore_people(people):
                     print("the saved people do not fit: nothing known")
                 clocks.clear()

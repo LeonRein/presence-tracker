@@ -1,5 +1,6 @@
-//! What the filter knows of each sensor while it runs (MODEL.md 4.4): whether its frames count, when
-//! its last frame came, its LD2450's own tracks and its last frame, its LD2410C.
+//! What the filter knows of each sensor while it runs (MODEL.md 4.4): whether its frames count, its
+//! LD2450's own tracks (they keep the time of its last frame: the one place for it) and its last
+//! frame, its LD2410C.
 
 use crate::frames::{Detection, Ld2410};
 use crate::ld2410::sensor::LdSensor;
@@ -10,8 +11,6 @@ use crate::params::{IDLE, Params};
 pub struct SensorState {
     /// enabled and placed in the plan: its frames count
     pub active: bool,
-    /// time of its last frame (-inf: none yet)
-    pub last_frame: f64,
     pub ld: LdSensor,
     pub tracks: Ld2450Tracks,
     pub frame: SensorFrame,
@@ -19,14 +18,18 @@ pub struct SensorState {
 
 impl SensorState {
     /// A sensor without frames, not counting yet.
-    pub fn new(p: &Params) -> Self {
+    pub fn new(p: &Params, active: bool) -> Self {
         Self {
-            active: false,
-            last_frame: f64::NEG_INFINITY,
+            active,
             ld: LdSensor::new(p),
             tracks: Ld2450Tracks::default(),
             frame: SensorFrame::default(),
         }
+    }
+
+    /// Time of its last frame (-inf: none since the start, its tracks' reset or a rebuild).
+    pub fn last_frame(&self) -> f64 {
+        self.tracks.last()
     }
 }
 
@@ -36,7 +39,9 @@ impl SensorState {
 pub struct SensorFrame {
     pub t: f64,
     pub detections: Vec<Detection>,
-    /// the events not yet taken out by the steps of the evidence (Tracker::track_events)
+    /// per detection whether its LD2450 measured it in a track (not hidden, not held)
+    pub measured: Vec<bool>,
+    /// the events not yet taken out by the steps of the evidence
     pub events: TrackEvents,
     /// its LD2410C part until it is gathered (Tracker::ld_frame)
     pub ld2410: Option<Ld2410>,
@@ -47,9 +52,9 @@ impl SensorFrame {
     pub fn measured(&self) -> impl Iterator<Item = &Detection> {
         self.detections
             .iter()
-            .enumerate()
-            .filter(|&(j, _)| self.events.measures(j))
-            .map(|(_, d)| d)
+            .zip(&self.measured)
+            .filter(|&(_, &m)| m)
+            .map(|(d, _)| d)
     }
 
     /// Whether its LD2450 has anything in sight that can be a person (the LD2410C's anchor).
@@ -100,7 +105,7 @@ pub fn live(sensors: &[SensorState], t: f64) -> SensorSet {
     sensors
         .iter()
         .enumerate()
-        .filter(|(_, s)| s.active && t - s.last_frame <= IDLE)
+        .filter(|(_, s)| s.active && t - s.last_frame() <= IDLE)
         .map(|(si, _)| si)
         .collect()
 }
@@ -108,14 +113,17 @@ pub fn live(sensors: &[SensorState], t: f64) -> SensorSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ld2450::tracks::SegIds;
 
     #[test]
     fn only_active_sensors_with_recent_frames_watch() {
         let p = Params::default();
-        let s = |active, last_frame| SensorState {
-            active,
-            last_frame,
-            ..SensorState::new(&p)
+        let s = |active, last_frame: f64| {
+            let mut s = SensorState::new(&p, active);
+            if last_frame.is_finite() {
+                s.tracks.update(last_frame, &[], &mut SegIds::default());
+            }
+            s
         };
         let sensors = [s(true, 10.0), s(false, 10.0), s(true, 4.0), s(true, f64::NEG_INFINITY)];
         let w = live(&sensors, 9.5);
