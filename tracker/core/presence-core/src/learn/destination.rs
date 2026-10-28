@@ -10,10 +10,11 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::f64::consts::PI;
+use std::sync::LazyLock;
 
 use serde_json::{Value, json};
 
-use super::LearnedError;
+use super::{LearnedError, PackedFault};
 use crate::filter::Filter;
 use crate::filter::holders::Obj;
 use crate::filter::hyp::Owner;
@@ -58,12 +59,12 @@ const NEAR: f64 = 2.5 * BW_POS;
 const QUERY: f64 = 0.5 * CELL;
 
 /// The centres of the velocity cells, speed class major (destination.VEL).
-fn velocities() -> [Point; V] {
+static VELOCITIES: LazyLock<[Point; V]> = LazyLock::new(|| {
     std::array::from_fn(|k| {
         let (s, a) = (SPEED_MID[k / SECTORS], 2.0 * PI * (k % SECTORS) as f64 / SECTORS as f64);
         [s * a.cos(), s * a.sin()]
     })
-}
+});
 
 /// Velocity cells with weights summing to 1: linear interpolation over direction and speed.
 fn vel_interp([vx, vy]: Point) -> ([usize; 4], [f64; 4]) {
@@ -98,7 +99,7 @@ fn vel_interp([vx, vy]: Point) -> ([usize; 4], [f64; 4]) {
 
 /// The velocity cells with the kernel's weight above 0.02 (destination.vel_weights).
 fn vel_weights(v: Point) -> Vec<(usize, f64)> {
-    velocities()
+    VELOCITIES
         .iter()
         .enumerate()
         .map(|(k, c)| {
@@ -231,7 +232,7 @@ impl DestGeometry {
             .floats(self.cells.iter().map(|c| c.room.0 as f64))
             .floats(self.space.iter().map(|&s| s as f64))
             .floats(self.allowed.iter().flatten().map(|&a| if a { 1.0 } else { 0.0 }))
-            .floats(velocities().into_iter().flatten());
+            .floats(VELOCITIES.iter().flatten().copied());
         for (&(s, o), pts) in &self.doors {
             h.text(&format!("({s}, {o})"))
                 .floats(pts.iter().flat_map(|p| p.map(|v| round_numpy(v, 2))));
@@ -457,7 +458,7 @@ impl DestMap {
             .map(|&b| f32::from_le_bytes(b))
             .collect();
         if !count.iter().all(|c| c.is_finite() && *c >= 0.0) {
-            return Err(LearnedError::Packed("a count that is no number of walks"));
+            return Err(LearnedError::Packed(PackedFault::Value));
         }
         Ok(Self {
             count,
@@ -523,17 +524,73 @@ struct Seen {
     pos: Point,
 }
 
+/// The destination map with the walks under way: both refer to the cells of one geometry, so they
+/// start over only together (a map of another plan never meets walks of this one).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Destinations {
+    map: DestMap,
+    walks: Learner,
+}
+
+impl Destinations {
+    pub fn new(geo: &DestGeometry) -> Self {
+        Self {
+            map: DestMap::new(geo),
+            walks: Learner::default(),
+        }
+    }
+
+    pub fn map(&self) -> &DestMap {
+        &self.map
+    }
+
+    #[cfg(test)]
+    pub(crate) fn walks(&self) -> &[(SegId, Walk)] {
+        &self.walks.walks
+    }
+
+    /// A new world: what was learned holds on the same geometry, else the map and the walks start over.
+    pub fn follow(&mut self, geo: &DestGeometry) {
+        if !self.map.fits(geo) {
+            *self = Self::new(geo);
+        }
+    }
+
+    /// A saved map in place of the learned one if it was learned on this geometry (the walks under way
+    /// go on: the same cells), else an empty one (also for None). Whether the saved one is used; Err,
+    /// and nothing changed, if it cannot be read.
+    pub fn load(&mut self, saved: Option<&Value>, geo: &DestGeometry) -> Result<bool, LearnedError> {
+        let map = match saved.map(|v| DestMap::from_json(v, geo)) {
+            Some(Err(LearnedError::OtherPlan)) | None => None,
+            Some(map) => Some(map?),
+        };
+        let used = map.is_some();
+        self.map = map.unwrap_or_else(|| DestMap::new(geo));
+        Ok(used)
+    }
+
+    /// The walks under way are dropped, none counted (a pause, a start over).
+    pub fn drop_walks(&mut self) {
+        self.walks = Learner::default();
+    }
+
+    /// Follow the model's walkers at t and count their finished walks.
+    pub fn observe(&mut self, filter: &Filter, world: &World, t: f64) {
+        self.walks.observe(&mut self.map, filter, world, t);
+    }
+}
+
 /// Follows the model's walkers and counts their finished walks into the map (destination.Learner).
 /// A person is followed by their earliest live track; a walk whose tracks end is taken over by a
 /// walker who appears within LINK_DIST and LINK_TIME. Reads the hypotheses only.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Learner {
-    pub(crate) walks: Vec<(SegId, Walk)>,
+struct Learner {
+    walks: Vec<(SegId, Walk)>,
     orphans: Vec<(f64, Walk)>,
 }
 
 impl Learner {
-    pub fn observe(&mut self, map: &mut DestMap, filter: &Filter, world: &World, t: f64) {
+    fn observe(&mut self, map: &mut DestMap, filter: &Filter, world: &World, t: f64) {
         map.fade(t);
         let geo = &world.destinations;
         let seen = walkers(filter, world);
@@ -596,9 +653,8 @@ fn walkers(filter: &Filter, world: &World) -> Vec<(SegId, Seen)> {
                 Some(&(_, f)) => f,
                 None => {
                     let w = mix.weights();
-                    let mode = &mix.modes[WALK];
-                    let d = mode.dim();
-                    let [ps, pw] = [mix.modes[0].pos(), mode.pos()];
+                    let ([x, y], [vx, vy]) = (mix.modes[WALK].pos(), mix.modes[WALK].velocity());
+                    let [ps, pw] = [mix.modes[0].pos(), mix.modes[WALK].pos()];
                     let pos = [w[0] * ps[0] + w[1] * pw[0], w[0] * ps[1] + w[1] * pw[1]];
                     let loc = match mix.away {
                         Some(away) if mix.a > 0.5 => {
@@ -609,7 +665,7 @@ fn walkers(filter: &Filter, world: &World) -> Vec<(SegId, Seen)> {
                     };
                     let f = Feature {
                         walking: w[WALK] * (1.0 - mix.a),
-                        state: [mode.mean[0], mode.mean[d], mode.mean[1], mode.mean[d + 1]],
+                        state: [x, y, vx, vy],
                         loc,
                         pos,
                     };
@@ -1018,7 +1074,7 @@ mod tests {
         bad["count"] = json!(formats::pack(&[0u8; 12], 6));
         assert_eq!(
             DestMap::from_json(&bad, &w.destinations),
-            Err(LearnedError::Packed("another number of values"))
+            Err(LearnedError::Packed(PackedFault::Length))
         );
         let mut bad = v;
         bad["walks"] = json!(-1.0);

@@ -2,6 +2,36 @@
 
 ## Unveröffentlicht
 
+## 0.38.1 (Branch `rust-core`, nach Leons Prüfung von Phase 8, nicht live)
+
+Spuren aller drei Referenzstunden byte-gleich mit 0.38.0 (nur Umbau); ab.sh 1200 16,5 s (0.31.1 48,2 s); 125 Rust-,
+228 Python-Tests (262 mit PT_CONFIGS), fmt/clippy sauber.
+
+- **M1:** Die Reihentests der Lernreihenfolge schlagen jetzt fehl, wenn die Reihenfolge im Code vertauscht wird (je
+  einmal ausprobiert): Reihe 1 vergleicht die Rate an der Geburt mit der Karte ohne die eben gelernte Geburt
+  (`assert_ne!`), neu „Total vor `add_watch`“ (der gelesene Total ist der ohne die eben beobachtete Zeit); Reihe 3 mit
+  einer gelesenen Echorate gleich dem doppelten Prior und `began` 0,2 (von Hand 1/9 · 0,5); Reihe 4 mit jemandem, der
+  1 m/s geht (die Position des Gangs ist die nach dem Bewegen, nicht die davor).
+- **M2:** `GhostMap::from_json` und `Background::from_json` nehmen den Plan und folgen ihm sofort: kein halb gebautes
+  Ergebnis mehr.
+- **M3:** Zielkarte und laufende Gänge sind ein Typ (`Destinations`): ein anderer Grundriss setzt beide zurück, eine
+  geladene Karte gibt es nur für diese Geometrie.
+- **M4 (Herkunft der Abweichung gegen 0.37.1):** In einem Arbeitsbaum von 0.37.1 die beiden Summen so gerechnet wie
+  der Kern – `gained` des Hintergrunds (`w @ (b / mus)`, `w @ tail`: dgemv) und das Glätten der Geisterkarte
+  (`np.convolve`: ddot) der Reihe nach –, dann gegen 0.38.0 gespurt: die erste Abweichung rückt am 10.10. von 19 s auf
+  1178 s (4,9e-18) und am 8.10. von 76 s auf 130 s (2e-34). Das sind also die beiden Hauptquellen; der Rest beginnt
+  später ebenso im letzten Bit, vermutlich die Erwartung gekappter Energien (`log_gammaq`/`exp` des Hintergrunds,
+  zensierte Frames werden in beiden Stunden vorher gelernt; Toleranz für iterative Näherungen). Nicht nachgebaut
+  (Leons Toleranzen); fast_eval: 0,0 min Licht anders über 94 h.
+- Ein beschädigter Teil des Hintergrunds verwirft nur diesen Sensor (wie Python), Gelerntes ohne Pose wird gemeldet;
+  die App loggt jeden verworfenen Teil als Warnung. `Event::Branch` mit `Branched::{Born { map_rate }, FoundAgain}`
+  und `Child { logw, category }` statt Bool und Sentinel; `LearnedError::Json` und `half` entfernt, `PackedFault` statt
+  Text, eigener Fehler `BadPause`; `Pose` im Plan (die Welt hängt nicht mehr am Lernen); Geschwindigkeitszellen einmal
+  (`LazyLock`); `Kalman::velocity` statt `mean[1]`/`mean[d + 1]`; Glätten der Geisterkarte mit `convolve_same`;
+  `adopt` tauscht das Gelernte statt es zu klonen. Hülle: die Pausen werden auch vor einer Rekalibrierung abgeglichen;
+  `test_pause` vergleicht wieder mit etwas Unabhängigem (Gelerntes wie ein Tracker ohne Frames, Verfolgung anders als mit
+  Lernen).
+
 ## 0.38.0 (Branch `rust-core`, Phase 8 des Rust-Ports, nicht live)
 
 Der Kern lernt selbst: Geisterkarte, LD2410C-Hintergrund mit Anker und Echorate, Zielkarte samt „Ziel“, an genau den

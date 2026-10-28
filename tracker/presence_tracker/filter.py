@@ -19,6 +19,7 @@ hypotheses makes new objects (copy on write).
 
 import binascii
 import json
+import logging
 import math
 import os
 import zlib
@@ -38,6 +39,9 @@ from .unobserved import Dwell
 from .world import CELL, OBSERVED, World
 
 import presence_core  # the Rust core (docs/rust-core.md): since phase 3 the hypotheses and their objects
+
+
+log = logging.getLogger(__name__)
 
 
 class CoreError(RuntimeError):
@@ -458,6 +462,7 @@ class Tracker:
         knew (people_state) if the tiles stay the same, else from nothing known. Returns whether it
         started over."""
         self.reconfigured_from = None
+        self._sync_pauses()  # the ends of the changed sensors' tracks learn, or not, as at any time
         changed = self._changed_sensors(self.config, config)
         state = self.people_state() if changed is None else None
         # if what follows fails half-way (new tiles, old people), the app saves this (app.h_put_config)
@@ -522,10 +527,11 @@ class Tracker:
         doors and regions; else (also None) start an empty one. ValueError if it cannot be read."""
         return self._call("use_dest_map", None if dm is None else json.dumps(dm))
 
-    def use_ld_background(self, bg):
+    def use_ld_background(self, bg) -> list:
         """Use a learned LD2410C background (MODEL.md 4.3; its dict, None: nothing learned), per sensor only
-        where it was learned with the sensor where it is now. ValueError if it cannot be read."""
-        self._call("use_ld_background", None if bg is None else json.dumps(bg))
+        where it was learned with the sensor where it is now. Returns why sensors' parts were dropped (a
+        part out of range is dropped alone, the others are used); ValueError if it is no background."""
+        return self._call("use_ld_background", None if bg is None else json.dumps(bg))
 
     def hold_background(self, seconds: float):
         """The LD2410Cs learn nothing from their next `seconds` s of frames (after "Tracks zurücksetzen":
@@ -977,6 +983,7 @@ class Tracker:
         if data.get("ghost_map"):  # learned offline (tools/ghostmap.py), per sensor unless mounted elsewhere since
             self.use_ghost_map(data["ghost_map"])
         if data.get("ld_background"):
-            self.use_ld_background(data["ld_background"])
+            for why in self.use_ld_background(data["ld_background"]):
+                log.warning("LD2410C background: a part dropped: %s", why)
         if data.get("dest_map"):
             self.use_dest_map(data["dest_map"])

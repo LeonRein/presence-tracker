@@ -12,7 +12,7 @@ use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use serde_json::{Map, Value};
 
-use crate::learn::LearnedError;
+use crate::learn::{LearnedError, PackedFault};
 
 /// numpy's round(x, decimals): rint(x 10^d) / 10^d.
 pub fn round_numpy(x: f64, decimals: i32) -> f64 {
@@ -37,16 +37,18 @@ pub fn pack(bytes: &[u8], level: u32) -> String {
 
 /// The inverse of pack, with exactly `len` bytes (else Err: never more is read than that).
 pub fn unpack(text: &str, len: usize) -> Result<Vec<u8>, LearnedError> {
-    let z = STANDARD.decode(text).map_err(|_| LearnedError::Packed("no base64"))?;
+    let z = STANDARD
+        .decode(text)
+        .map_err(|_| LearnedError::Packed(PackedFault::Base64))?;
     let mut out = Vec::with_capacity(len);
     ZlibDecoder::new(z.as_slice())
         .take(len as u64 + 1)
         .read_to_end(&mut out)
-        .map_err(|_| LearnedError::Packed("no zlib"))?;
+        .map_err(|_| LearnedError::Packed(PackedFault::Zlib))?;
     if out.len() == len {
         Ok(out)
     } else {
-        Err(LearnedError::Packed("another number of values"))
+        Err(LearnedError::Packed(PackedFault::Length))
     }
 }
 
@@ -131,18 +133,12 @@ mod tests {
         let bytes: Vec<u8> = (0..1000u32).map(|i| (i % 7) as u8).collect();
         let text = pack(&bytes, 9);
         assert_eq!(unpack(&text, 1000).expect("readable"), bytes);
-        assert_eq!(
-            unpack(&text, 999),
-            Err(LearnedError::Packed("another number of values"))
-        );
-        assert_eq!(
-            unpack(&text, 1001),
-            Err(LearnedError::Packed("another number of values"))
-        );
-        assert_eq!(unpack("%%", 3), Err(LearnedError::Packed("no base64")));
+        assert_eq!(unpack(&text, 999), Err(LearnedError::Packed(PackedFault::Length)));
+        assert_eq!(unpack(&text, 1001), Err(LearnedError::Packed(PackedFault::Length)));
+        assert_eq!(unpack("%%", 3), Err(LearnedError::Packed(PackedFault::Base64)));
         assert_eq!(
             unpack(&STANDARD.encode(b"abc"), 3),
-            Err(LearnedError::Packed("no zlib"))
+            Err(LearnedError::Packed(PackedFault::Zlib))
         );
         // Python: base64.b64encode(zlib.compress(bytes(3))) reads as three zeros
         assert_eq!(unpack("eJxjYGAAAAADAAE=", 3).expect("readable"), vec![0, 0, 0]);

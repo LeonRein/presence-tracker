@@ -7,7 +7,6 @@
 
 use crate::config::{Config, SensorConfig, WallKind, ZoneConfig, ZoneKind};
 use crate::geometry::{Point, Shape, distance_to_segment, line_of_sight};
-use crate::learn::Pose;
 use crate::vmath::{py_dist, py_hypot};
 
 /// m: a door belongs to a wall piece this close to its centre (floorplan.DOOR_REACH)
@@ -137,8 +136,47 @@ pub struct SensorPlan {
     pub id: String,
     pub own_room: Option<RoomIdx>,
     pub in_use: bool,
-    /// how it hangs: what its learned parts are kept in (learn::Pose)
+    /// how it hangs: what its learned parts are kept in
     pub pose: Pose,
+}
+
+/// m: a sensor whose drawn place or height moved more than this hangs elsewhere (model.REMOUNT_SHIFT)
+const REMOUNT_SHIFT: f64 = 0.5;
+/// degrees: ... or whose heading turned more than this (model.REMOUNT_TURN)
+const REMOUNT_TURN: f64 = 30.0;
+
+/// How a sensor hangs and how its reports are read (ghostmap.pose_of): what the learned parts of a
+/// sensor are kept in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pose {
+    pub x: f64,
+    pub y: f64,
+    /// degrees from the +x axis, counterclockwise
+    pub heading: f64,
+    pub height: f64,
+    pub mirror: bool,
+    pub scale: f64,
+}
+
+impl Pose {
+    pub fn of(s: &SensorConfig) -> Self {
+        Self {
+            x: s.x,
+            y: s.y,
+            heading: s.heading,
+            height: s.height,
+            mirror: s.mirror,
+            scale: s.scale,
+        }
+    }
+
+    /// Whether a sensor that hung at `old` hangs elsewhere now (model.remounted): moved or turned;
+    /// scale and mirror are how its measurements are read, never a remount.
+    pub fn remounted(&self, old: &Pose) -> bool {
+        let shift = ((old.x - self.x).powi(2) + (old.y - self.y).powi(2) + (old.height - self.height).powi(2)).sqrt();
+        let turn = ((old.heading - self.heading + 180.0).rem_euclid(360.0) - 180.0).abs();
+        shift > REMOUNT_SHIFT || turn > REMOUNT_TURN
+    }
 }
 
 #[derive(Debug)]
@@ -599,6 +637,36 @@ fn places(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_remount_is_a_move_or_a_turn_not_a_new_scale_or_mirror() {
+        let p = Pose {
+            x: 1.0,
+            y: 2.0,
+            heading: 350.0,
+            height: 2.0,
+            mirror: false,
+            scale: 1.0,
+        };
+        let read_anew = Pose {
+            mirror: true,
+            scale: 1.1,
+            heading: 15.0, // 25 degrees across north
+            ..p
+        };
+        assert!(!read_anew.remounted(&p));
+        assert!(Pose { heading: 25.0, ..p }.remounted(&p));
+        assert!(Pose { x: 1.4, y: 2.4, ..p }.remounted(&p));
+        assert!(
+            !Pose {
+                x: 1.3,
+                height: 2.3,
+                ..p
+            }
+            .remounted(&p)
+        );
+    }
+
     use crate::testing::{config, wall};
 
     /// The living room (6 x 5 m) with its sensor in a corner; right of it a bath (closed: one door,

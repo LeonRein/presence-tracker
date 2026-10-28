@@ -11,57 +11,17 @@ use std::fmt;
 
 use serde_json::{Value, json};
 
-use crate::config::SensorConfig;
 use crate::ld2410::background::Background;
 use crate::world::World;
-use destination::DestMap;
+use destination::Destinations;
 use ghost_map::GhostMap;
-
-/// m: a sensor whose drawn place or height moved more than this hangs elsewhere (model.REMOUNT_SHIFT)
-const REMOUNT_SHIFT: f64 = 0.5;
-/// degrees: ... or whose heading turned more than this (model.REMOUNT_TURN)
-const REMOUNT_TURN: f64 = 30.0;
-
-/// How a sensor hangs and how its reports are read (ghostmap.pose_of): what the learned parts of a
-/// sensor are kept in.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Pose {
-    pub x: f64,
-    pub y: f64,
-    /// degrees from the +x axis, counterclockwise
-    pub heading: f64,
-    pub height: f64,
-    pub mirror: bool,
-    pub scale: f64,
-}
-
-impl Pose {
-    pub fn of(s: &SensorConfig) -> Self {
-        Self {
-            x: s.x,
-            y: s.y,
-            heading: s.heading,
-            height: s.height,
-            mirror: s.mirror,
-            scale: s.scale,
-        }
-    }
-
-    /// Whether a sensor that hung at `old` hangs elsewhere now (model.remounted): moved or turned;
-    /// scale and mirror are how its measurements are read, never a remount.
-    pub fn remounted(&self, old: &Pose) -> bool {
-        let shift = ((old.x - self.x).powi(2) + (old.y - self.y).powi(2) + (old.height - self.height).powi(2)).sqrt();
-        let turn = ((old.heading - self.heading + 180.0).rem_euclid(360.0) - 180.0).abs();
-        shift > REMOUNT_SHIFT || turn > REMOUNT_TURN
-    }
-}
 
 /// The three learners, each lent alone to the step that learns (docs/rust-core.md 2.0).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Learned {
     pub ghosts: GhostMap,
     pub background: Background,
-    pub destinations: DestMap,
+    pub destinations: Destinations,
 }
 
 impl Learned {
@@ -74,7 +34,7 @@ impl Learned {
         Self {
             ghosts,
             background,
-            destinations: DestMap::new(&world.destinations),
+            destinations: Destinations::new(&world.destinations),
         }
     }
 
@@ -86,31 +46,27 @@ impl Learned {
         }
         self.ghosts.follow(&world.plan);
         self.background.follow(&world.plan);
-        if !self.destinations.fits(&world.destinations) {
-            self.destinations = DestMap::new(&world.destinations);
-        }
+        self.destinations.follow(&world.destinations);
     }
 
     /// The three in their saved formats (Tracker.learned).
     pub fn to_json(&self) -> Value {
         json!({"ghost_map": self.ghosts.to_json(), "ld_background": self.background.to_json(),
-               "dest_map": self.destinations.to_json()})
+               "dest_map": self.destinations.map().to_json()})
     }
 }
 
 /// Why a saved part of what was learned is not taken (the files are input from outside).
 #[derive(Debug, Clone, PartialEq)]
 pub enum LearnedError {
-    /// not JSON, or not the expected kind of value at this key
-    Json(String),
     /// this field is missing or no number of the allowed range
     Field(&'static str),
     /// a ghost map of another grid (cell, range)
     Grid,
-    /// a part of this sensor does not have the expected size
-    Size { field: &'static str, sensor: String },
-    /// the destination map's packed counts cannot be read or have another shape
-    Packed(&'static str),
+    /// this field of a sensor's part has another size or a value out of range
+    Part { field: &'static str, sensor: String },
+    /// packed numbers that cannot be read
+    Packed(PackedFault),
     /// a destination map of another floor plan (its rooms, doors, regions)
     OtherPlan,
 }
@@ -118,11 +74,12 @@ pub enum LearnedError {
 impl fmt::Display for LearnedError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Json(e) => write!(f, "not readable: {e}"),
             Self::Field(name) => write!(f, "{name} is missing or out of range"),
             Self::Grid => write!(f, "a ghost map of another grid"),
-            Self::Size { field, sensor } => write!(f, "{field} of sensor {sensor} has another size"),
-            Self::Packed(what) => write!(f, "the packed counts: {what}"),
+            Self::Part { field, sensor } => {
+                write!(f, "{field} of sensor {sensor} has another size or a value out of range")
+            }
+            Self::Packed(fault) => write!(f, "the packed numbers: {fault}"),
             Self::OtherPlan => write!(f, "a destination map of another floor plan"),
         }
     }
@@ -130,36 +87,24 @@ impl fmt::Display for LearnedError {
 
 impl std::error::Error for LearnedError {}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// What is wrong with numbers packed as base64 of zlib.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackedFault {
+    Base64,
+    Zlib,
+    /// more or fewer bytes than the shape says
+    Length,
+    /// a number that cannot be what it counts (not finite, negative)
+    Value,
+}
 
-    #[test]
-    fn a_remount_is_a_move_or_a_turn_not_a_new_scale_or_mirror() {
-        let p = Pose {
-            x: 1.0,
-            y: 2.0,
-            heading: 350.0,
-            height: 2.0,
-            mirror: false,
-            scale: 1.0,
-        };
-        let read_anew = Pose {
-            mirror: true,
-            scale: 1.1,
-            heading: 15.0, // 25 degrees across north
-            ..p
-        };
-        assert!(!read_anew.remounted(&p));
-        assert!(Pose { heading: 25.0, ..p }.remounted(&p));
-        assert!(Pose { x: 1.4, y: 2.4, ..p }.remounted(&p));
-        assert!(
-            !Pose {
-                x: 1.3,
-                height: 2.3,
-                ..p
-            }
-            .remounted(&p)
-        );
+impl fmt::Display for PackedFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Base64 => "no base64",
+            Self::Zlib => "no zlib",
+            Self::Length => "another number of values",
+            Self::Value => "a value out of range",
+        })
     }
 }

@@ -14,7 +14,7 @@ use crate::geometry::Point;
 use crate::ld2410::background::{Background, Weighed};
 use crate::ld2410::sensor::LdCollect;
 use crate::ld2450::tracks::{LOST, SegIds, Sighting};
-use crate::learn::destination::{DestMap, Learner, Target};
+use crate::learn::destination::Target;
 use crate::learn::ghost_map::GhostMap;
 use crate::learn::pauses::Pauses;
 use crate::learn::{Learned, LearnedError};
@@ -43,16 +43,30 @@ pub enum Event {
         life: f64,
         data_lost: bool,
     },
-    /// a track was born (or found again) at z, the ghost map's rate there (0: found again): the
-    /// children's weights and what each says of it
+    /// a track was born or found again at z: the children the hypotheses branched into
     Branch {
         si: usize,
         seg: SegId,
         z: Point,
-        refind: bool,
-        map_rate: f64,
-        children: Vec<(f64, Category)>,
+        how: Branched,
+        children: Vec<Child>,
     },
+}
+
+/// Why a track branched the hypotheses.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Branched {
+    /// a new track; the ghost map's rate of ghost births where it began (per m^2 and s)
+    Born { map_rate: f64 },
+    /// a lost track measured again
+    FoundAgain,
+}
+
+/// A child hypothesis of a branch: its log weight and what it says the track is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Child {
+    pub logw: f64,
+    pub category: Category,
 }
 
 /// Why a frame or a step was not taken: a call that makes no sense, or weights that are no numbers
@@ -119,7 +133,6 @@ pub struct Tracker {
     seg_ids: SegIds,
     clock: Clock,
     learned: Learned,
-    walks: Learner,
     pauses: Pauses,
 }
 
@@ -137,7 +150,6 @@ impl Tracker {
             outputs: OutputCache::default(),
             seg_ids: SegIds::default(),
             clock: Clock::default(),
-            walks: Learner::default(),
             pauses: Pauses::default(),
         }
     }
@@ -207,7 +219,7 @@ impl Tracker {
         self.seg_ids = old.seg_ids;
         self.clock = old.clock;
         self.filter.set_loglik(old.filter.loglik());
-        self.learned = old.learned.clone(); // the old tracker is dropped by the shell right after
+        std::mem::swap(&mut self.learned, &mut old.learned); // the old tracker is dropped right after
         self.learned.follow(&self.world);
         self.pauses = std::mem::take(&mut old.pauses);
         for (s, plan) in self.sensors.iter_mut().zip(&self.world.plan.sensors) {
@@ -241,7 +253,7 @@ impl Tracker {
         self.clock.recycled = self.clock.now;
         self.clock.gap_from = None;
         self.clock.walks_counted = f64::NEG_INFINITY;
-        self.walks = Learner::default();
+        self.learned.destinations.drop_walks();
         self.outputs = OutputCache::default();
     }
 
@@ -388,10 +400,9 @@ impl Tracker {
             // the walks counted into the destination map (MODEL.md 6 "Ziel"): reads the hypotheses only
             self.clock.walks_counted = t;
             if self.pauses.paused(t, t) {
-                self.walks = Learner::default(); // the walks under way are dropped, none counted
+                self.learned.destinations.drop_walks(); // none counted
             } else {
-                self.walks
-                    .observe(&mut self.learned.destinations, &self.filter, &self.world, t);
+                self.learned.destinations.observe(&self.filter, &self.world, t);
             }
         }
         Ok(events)
@@ -639,9 +650,15 @@ impl Tracker {
                     si,
                     seg: f.track.seg,
                     z: f.track.z,
-                    refind: k < refound.len(),
-                    map_rate: f.map_rate,
-                    children,
+                    how: if k < refound.len() {
+                        Branched::FoundAgain
+                    } else {
+                        Branched::Born { map_rate: f.map_rate }
+                    },
+                    children: children
+                        .into_iter()
+                        .map(|(logw, category)| Child { logw, category })
+                        .collect(),
                 });
             }
         }
@@ -706,34 +723,39 @@ impl Tracker {
     /// the prior's (also for None); per sensor only where it hangs where it hung. Whether the saved
     /// one is used; Err, and nothing changed, if it cannot be read.
     pub fn use_ghost_map(&mut self, saved: Option<&Value>) -> Result<bool, LearnedError> {
-        let map = saved.map(GhostMap::from_json).transpose()?;
+        let plan = &self.world.plan;
+        let map = saved.map(|v| GhostMap::from_json(v, plan)).transpose()?;
         let used = map.as_ref().is_some_and(|m| m.learned_with(&self.world.params));
-        self.learned.ghosts = map
-            .filter(|_| used)
-            .unwrap_or_else(|| GhostMap::from_prior(&self.world.params));
-        self.learned.ghosts.follow(&self.world.plan);
+        self.learned.ghosts = map.filter(|_| used).unwrap_or_else(|| {
+            let mut prior = GhostMap::from_prior(&self.world.params);
+            prior.follow(plan);
+            prior
+        });
         Ok(used)
     }
 
     /// Use a saved LD2410C background (MODEL.md 4.3), per sensor where it hangs where it hung; None:
-    /// nothing learned. Err, and nothing changed, if it cannot be read.
-    pub fn use_background(&mut self, saved: Option<&Value>) -> Result<(), LearnedError> {
-        let mut bg = saved.map(Background::from_json).transpose()?.unwrap_or_default();
-        bg.follow(&self.world.plan);
+    /// nothing learned. The parts not taken (a sensor's part out of range: dropped alone); Err, and
+    /// nothing changed, if it is no background at all.
+    pub fn use_background(&mut self, saved: Option<&Value>) -> Result<Vec<LearnedError>, LearnedError> {
+        let plan = &self.world.plan;
+        let (bg, dropped) = match saved {
+            Some(v) => Background::from_json(v, plan)?,
+            None => {
+                let mut bg = Background::default();
+                bg.follow(plan);
+                (bg, Vec::new())
+            }
+        };
         self.learned.background = bg;
-        Ok(())
+        Ok(dropped)
     }
 
     /// Use a saved destination map (MODEL.md 6 "Ziel") if it was learned with these rooms, doors and
     /// regions, else an empty one (also for None). Whether the saved one is used; Err, and nothing
     /// changed, if it cannot be read.
     pub fn use_dest_map(&mut self, saved: Option<&Value>) -> Result<bool, LearnedError> {
-        let map = match saved.map(|v| DestMap::from_json(v, &self.world.destinations)) {
-            Some(Err(LearnedError::OtherPlan)) | None => None,
-            Some(map) => Some(map?),
-        };
-        let used = map.is_some();
-        self.learned.destinations = map.unwrap_or_else(|| DestMap::new(&self.world.destinations));
+        let used = self.learned.destinations.load(saved, &self.world.destinations)?;
         self.outputs = OutputCache::default();
         Ok(used)
     }
@@ -850,7 +872,9 @@ impl Tracker {
             learned,
             ..
         } = self;
-        outputs.at(filter.epoch()).targets(filter, world, &learned.destinations)
+        outputs
+            .at(filter.epoch())
+            .targets(filter, world, learned.destinations.map())
     }
 
     /// Per observed room whether it is occupied at `now` and by what (Tracker.occupancy): the
@@ -1031,13 +1055,11 @@ mod frame_tests {
         tr
     }
 
-    fn branches(events: &[Event]) -> Vec<(SegId, bool, f64)> {
+    fn branches(events: &[Event]) -> Vec<(SegId, Branched)> {
         events
             .iter()
             .filter_map(|e| match e {
-                Event::Branch {
-                    seg, refind, map_rate, ..
-                } => Some((*seg, *refind, *map_rate)),
+                Event::Branch { seg, how, .. } => Some((*seg, *how)),
                 _ => None,
             })
             .collect()
@@ -1082,7 +1104,7 @@ mod frame_tests {
         tr.frame("wohn", 1.2, &one(50.0, 2500.0)).expect("a frame");
         assert!(tr.filter().tracks().get(born).is_some_and(|i| i.lost.is_some()));
         let events = tr.frame("wohn", 1.3, &one(60.0, 2500.0)).expect("a frame");
-        assert_eq!(branches(&events), vec![(born, true, 0.0)]);
+        assert_eq!(branches(&events), vec![(born, Branched::FoundAgain)]);
         // the LD2410C part is gathered once
         let gates = frames::LdGates {
             moving: [10.0; 9],
@@ -1141,7 +1163,9 @@ mod frame_tests {
         tr.frame("wohn", 1.0, &one(0.0, 2500.0)).expect("a frame");
         let z0 = tr.sensor_frame(0).detections[0].pos;
         tr.frame("wohn", 1.1, &one(20.0, 2500.0)).expect("a frame");
-        let before = tr.learned().ghosts.rate(0, z0);
+        // the map as it would be had this frame only been watched, without the birth it learns
+        let mut watched_only = tr.learned().ghosts.clone();
+        watched_only.add_watch(0, 1.2 - 1.1);
         // the target jumps back 1 m (more than the LD2450 tracks' gate): its track ends, a new one is born
         let events = tr.frame("wohn", 1.2, &one(20.0, 1500.0)).expect("a frame");
         let Some(&Event::TrackEnd { z0: began, p_ghost, .. }) =
@@ -1151,7 +1175,7 @@ mod frame_tests {
         };
         assert!(p_ghost > 0.0 && began == z0, "{events:?}");
         let z = tr.sensor_frame(0).detections[0].pos;
-        let [(_, false, map_rate)] = branches(&events)[..] else {
+        let [(_, Branched::Born { map_rate })] = branches(&events)[..] else {
             panic!("no birth in {events:?}");
         };
         assert_eq!(
@@ -1159,7 +1183,22 @@ mod frame_tests {
             tr.learned().ghosts.rate(0, z),
             "read after the end was learned"
         );
-        assert!(tr.learned().ghosts.rate(0, z0) > before);
+        assert_ne!(map_rate, watched_only.rate(0, z), "not before");
+    }
+
+    #[test]
+    fn row_1_the_total_rate_is_read_before_the_map_learns_the_time_watched() {
+        let mut tr = started();
+        tr.frame("wohn", 1.0, &one(0.0, 2500.0)).expect("a frame"); // a start: nothing watched
+        tr.frame("wohn", 1.1, &one(20.0, 2500.0)).expect("a frame");
+        // read (and kept) with nothing watched yet, then 0.1 s learned
+        let mut fresh = Learned::new(tr.world()).ghosts;
+        let mut later = fresh.clone();
+        later.add_watch(0, 1.1 - 1.0);
+        let sight = &tr.world.sights[0];
+        let read = tr.learned.ghosts.total(0, sight);
+        assert_eq!(read, fresh.total(0, sight));
+        assert_ne!(read, later.total(0, sight));
         assert!(tr.learned().ghosts.watched(0) > 0.0);
     }
 
@@ -1197,13 +1236,8 @@ mod frame_tests {
         }
     }
 
-    #[test]
-    fn row_4_the_walks_are_counted_after_everybody_moved_and_the_recycling() {
-        let mut tr = started();
-        tr.frame("wohn", 1.0, &one(0.0, 2500.0)).expect("a frame");
-        tr.step(1.25).expect("finite");
-        // the walk follows the person where the move left them at 1.25
-        let (_, walk) = &tr.walks.walks[0];
+    /// Where the first person with a track of the first hypothesis is, its modes weighed.
+    fn person_at(tr: &Tracker) -> Point {
         let m = tr.filter().hyps()[0]
             .people
             .values()
@@ -1213,9 +1247,24 @@ mod frame_tests {
         let mix = tr.filter().objects().mixtures().get(m);
         let w = mix.weights();
         let [ps, pw] = [mix.modes[0].pos(), mix.modes[1].pos()];
-        assert_eq!(walk.last, 1.25);
-        assert_eq!(walk.pos, [w[0] * ps[0] + w[1] * pw[0], w[0] * ps[1] + w[1] * pw[1]]);
-        assert_eq!(tr.filter().flushed(), 1.25);
+        [w[0] * ps[0] + w[1] * pw[0], w[0] * ps[1] + w[1] * pw[1]]
+    }
+
+    #[test]
+    fn row_4_the_walks_are_counted_after_everybody_moved_and_the_recycling() {
+        let mut tr = started();
+        // somebody walking 1 m/s across the sensor's view
+        for k in 0..=10 {
+            tr.frame("wohn", 1.0 + 0.1 * k as f64, &one(-500.0 + 100.0 * k as f64, 2500.0))
+                .expect("a frame");
+        }
+        let before = person_at(&tr);
+        tr.step(2.3).expect("finite");
+        // the walk follows the person where the move left them at 2.3, not where they were
+        let (_, walk) = &tr.learned.destinations.walks()[0];
+        assert_eq!((walk.last, tr.filter().flushed()), (2.3, 2.3));
+        assert_eq!(walk.pos, person_at(&tr));
+        assert_ne!(walk.pos, before);
     }
 
     #[test]
@@ -1239,6 +1288,6 @@ mod frame_tests {
                 .any(|e| matches!(e, Event::Watch { .. } | Event::TrackEnd { .. }))
         );
         assert_eq!(tr.learned().to_json(), Learned::new(tr.world()).to_json());
-        assert!(tr.walks.walks.is_empty());
+        assert!(tr.learned.destinations.walks().is_empty());
     }
 }

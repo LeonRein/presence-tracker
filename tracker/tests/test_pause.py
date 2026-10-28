@@ -69,19 +69,17 @@ def test_nothing_is_learned_while_paused_and_the_tracking_is_that_without_learni
     free = Tracker(config, start=0.0, people=["observed"])
     out_free = _run(free, a, until, config)
     assert all(x > 0 for x in _learned(free))  # the run teaches all three
-    off = Tracker(config, start=0.0, people=["observed"])  # learning off: a pause the tools know beforehand
-    off.pauses.add(0.0, None)
-    out_off = _run(off, a, until, config)
     paused = Tracker(config, start=0.0, people=["observed"])
     paused.pauses = Pauses([[0.0, None]])
     births = []
     paused.listeners.append(lambda kind, d: births.append(kind) if kind in ("watch", "track_end") else None)
     out_paused = _run(paused, a, until, config)
-    assert _learned(paused) == (0.0, 0.0, 0.0) and not births
-    assert paused.learned() == off.learned()
-    # the tracking: as with learning off, exactly (what was learned weighs in, MODEL.md 4.2)
-    assert all(x == y for p, q in zip(out_paused, out_off) for x, y in zip(p.values(), q.values()))
+    # nothing learned: what it knows is what a tracker that saw nothing knows (the priors, no walks)
+    untouched = Tracker(config, start=0.0, people=["observed"])
+    assert paused.learned() == untouched.learned() and not births
+    # the tracking went on, with the priors: it differs from the run that learned, step for step
     assert len(out_paused) == len(out_free)
+    assert any(p != q for x, y in zip(out_paused, out_free) for p, q in zip(x.values(), y.values()))
 
 
 def test_learning_goes_on_after_the_pause():

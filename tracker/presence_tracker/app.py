@@ -432,8 +432,11 @@ class App:
         if not path.exists():
             return
         try:
-            if use(json.loads(path.read_text())) is False and not_used:
+            used = use(json.loads(path.read_text()))
+            if used is False and not_used:
                 log.info("%s %s", what, not_used)
+            for why in used if isinstance(used, list) else ():  # the LD2410C background's parts dropped
+                log.warning("%s: a part dropped, it starts over: %s", name, why)
         except Exception as e:  # noqa: BLE001 - the part from the prior / empty holds
             log.warning("%s unreadable (%r), starting a new %s", name, e, what)
             use(None)

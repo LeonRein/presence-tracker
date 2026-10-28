@@ -24,7 +24,7 @@ use presence_core::outputs::{Decision, Source};
 use presence_core::params::{LostKind, Params, Shapes};
 use presence_core::plan::{Place, RoomIdx};
 use presence_core::sensors::SensorSet;
-use presence_core::tracker::{Event, Fault, Tracker};
+use presence_core::tracker::{Branched, Event, Fault, Tracker};
 use presence_core::world::{DoorTile, LdExport, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
 use serde_json::Value;
 
@@ -292,11 +292,11 @@ fn events_out(py: Python<'_>, events: Vec<Event>) -> PyResult<Bound<'_, PyList>>
                 si,
                 seg,
                 z,
-                refind,
+                how,
                 children,
-                ..
             } => {
-                let children: Vec<(f64, &str)> = children.into_iter().map(|(w, c)| (w, c.name())).collect();
+                let children: Vec<(f64, &str)> = children.iter().map(|c| (c.logw, c.category.name())).collect();
+                let refind = how == Branched::FoundAgain;
                 out.append(("branch", si, seg.0, (z[0], z[1]), refind, children))?
             }
         }
@@ -543,7 +543,8 @@ impl Core {
     /// The intervals [start, end) in which nothing is learned (end None: still paused).
     fn set_pauses(&mut self, pauses: Vec<(f64, Option<f64>)>) -> PyResult<()> {
         let pauses = pauses.into_iter().map(|(start, end)| Pause { start, end }).collect();
-        self.tracker.set_pauses(Pauses::new(pauses).map_err(learned_error)?);
+        let pauses = Pauses::new(pauses).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        self.tracker.set_pauses(pauses);
         Ok(())
     }
 
@@ -556,13 +557,14 @@ impl Core {
         Ok(used)
     }
 
-    /// Use a saved LD2410C background (its JSON; None: nothing learned).
+    /// Use a saved LD2410C background (its JSON; None: nothing learned): why the parts not taken were
+    /// dropped (each a sensor's part, the others are used).
     #[pyo3(signature = (saved=None))]
-    fn use_ld_background(&mut self, saved: Option<&str>) -> PyResult<()> {
+    fn use_ld_background(&mut self, saved: Option<&str>) -> PyResult<Vec<String>> {
         let saved = saved.map(json_of).transpose()?;
-        self.tracker.use_background(saved.as_ref()).map_err(learned_error)?;
+        let dropped = self.tracker.use_background(saved.as_ref()).map_err(learned_error)?;
         self.changed();
-        Ok(())
+        Ok(dropped.iter().map(ToString::to_string).collect())
     }
 
     /// Use a saved destination map (its JSON; None: empty): whether it is used (learned on this plan).
@@ -593,11 +595,6 @@ impl Core {
     fn background(&self, si: usize) -> PyResult<(Vec<f64>, f64)> {
         let (b, rate) = self.tracker.background(self.sensor(si)?);
         Ok((b.to_vec(), rate))
-    }
-
-    /// The destination map's walks counted.
-    fn dest_walks(&self) -> f64 {
-        self.tracker.learned().destinations.walks()
     }
 
     fn live_tracks(&self, si: usize) -> PyResult<Vec<u64>> {

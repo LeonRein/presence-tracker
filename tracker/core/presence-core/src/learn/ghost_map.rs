@@ -8,11 +8,12 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{LearnedError, Pose};
+use super::LearnedError;
 use crate::formats::{self, field, number, object};
 use crate::geometry::Point;
 use crate::params::Params;
 use crate::plan::Plan;
+use crate::plan::Pose;
 use crate::vmath::pairwise_sum;
 use crate::world::{Sight, raster};
 
@@ -60,31 +61,26 @@ fn spread(raw: &[f64]) -> Vec<f64> {
         .collect();
     let total: f64 = k.iter().sum();
     let k: Vec<f64> = k.iter().map(|v| v / total).collect();
-    let conv = |get: &dyn Fn(i64) -> f64, n: i64, out: &mut dyn FnMut(i64, f64)| {
-        for at in 0..n {
-            let mut s = 0.0;
-            for (m, kv) in (at - r..=at + r).zip(&k) {
-                if (0..n).contains(&m) {
-                    s += get(m) * kv;
-                }
-            }
-            out(at, s);
-        }
-    };
-    let (nx, ny) = (NX as i64, NY as i64);
+    // along x (each column j), then along y (each row i)
     let mut along_x = vec![0.0; NX * NY];
-    for j in 0..ny {
-        conv(&|i| raw[(i * ny + j) as usize], nx, &mut |i, v| {
-            along_x[(i * ny + j) as usize] = v
-        });
+    for j in 0..NY {
+        let column: Vec<f64> = (0..NX).map(|i| raw[i * NY + j]).collect();
+        for (i, v) in convolve_same(&column, &k).into_iter().enumerate() {
+            along_x[i * NY + j] = v;
+        }
     }
-    let mut out = vec![0.0; NX * NY];
-    for i in 0..nx {
-        conv(&|j| along_x[(i * ny + j) as usize], ny, &mut |j, v| {
-            out[(i * ny + j) as usize] = v
-        });
-    }
-    out
+    along_x.chunks(NY).flat_map(|row| convolve_same(row, &k)).collect()
+}
+
+/// np.convolve(v, k, "same") of a symmetric kernel of odd length, summed in the order of v.
+fn convolve_same(v: &[f64], k: &[f64]) -> Vec<f64> {
+    let r = k.len() / 2;
+    (0..v.len())
+        .map(|at| {
+            let (first, last) = (at.saturating_sub(r), (at + r).min(v.len() - 1));
+            (first..=last).fold(0.0, |s, m| s + v[m] * k[m + r - at])
+        })
+        .collect()
 }
 
 /// One sensor's part of the map.
@@ -266,8 +262,8 @@ impl GhostMap {
                "time": time, "poses": poses, "count": count})
     }
 
-    /// A saved map (GhostMap.from_dict), its parts by the sensors it names; follow the plan before use.
-    pub fn from_json(v: &Value) -> Result<Self, LearnedError> {
+    /// A saved map (GhostMap.from_dict) for the sensors of the plan (it follows them at once).
+    pub fn from_json(v: &Value, plan: &Plan) -> Result<Self, LearnedError> {
         let m = object(v, "ghost_map")?;
         let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs());
         if !(close(number(field(m, "cell")?, "cell", 0.0)?, CELL)
@@ -292,12 +288,14 @@ impl GhostMap {
                 id,
             })
             .collect();
-        Ok(Self {
+        let mut map = Self {
             prior_rate,
             prior_time,
             faded: None,
             parts,
-        })
+        };
+        map.follow(plan);
+        Ok(map)
     }
 }
 
@@ -317,7 +315,7 @@ fn pose_of(v: &Value) -> Result<Pose, LearnedError> {
 
 /// NX lists of NY counts, finite and not negative.
 fn counts_of(id: &str, v: &Value) -> Result<Vec<f64>, LearnedError> {
-    let size = || LearnedError::Size {
+    let size = || LearnedError::Part {
         field: "count",
         sensor: id.to_string(),
     };
@@ -396,27 +394,26 @@ mod tests {
         let (mut g, w) = map();
         g.add_watch(0, 3600.0);
         g.add_birth(0, [1.0, 1.0], 0.75);
-        let mut back = GhostMap::from_json(&g.to_json()).expect("readable");
-        back.follow(&w.plan);
+        let back = GhostMap::from_json(&g.to_json(), &w.plan).expect("readable");
         assert_eq!(back, g);
         let mut v = g.to_json();
         v["cell"] = json!(0.3);
-        assert_eq!(GhostMap::from_json(&v), Err(LearnedError::Grid));
+        assert_eq!(GhostMap::from_json(&v, &w.plan), Err(LearnedError::Grid));
         let mut v = g.to_json();
         let id = w.plan.sensors[0].id.clone();
         v["count"][&id][3] = json!([1.0]);
         assert_eq!(
-            GhostMap::from_json(&v),
-            Err(LearnedError::Size {
+            GhostMap::from_json(&v, &w.plan),
+            Err(LearnedError::Part {
                 field: "count",
                 sensor: id.clone()
             })
         );
         let mut v = g.to_json();
         v["time"][&id] = json!(-1.0);
-        assert_eq!(GhostMap::from_json(&v), Err(LearnedError::Field("time")));
+        assert_eq!(GhostMap::from_json(&v, &w.plan), Err(LearnedError::Field("time")));
         let mut v = g.to_json();
         v["poses"][&id][4] = json!(1);
-        assert_eq!(GhostMap::from_json(&v), Err(LearnedError::Field("poses")));
+        assert_eq!(GhostMap::from_json(&v, &w.plan), Err(LearnedError::Field("poses")));
     }
 }

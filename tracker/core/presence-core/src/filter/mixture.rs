@@ -169,6 +169,10 @@ impl Kalman {
         [self.mean[0], self.mean[self.dim()]]
     }
 
+    pub fn velocity(&self) -> Point {
+        [self.mean[1], self.mean[self.dim() + 1]]
+    }
+
     pub fn pos_var(&self) -> Point {
         let d = self.dim();
         [self.cov[0], self.cov[d * d]]

@@ -567,7 +567,6 @@ dependencies = [
  "base64",
  "faer",
  "flate2",
- "half",
  "libm",
  "matrixmultiply",
  "serde",

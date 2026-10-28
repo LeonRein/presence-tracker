@@ -13,9 +13,10 @@ use super::likelihood::{Stats, log_gammaq};
 use super::{CAP, CELLS};
 use crate::filter::LdLearn;
 use crate::formats::{self, number, object, round_python};
-use crate::learn::{LearnedError, Pose};
+use crate::learn::LearnedError;
 use crate::params::Params;
 use crate::plan::Plan;
+use crate::plan::Pose;
 
 type Cells = [f64; CELLS];
 
@@ -252,57 +253,75 @@ impl Background {
         out
     }
 
-    /// A saved background (Background.load_dict), by the sensors it names; follow the plan before use.
-    /// A level needs both halves; the echoes a level.
-    pub fn from_json(v: &Value) -> Result<Self, LearnedError> {
+    /// A saved background (Background.load_dict) for the sensors of the plan (it follows them at once),
+    /// and the parts not taken: a sensor's part with a value out of range or of another size is dropped
+    /// alone, as the Python app did (the others keep what they learned; the caller logs them). A level
+    /// needs both halves, the echoes a level. Err only if it is no background at all.
+    pub fn from_json(v: &Value, plan: &Plan) -> Result<(Self, Vec<LearnedError>), LearnedError> {
+        const SECTIONS: [&str; 8] = ["poses", "num", "den", "num_a", "den_a", "echoes", "quiet", "held"];
         let m = object(v, "ld_background")?;
-        let levels = |num_key, den_key| -> Result<Vec<(String, Level)>, LearnedError> {
-            let den = formats::per_sensor(m, den_key, |_, x| number(x, den_key, 0.0))?;
-            let num = formats::per_sensor(m, num_key, |id, x| {
-                formats::numbers(x, num_key, CELLS, 0.0).map_err(|_| LearnedError::Size {
-                    field: num_key,
-                    sensor: id.to_string(),
-                })
-            })?;
-            Ok(num
+        let mut sections = [None; 8];
+        for (section, name) in sections.iter_mut().zip(SECTIONS) {
+            *section = m.get(name).map(|x| object(x, name)).transpose()?;
+        }
+        let [poses, ..] = sections;
+        let mut parts = Vec::new();
+        let mut dropped = Vec::new();
+        for (id, pose) in poses.into_iter().flatten() {
+            let of = |k: usize| sections[k].and_then(|s| s.get(id));
+            match saved_part(id, pose, of) {
+                Ok(part) => parts.push(part),
+                Err(e) => dropped.push(e),
+            }
+        }
+        // what is learned for a sensor without its pose cannot be placed: dropped, said so
+        let mut orphans: Vec<&String> = sections.iter().flatten().flat_map(|s| s.keys()).collect();
+        orphans.sort_unstable();
+        orphans.dedup();
+        dropped.extend(
+            orphans
                 .into_iter()
-                .filter_map(|(id, n)| {
-                    let &(_, d) = den.iter().find(|(k, _)| *k == id)?;
-                    Some((
-                        id,
-                        Level {
-                            num: n.try_into().expect("CELLS numbers"),
-                            den: d,
-                        },
-                    ))
-                })
-                .collect())
-        };
-        let (level, anchor) = (levels("num", "den")?, levels("num_a", "den_a")?);
-        let seconds = |name| formats::per_sensor(m, name, |_, x| number(x, name, 0.0));
-        let (began, quiet, held) = (seconds("echoes")?, seconds("quiet")?, seconds("held")?);
-        let of = |list: &[(String, f64)], id: &str| list.iter().find(|(k, _)| k == id).map(|&(_, x)| x);
-        let ld_of = |list: &[(String, Level)], id: &str| list.iter().find(|(k, _)| k == id).map(|&(_, l)| l);
-        let parts = formats::per_sensor(m, "poses", |_, x| ld_pose(x))?
-            .into_iter()
-            .map(|(id, pose)| {
-                let level = ld_of(&level, &id);
-                let echoes = of(&quiet, &id).filter(|_| level.is_some()).map(|q| EchoCount {
-                    began: of(&began, &id).unwrap_or(0.0),
-                    quiet: q,
-                });
-                Part {
-                    anchor: ld_of(&anchor, &id),
-                    held: of(&held, &id).unwrap_or(0.0),
-                    level,
-                    echoes,
-                    pose,
-                    id,
-                }
-            })
-            .collect();
-        Ok(Self { parts, of: Vec::new() })
+                .filter(|id| !poses.is_some_and(|p| p.contains_key(*id)))
+                .map(|id| LearnedError::Part {
+                    field: "poses",
+                    sensor: id.clone(),
+                }),
+        );
+        let mut bg = Self { parts, of: Vec::new() };
+        bg.follow(plan);
+        Ok((bg, dropped))
     }
+}
+
+/// A sensor's saved part, its sections' values by index of SECTIONS in from_json.
+fn saved_part<'a>(id: &str, pose: &Value, of: impl Fn(usize) -> Option<&'a Value>) -> Result<Part, LearnedError> {
+    let bad = |field: &'static str| LearnedError::Part {
+        field,
+        sensor: id.to_string(),
+    };
+    let seconds = |k: usize, field| of(k).map(|x| number(x, field, 0.0).map_err(|_| bad(field))).transpose();
+    let level =
+        |[num, den]: [usize; 2], [num_field, den_field]: [&'static str; 2]| -> Result<Option<Level>, LearnedError> {
+            let (Some(n), Some(d)) = (of(num), of(den)) else {
+                return Ok(None);
+            };
+            let num = formats::numbers(n, num_field, CELLS, 0.0).map_err(|_| bad(num_field))?;
+            Ok(Some(Level {
+                num: num.try_into().expect("CELLS numbers"),
+                den: number(d, den_field, 0.0).map_err(|_| bad(den_field))?,
+            }))
+        };
+    let level_now = level([1, 2], ["num", "den"])?;
+    let began = seconds(5, "echoes")?.unwrap_or(0.0);
+    let quiet = seconds(6, "quiet")?.filter(|_| level_now.is_some());
+    Ok(Part {
+        id: id.to_string(),
+        pose: ld_pose(pose).map_err(|_| bad("poses"))?,
+        anchor: level([3, 4], ["num_a", "den_a"])?,
+        echoes: quiet.map(|quiet| EchoCount { began, quiet }),
+        level: level_now,
+        held: seconds(7, "held")?.unwrap_or(0.0),
+    })
 }
 
 /// [x, y, heading, height] (ld2410.pose_of).
@@ -413,6 +432,35 @@ mod tests {
     }
 
     #[test]
+    fn row_3_the_echoes_begun_are_judged_with_the_prior_rate_in_place_of_the_one_read_before() {
+        let (mut bg, w) = background();
+        let p = &w.params;
+        let mut st = Stats::default();
+        st.add(&[10.0; CELLS], 2.0, false);
+        let l = learning(st, vec![[10.0; CELLS]], vec![1.0]);
+        let (b, alpha) = ([10.0; CELLS], [2.0; CELLS]);
+        // the rate read before the weighing, twice the prior: the odds of "a source began" halved
+        let rate = 2.0 * p.ld_echo_rate;
+        bg.learn(
+            0,
+            &Weighed {
+                learn: &l,
+                b: &b,
+                rate,
+                alpha: &alpha,
+                quiet: 1e9,
+            },
+            p,
+        );
+        // began 0.2: odds 0.25 -> 0.125, P = 1/9; counted where nobody (0.5) was in view
+        let e = bg.part(0).echoes.expect("counted");
+        assert!((e.began - 0.5 / 9.0).abs() < 1e-15, "{}", e.began);
+        assert!((e.quiet - 0.5 * 2.0).abs() < 1e-15);
+        let want = (p.ld_echo_rate * p.ld_echo_prior_time + 0.5 / 9.0) / (p.ld_echo_prior_time + 1.0);
+        assert!((bg.rate(0, p) - want).abs() < 1e-20);
+    }
+
+    #[test]
     fn held_learns_nothing_not_even_the_echoes_and_a_capped_energy_counts_for_more() {
         let (mut bg, w) = background();
         let p = &w.params;
@@ -466,25 +514,52 @@ mod tests {
             },
             p,
         );
+        bg.learn(
+            1,
+            &Weighed {
+                learn: &l,
+                b: &b,
+                rate: p.ld_echo_rate,
+                alpha: &alpha,
+                quiet: 1e9,
+            },
+            p,
+        );
         bg.hold(2.0);
         let v = bg.to_json();
-        let mut back = Background::from_json(&v).expect("readable");
-        back.follow(&w.plan);
-        assert_eq!(back.to_json(), v);
+        let (mut back, dropped) = Background::from_json(&v, &w.plan).expect("readable");
+        assert_eq!((back.to_json(), dropped), (v.clone(), Vec::new()));
         assert!((back.b(0, p)[3] - bg.b(0, p)[3]).abs() < 1e-3);
-        let id = w.plan.sensors[0].id.clone();
-        let mut bad = v.clone();
-        bad["num"][&id] = json!([1.0, 2.0]);
+        // a broken part is dropped alone: that sensor starts from the prior, the other keeps its own
+        let id0 = w.plan.sensors[0].id.clone();
+        for (field, value) in [("num", json!([1.0, 2.0])), ("den", json!(null)), ("quiet", json!(-1.0))] {
+            let mut bad = v.clone();
+            bad[field][&id0] = value;
+            let (read, dropped) = Background::from_json(&bad, &w.plan).expect("a background");
+            assert_eq!(
+                dropped,
+                [LearnedError::Part {
+                    field,
+                    sensor: id0.clone()
+                }]
+            );
+            assert_eq!((read.b(0, p), read.b(1, p)), (prior(p), back.b(1, p)), "{field}");
+        }
         assert_eq!(
-            Background::from_json(&bad),
-            Err(LearnedError::Size {
-                field: "num",
-                sensor: id.clone()
-            })
+            Background::from_json(&json!([]), &w.plan),
+            Err(LearnedError::Field("ld_background"))
+        );
+        let (_, dropped) = Background::from_json(&json!({"num": {"x": [1.0]}}), &w.plan).expect("a background");
+        assert_eq!(
+            dropped,
+            [LearnedError::Part {
+                field: "poses",
+                sensor: "x".into()
+            }]
         );
         let mut bad = v;
-        bad["den"][&id] = json!(f64::NAN);
-        assert_eq!(Background::from_json(&bad), Err(LearnedError::Field("den")));
+        bad["num"] = json!([]);
+        assert_eq!(Background::from_json(&bad, &w.plan), Err(LearnedError::Field("num")));
         // a part mounted elsewhere starts over, a recalibrated one keeps it
         let mut plan = testing::flat().plan;
         plan.sensors[0].pose.mirror = true;

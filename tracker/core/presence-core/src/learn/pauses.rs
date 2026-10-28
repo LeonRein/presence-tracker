@@ -1,7 +1,7 @@
 //! Lernen pausieren (pause.py, MODEL.md 10): the intervals in which nothing is learned. Input of the
 //! core: the app switches them (Home Assistant), the tools know some beforehand; the tracking goes on.
 
-use super::LearnedError;
+use std::fmt;
 
 /// [start, end); end None: still paused.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -13,14 +13,25 @@ pub struct Pause {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Pauses(Vec<Pause>);
 
+/// A pause whose times are no numbers or that ends before it starts.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BadPause(pub Pause);
+
+impl fmt::Display for BadPause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "a pause that is no interval: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for BadPause {}
+
 impl Pauses {
     /// Err for a time that is no number or an interval that ends before it starts.
-    pub fn new(pauses: Vec<Pause>) -> Result<Self, LearnedError> {
+    pub fn new(pauses: Vec<Pause>) -> Result<Self, BadPause> {
         let sound = |p: &Pause| p.start.is_finite() && p.end.is_none_or(|e| e.is_finite() && e >= p.start);
-        if pauses.iter().all(sound) {
-            Ok(Self(pauses))
-        } else {
-            Err(LearnedError::Field("pauses"))
+        match pauses.iter().find(|p| !sound(p)) {
+            Some(&bad) => Err(BadPause(bad)),
+            None => Ok(Self(pauses)),
         }
     }
 
@@ -52,7 +63,7 @@ mod tests {
             start: 5.0,
             end: Some(4.0),
         };
-        assert_eq!(Pauses::new(vec![wrong]), Err(LearnedError::Field("pauses")));
+        assert_eq!(Pauses::new(vec![wrong]), Err(BadPause(wrong)));
         assert!(
             Pauses::new(vec![Pause {
                 start: f64::NAN,

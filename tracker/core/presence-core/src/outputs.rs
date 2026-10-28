@@ -591,8 +591,7 @@ pub fn entering(filter: &Filter, world: &World, h: f64) -> Vec<Entering> {
             continue;
         }
         let walking = &mix.modes[WALK];
-        let d = walking.dim();
-        let (at, velocity) = (walking.pos(), [walking.mean[1], walking.mean[d + 1]]);
+        let (at, velocity) = (walking.pos(), walking.velocity());
         let now = mass(at, walking.pos_var());
         let (half_at, half_var) = walk_ahead(world, walking, 0.5 * h);
         let half = mass(half_at, half_var);
@@ -884,12 +883,11 @@ pub fn walkers(filter: &Filter) -> Walkers {
             continue;
         }
         let mode = &mix.modes[WALK];
-        let d = mode.dim();
         index[e] = Some(walkers.len());
         walkers.push(Walker {
             walking,
             at: mode.pos(),
-            velocity: [mode.mean[1], mode.mean[d + 1]],
+            velocity: mode.velocity(),
         });
     }
     let held = filter
