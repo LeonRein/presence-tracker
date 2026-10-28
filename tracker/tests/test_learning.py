@@ -10,6 +10,7 @@ from presence_tracker import ld2410
 from presence_tracker.filter import Tracker
 from presence_tracker.filtermodel import Model
 from presence_tracker.sim import Person, SimSensor, simulate
+from presence_tracker.frames import Frame
 
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import walk
@@ -132,7 +133,7 @@ def _sit(seat, minutes, leave=0.0):
     sat, gone = p.waypoints[3][0], p.waypoints[-1][0]
     occupied, after, nxt = [], 0.0, sat + 600
     for t, sid, frame in simulate([p], sensors, gone + leave, walls=config.wall_segments):
-        tr.process_frame(sid, t, frame)
+        tr.process_frame(sid, t, Frame.of(frame))
         if t >= nxt and t < sat + minutes * 60:
             occupied.append(1 - tr.count_distribution()["wohn"][0])
             nxt += 600
@@ -170,7 +171,7 @@ def test_a_new_sensor_learns_an_empty_room_that_is_louder_than_the_prior():
         s.ld_background = louder
     worst = 0.0
     for t, sid, frame in simulate([nobody], sensors, 1800, walls=config.wall_segments):
-        tr.process_frame(sid, t, frame)
+        tr.process_frame(sid, t, Frame.of(frame))
         if t > 60:
             worst = max(worst, 1 - tr.count_distribution()["wohn"][0])
     assert worst < 2 / 3, worst
@@ -192,6 +193,6 @@ def test_a_sitter_the_model_starts_with_is_not_learned_where_an_echo_source_hold
     tr = Tracker(config, start=0.0)
     sensors = [SimSensor(s, still_dropout=1.0, still_gap=900.0) for s in config.sensors]
     for t, sid, frame in simulate([p], sensors, 3600, walls=config.wall_segments):
-        tr.process_frame(sid, t, frame)
+        tr.process_frame(sid, t, Frame.of(frame))
     prior = ld2410.prior(m)
     assert np.all(np.abs(tr.ld_background.b("a") / prior - 1) < 0.3), tr.ld_background.b("a")

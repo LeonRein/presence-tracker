@@ -7,6 +7,7 @@ from presence_tracker.filtermodel import STILL, WALK, Model
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
+from presence_tracker.frames import Frame
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
 
@@ -86,11 +87,11 @@ def test_all_energies_0_are_no_measurement():
     for t, sid, frame in simulate([p], sim_sensors(config), 120, walls=config.wall_segments):
         if sid == "a" and t > 30 and frame.get("ld2410"):
             frame["ld2410"].update(move_gates=[0] * 9, still_gates=[0] * 9, moving=False, still=False)
-        tr.process_frame(sid, t, frame)
+        tr.process_frame(sid, t, Frame.of(frame))
         if t > 40:
             low = min(low, 1 - tr.count_distribution()["wohn"][0])
     assert low > c, low
-    assert tr.runtime["a"].ld_e is None  # nothing taken as its energies
+    assert tr._c.ld_last(tr.sidx["a"]) is None  # nothing taken as its energies
 
 
 def test_the_end_of_a_track_is_not_the_end_of_the_stay():

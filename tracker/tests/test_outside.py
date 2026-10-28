@@ -7,6 +7,7 @@ import json
 from presence_tracker import ha
 from presence_tracker.filter import Tracker
 from presence_tracker.sim import Person, simulate
+from presence_tracker.frames import Frame
 
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
@@ -23,7 +24,7 @@ def test_who_walks_out_through_the_stairwell_door_is_outside():
     t_out = a.waypoints[6][0] + 30  # 30 s after the stairwell door
     seen = {}
     for t, sid, frame in simulate([a], sim_sensors(config), t_out, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
         crowd.check()
         if "in" not in seen and t >= t_in:
             seen["in"] = crowd.place_distribution()

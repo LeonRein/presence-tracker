@@ -34,9 +34,12 @@ impl SensorState {
 /// its tracks, its LD2410C part (default: no frame yet).
 #[derive(Debug, Default, Clone)]
 pub struct SensorFrame {
+    pub t: f64,
     pub detections: Vec<Detection>,
+    /// the events not yet taken out by the steps of the evidence (Tracker::track_events)
     pub events: TrackEvents,
-    pub ld2410: Ld2410,
+    /// its LD2410C part until it is gathered (Tracker::ld_frame)
+    pub ld2410: Option<Ld2410>,
 }
 
 impl SensorFrame {

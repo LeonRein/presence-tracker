@@ -27,7 +27,6 @@ in the app (MODEL.md 10, "Hintergrundaktivität").
 import argparse
 import collections
 import copy
-import itertools
 import json
 import math
 import os
@@ -49,14 +48,14 @@ def load(config, recordings: str, t0: float, t1: float, pauses=None) -> dict:
     from the recordings between t0 and t1, none while learning was paused (pauses, and the switch in
     the recordings)."""
     from presence_tracker.calibration import track_frame
-    from presence_tracker.frames import SensorClock
+    from presence_tracker.frames import Frame, SensorClock
+    from presence_core import TrackStage
     from presence_tracker.pause import Pauses, follow
 
     pauses = pauses if pauses is not None else Pauses()
     skip = set()
 
-    ids = itertools.count()
-    tracks, clocks = {}, collections.defaultdict(SensorClock)
+    stage, clocks = TrackStage(0), collections.defaultdict(SensorClock)
     rows = collections.defaultdict(list)
     t = t0 - t0 % 3600
     while t <= t1:
@@ -71,9 +70,9 @@ def load(config, recordings: str, t0: float, t1: float, pauses=None) -> dict:
             sid = m["topic"].split("/")[1]
             if sid not in config.sensor_by_id:
                 continue
-            p = m["payload"]
-            tt = clocks[sid](m["t"], p.get("uptime_ms"))
-            track_frame(tracks, ids, rows, sid, tt, p, pauses.paused(tt), skip)
+            frame = Frame.of(m["payload"])
+            tt = clocks[sid](m["t"], frame)
+            track_frame(stage, rows, sid, tt, frame, pauses.paused(tt), skip)
     return {sid: np.array(r, float).reshape(-1, 6) for sid, r in rows.items()}
 
 

@@ -11,6 +11,7 @@ import numpy as np
 from presence_tracker.filter import Tracker
 from presence_tracker.filtermodel import Model, Shapes, copula_cells, gamma_log_grid
 from presence_tracker.sim import Person, simulate
+from presence_tracker.frames import Frame
 
 from test_existence import known
 from test_filter import FLUR_DOOR, flat_config
@@ -52,7 +53,7 @@ def test_a_sitter_no_ld2450_sees_for_a_quarter_of_an_hour_stays():
     on = []
     c = config.params.light_cost / (config.params.light_cost + 1.0)
     for t, sid, frame in simulate([a], sensors, sit + 900, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
         if t > sit + 10:
             on.append(1 - crowd.count_distribution()["wohn"][0] > c)
     assert sum(on) / len(on) > 0.85 and on[-1], sum(on) / len(on)

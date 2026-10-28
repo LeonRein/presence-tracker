@@ -9,7 +9,7 @@ use crate::filter::branch::{Category, Found, Frame};
 use crate::filter::evidence::Ended;
 use crate::filter::mixture::SegId;
 use crate::filter::{Filter, NotFinite, PeopleState, Start};
-use crate::frames::{self, FrameError, Ld2410, LdGates};
+use crate::frames::{self, CallError, LdGates};
 use crate::geometry::Point;
 use crate::ld2410::CELLS;
 use crate::ld2410::sensor::LdCollect;
@@ -160,14 +160,14 @@ impl Tracker {
     /// say about its LD2450's tracks; its room is seen if it measured somebody in it (output only).
     /// Kept as the sensor's last frame for the steps of its evidence. Err, and nothing changed, for a
     /// sensor there is not or a time that is no number.
-    pub fn frame(&mut self, si: usize, t: f64, frame: &frames::Frame) -> Result<&SensorFrame, FrameError> {
+    pub fn frame(&mut self, si: usize, t: f64, frame: &frames::Frame) -> Result<&SensorFrame, CallError> {
         if si >= self.sensors.len() {
-            return Err(FrameError::NoSensor(si));
+            return Err(CallError::NoSensor(si));
         }
         if !t.is_finite() {
-            return Err(FrameError::Time);
+            return Err(CallError::Time);
         }
-        let detections = frames::detections(&self.world, si, &frame.targets);
+        let detections = frames::detections(&self.world, si, frame);
         let seen: Vec<Sighting> = detections
             .iter()
             .map(|d| Sighting {
@@ -178,6 +178,7 @@ impl Tracker {
         let sensor = &mut self.sensors[si];
         let events = sensor.tracks.update(t, &seen, &mut self.seg_ids);
         sensor.frame = SensorFrame {
+            t,
             detections,
             events,
             ld2410: frame.ld2410,
@@ -203,24 +204,31 @@ impl Tracker {
     /// What the last frame of sensor si says about its live tracks (Tracker._evidence step 2): a
     /// measured track updates its owners; one that was lost and is measured again is found again,
     /// returned to be branched on. Tracks the filter does not know (begun before a start, or of a
-    /// sensor that changed) say nothing, as in the Python filter.
-    pub fn track_events(&mut self, si: usize, t: f64) -> Vec<(SegId, Point)> {
-        let frame = &self.sensors[si].frame;
-        let at = |det: usize| frame.detections[det].pos;
+    /// sensor that changed) say nothing, as in the Python filter. The events are taken out: a second
+    /// call does nothing.
+    pub fn track_events(&mut self, si: usize) -> Vec<(SegId, Point)> {
+        let frame = &mut self.sensors[si].frame;
+        let (t, events) = (frame.t, &mut frame.events);
+        let (measured, lost, held) = (
+            std::mem::take(&mut events.measured),
+            std::mem::take(&mut events.lost),
+            std::mem::take(&mut events.held),
+        );
+        let at = |det: usize| self.sensors[si].frame.detections[det].pos;
         let mut refound = Vec::new();
-        for m in &frame.events.measured {
+        for m in measured {
             match self.filter.tracks().get(m.seg).map(|i| i.lost.is_some()) {
                 Some(false) => self.filter.measured(&self.world, &self.sensors, m.seg, at(m.det), t),
                 Some(true) => refound.push((m.seg, at(m.det))),
                 None => {}
             }
         }
-        for l in &frame.events.lost {
+        for l in lost {
             if self.filter.tracks().get(l.seg).is_some() {
                 self.filter.lost(l.seg, l.kind, at(l.det), t);
             }
         }
-        for h in &frame.events.held {
+        for h in held {
             if self.filter.tracks().get(h.seg).is_some() {
                 self.filter.held(&self.world, si, h.seg, at(h.det), t);
             }
@@ -297,23 +305,20 @@ impl Tracker {
     }
 
     /// The LD2410C part of the last frame of sensor si (LdSensor::frame), if it has one; whether its
-    /// LD2450 has anything in sight is the background's anchor.
-    pub fn ld_frame(&mut self, si: usize, t: f64) {
-        let frame = &self.sensors[si].frame;
+    /// LD2450 has anything in sight is the background's anchor. Taken out: a second call does nothing.
+    pub fn ld_frame(&mut self, si: usize) {
+        let frame = &mut self.sensors[si].frame;
         let target = frame.target_in_sight();
-        match frame.ld2410 {
-            Ld2410::Absent => {}
-            Ld2410::NoGates => self.gather_ld(si, t, None, target),
-            Ld2410::Gates(g) => self.gather_ld(si, t, Some(&g), target),
+        if let Some(ld) = frame.ld2410.take() {
+            let t = frame.t;
+            self.gather_ld(si, t, ld.gates.as_ref(), target);
         }
     }
 
     /// The energies of a frame of sensor si's LD2410C.
     pub(crate) fn gather_ld(&mut self, si: usize, t: f64, gates: Option<&LdGates>, target: bool) {
         let frame = self.world.params.ld_frame;
-        self.sensors[si]
-            .ld
-            .frame(t, gates.map(|g| (&g.moving, &g.still)), target, frame);
+        self.sensors[si].ld.frame(t, gates, target, frame);
     }
 
     /// What sensor si's LD2410C frames left.
@@ -527,41 +532,26 @@ mod tests {
 mod frame_tests {
     use super::*;
     use crate::filter::mixture::NewTrack;
-    use crate::frames::Target;
+    use crate::frames::{Ld2410, Target};
     use crate::params::FRAME;
     use crate::testing;
 
     /// A frame with one target at (x, y) mm in the sensor's frame.
     fn one(x: f64, y: f64) -> frames::Frame {
         frames::Frame {
+            uptime_ms: None,
             targets: vec![Target {
                 slot: 1,
                 x,
                 y,
                 speed: 0.0,
             }],
-            ld2410: Ld2410::Absent,
+            ld2410: None,
         }
     }
 
-    #[test]
-    fn a_frame_is_read_kept_and_its_room_seen() {
-        let mut tr = Tracker::new(testing::flat());
-        assert_eq!(tr.frame(5, 1.0, &one(0.0, 2500.0)).err(), Some(FrameError::NoSensor(5)));
-        assert_eq!(tr.frame(0, f64::NAN, &one(0.0, 2500.0)).err(), Some(FrameError::Time));
-        let read = tr.frame(0, 1.0, &one(0.0, 2500.0)).expect("a frame");
-        assert_eq!(read.events.born.len(), 1);
-        assert!(read.target_in_sight() && read.measured().count() == 1);
-        assert!(tr.concerns_all(0), "a track was born");
-        assert_eq!(tr.seen().seen(&tr.world().plan, 1.0, 10.0), vec![true]);
-        // held (the same raw numbers: frozen) is no measurement
-        let read = tr.frame(0, 1.1, &one(0.0, 2500.0)).expect("a frame");
-        assert_eq!(read.events.lost.len(), 1);
-        assert_eq!(read.measured().count(), 0);
-    }
-
-    #[test]
-    fn a_silent_sensor_drops_its_tracks_only_where_the_filter_has_them() {
+    /// A tracker whose filter tracks the target of sensor 0's frame at t = 1 (born and branched on).
+    fn tracking() -> (Tracker, SegId) {
         let mut tr = Tracker::new(testing::flat());
         tr.reset_people(1.0, Some(&[Start::Anywhere])).expect("a start");
         let born = tr.frame(0, 1.0, &one(0.0, 2500.0)).expect("a frame").events.born[0];
@@ -583,6 +573,71 @@ mod frame_tests {
             prior_rate: 1.8e-5,
         };
         tr.branch_all(&frame, &[found]).expect("finite");
+        (tr, born.seg)
+    }
+
+    #[test]
+    fn a_frame_is_read_kept_and_its_room_seen() {
+        let mut tr = Tracker::new(testing::flat());
+        assert_eq!(tr.frame(5, 1.0, &one(0.0, 2500.0)).err(), Some(CallError::NoSensor(5)));
+        assert_eq!(tr.frame(0, f64::NAN, &one(0.0, 2500.0)).err(), Some(CallError::Time));
+        let read = tr.frame(0, 1.0, &one(0.0, 2500.0)).expect("a frame");
+        assert_eq!((read.t, read.events.born.len()), (1.0, 1));
+        assert!(read.target_in_sight() && read.measured().count() == 1);
+        assert!(tr.concerns_all(0), "a track was born");
+        assert_eq!(tr.seen().seen(&tr.world().plan, 1.0, 10.0), vec![true]);
+        // held (the same raw numbers: frozen) is no measurement
+        let read = tr.frame(0, 1.1, &one(0.0, 2500.0)).expect("a frame");
+        assert_eq!(read.events.lost.len(), 1);
+        assert_eq!(read.measured().count(), 0);
+    }
+
+    #[test]
+    fn the_steps_take_their_events_out_a_second_call_does_nothing() {
+        let (mut tr, seg) = tracking();
+        tr.frame(0, 1.1, &one(50.0, 2500.0)).expect("a frame");
+        assert!(!tr.concerns_all(0), "only measured");
+        assert!(tr.track_events(0).is_empty());
+        assert_eq!(
+            tr.filter().tracks().get(seg).map(|i| i.ghost_t()),
+            Some(1.1),
+            "measured"
+        );
+        assert!(tr.sensors[0].frame.events.measured.is_empty() && tr.track_events(0).is_empty());
+        // frozen: lost; then measured where it can be a person: found again, which concerns everybody
+        tr.frame(0, 1.2, &one(50.0, 2500.0)).expect("a frame");
+        assert!(tr.track_events(0).is_empty());
+        assert!(tr.filter().tracks().get(seg).is_some_and(|i| i.lost.is_some()));
+        tr.frame(0, 1.3, &one(60.0, 2500.0)).expect("a frame");
+        assert!(tr.concerns_all(0), "found again");
+        assert_eq!(
+            tr.track_events(0).iter().map(|&(s, _)| s).collect::<Vec<_>>(),
+            vec![seg]
+        );
+        assert!(tr.track_events(0).is_empty());
+        // the LD2410C part is gathered once
+        let gates = frames::LdGates {
+            moving: [10.0; 9],
+            still: [5.0; 9],
+        };
+        let with_ld = frames::Frame {
+            ld2410: Some(Ld2410 {
+                gates: Some(gates),
+                ..Ld2410::default()
+            }),
+            ..one(70.0, 2500.0)
+        };
+        tr.frame(0, 1.4, &with_ld).expect("a frame");
+        tr.ld_frame(0);
+        let gathered = tr.ld_sensor(0).stats().time;
+        assert!(gathered > 0.0 && tr.ld_collect(0).t == 1.4);
+        tr.ld_frame(0);
+        assert_eq!(tr.ld_sensor(0).stats().time, gathered);
+    }
+
+    #[test]
+    fn a_silent_sensor_drops_its_tracks_only_where_the_filter_has_them() {
+        let (mut tr, seg) = tracking();
         // sensor 1 tracks somebody the filter does not know
         tr.frame(1, 1.0, &one(0.0, 2500.0)).expect("a frame");
         assert!(tr.data_lost(1.0 + LOST).is_empty(), "not silent for more than LOST yet");
@@ -592,7 +647,7 @@ mod frame_tests {
             vec![DataLost {
                 si: 0,
                 since: 1.0 + LOST,
-                live: vec![born.seg]
+                live: vec![seg]
             }]
         );
         // sensor 0's tracks were forgotten: its next frame ends nothing; sensor 1 kept them

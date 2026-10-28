@@ -13,7 +13,9 @@
 //!   first visible measured frame.
 
 use crate::filter::mixture::SegId;
-use crate::frames::Target;
+use std::collections::BTreeMap;
+
+use crate::frames::{CallError, Frame, Target};
 use crate::geometry::Point;
 use crate::params::LostKind;
 use crate::vmath::py_hypot;
@@ -86,9 +88,14 @@ pub struct TrackEvents {
 }
 
 impl TrackEvents {
-    /// Whether the target `det` was measured (in a track born or continued).
+    /// The targets measured in a track: born, then continued or found again.
+    pub fn measurements(&self) -> impl Iterator<Item = &TrackAt> {
+        self.born.iter().chain(&self.measured)
+    }
+
+    /// Whether the target `det` was measured.
     pub fn measures(&self, det: usize) -> bool {
-        self.born.iter().chain(&self.measured).any(|a| a.det == det)
+        self.measurements().any(|a| a.det == det)
     }
 }
 
@@ -177,7 +184,7 @@ impl Ld2450Tracks {
             .iter()
             .zip(&links)
             .enumerate()
-            .map(|(det, (s, &link))| self.follow(det, s, link.map(|i| self.raw[i]), ids, &mut ev))
+            .map(|(det, (s, &link))| follow(det, s, link.map(|i| self.raw[i]), ids, &mut ev))
             .collect();
         self.raw = raw;
         ev
@@ -208,57 +215,124 @@ impl Ld2450Tracks {
         }
         links
     }
+}
 
-    /// The raw target of sighting `det` (continuing `prev`, if linked) and the events of its track.
-    fn follow(&self, det: usize, s: &Sighting, prev: Option<Raw>, ids: &mut SegIds, ev: &mut TrackEvents) -> Raw {
-        let tg = s.target;
-        let xy = [tg.x, tg.y];
-        let (run, track, kind) = match prev {
-            Some(r) => {
-                let run = if tg.speed == r.speed && tg.speed != 0.0 {
-                    r.run + 1
-                } else {
-                    1
-                };
-                let kind = if xy == r.xy {
-                    Some(LostKind::Frozen)
-                } else if run >= COAST_RUN {
-                    Some(LostKind::Coast)
-                } else {
-                    None
-                };
-                (run, r.track, kind)
-            }
-            None => (1, RawTrack::Unborn, None),
+/// What the LD2450 does with a target it continues.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Report {
+    Measuring,
+    /// it lost the target and holds it: coasted with its last speed, or repeated bit-identically
+    Holding(LostKind),
+}
+
+impl Raw {
+    /// The target `tg` continues this one: frames in a row with its nonzero speed, and what the sensor
+    /// does with it.
+    fn continued_by(&self, tg: &Target) -> (u32, Report) {
+        let run = if tg.speed == self.speed && tg.speed != 0.0 {
+            self.run + 1
+        } else {
+            1
         };
-        let track = match (track, kind) {
-            (RawTrack::Unborn, None) if s.visible => {
-                let seg = ids.fresh();
-                ev.born.push(TrackAt { seg, det });
-                RawTrack::Live { seg, lost: None }
-            }
-            (RawTrack::Unborn, _) => RawTrack::Unborn,
-            (RawTrack::Live { seg, lost }, Some(kind)) => {
-                match lost {
-                    None => ev.lost.push(LostAt { seg, kind, det }),
-                    Some(_) => ev.held.push(TrackAt { seg, det }),
-                }
-                RawTrack::Live { seg, lost: Some(kind) }
-            }
-            (RawTrack::Live { seg, .. }, None) => {
-                if s.visible {
-                    ev.measured.push(TrackAt { seg, det });
-                }
-                RawTrack::Live { seg, lost: None }
-            }
+        let report = if [tg.x, tg.y] == self.xy {
+            Report::Holding(LostKind::Frozen)
+        } else if run >= COAST_RUN {
+            Report::Holding(LostKind::Coast)
+        } else {
+            Report::Measuring
         };
-        Raw {
-            xy,
-            local: tg.local(),
-            speed: tg.speed,
-            run,
-            track,
+        (run, report)
+    }
+}
+
+/// The raw target of sighting `det` (continuing `prev`, if linked) and the events of its track.
+fn follow(det: usize, s: &Sighting, prev: Option<Raw>, ids: &mut SegIds, ev: &mut TrackEvents) -> Raw {
+    let tg = s.target;
+    let (run, track, report) = match prev {
+        Some(r) => {
+            let (run, report) = r.continued_by(&tg);
+            (run, r.track, report)
         }
+        None => (1, RawTrack::Unborn, Report::Measuring),
+    };
+    let track = match (track, report) {
+        (RawTrack::Unborn, Report::Measuring) if s.visible => {
+            let seg = ids.fresh();
+            ev.born.push(TrackAt { seg, det });
+            RawTrack::Live { seg, lost: None }
+        }
+        (RawTrack::Unborn, _) => RawTrack::Unborn,
+        (RawTrack::Live { seg, lost }, Report::Holding(kind)) => {
+            match lost {
+                None => ev.lost.push(LostAt { seg, kind, det }),
+                Some(_) => ev.held.push(TrackAt { seg, det }),
+            }
+            RawTrack::Live { seg, lost: Some(kind) }
+        }
+        (RawTrack::Live { seg, .. }, Report::Measuring) => {
+            if s.visible {
+                ev.measured.push(TrackAt { seg, det });
+            }
+            RawTrack::Live { seg, lost: None }
+        }
+    };
+    Raw {
+        xy: [tg.x, tg.y],
+        local: tg.local(),
+        speed: tg.speed,
+        run,
+        track,
+    }
+}
+
+/// A target measured in a track, in the sensor's own frame (the calibration's measurements).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Measurement {
+    pub seg: SegId,
+    /// m, the sensor's frame
+    pub local: Point,
+    /// m/s along the beam, as measured
+    pub speed: f64,
+}
+
+/// The LD2450's own tracks of several boards with one sequence of track ids and without a plan:
+/// every target in front of its sensor counts (calibration.track_frame).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackStage {
+    boards: BTreeMap<String, Ld2450Tracks>,
+    ids: SegIds,
+}
+
+impl TrackStage {
+    pub fn starting_at(first: u64) -> Self {
+        Self {
+            boards: BTreeMap::new(),
+            ids: SegIds::starting_at(first),
+        }
+    }
+
+    /// A frame of a board at t: its targets measured in a track (born, then continued), in that order.
+    pub fn update(&mut self, board: &str, t: f64, frame: &Frame) -> Result<Vec<Measurement>, CallError> {
+        if !t.is_finite() {
+            return Err(CallError::Time);
+        }
+        let seen: Vec<Sighting> = frame
+            .in_front()
+            .map(|&target| Sighting { target, visible: true })
+            .collect();
+        let tracks = self.boards.entry(board.to_owned()).or_default();
+        let ev = tracks.update(t, &seen, &mut self.ids);
+        Ok(ev
+            .measurements()
+            .map(|a| {
+                let tg = seen[a.det].target;
+                Measurement {
+                    seg: a.seg,
+                    local: tg.local(),
+                    speed: tg.radial_speed(),
+                }
+            })
+            .collect())
     }
 }
 
@@ -378,5 +452,72 @@ mod tests {
         tracks.drop_raw();
         let ev = tracks.update(20.0, &[], &mut ids);
         assert!(ev.ended.is_empty() && !ev.data_lost, "nothing left to lose");
+    }
+
+    #[test]
+    fn a_target_continues_within_the_gate_and_ties_go_to_the_first_raw_target() {
+        // 0.599 m: the same target; 0.601 m: a new one (and the old one ends)
+        let ev = feed(&[
+            vec![(0.0, 2000.0, 10.0)],
+            vec![(0.0, 2599.0, 20.0)],
+            vec![(0.0, 3200.0, 30.0)],
+        ]);
+        assert_eq!(segs(&ev[1].measured), vec![SegId(1)]);
+        assert_eq!(
+            (ev[2].ended.clone(), segs(&ev[2].born)),
+            (vec![SegId(1)], vec![SegId(2)])
+        );
+        // one target as far from both of two: it continues the first, the second ends
+        let ev = feed(&[
+            vec![(-300.0, 2000.0, 10.0), (300.0, 2000.0, 20.0)],
+            vec![(0.0, 2000.0, 30.0)],
+        ]);
+        assert_eq!(ev[1].measured, vec![TrackAt { seg: SegId(1), det: 0 }]);
+        assert_eq!(ev[1].ended, vec![SegId(2)]);
+    }
+
+    #[test]
+    fn coasting_needs_the_same_speed_three_frames_in_a_row() {
+        let speeds = [300.0, 300.0, 301.0, 301.0, 301.0];
+        let frames: Vec<Vec<(f64, f64, f64)>> = speeds
+            .iter()
+            .enumerate()
+            .map(|(k, &v)| vec![(0.0, 2000.0 + 10.0 * k as f64, v)])
+            .collect();
+        let ev = feed(&frames);
+        let lost: Vec<usize> = (0..ev.len()).filter(|&k| !ev[k].lost.is_empty()).collect();
+        assert_eq!(lost, vec![4], "the change of speed starts the count over");
+        assert_eq!(ev[4].lost[0].kind, LostKind::Coast);
+    }
+
+    #[test]
+    fn the_calibration_s_stage_measures_in_front_with_one_sequence_of_ids() {
+        let frame = |targets: &[(f64, f64, f64)]| Frame {
+            uptime_ms: None,
+            targets: targets
+                .iter()
+                .zip(1..)
+                .map(|(&(x, y, speed), slot)| Target { slot, x, y, speed })
+                .collect(),
+            ld2410: None,
+        };
+        let mut stage = TrackStage::starting_at(10);
+        let a = stage
+            .update("a", 0.0, &frame(&[(100.0, 2000.0, -250.0), (0.0, -10.0, 0.0)]))
+            .unwrap();
+        assert_eq!(
+            a,
+            vec![Measurement {
+                seg: SegId(10),
+                local: [0.1, 2.0],
+                speed: -0.25
+            }],
+            "behind the sensor: no target"
+        );
+        let b = stage.update("b", 0.05, &frame(&[(0.0, 3000.0, 0.0)])).unwrap();
+        assert_eq!(b[0].seg, SegId(11), "one sequence over the boards");
+        let a = stage.update("a", 0.1, &frame(&[(110.0, 2010.0, -250.0)])).unwrap();
+        assert_eq!(a[0].seg, SegId(10), "each board its own tracks");
+        assert_eq!(stage.update("a", f64::NAN, &frame(&[])), Err(CallError::Time));
     }
 }

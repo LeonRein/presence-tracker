@@ -58,14 +58,20 @@ impl SensorConfig {
         [self.x, self.y]
     }
 
-    /// House frame -> the sensor's frame on the floor (x right, y forward), as it measures (its scale
-    /// taken out; SensorConfig.to_local).
-    pub fn to_local(&self, [wx, wy]: Point) -> Point {
-        let [c, s] = self.axis();
-        let (dx, dy) = ((wx - self.x) / self.scale, (wy - self.y) / self.scale);
-        let gy = dx * c + dy * s;
-        let gx = dx * s - dy * c;
-        [if self.mirror { -gx } else { gx }, gy]
+    /// How it hangs: what turns its targets into floor positions and back.
+    pub fn mount(&self) -> Mount {
+        Mount {
+            at: self.at(),
+            axis: self.axis(),
+            height: self.height,
+            mirror: self.mirror,
+            scale: self.scale,
+        }
+    }
+
+    /// House frame -> the sensor's frame on the floor (Mount::to_local).
+    pub fn to_local(&self, p: Point) -> Point {
+        self.mount().to_local(p)
     }
 
     /// Within its field of view and range, grown by margin (SensorConfig.in_fov).
@@ -87,6 +93,62 @@ impl SensorConfig {
     /// In its field of view and no wall between (SensorConfig.sees).
     pub fn sees(&self, p: Point, walls: &[[Point; 2]], margin: f64) -> bool {
         self.in_fov(p, margin) && line_of_sight(self.sight_origin(), p, walls)
+    }
+}
+
+/// How a sensor hangs (model.SensorConfig): what turns its targets into floor positions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Mount {
+    pub at: Point,
+    /// (cos, sin) of its heading
+    pub axis: Point,
+    pub height: f64,
+    /// its x axis points to the left
+    pub mirror: bool,
+    /// true distance on the floor / measured one (from the calibration)
+    pub scale: f64,
+}
+
+/// A target on the floor: where, and its distance to the sensor on the floor and along the beam.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OnFloor {
+    pub pos: Point,
+    pub ground: f64,
+    pub slant: f64,
+}
+
+impl Mount {
+    /// The house frame -> the sensor's frame on the floor (x right, y forward), as it measures (its
+    /// scale taken out; SensorConfig.to_local).
+    pub fn to_local(&self, [wx, wy]: Point) -> Point {
+        let [c, s] = self.axis;
+        let (dx, dy) = ((wx - self.at[0]) / self.scale, (wy - self.at[1]) / self.scale);
+        let gy = dx * c + dy * s;
+        let gx = dx * s - dy * c;
+        [if self.mirror { -gx } else { gx }, gy]
+    }
+
+    /// A target (m, sensor frame) in the house frame (the inverse of to_local on the floor). The radar measures the
+    /// slant distance from its antenna; the height difference to the reflecting body is taken out so
+    /// that the position lies on the floor. Then the sensor's scale corrects the distance.
+    pub fn to_world(&self, [lx, ly]: Point, target_height: f64) -> OnFloor {
+        let lx = if self.mirror { -lx } else { lx };
+        let slant = py_hypot(lx, ly);
+        let dh = self.height - target_height;
+        let ground = (slant * slant - dh * dh).max(0.01).sqrt();
+        let k = if slant > 0.0 {
+            self.scale * ground / slant
+        } else {
+            self.scale
+        };
+        let (gx, gy) = (lx * k, ly * k);
+        // sensor frame: y forward along the heading, x to the right
+        let [c, s] = self.axis;
+        OnFloor {
+            pos: [self.at[0] + gy * c + gx * s, self.at[1] + gy * s - gx * c],
+            ground: self.scale * ground,
+            slant: self.scale * slant,
+        }
     }
 }
 

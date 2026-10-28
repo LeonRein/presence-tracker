@@ -9,7 +9,7 @@ use pyo3::exceptions::{PyFloatingPointError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::frames;
+use crate::frames::PyFrame;
 
 use presence_core::config::Config;
 use presence_core::filter::branch::{Found, Frame};
@@ -272,6 +272,16 @@ impl Core {
         self.serial += 1;
     }
 
+    /// si if the world has sensor si, else ValueError (the shell's index; a wrong one is a bug there).
+    fn sensor(&self, si: usize) -> PyResult<usize> {
+        let n = self.tracker.world().sights.len();
+        if si < n {
+            Ok(si)
+        } else {
+            Err(PyValueError::new_err(format!("no sensor {si} of {n}")))
+        }
+    }
+
     /// (walk, still, region, out, clock, r, amp, keep) of a density.
     fn density_out<'py>(py: Python<'py>, d: &DensityData, s: &DensityShape) -> PyResult<Bound<'py, PyAny>> {
         let amp = match &d.amp {
@@ -416,25 +426,25 @@ impl Core {
         self.changed();
     }
 
-    fn watch(&mut self, si: usize, delta: f64, ghost_total: f64) {
-        self.tracker.watch(si, delta, ghost_total);
+    fn watch(&mut self, si: usize, delta: f64, ghost_total: f64) -> PyResult<()> {
+        self.tracker.watch(self.sensor(si)?, delta, ghost_total);
         self.changed();
+        Ok(())
     }
 
-    /// A frame of sensor si at t (a dict as from JSON; ValueError, and nothing changed, if it is none):
-    /// {"detections": [{pos, local, speed, hidden, stale}], "born": [(seg, x, y)], "ended": [seg],
-    /// "data_lost"}. Kept in the core for the steps of its evidence.
+    /// A checked frame of sensor si at t (ValueError, and nothing changed, for a sensor there is not or
+    /// a time that is no number): {"detections": [{pos, local, speed, hidden, stale}], "born": [(seg,
+    /// x, y)], "ended": [seg], "data_lost"}. Kept in the core for the steps of its evidence.
     fn frame<'py>(
         &mut self,
         py: Python<'py>,
         si: usize,
         t: f64,
-        frame: &Bound<'py, PyAny>,
+        frame: &Bound<'py, PyFrame>,
     ) -> PyResult<Bound<'py, PyDict>> {
-        let frame = frames::frame_of(frame)?;
         let read = self
             .tracker
-            .frame(si, t, &frame)
+            .frame(si, t, &frame.get().0)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         let detections = PyList::empty(py);
         for (j, d) in read.detections.iter().enumerate() {
@@ -466,16 +476,16 @@ impl Core {
     }
 
     /// Whether the last frame of sensor si concerns everybody (a track born, ended or found again).
-    fn concerns_all(&self, si: usize) -> bool {
-        self.tracker.concerns_all(si)
+    fn concerns_all(&self, si: usize) -> PyResult<bool> {
+        Ok(self.tracker.concerns_all(self.sensor(si)?))
     }
 
-    /// Step 2 of sensor si's last frame: its measured, lost and held tracks; returns the tracks found
-    /// again (seg, x, y).
-    fn track_events(&mut self, si: usize, t: f64) -> Vec<(u64, f64, f64)> {
-        let refound = self.tracker.track_events(si, t);
+    /// Step 2 of sensor si's last frame: its measured, lost and held tracks (taken out: a second call
+    /// does nothing); returns the tracks found again (seg, x, y).
+    fn track_events(&mut self, si: usize) -> PyResult<Vec<(u64, f64, f64)>> {
+        let refound = self.tracker.track_events(self.sensor(si)?);
         self.changed();
-        refound.into_iter().map(|(s, [x, y])| (s.0, x, y)).collect()
+        Ok(refound.into_iter().map(|(s, [x, y])| (s.0, x, y)).collect())
     }
 
     /// The sensors silent for more than LOST s at t with live tracks: (si, last frame + LOST, the
@@ -489,17 +499,19 @@ impl Core {
     }
 
     /// The LD2450 tracks of sensor si start over (its next frame is a start).
-    fn reset_tracks(&mut self, si: usize) {
-        self.tracker.reset_tracks(si);
+    fn reset_tracks(&mut self, si: usize) -> PyResult<()> {
+        self.tracker.reset_tracks(self.sensor(si)?);
         self.changed();
+        Ok(())
     }
 
     fn has_track(&self, seg: u64) -> bool {
         self.tracker.filter().tracks().get(SegId(seg)).is_some()
     }
 
-    fn live_tracks(&self, si: usize) -> Vec<u64> {
-        self.tracker.filter().tracks().of(si).iter().map(|s| s.0).collect()
+    fn live_tracks(&self, si: usize) -> PyResult<Vec<u64>> {
+        let tracks = self.tracker.filter().tracks().of(self.sensor(si)?);
+        Ok(tracks.iter().map(|s| s.0).collect())
     }
 
     /// A track ends: (z0, P(ghost), life, born) for what the ghost map learns; None if not live.
@@ -525,9 +537,10 @@ impl Core {
         self.tracker.normalize(dropped).map_err(not_finite)
     }
 
-    fn censor(&mut self, si: usize) {
-        self.tracker.censor(si);
+    fn censor(&mut self, si: usize) -> PyResult<()> {
+        self.tracker.censor(self.sensor(si)?);
         self.changed();
+        Ok(())
     }
 
     /// Step 4 of a frame: per track found (seg, x, y, var, map_rate) the children's weights and
@@ -545,7 +558,7 @@ impl Core {
     ) -> PyResult<Vec<Vec<(f64, &'static str)>>> {
         let skip: Vec<SegId> = skip.into_iter().map(SegId).collect();
         let frame = Frame {
-            si,
+            si: self.sensor(si)?,
             t,
             last,
             censored,
@@ -700,30 +713,34 @@ impl Core {
         Ok((densities, mixtures, hyps, tracks))
     }
 
-    /// The LD2410C part of sensor si's last frame, if it has one.
-    fn ld_frame(&mut self, si: usize, t: f64) {
-        self.tracker.ld_frame(si, t);
+    /// The LD2410C part of sensor si's last frame, if it has one (taken out: a second call does
+    /// nothing).
+    fn ld_frame(&mut self, si: usize) -> PyResult<()> {
+        self.tracker.ld_frame(self.sensor(si)?);
         self.changed();
+        Ok(())
     }
 
     /// The energies of sensor si's last LD2410C frame that counted (16), or None.
     fn ld_last<'py>(&self, py: Python<'py>, si: usize) -> PyResult<Option<Out<'py>>> {
         self.tracker
-            .ld_collect(si)
+            .ld_collect(self.sensor(si)?)
             .last
             .map(|e| array(py, &e, &[CELLS]))
             .transpose()
     }
 
     /// What sensor si's LD2410C frames left: (t, last energies, target_t).
-    fn ld_collect(&self, si: usize) -> (f64, Option<Vec<f64>>, f64) {
-        let c = self.tracker.ld_collect(si);
-        (c.t, c.last.map(|e| e.to_vec()), c.target_t)
+    fn ld_collect(&self, si: usize) -> PyResult<(f64, Option<Vec<f64>>, f64)> {
+        let c = self.tracker.ld_collect(self.sensor(si)?);
+        Ok((c.t, c.last.map(|e| e.to_vec()), c.target_t))
     }
 
-    fn set_ld_collect(&mut self, si: usize, collect: (f64, Option<[f64; CELLS]>, f64)) {
+    fn set_ld_collect(&mut self, si: usize, collect: (f64, Option<[f64; CELLS]>, f64)) -> PyResult<()> {
         let (t, last, target_t) = collect;
-        self.tracker.set_ld_collect(si, LdCollect { t, last, target_t });
+        self.tracker
+            .set_ld_collect(self.sensor(si)?, LdCollect { t, last, target_t });
+        Ok(())
     }
 
     /// The sensors whose LD2410C has gathered long enough to be weighed.
@@ -741,6 +758,7 @@ impl Core {
         b: [f64; CELLS],
         rate: f64,
     ) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let si = self.sensor(si)?;
         self.changed();
         let Some(l) = self.tracker.ld_weigh(si, &b, rate).map_err(not_finite)? else {
             return Ok(None);
@@ -763,9 +781,10 @@ impl Core {
     }
 
     /// The LD2410C of sensor si starts over (recalibrated).
-    fn ld_reset(&mut self, si: usize) {
-        self.tracker.ld_reset(si);
+    fn ld_reset(&mut self, si: usize) -> PyResult<()> {
+        self.tracker.ld_reset(self.sensor(si)?);
         self.changed();
+        Ok(())
     }
 
     // ---------------------------------------------------------------- starts

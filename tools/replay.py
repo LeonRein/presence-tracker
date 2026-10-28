@@ -56,7 +56,7 @@ def main():
     sys.path.insert(0, os.path.abspath(a.tracker))
     from presence_tracker import code_hash
     from presence_tracker.filter import Tracker
-    from presence_tracker.frames import SensorClock
+    from presence_tracker.frames import Frame, SensorClock
     from presence_tracker.model import Config
     from presence_tracker import pause
 
@@ -136,14 +136,15 @@ def main():
             if m["t"] > end:
                 break
             sid = m["topic"].split("/")[1]
-            tt = clocks[sid](m["t"], m["payload"].get("uptime_ms"))
+            frame = Frame.of(m["payload"])
+            tt = clocks[sid](m["t"], frame)
             while changes and tt > changes[0][0]:
                 t_c, cfg = changes.pop(0)
                 crowd.step(t_c)
                 restarted = crowd.reconfigure(cfg)
                 print(time.strftime("%H:%M:%S", time.localtime(t_c)) + " the app took over a new configuration"
                       + (" (and started over)" if restarted else ""))
-            crowd.process_frame(sid, tt, m["payload"])
+            crowd.process_frame(sid, tt, frame)
             if tt >= next_step:
                 crowd.step(tt)
                 next_step = tt + 0.2

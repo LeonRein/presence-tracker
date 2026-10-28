@@ -56,7 +56,7 @@ import numpy as np
 
 from .floorplan import wall_pieces
 from .model import Config
-from presence_core import TrackStage
+from presence_core import Frame, TrackStage
 from .util import atomic_write
 
 MIN_SPEED = 0.05  # m/s raw radial speed: walking
@@ -111,7 +111,7 @@ T, SEG, LX, LY, V, SINGLE = range(6)  # columns of the measurement rows
 
 # ------------------------------------------------------------------------------ measurements
 
-def track_frame(stage: TrackStage, rows: dict, sensor_id: str, t: float, frame: dict, paused: bool = False,
+def track_frame(stage: TrackStage, rows: dict, sensor_id: str, t: float, frame: Frame, paused: bool = False,
                 skip: set | None = None):
     """One LD2450 frame into rows of its walking targets (t, track, raw x, raw y (m), raw radial
     speed (m/s), whether it is the only moving target of its frame), through the sensor's own
@@ -893,8 +893,8 @@ class Calibrator:
         self._gen = getattr(self, "_gen", 0) + 1  # a count started before a reset is not taken over
         self.since = None
 
-    def on_frame(self, sensor_id: str, t: float, frame: dict, learn: bool = True):
-        """A raw LD2450 frame (the MQTT payload) at the sensor's frame time. learn False (learning
+    def on_frame(self, sensor_id: str, t: float, frame: Frame, learn: bool = True):
+        """A checked LD2450 frame (presence_core.Frame) at the sensor's frame time. learn False (learning
         paused, pause.py): the sensor's tracks go on, its measurements are not kept."""
         if not learn:
             track_frame(self._tracks, self._rows, sensor_id, t, frame, True, self._skip)

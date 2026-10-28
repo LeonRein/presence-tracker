@@ -76,7 +76,7 @@ def main():
     for p in a.patch:
         runpy.run_path(p)
     from presence_tracker.filter import Tracker
-    from presence_tracker.frames import SensorClock
+    from presence_tracker.frames import Frame, SensorClock
     from presence_tracker.model import Config
     from presence_tracker import pause
 
@@ -155,8 +155,9 @@ def main():
             if config_of(m["t"]) is not tracker.config:
                 tracker.reconfigure(config_of(m["t"]))
             sid = m["topic"].split("/")[1]
-            tt = clocks[sid](m["t"], m["payload"].get("uptime_ms"))
-            tracker.process_frame(sid, tt, m["payload"])
+            frame = Frame.of(m["payload"])
+            tt = clocks[sid](m["t"], frame)
+            tracker.process_frame(sid, tt, frame)
             rt = tracker.runtime.get(sid)
             for d in (rt.detections if rt is not None else []):
                 if not d.hidden and not d.stale:

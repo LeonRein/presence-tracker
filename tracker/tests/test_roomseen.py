@@ -10,6 +10,7 @@ from presence_tracker import ha
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
 from presence_tracker import roomseen
+from presence_tracker.frames import Frame
 
 LOST = 6.0  # the timing tests below run with a short silence limit (the app's: roomseen.SILENT_AFTER)
 
@@ -55,14 +56,14 @@ def frame(k, y_mm, frozen=False):
     """One LD2450 frame with one target straight ahead: still, its position jittering by a few mm as
     measured, or bit-identical (frozen: the sensor holds a lost target)."""
     jitter = 0 if frozen else (7 if k % 2 else -7)
-    return {"uptime_ms": 100 * k, "targets": [{"x": jitter, "y": y_mm + jitter, "speed": 0, "slot": 0}]}
+    return {"uptime_ms": 100 * k, "targets": [{"x": jitter, "y": y_mm + jitter, "speed": 0, "slot": 1}]}
 
 
 def feed(tracker, sid, t0, t1, y_mm, frozen_from=None, k0=0):
     """Frames of one sensor at 10 Hz from t0 to t1; from frozen_from on the target is frozen."""
     k, t = k0, t0
     while t < t1 - 1e-9:
-        tracker.process_frame(sid, t, frame(k, y_mm, frozen_from is not None and t >= frozen_from))
+        tracker.process_frame(sid, t, Frame.of(frame(k, y_mm, frozen_from is not None and t >= frozen_from)))
         tracker.step(t)
         k += 1
         t = round(t + 0.1, 6)
@@ -192,9 +193,9 @@ def feed_both(tracker, t0, t1, wohn=True, ess=True, k0=0):
     k, t = k0, t0
     while t < t1 - 1e-9:
         if wohn:
-            tracker.process_frame("presence-wohn", t, frame(k, 2500))
+            tracker.process_frame("presence-wohn", t, Frame.of(frame(k, 2500)))
         if ess:
-            tracker.process_frame("presence-ess", t, frame(k, 1500))
+            tracker.process_frame("presence-ess", t, Frame.of(frame(k, 1500)))
         tracker.step(t)
         k += 1
         t = round(t + 0.1, 6)

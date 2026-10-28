@@ -6,6 +6,7 @@ import numpy as np
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
+from presence_tracker.frames import Frame
 
 from test_frames import sim_sensors, walk
 
@@ -41,7 +42,7 @@ def run(config, people, duration, start_places, every=0.5, check=False, **kw):
     samples = []
     next_sample = 0.0
     for t, sid, frame in simulate(people, sim_sensors(config, **kw), duration, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
         if check:
             crowd.check()
         if t >= next_sample:
@@ -134,7 +135,7 @@ def test_a_recalibrated_sensor_keeps_the_people():
             crowd.reconfigure(turned)
             crowd.check()
             done = True
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
         if t >= 90 and int(t * 2) != int((t - 0.1) * 2):
             dist = crowd.count_distribution()["wohn"]
             samples.append((t, float(dist[2]) if len(dist) > 2 else 0.0))
@@ -209,7 +210,7 @@ def test_the_ghost_map_does_not_confirm_itself():
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, seat, (seat[0] + 0.05, seat[1]), start=2, pauses={2: 150}))
     for t, sid, frame in simulate([a], sim_sensors(config, still_dropout=1 / 30, still_gap=40), a.waypoints[-1][0],
                                   walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
     at_seat = [p for z, p in learned if np.hypot(z[0] - seat[0], z[1] - seat[1]) < 0.5]
     assert len(at_seat) >= 2 and max(at_seat) < 0.01, learned
     assert max(p for _, p in learned) < 0.05, learned  # coming in at the door: a person too
@@ -227,7 +228,7 @@ def test_a_sitter_taken_for_ghosts_does_not_become_a_ghost_source():
     a = Person([(0.0, *seat), (600.0, seat[0] + 0.05, seat[1])])
     for t, sid, frame in simulate([a], sim_sensors(config, still_dropout=1 / 60, ld2410=False), 600,
                                   walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
     gm = crowd.ghost_map
     assert sum(p for _, p in learned) > 2, learned  # the case: some of them were taken for ghosts
     assert all(gm.rate(s, np.array([seat]))[0] < 2 * gm.prior_rate for s in ("a", "b"))
@@ -240,7 +241,7 @@ def test_a_ghost_in_an_empty_house_is_learned_as_one():
     learned = _learned(crowd)
     ghost = Person([(20.0, 3.0, 2.5), (21.0, 3.0, 2.5)])
     for t, sid, frame in simulate([ghost], sim_sensors(config), 40, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
     assert learned and min(p for _, p in learned) > 0.9, learned
 
 
@@ -255,7 +256,7 @@ def test_a_sitter_the_ld2450_loses_stays_while_the_ld2410c_sees_them():
     crowd = Tracker(config, start=0.0, people=["flur"])
     samples = []
     for t, sid, frame in simulate([a], sensors, a.waypoints[-1][0] - 1, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
         if t > a.waypoints[2][0] + 180 and not samples:
             samples.append(1 - crowd.count_distribution()["wohn"][0])
     assert samples[0] > 0.9, samples
@@ -287,7 +288,7 @@ def test_the_tracks_of_a_sensor_that_died_end():
             if sid in dead and t >= 60.0:
                 crowd.step(t)  # the others' frames, or the app's ticks, go on
             else:
-                crowd.process_frame(sid, t, frame)
+                crowd.process_frame(sid, t, Frame.of(frame))
             crowd.check()
             p.setdefault(int(t), 1 - crowd.count_distribution()["wohn"][0])
             if 50.0 <= t < 60.0:

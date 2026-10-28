@@ -6,7 +6,7 @@ import math
 import numpy as np
 import pytest
 
-from presence_tracker.frames import SensorClock
+from presence_tracker.frames import Frame, SensorClock
 from presence_tracker.model import Config, SensorConfig, ZoneConfig
 from presence_tracker.filter import Tracker
 from presence_tracker.sim import SimSensor
@@ -46,7 +46,7 @@ def walk(*points, start=0.0, speed=1.0, pauses=None):
 def detections(config: Config, s: SensorConfig, frame: dict) -> list:
     """The detections of one frame of sensor s as a tracker reads it."""
     tr = Tracker(config, start=0.0)
-    tr.process_frame(s.id, 0.0, frame)
+    tr.process_frame(s.id, 0.0, Frame.of(frame))
     return tr.runtime[s.id].detections
 
 
@@ -55,7 +55,7 @@ def test_sensor_clock_removes_jitter():
     times = []
     for k in range(200):
         recv = 1000 + k * 0.09 + (0.03 if k % 3 else 0.0)
-        times.append(clock(recv, 5000 + k * 90))
+        times.append(clock(recv, Frame.of({"uptime_ms": 5000 + k * 90})))
     diffs = {round(b - a, 3) for a, b in zip(times[10:], times[11:])}
     assert diffs <= {0.09, 0.091, 0.089}
 

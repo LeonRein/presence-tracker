@@ -8,6 +8,7 @@ from presence_tracker.filter import Tracker
 from presence_tracker.hidden import Hidden
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
+from presence_tracker.frames import Frame
 
 from test_filter import BALCONY_DOOR, FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
@@ -36,7 +37,7 @@ def test_a_reflection_leaves_nobody_behind():
     crowd = Tracker(config, start=0.0, people=["outside"])
     before = None
     for t, sid, frame in simulate([], sensors, 450, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
         crowd.check()
         if before is None and t > 50:
             before = in_house(crowd)
@@ -53,7 +54,7 @@ def test_somebody_back_from_the_balcony_is_who_went_there():
     crowd = Tracker(config, start=0.0)
     before = 1 - crowd.place_distribution()["balkon"][0]  # unknown people out there (nothing known)
     for t, sid, frame in simulate([a], sim_sensors(config), a.waypoints[-1][0] - 1, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
     after = 1 - crowd.place_distribution()["balkon"][0]
     assert 1 - crowd.count_distribution()["wohn"][0] > 0.95
     assert after < before + 0.02, (before, after)
@@ -74,7 +75,7 @@ def test_a_sitter_no_ld2450_sees_for_a_while_stays():
     crowd = Tracker(config, start=0.0)
     low = 1.0
     for t, sid, frame in simulate([a], sensors, sit + 160, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
         if t > sit + 10:
             low = min(low, 1 - crowd.count_distribution()["wohn"][0])
     assert low > config.params.light_cost / (config.params.light_cost + 1.0), low  # the light stays on
@@ -131,7 +132,7 @@ def _hold_in_nook(r, minutes):
     h._normalize()
     assert crowd.restore_people(saved(crowd, [h]))
     for t, sid, frame in simulate([], sim_sensors(config), 60 * minutes, rate=2.0, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
     return 1 - crowd.count_distribution()["wohn"][0]
 
 
@@ -158,7 +159,7 @@ def test_a_sitter_nothing_supports_for_two_minutes_stays():
     crowd = Tracker(config, start=0.0)
     low = 1.0
     for t, sid, frame in simulate([a], sensors, sit + 150, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
         if t > sit + 30:
             low = min(low, 1 - crowd.count_distribution()["wohn"][0])
     assert low > config.params.light_cost / (config.params.light_cost + 1.0), low
@@ -176,7 +177,7 @@ def test_a_ghost_beside_a_blind_spot_leaves_nobody_behind():
     before = None
     worst = 0.0
     for t, sid, frame in simulate([], sensors, 150 + 1200, rate=4.0, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
         if before is None and t > 50:
             before = in_house(crowd)
         if t > 150 + 300:

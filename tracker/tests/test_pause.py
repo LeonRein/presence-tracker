@@ -11,7 +11,7 @@ import json
 from presence_tracker import ha, pause
 from presence_tracker.app import App
 from presence_tracker.filter import Tracker
-from presence_tracker.frames import SensorClock
+from presence_tracker.frames import Frame, SensorClock
 from presence_tracker.model import Config
 from presence_tracker.pause import Pauses
 from presence_tracker.sim import Person, simulate
@@ -49,7 +49,7 @@ def test_the_intervals():
 def _run(tr, person, until, config):
     out, nxt = [], 0.0
     for t, sid, frame in simulate([person], sim_sensors(config), until, walls=config.wall_segments):
-        tr.process_frame(sid, t, frame)
+        tr.process_frame(sid, t, Frame.of(frame))
         if t >= nxt:
             tr.step(t)
             out.append(tr.count_distribution())
@@ -182,7 +182,7 @@ def test_a_report_replays_with_the_apps_pauses(tmp_path):
         for m in messages:
             if m["topic"].endswith("/frame") and m["t"] >= meta["report"]["model_start"]:
                 sid = m["topic"].split("/")[1]
-                tr.process_frame(sid, clocks[sid](m["t"], m["payload"].get("uptime_ms")), m["payload"])
+                tr.process_frame(sid, clocks[sid](m["t"], Frame.of(m["payload"])), Frame.of(m["payload"]))
                 tr.step(m["t"])
         return json.loads(json.dumps(tr.learned()))
     app_learned = json.loads(json.dumps(app.tracker.learned()))

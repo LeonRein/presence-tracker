@@ -11,6 +11,7 @@ from presence_tracker.destination import DestinationMap
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
+from presence_tracker.frames import Frame
 
 from test_entering import DOOR, two_rooms
 from test_frames import sim_sensors, walk
@@ -36,7 +37,7 @@ def run(person, until, tracker=None, learn=True):
     tr.learn_dest = learn
     out, nxt = [], 0.0
     for t, sid, frame in simulate([person], sim_sensors(config), until, walls=config.wall_segments):
-        tr.process_frame(sid, t, frame)
+        tr.process_frame(sid, t, Frame.of(frame))
         if t >= nxt:
             tr.step(t)
             states = tr.zone_states()

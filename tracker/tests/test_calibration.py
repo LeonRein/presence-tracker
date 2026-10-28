@@ -3,6 +3,7 @@ import copy
 import numpy as np
 import pytest
 
+from presence_tracker.frames import Frame
 from presence_tracker.calibration import MIN_STRETCHES, STRETCH, Calibrator, Problem, more_out_of_sight, solve
 from presence_tracker.model import Config, SensorConfig, TrackerParams
 from presence_tracker.sim import Person, SimSensor, simulate
@@ -18,7 +19,7 @@ def _collect(truth, guess, people, duration, walls=(), hours=MIN_STRETCHES):
     for k in range(hours):
         sensors = [SimSensor(s, noise=0.05) for s in truth.sensors]
         for t, sid, frame in simulate(people, sensors, duration, walls=walls, seed=k + 1):
-            calibrator.on_frame(sid, t + k * STRETCH, frame)
+            calibrator.on_frame(sid, t + k * STRETCH, Frame.of(frame))
     status = calibrator.status()
     assert status["since"] is not None and all(n > 0 for n in status["frames"].values())
     return calibrator
@@ -174,7 +175,7 @@ def test_the_collected_data_survive_a_restart(tmp_path):
     assert again.since == calibrator.since
     sensors = [SimSensor(s, noise=0.05) for s in truth.sensors]
     for t, sid, frame in simulate([person], sensors, 10.0):
-        again.on_frame(sid, t + 100.0, frame)
+        again.on_frame(sid, t + 100.0, Frame.of(frame))
     new = again.data()["a"]
     assert new[len(a["a"]):, 1].min() > a["a"][:, 1].max()  # new tracks, not merged with old ones
 
@@ -211,10 +212,10 @@ def test_reset_forgets_and_only_walking_is_kept():
     sensors = [SimSensor(s, noise=0.05) for s in truth.sensors]
     sitter = Person([(0, 3.0, 2.5), (60, 3.0, 2.5)])
     for t, sid, frame in simulate([sitter], sensors, 60):
-        calibrator.on_frame(sid, t, frame)
+        calibrator.on_frame(sid, t, Frame.of(frame))
     walking = sum(len(a) for a in calibrator.data().values())
     for t, sid, frame in simulate([person], sensors, 60):
-        calibrator.on_frame(sid, t + 60, frame)
+        calibrator.on_frame(sid, t + 60, Frame.of(frame))
     assert sum(len(a) for a in calibrator.data().values()) > 5 * max(walking, 1)
     calibrator.reset()
     assert calibrator.data() == {} and calibrator.status()["since"] is None
@@ -230,7 +231,7 @@ def test_the_status_counts_a_copy_and_a_reset_drops_a_count_under_way(tmp_path):
     job = calibrator.status_job()
     sensors = [SimSensor(s, noise=0.05) for s in truth.sensors]
     for t, sid, frame in simulate([person], sensors, 30.0, seed=7):
-        calibrator.on_frame(sid, t + 100.0, frame)  # while the thread counts
+        calibrator.on_frame(sid, t + 100.0, Frame.of(frame))  # while the thread counts
     result = job()
     assert result[2] == counted
     calibrator.use_status(result)

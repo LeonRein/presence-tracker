@@ -28,7 +28,7 @@ from .destination import DestinationMap
 from .ghostmap import GhostMap
 from .pause import Pauses
 from .sources import Clock, ReplayClock, mqtt_source, replay_source
-from .frames import SensorClock, parse_frame
+from .frames import Frame, SensorClock
 from .util import Throttled, atomic_write
 
 log = logging.getLogger(__name__)
@@ -286,7 +286,7 @@ class App:
         sensor_id, kind = parts[1], parts[2]
         if kind == "frame":
             try:
-                frame = parse_frame(payload)
+                frame = Frame.parse(payload)
             except ValueError as e:  # dropped like a frame lost on the way (and not in a report)
                 self.throttled(("frame", sensor_id), logging.WARNING, "frame of %s dropped: %s (%r)",
                                sensor_id, e, bytes(payload[:200]))
@@ -300,12 +300,12 @@ class App:
         if kind != "frame":
             return
         start = time.process_time()
-        t = self.clocks[sensor_id](recv, frame.get("uptime_ms"))
+        t = self.clocks[sensor_id](recv, frame)
         if self.replay and t < self.last_frame_t - 10:
             log.info("replay restarted, resetting tracker")
             self._reset_tracker()
             self.calibrator.reset()
-            t = self.clocks[sensor_id](recv, frame.get("uptime_ms"))
+            t = self.clocks[sensor_id](recv, frame)
         try:
             self.calibrator.on_frame(sensor_id, t, frame, learn=not self.pauses.paused(t))
         except Exception:  # noqa: BLE001 - the calibration's data, not the model: logged only

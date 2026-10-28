@@ -11,6 +11,7 @@ from presence_tracker.filter import Tracker
 from presence_tracker.hidden import Hidden, Undetected
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
+from presence_tracker.frames import Frame
 
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
@@ -45,7 +46,7 @@ def test_the_people_survive_a_restart():
     for t, sid, frame in frames:
         if t >= 100:
             break
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
     before = crowd.count_distribution()["wohn"]
     state = json.loads(json.dumps(crowd.people_state()))
     assert len(json.dumps(state)) < 200_000
@@ -61,7 +62,7 @@ def test_the_people_survive_a_restart():
     for t, sid, frame in frames:
         if t < 130:
             continue
-        later.process_frame(sid, t, frame)
+        later.process_frame(sid, t, Frame.of(frame))
         later.check()
         if int(t * 2) != int((t - 0.1) * 2):
             samples.append((t, two_in_the_room(later.count_distribution()["wohn"])))
@@ -113,7 +114,7 @@ def test_a_gap_moves_everybody_on():
         try:
             tr = Tracker(config, model=m)
             tr.restore_people(state)
-            tr.process_frame("a", gap, {"targets": []})
+            tr.process_frame("a", gap, Frame.of({"targets": []}))
         finally:
             F.GAP_EXACT = old
         return tr.hyps[0].hidden[0].places()
@@ -135,7 +136,7 @@ def test_nothing_known_invents_nobody_in_view():
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.6, 1.0), start=150, pauses={2: 200}))
     occupied = []
     for t, sid, frame in simulate([a], sim_sensors(config, ghost_rate=4), 300, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
         occupied.append((t, 1 - crowd.count_distribution()["wohn"][0]))
     # a ghost of up to a second may be somebody stepping out of the hallway and back for a moment
     # (a second of light, as with the start of 0.10); nobody stays
@@ -159,7 +160,7 @@ def test_nothing_known_finds_who_sits_in_view_at_the_start():
     a = Person([(0.0, 4.5, 1.0), (300.0, 4.55, 1.0)])
     occupied = []
     for t, sid, frame in simulate([a], sim_sensors(config), 200, walls=config.wall_segments):
-        crowd.process_frame(sid, t, frame)
+        crowd.process_frame(sid, t, Frame.of(frame))
         occupied.append((t, 1 - crowd.count_distribution()["wohn"][0]))
     assert min(p for t, p in occupied if t > 60) > 0.9, [(round(t), round(p, 2)) for t, p in occupied[::50]]
 

@@ -2,6 +2,7 @@
 weighs like the 56 empty frames it stands for."""
 
 from presence_tracker.filter import Tracker
+from presence_tracker.frames import Frame
 
 from test_filter import flat_config
 
@@ -16,7 +17,7 @@ def place_mass(gaps):
     for g in gaps:
         t += g
         for sid in ("a", "b"):
-            tr.process_frame(sid, t, empty)
+            tr.process_frame(sid, t, Frame.of(empty))
     return 1 - tr.place_distribution()["observed"][0]
 
 

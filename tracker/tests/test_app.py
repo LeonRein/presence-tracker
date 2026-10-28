@@ -11,7 +11,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from presence_tracker import app as app_module, code_hash
 from presence_tracker.app import App
 from presence_tracker.filter import Tracker
-from presence_tracker.frames import SensorClock
+from presence_tracker.frames import Frame, SensorClock
 from presence_tracker.model import Config
 from presence_tracker.sim import Person, simulate
 from test_filter import FLUR_DOOR, flat_config
@@ -91,8 +91,8 @@ def test_a_report_replays_to_what_the_app_showed(tmp_path):
         if not m["topic"].endswith("/frame") or m["t"] < meta["report"]["model_start"]:
             continue
         sid = m["topic"].split("/")[1]
-        t = clocks[sid](m["t"], m["payload"].get("uptime_ms"))
-        replay.process_frame(sid, t, m["payload"])
+        t = clocks[sid](m["t"], Frame.of(m["payload"]))
+        replay.process_frame(sid, t, Frame.of(m["payload"]))
         replay.step(t)
         while k < len(shown) and shown[k][0] <= t:
             diff = max(diff, abs(1 - replay.count_distribution()["wohn"][0] - shown[k][1]["zones"]["wohn"][1]))
@@ -171,8 +171,8 @@ def test_a_restarted_app_keeps_the_people_and_reports_from_where(tmp_path):
         if not m["topic"].endswith("/frame") or m["t"] < meta["report"]["model_start"]:
             continue
         sid = m["topic"].split("/")[1]
-        t = clocks[sid](m["t"], m["payload"].get("uptime_ms"))
-        replay.process_frame(sid, t, m["payload"])
+        t = clocks[sid](m["t"], Frame.of(m["payload"]))
+        replay.process_frame(sid, t, Frame.of(m["payload"]))
         replay.step(t)
         while k < len(shown) and shown[k][0] <= t:
             diff = max(diff, abs(1 - replay.count_distribution()["wohn"][0] - shown[k][1]["zones"]["wohn"][1]))
@@ -231,12 +231,12 @@ def test_a_report_after_a_live_recalibration_replays_to_what_the_app_showed(tmp_
         if not m["topic"].endswith("/frame") or m["t"] < meta["report"]["model_start"]:
             continue
         sid = m["topic"].split("/")[1]
-        t = clocks[sid](m["t"], m["payload"].get("uptime_ms"))
+        t = clocks[sid](m["t"], Frame.of(m["payload"]))
         while changes and t > changes[0][0]:
             t_c, cfg = changes.pop(0)
             replay.step(t_c)
             assert not replay.reconfigure(cfg)
-        replay.process_frame(sid, t, m["payload"])
+        replay.process_frame(sid, t, Frame.of(m["payload"]))
         replay.step(t)
         while k < len(shown) and shown[k][0] <= t:
             diff = max(diff, abs(1 - replay.count_distribution()["wohn"][0] - shown[k][1]["zones"]["wohn"][1]))

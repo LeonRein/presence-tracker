@@ -5,6 +5,7 @@ import numpy as np
 
 from presence_tracker.filter import Tracker
 from presence_tracker.sim import Person, SimSensor, simulate
+from presence_tracker.frames import Frame
 
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import walk
@@ -20,7 +21,7 @@ def _walked(seconds):
     for t, sid, frame in frames:
         if t > seconds:
             break
-        tr.process_frame(sid, t, frame)
+        tr.process_frame(sid, t, Frame.of(frame))
     return tr, [f for f in frames if f[0] > seconds]
 
 
@@ -61,14 +62,14 @@ def test_the_ghost_map_learns_a_birth_before_a_track_born_in_the_same_frame_read
     _spy(log, tr, "_ghost_rate", "rate_at_birth")
     _spy(log, tr, "_call", lambda name, *a: name)
     _spy(log, tr, "_end", "end")
-    tr.process_frame(sid, t, frame)
+    tr.process_frame(sid, t, Frame.of(frame))
     assert _in_order(log, "rate_total", "watch", "add_watch", "fade", "end", "add_birth", "rate_at_birth",
                      "branch_all")
 
 
 def _weighings(tr, frames, log):
     for t, sid, frame in frames:
-        tr.process_frame(sid, t, frame)
+        tr.process_frame(sid, t, Frame.of(frame))
         if sum(tag == "learn_echoes" for tag, _ in log) >= 2:
             return
     raise AssertionError("no two weighings")

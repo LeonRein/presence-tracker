@@ -2,6 +2,34 @@
 
 ## Unveröffentlicht
 
+## 0.37.1 (Branch `rust-core`, nach Leons Prüfung von Phase 7, nicht live)
+
+Spuren aller drei Referenzstunden byte-gleich mit 0.37.0; ab.sh 1200 19,5 s (0.31.1 48,0 s: −59 %; `Frame.of` mitgezählt);
+103 Rust-, 232 Python-Tests.
+
+- **H1:** Frames werden gegen das geprüft, was die Firmware sendet (`esphome/packages/radar-combo.yaml`), jeder Fehler
+  benannt: `uptime_ms` eine ganze Zahl 0..=u32::MAX (`millis()`), im `Frame` als `Option<u32>` gespeichert, nur damit
+  wird `SensorClock::at` gefüttert; Slot 1..=3 (Pflicht); x, y, speed ganze mm innerhalb ±32767; Gates beide oder
+  keine, je genau 9 Energien 0..=100 (`GateFault`); Flags `moving`/`still` true/false, Abstände ganze mm. Bis 0.37.0
+  machte `uptime_ms = 1e300` die Bildzeit 0 (negative Lücke, danach Datenverlust des Sensors), riesige x/y NaN,
+  riesige Gates inf. Alle 5,27 Mio. Frames der Aufnahmen 6.–14.10. halten die Grenzen ein.
+- **M1:** Ein geprüfter `presence_core.Frame` statt Dicts: `Frame.parse(payload)` in der App, `Frame.of(dict)` für
+  Aufnahmen, Tests und Simulation; Getter `uptime_ms` und `ld2410` (Anzeige). `SensorClock`, `Tracker.process_frame`,
+  `Core.frame` und `TrackStage.update` nehmen nur ihn – ein ungültiger Frame erreicht den Tracker nicht. Entscheidung
+  in docs/rust-core.md 4 (kein `process_payload`). `frames.parse_frame` gelöscht; Werkzeuge und Dev-Werkzeuge
+  umgestellt (die Dev-Werkzeuge fallen bei älteren Bäumen auf das Dict zurück; prof.py zählt `Frame.of` mit).
+- **M2:** `ld2450::tracks::TrackStage` (Spuren mehrerer Boards, eine ID-Folge, `Measurement`) im Kern mit Rust-Test;
+  „vor dem Sensor“ (`Frame::in_front`) und „gemessen“ (`TrackEvents::measurements`) je einmal; die Bindung reicht nur
+  durch. `tools/calibrate_offline.py` war seit 0.37.0 kaputt (alte `track_frame`-Signatur), jetzt umgestellt.
+- **M3:** `SensorFrame` trägt `t`; `track_events(si)` und `ld_frame(si)` nehmen ihre Ereignisse bzw. den LD2410C-Teil
+  heraus – ein zweiter Aufruf tut nichts (Test).
+- **Niedrig:** `follow` als freie Funktion mit `Report { Measuring, Holding(LostKind) }`; Slot `u8`;
+  `FrameError::Target { index, field }`; `NoSensor`/`Time` als `CallError`; `to_world` und `to_local` an `Mount`
+  (`SensorConfig::mount`); tote `max(1e-3)`/`ground > 0` weg (ground ≥ 0,1·scale); `LdSensor::frame` nimmt
+  `Option<&LdGates>`; die Bindung prüft `si` in jeder Methode (ValueError statt Panik); tote Python-Felder
+  `rt.ld_e`, `ld_t`, `ld_target_t`, `rt.frame` gelöscht. Tests neu: Gleichstand in `link`, GATE-Grenze, Coast-Zähler
+  beim Geschwindigkeitswechsel, `concerns_all` beim Wiederfinden, alle Abweisungen nach H1 (Rust und App).
+
 ## 0.37.0 (Branch `rust-core`, Phase 7 des Rust-Ports, nicht live)
 
 Der Kern liest die Frames selbst (docs/rust-core.md 1, 7): Nutzlast prüfen, Bildzeit, Detektionen und die Spurstufe

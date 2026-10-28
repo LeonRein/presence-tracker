@@ -211,7 +211,7 @@ Loop, das Formatieren (zlib/base64) läuft im Thread ohne den Tracker.
 ```
 Tracker(config: dict, model: dict | None, start: float | None, people: list | None)
 reconfigure(config) -> bool               people_state() -> dict / restore_people(dict) -> bool
-process_frame(sid, t, frame: dict)        process_payload(sid, recv_t, payload: bytes)  (prüfen + Uhr + Frame)
+process_frame(sid, t, frame: Frame)       (Frame: geprüfte Nutzlast, siehe unten)
 step(t)                                   set_pauses(intervals)
 outputs(now) -> dict                      Zonenwerte, Belegt mit Quelle, stumme Räume, Ziel (ungerundet)
 count_distribution(), place_distribution(), entering(), targets(), persons(), snapshot(), hyp_weights()
@@ -223,6 +223,15 @@ events() -> list                          für listeners: frame, watch, track_en
 
 Dazu Funktionen für die Kalibrierung: `Ld2450Tracks` (die Spurstufe des Sensors), `wall_pieces`, Sensor ↔ Welt,
 Sichtlinie.
+
+**Entschieden in Phase 7 (Prüfung 28.10.): kein `process_payload`, sondern ein geprüfter `presence_core.Frame`.**
+Die App braucht den Frame auch für die Uhr und die Kalibrierung; eine Nutzlast wird darum genau einmal geprüft:
+`Frame.parse(payload)` (MQTT) bzw. `Frame.of(dict)` (Aufnahmen, Tests, Simulation) gegen das, was die Firmware sendet
+(`esphome/packages/radar-combo.yaml`: `uptime_ms` als `millis()` in 0..=u32::MAX, Slots 1..=3, x/y/speed ganze mm
+innerhalb ±32767, Gates beide oder keine, je 9 Energien 0..=100), sonst ValueError mit dem Grund. `SensorClock`
+(eine je Board, auch ohne Konfiguration, in der App), `Tracker.process_frame`, `Core.frame` und `TrackStage.update`
+nehmen nur diesen Typ; ein ungültiger Frame erreicht den Tracker nicht. Die Anzeige liest `Frame.ld2410` (Flags,
+Abstände, Gates), die Uhr `Frame.uptime_ms`.
 
 **`presence_tracker.filter.Tracker`** bleibt die Klasse, die App, Werkzeuge und Tests benutzen, mit derselben
 öffentlichen API: Sie reicht durch, formt `ZoneState`, ruft die `listeners` mit den Ereignissen des Kerns und hält

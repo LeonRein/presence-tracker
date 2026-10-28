@@ -702,7 +702,7 @@ class Tracker:
 
     # ------------------------------------------------------------- frames
 
-    def process_frame(self, sensor_id: str, t: float, frame: dict):
+    def process_frame(self, sensor_id: str, t: float, frame: presence_core.Frame):
         if self.start is None:
             self.start = self.now = self._flushed = self._recycled = t
             if self._gap_from is not None:  # restored: from the saved state's time to now
@@ -712,7 +712,6 @@ class Tracker:
         sensor = self.config.sensor_by_id.get(sensor_id)
         rt = self.runtime.setdefault(sensor_id, SensorRuntime())
         prev = rt.last_frame
-        rt.frame = frame
         rt.frames += 1
         if sensor is None:
             rt.last_frame = t
@@ -723,7 +722,7 @@ class Tracker:
         # somebody in it (output only, roomseen.py); kept there for the steps of the evidence
         ev = self._call("frame", si, t, frame)
         rt.detections = [Detection.of(d) for d in ev["detections"]]
-        self._ld_runtime(sensor, rt, t, frame.get("ld2410") or {})
+        self._ld_runtime(sensor, rt, t, frame.ld2410 or {})
         for listener in self.listeners:
             listener("frame", (sensor, t, rt.detections))
         if not sensor.enabled or not sensor.placed:
@@ -736,8 +735,7 @@ class Tracker:
         gap = t - prev
         delta = gap if gap <= IDLE else 0.0  # longer: lost data, says nothing
         self._evidence(si, t, delta, ev)
-        self._call("ld_frame", si, t)  # the LD2410C part of the frame, if it has one
-        rt.ld_e = self._c.ld_last(si)
+        self._call("ld_frame", si)  # the LD2410C part of the frame, if it has one
 
     def step(self, t: float, targets=None):
         """Time goes on to t (MODEL.md 3). Everybody is moved and weighed by the tracks not started
@@ -825,7 +823,7 @@ class Tracker:
             for listener in self.listeners if learn else ():
                 listener("watch", (self.sensors[si], delta))
         # 2. the sensor's tracks: measured (or found again), lost, still held, gone
-        refound = self._call("track_events", si, t)
+        refound = self._call("track_events", si)
         ended = [seg for seg in ev["ended"] if self._c.has_track(seg)]
         for seg in ended:
             self._end(si, seg, t, ev["data_lost"])

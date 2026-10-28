@@ -4,6 +4,7 @@
 use super::CELLS;
 use super::echoes::Echoes;
 use super::likelihood::Stats;
+use crate::frames::LdGates;
 use crate::params::{IDLE, Params};
 
 /// When a sensor's LD2410C frames came and what the last one brought, when its LD2450 last had
@@ -71,7 +72,7 @@ impl LdSensor {
     /// longer than IDLE is lost data. All energies 0 are the firmware's "no value", no measurement,
     /// and so is a time or an energy that is not finite. target: the housing's LD2450 has something
     /// in sight.
-    pub fn frame(&mut self, t: f64, gates: Option<(&[f64; 9], &[f64; 9])>, target: bool, frame: f64) {
+    pub fn frame(&mut self, t: f64, gates: Option<&LdGates>, target: bool, frame: f64) {
         let collect = &mut self.collect;
         let dt = t - collect.t;
         if !(dt > 0.0) || !t.is_finite() {
@@ -79,10 +80,10 @@ impl LdSensor {
         }
         collect.t = t;
         let prev = collect.last.take();
-        let Some((moving, still)) = gates else {
+        let Some(g) = gates else {
             return;
         };
-        let e: [f64; CELLS] = std::array::from_fn(|c| if c < 9 { moving[c] } else { still[c - 9 + 2] });
+        let e: [f64; CELLS] = std::array::from_fn(|c| if c < 9 { g.moving[c] } else { g.still[c - 9 + 2] });
         if e.iter().all(|&x| x == 0.0) || !e.iter().all(|x| x.is_finite()) {
             return;
         }

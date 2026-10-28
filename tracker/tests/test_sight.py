@@ -5,6 +5,7 @@ import numpy as np
 
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
+from presence_tracker.frames import Frame
 
 from test_frames import detections
 
@@ -48,8 +49,8 @@ def test_somebody_at_the_wall_the_sensor_hangs_on_is_measured_in_the_room():
     for i in range(600):
         t = 0.1 * i
         x, y = -0.05 + rng.normal(0, 0.02), 2.0 + rng.normal(0, 0.02)
-        crowd.process_frame(bad.id, t, {"targets": [target(bad, x, y)]})
-        crowd.process_frame(buero.id, t + 0.05, {"targets": []})
+        crowd.process_frame(bad.id, t, Frame.of({"targets": [target(bad, x, y)]}))
+        crowd.process_frame(buero.id, t + 0.05, Frame.of({"targets": []}))
     assert 1 - crowd.count_distribution()["bad"][0] > 0.9
     assert crowd.occupancy()["bad"][0]
     (p,) = [p for p in crowd.persons() if p.get("x") is not None]
@@ -76,8 +77,8 @@ def test_a_track_at_the_wall_never_puts_somebody_behind_it():
     for i, (x, y) in enumerate(path):
         t = 0.1 * i
         x, y = x + rng.normal(0, 0.02), y + rng.normal(0, 0.02)  # bit-equal frames would be frozen ones
-        crowd.process_frame(bad.id, t, {"targets": [target(bad, x, y)]})
-        crowd.process_frame(buero.id, t + 0.05, {"targets": []})
+        crowd.process_frame(bad.id, t, Frame.of({"targets": [target(bad, x, y)]}))
+        crowd.process_frame(buero.id, t + 0.05, Frame.of({"targets": []}))
         if t > 5:
             counts = crowd.count_distribution()
             if prior is None and i >= 149:

@@ -94,6 +94,13 @@ BAD_FRAMES = {  # valid JSON, but no frame (BUGS 3): each of these stopped the a
     "a gate a string": b'{"uptime_ms": 1600, "targets": [], "ld2410": {"move_gates": ["a"], "still_gates": []}}',
     "a target a list": b'{"uptime_ms": 1700, "targets": [[1]]}',
     "no JSON": b"{",
+    # outside what the firmware sends (0.37.1): until then 1e300 made the frame time 0, a negative gap
+    # and the sensor's next frame lost data; huge x made positions NaN, huge gates the LD2410C's sums inf
+    "uptime_ms 1e300": b'{"uptime_ms": 1e300, "targets": [], "ld2410": {}}',
+    "slot 4": b'{"uptime_ms": 1800, "targets": [{"x": 1, "y": 1000, "slot": 4}]}',
+    "x 1e300": b'{"uptime_ms": 1900, "targets": [{"x": 1e300, "y": 1000, "slot": 1}]}',
+    "8 gates": b'{"uptime_ms": 2000, "ld2410": {"move_gates": [1, 1, 1, 1, 1, 1, 1, 1], "still_gates": [1, 1, 1, 1, 1, 1, 1, 1, 1]}}',
+    "a gate 1e300": b'{"uptime_ms": 2100, "ld2410": {"move_gates": [1e300, 1, 1, 1, 1, 1, 1, 1, 1], "still_gates": [1, 1, 1, 1, 1, 1, 1, 1, 1]}}',
 }
 
 
