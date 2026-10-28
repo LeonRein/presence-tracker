@@ -14,7 +14,7 @@
 //! goes on over a new plan.
 
 use crate::geometry::Point;
-use crate::plan::Plan;
+use crate::plan::{Plan, RoomIdx};
 
 #[derive(Debug, Default)]
 pub struct RoomSeen {
@@ -42,7 +42,7 @@ impl RoomSeen {
             plan.sensors
                 .iter()
                 .filter_map(|s| s.own_room)
-                .any(|k| plan.rooms[k].id == room)
+                .any(|k| plan.room(k).id == room)
         };
         self.last.retain(|(room, _)| owned(room));
     }
@@ -61,15 +61,14 @@ impl RoomSeen {
             return;
         };
         if measured.iter().any(|&p| plan.room_at(p) == Some(room)) {
-            set(&mut self.last, &plan.rooms[room].id, t);
+            set(&mut self.last, &plan.room(room).id, t);
         }
     }
 
     /// Per room of the plan whether its own LD2450 measured somebody in it within the last `hold` s
     /// (0: never).
     pub fn seen(&self, plan: &Plan, now: f64, hold: f64) -> Vec<bool> {
-        plan.rooms
-            .iter()
+        plan.observed()
             .map(|room| hold > 0.0 && get(&self.last, &room.id).is_some_and(|t| now - t <= hold))
             .collect()
     }
@@ -88,7 +87,7 @@ impl RoomSeen {
                 let mut own = plan
                     .sensors
                     .iter()
-                    .filter(|s| s.in_use && s.own_room == Some(k))
+                    .filter(|s| s.in_use && s.own_room == Some(RoomIdx(k)))
                     .peekable();
                 own.peek().is_some() && own.all(|s| !self.online(&s.id, now, start, limit))
             })
@@ -104,7 +103,7 @@ impl RoomSeen {
     /// it its own availability).
     pub fn watched(plan: &Plan) -> Vec<bool> {
         (0..plan.rooms.len())
-            .map(|k| plan.sensors.iter().any(|s| s.in_use && s.own_room == Some(k)))
+            .map(|k| plan.sensors.iter().any(|s| s.in_use && s.own_room == Some(RoomIdx(k))))
             .collect()
     }
 }
@@ -112,32 +111,24 @@ impl RoomSeen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::Shape;
-    use crate::plan::{Room, SensorPlan};
 
     /// Two rooms without a wall between them (test_roomseen.open_plan): wohn 6 x 5 m, ess 4 x 5 m
     /// right of it; sensor 0 wohn's, sensor 1 ess's, sensor 2 nobody's.
     fn open_plan() -> Plan {
-        let room = |id: &str, x0: f64, x1: f64| Room {
-            id: id.into(),
-            shape: Shape::rect([x0, 0.0], [x1, 5.0]),
-        };
-        let sensor = |id: &str, own_room| SensorPlan {
-            id: id.into(),
-            own_room,
-            in_use: true,
-        };
-        Plan {
-            rooms: vec![room("wohn", 0.0, 6.0), room("ess", 6.0, 10.0)],
-            sensors: vec![sensor("w", Some(0)), sensor("e", Some(1)), sensor("x", None)],
-            walls: Vec::new(),
-            regions: Vec::new(),
-            portals: Vec::new(),
-            closed_rooms: Vec::new(),
-            all_rooms: Vec::new(),
-            zones: Vec::new(),
-            areas: Vec::new(),
-        }
+        let config = crate::testing::config(
+            &[
+                ("w", "wohn", [0.05, 0.05], 45.0),
+                ("e", "ess", [9.95, 2.5], 180.0),
+                ("x", "", [5.0, 4.9], 270.0),
+            ],
+            r#"[{"id": "wohn", "name": "Wohn", "kind": "room", "shape": "rect", "points": [[0, 0], [6, 5]]},
+                {"id": "ess", "name": "Ess", "kind": "room", "shape": "rect", "points": [[6, 0], [10, 5]]}]"#,
+            "[]",
+            "[]",
+        );
+        let mut plan = Plan::new(&config);
+        plan.sensors[2].own_room = None; // on the border of both: nobody's
+        plan
     }
 
     #[test]
@@ -176,7 +167,7 @@ mod tests {
         assert!(seen.online("w", 50.0, Some(0.0), 30.0) && !seen.online("e", 50.0, Some(0.0), 30.0));
         assert!(seen.online("e", 50.0, None, 30.0), "not started: online");
         // two own sensors: silent only when both are
-        plan.sensors[1].own_room = Some(0);
+        plan.sensors[1].own_room = Some(RoomIdx(0));
         assert_eq!(seen.silent(&plan, 50.0, Some(0.0), 30.0), [false, false]);
         assert_eq!(seen.silent(&plan, 51.0, Some(0.0), 30.0), [true, false]);
         // a room without an own sensor in use is never silent

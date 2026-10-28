@@ -288,6 +288,11 @@ impl Params {
             ("max_step", self.max_step),
             ("speed", self.speed),
             ("walk_length", self.walk_length),
+            ("turn_rate", self.turn_rate),
+            ("go_share", self.go_share),
+            ("go_time", self.go_time),
+            ("kappa_shape", self.kappa_shape),
+            ("ld_amp_shape", self.ld_amp_shape),
             ("ld_shape", self.ld_shape[0].min(self.ld_shape[1])),
             ("ld_tau", self.ld_tau[0].min(self.ld_tau[1])),
             ("ld_gain", self.ld_gain[0].min(self.ld_gain[1])),
@@ -318,6 +323,13 @@ impl Params {
                     self.start_unknown >= 0.0 && self.start_unknown.is_finite(),
                 ),
                 ("give_up", (0.0..=1.0).contains(&self.give_up)),
+                (
+                    "stay_points",
+                    self.stay_points.len() >= 2 && self.stay_points.iter().all(|&t| t > 0.0 && t.is_finite()),
+                ),
+                ("kappa_levels", self.kappa_levels >= 2),
+                ("ld_amp_levels", self.ld_amp_levels >= 2),
+                ("kappa_amp_corr", self.kappa_amp_corr.abs() < 1.0),
                 ("max_hyps", self.max_hyps >= 1),
                 (
                     "ld_moving, ld_still",
@@ -446,6 +458,20 @@ pub struct Slants {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_model_that_cannot_be_built_is_refused_by_name() {
+        for (json, name) in [
+            (r#"{"turn_rate": 0}"#, "turn_rate"),
+            (r#"{"stay_points": [2]}"#, "stay_points"),
+            (r#"{"kappa_levels": 1}"#, "kappa_levels"),
+            (r#"{"speed": "nan"}"#, "speed"),
+        ] {
+            let err = Params::from_json(json).expect("parsed").validate().expect_err(name);
+            assert!(err.contains(name), "{err}");
+        }
+        Params::default().validate().expect("the defaults fit");
+    }
 
     #[test]
     fn a_model_may_have_infinite_times() {

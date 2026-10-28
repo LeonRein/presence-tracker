@@ -5,20 +5,20 @@
 
 pub mod branch;
 pub mod densities;
-pub mod evidence;
-pub mod holders;
+pub(crate) mod evidence;
+pub(crate) mod holders;
 pub mod hyp;
 mod ld_weigh;
-pub mod merge;
+pub(crate) mod merge;
 #[cfg(test)]
 pub mod mirror;
 pub mod mixture;
-pub mod objects;
+pub(crate) mod objects;
 pub mod pool;
-pub mod small_map;
+pub(crate) mod small_map;
 mod start;
-pub mod step;
-pub mod tracks;
+pub(crate) mod step;
+pub(crate) mod tracks;
 
 #[cfg(test)]
 mod tests;

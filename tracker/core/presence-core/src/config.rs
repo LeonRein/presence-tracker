@@ -1,7 +1,8 @@
 //! The configuration as the app stores it (model.Config.to_dict(): sensors, zones, walls, doors and
 //! the tracker's parameters; the background image is the UI's), read with serde. Lengths in metres,
 //! angles in degrees, in the house frame. The rooms are already the faces between the walls
-//! (floorplan.sync_rooms runs where the plan is edited, in the shell).
+//! (floorplan.sync_rooms runs where the plan is edited, in the shell). Every field the shell always
+//! writes is required: no defaults here that could hide a renamed field.
 
 use std::collections::BTreeMap;
 
@@ -14,8 +15,7 @@ use crate::vmath::py_hypot;
 /// in a corner, and a few centimetres of drawing error would otherwise put it behind that wall.
 pub const SIGHT_OFFSET: f64 = 0.2;
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Deserialize)]
 pub struct Config {
     pub sensors: Vec<SensorConfig>,
     pub zones: Vec<ZoneConfig>,
@@ -26,7 +26,6 @@ pub struct Config {
 
 /// A sensor (model.SensorConfig): where it hangs, where it looks, how its measurements are read.
 #[derive(Debug, Deserialize)]
-#[serde(default)]
 pub struct SensorConfig {
     pub id: String,
     pub name: String,
@@ -41,25 +40,6 @@ pub struct SensorConfig {
     pub range: f64,
     pub enabled: bool,
     pub placed: bool,
-}
-
-impl Default for SensorConfig {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            name: String::new(),
-            x: 0.0,
-            y: 0.0,
-            heading: 0.0,
-            height: 1.5,
-            mirror: false,
-            scale: 1.0,
-            fov: 120.0,
-            range: 6.0,
-            enabled: true,
-            placed: false,
-        }
-    }
 }
 
 impl SensorConfig {
@@ -110,15 +90,20 @@ impl SensorConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// What a zone is (model.ZoneConfig.kind with its flag entry).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoneKind {
+    /// a room of the home (from the walls)
     Room,
+    /// a room outside the home, the public space beyond its door (the stairwell; MODEL.md 2)
+    OutsideRoom,
+    /// an area drawn in a room
     Area,
+    /// a way in drawn by hand
     Entry,
 }
 
-/// A zone (model.ZoneConfig): a room (from the walls), an area drawn in one, or a way in.
+/// A zone (model.ZoneConfig).
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "ZoneRaw")]
 pub struct ZoneConfig {
@@ -126,68 +111,75 @@ pub struct ZoneConfig {
     pub name: String,
     pub kind: ZoneKind,
     pub shape: Shape,
-    /// a room outside the home, the public space beyond its door (the stairwell; MODEL.md 2)
-    pub entry: bool,
 }
 
 impl ZoneConfig {
     pub fn contains(&self, p: Point, margin: f64) -> bool {
         self.shape.contains(p, margin)
     }
-
-    /// A room of the home (not an outside room).
-    pub fn home_room(&self) -> bool {
-        self.kind == ZoneKind::Room && !self.entry
-    }
 }
 
 #[derive(Deserialize)]
-#[serde(default)]
+#[serde(rename_all = "lowercase")]
+enum KindRaw {
+    Room,
+    Area,
+    Entry,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ShapeKind {
+    Rect,
+    Circle,
+    Polygon,
+}
+
+/// A zone as stored: its centre and radius only for a circle, entry only for a room.
+#[derive(Deserialize)]
 struct ZoneRaw {
     id: String,
     name: String,
-    kind: ZoneKind,
-    shape: String,
+    kind: KindRaw,
+    shape: ShapeKind,
     points: Vec<Point>,
+    #[serde(default)]
     center: Option<Point>,
+    #[serde(default)]
     radius: f64,
+    #[serde(default)]
     entry: bool,
-}
-
-impl Default for ZoneRaw {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            name: String::new(),
-            kind: ZoneKind::Area,
-            shape: "rect".into(),
-            points: Vec::new(),
-            center: None,
-            radius: 0.0,
-            entry: false,
-        }
-    }
 }
 
 impl TryFrom<ZoneRaw> for ZoneConfig {
     type Error = String;
 
     fn try_from(z: ZoneRaw) -> Result<Self, String> {
-        let shape = match (z.shape.as_str(), z.points.as_slice(), z.center) {
-            ("rect", &[a, b], _) => Shape::rect(a, b),
-            ("circle", _, Some(center)) => Shape::Circle {
+        let shape = match (z.shape, z.points.as_slice(), z.center) {
+            (ShapeKind::Rect, &[a, b], _) => Shape::rect(a, b),
+            (ShapeKind::Circle, _, Some(center)) => Shape::Circle {
                 center,
                 radius: z.radius,
             },
-            ("polygon", _, _) => Shape::polygon(z.points),
-            (kind, _, _) => return Err(format!("zone {}: a {kind} that is no outline", z.id)),
+            (ShapeKind::Polygon, _, _) => Shape::polygon(z.points),
+            _ => {
+                return Err(format!(
+                    "zone {}: a rectangle without two corners or a circle without a centre",
+                    z.id
+                ));
+            }
+        };
+        let kind = match (z.kind, z.entry) {
+            (KindRaw::Room, false) => ZoneKind::Room,
+            (KindRaw::Room, true) => ZoneKind::OutsideRoom,
+            (KindRaw::Area, _) => ZoneKind::Area,
+            (KindRaw::Entry, _) => ZoneKind::Entry,
         };
         Ok(Self {
             id: z.id,
             name: z.name,
-            kind: z.kind,
+            kind,
             shape,
-            entry: z.entry,
         })
     }
 }
@@ -213,12 +205,7 @@ pub struct WallConfig {
 #[derive(Deserialize)]
 struct WallRaw {
     points: Vec<Point>,
-    #[serde(default = "wall_kind")]
     kind: WallKind,
-}
-
-fn wall_kind() -> WallKind {
-    WallKind::Wall
 }
 
 impl TryFrom<WallRaw> for WallConfig {
@@ -235,21 +222,14 @@ impl TryFrom<WallRaw> for WallConfig {
 /// A door on a wall: its centre and width.
 #[derive(Debug, Deserialize)]
 pub struct DoorConfig {
-    #[serde(default)]
     pub id: String,
     pub x: f64,
     pub y: f64,
-    #[serde(default = "door_width")]
     pub width: f64,
-}
-
-fn door_width() -> f64 {
-    0.9
 }
 
 /// The tracker's parameters of the configuration (model.TrackerParams) that the core reads.
 #[derive(Debug, Deserialize)]
-#[serde(default)]
 pub struct TrackerParams {
     /// m: height of the reflecting body (chest), for the slant correction
     pub target_height: f64,
@@ -273,6 +253,8 @@ pub struct TrackerParams {
     pub target_thresholds: BTreeMap<String, f64>,
 }
 
+/// model.TrackerParams' defaults, for the tests' configurations.
+#[cfg(test)]
 impl Default for TrackerParams {
     fn default() -> Self {
         Self {
@@ -295,9 +277,13 @@ impl Default for TrackerParams {
     }
 }
 
+/// cells of 0.1 m the raster of the plan may have at most (4 * 10^6: 200 m x 200 m): a typing error such as
+/// x = 1e6 is refused, not tried
+pub const MAX_CELLS: f64 = 4e6;
+
 impl Config {
-    /// The configuration of the JSON of model.Config.to_dict(), checked: finite numbers, sensors
-    /// with a positive scale (Err names what does not fit).
+    /// The configuration of the JSON of model.Config.to_dict(), checked field by field (Err names the
+    /// first that does not fit).
     pub fn from_json(json: &str) -> Result<Self, String> {
         let config: Self = serde_json::from_str(json).map_err(|e| e.to_string())?;
         config.check()?;
@@ -305,47 +291,88 @@ impl Config {
     }
 
     fn check(&self) -> Result<(), String> {
-        let finite = |v: &[f64]| v.iter().all(|x| x.is_finite());
+        // (what, the value, whether it fits)
+        let real = |x: f64| x.is_finite();
+        let positive = |x: f64| x > 0.0 && x.is_finite();
+        let at_least_0 = |x: f64| x >= 0.0 && x.is_finite();
+        let mut checks: Vec<(String, bool)> = Vec::new();
         for s in &self.sensors {
-            if !finite(&[s.x, s.y, s.heading, s.height, s.fov, s.range]) || !(s.scale > 0.0 && s.scale.is_finite()) {
-                return Err(format!("sensor {}: numbers that do not fit", s.id));
-            }
+            let id = &s.id;
+            checks.extend([
+                (
+                    format!("sensor {id}: x, y, heading"),
+                    real(s.x) && real(s.y) && real(s.heading),
+                ),
+                (format!("sensor {id}: height"), positive(s.height)),
+                (format!("sensor {id}: scale"), positive(s.scale)),
+                (format!("sensor {id}: fov"), positive(s.fov) && s.fov <= 180.0),
+                (format!("sensor {id}: range"), positive(s.range)),
+            ]);
         }
-        let points = |z: &Shape| z.outline(4).iter().all(|p| finite(p));
-        if let Some(z) = self.zones.iter().find(|z| !points(&z.shape)) {
-            return Err(format!("zone {}: a corner that is no number", z.id));
+        for z in &self.zones {
+            checks.push((
+                format!("zone {}: its corners", z.id),
+                z.shape.outline(4).iter().flatten().all(|&v| real(v)),
+            ));
         }
-        if !self.walls.iter().all(|w| finite(&[w.a[0], w.a[1], w.b[0], w.b[1]]))
-            || !self.doors.iter().all(|d| finite(&[d.x, d.y, d.width]))
-        {
-            return Err("a wall or a door that is no number".into());
+        let ends = self.walls.iter().flat_map(|w| [w.a, w.b]).flatten();
+        checks.push(("the walls' ends".into(), ends.into_iter().all(real)));
+        for d in &self.doors {
+            checks.push((format!("door {}", d.id), real(d.x) && real(d.y) && positive(d.width)));
         }
         let p = &self.params;
-        let ok = [
-            p.target_height,
-            p.dwell_median,
-            p.dwell_spread,
-            p.light_cost,
-            p.seen_hold,
-            p.lead_time,
-        ]
-        .iter()
-        .all(|&x| x >= 0.0 && x.is_finite());
-        if ok && p.dwell_median > 0.0 && p.dwell_spread > 0.0 {
-            Ok(())
-        } else {
-            Err("the tracker's parameters do not fit".into())
+        let unit = |x: f64| x > 0.0 && x < 1.0;
+        checks.extend([
+            ("target_height".into(), at_least_0(p.target_height)),
+            ("range_sigma_base".into(), positive(p.range_sigma_base)),
+            ("range_sigma_slope".into(), at_least_0(p.range_sigma_slope)),
+            ("lateral_sigma_base".into(), positive(p.lateral_sigma_base)),
+            ("lateral_sigma_slope".into(), at_least_0(p.lateral_sigma_slope)),
+            ("wall_margin".into(), at_least_0(p.wall_margin)),
+            ("dwell_median".into(), positive(p.dwell_median)),
+            ("dwell_spread".into(), positive(p.dwell_spread)),
+            ("ld2410_hold".into(), at_least_0(p.ld2410_hold)),
+            ("light_cost".into(), positive(p.light_cost)),
+            ("seen_hold".into(), at_least_0(p.seen_hold)),
+            ("lead_time".into(), at_least_0(p.lead_time)),
+            ("approach_cost".into(), positive(p.approach_cost)),
+            ("target_threshold".into(), unit(p.target_threshold)),
+            (
+                "target_thresholds".into(),
+                p.target_thresholds.values().all(|&c| unit(c)),
+            ),
+        ]);
+        // the raster around the rooms
+        let rooms: Vec<[f64; 4]> = self
+            .zones
+            .iter()
+            .filter(|z| z.kind.is_room())
+            .map(|z| z.shape.bounds())
+            .collect();
+        let span = |k: usize| {
+            let lo = rooms.iter().map(|b| b[k]).fold(f64::INFINITY, f64::min);
+            let hi = rooms.iter().map(|b| b[k + 2]).fold(f64::NEG_INFINITY, f64::max);
+            (hi - lo) / 0.1 + 3.0
+        };
+        checks.push((
+            "the plan's extent".into(),
+            rooms.is_empty() || span(0) * span(1) <= MAX_CELLS,
+        ));
+        match checks.into_iter().find(|(_, ok)| !ok) {
+            Some((what, _)) => Err(format!("the configuration does not fit: {what}")),
+            None => Ok(()),
         }
     }
 
+    /// The rooms, the outside rooms too.
     pub fn rooms(&self) -> impl Iterator<Item = &ZoneConfig> {
-        self.zones.iter().filter(|z| z.kind == ZoneKind::Room)
+        self.zones.iter().filter(|z| z.kind.is_room())
     }
+}
 
-    /// The zones of these kinds that belong to the home: not the outside rooms (Config.home_zones).
-    pub fn home_zones(&self, kinds: &[ZoneKind]) -> impl Iterator<Item = &ZoneConfig> {
-        self.zones
-            .iter()
-            .filter(move |z| kinds.contains(&z.kind) && !(z.kind == ZoneKind::Room && z.entry))
+impl ZoneKind {
+    /// A room of the home or an outside room.
+    pub fn is_room(self) -> bool {
+        matches!(self, Self::Room | Self::OutsideRoom)
     }
 }

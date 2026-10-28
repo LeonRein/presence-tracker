@@ -10,7 +10,7 @@ pub mod targets;
 pub mod tiles;
 
 pub use ld::{LdPlace, LdSight, LdTiles};
-pub use raster::{CELL, Grid, Raster};
+pub use raster::{CELL, Grid, Raster, RoomGrid};
 pub use sight::Sight;
 pub use targets::EntryTargets;
 pub use tiles::{DoorTile, POINT, Tiles};
@@ -21,7 +21,7 @@ use crate::geometry::{Point, Walls};
 use crate::ld2410::likelihood::Likelihood;
 use crate::ld2450::rates::RateModel;
 use crate::params::{OutputParams, Params, Shapes};
-use crate::plan::Plan;
+use crate::plan::{Plan, RoomIdx};
 use crate::sensors::SensorSet;
 use crate::vmath::pairwise_sum;
 
@@ -40,8 +40,8 @@ pub struct World {
     pub sights: Vec<Sight>,
     /// per sensor its LD2410C
     pub ld: Vec<LdSight>,
-    /// per cell its room (an index into the views of the LD2410C; the last for none)
-    pub rooms: Grid,
+    /// per cell in view its observed room
+    pub rooms: RoomGrid,
     /// the LD2410C's likelihood (its tables are built once)
     pub ld_lik: Likelihood,
     pub plan: Plan,
@@ -176,13 +176,12 @@ impl World {
         let outputs = OutputParams::of(&config.params, silent_after);
         outputs.validate()?;
         let plan = Plan::new(config);
-        let raster = build::raster_of(config);
+        let raster = build::raster_of(&plan);
         let labels = build::labels_of(&plan, &raster);
-        let rooms = Grid::new(raster, build::rooms_of(&plan, &raster, &labels));
+        let rooms = build::rooms_of(&plan, &raster, &labels);
         let walls = Walls::new(plan.walls.iter().map(|&[a, b]| [a[0], a[1], b[0], b[1]]).collect());
         let wall_dist = Grid::new(raster, build::wall_dist(&raster, &plan.walls));
-        let tiles = Tiles::build(&plan, raster, &labels, rooms.values(), &walls, &params, &config.params);
-        let shapes = Shapes::new(&params);
+        let tiles = Tiles::build(&plan, raster, &labels, &rooms, &walls, &params, &config.params)?;
         let rates = RateModel::new(&params);
         let built = build::Built {
             config,
@@ -199,12 +198,12 @@ impl World {
         for s in &mut sights {
             s.set_rates(&rates, &tiles);
         }
-        let targets = EntryTargets::new(&plan, raster, &rooms, &tiles);
         Ok(Self {
+            targets: EntryTargets::new(&plan, raster, &rooms, &tiles),
             ld_lik: Likelihood::new(&params),
+            shapes: Shapes::new(&params),
             params,
             outputs,
-            shapes,
             rates,
             raster,
             walls,
@@ -214,7 +213,6 @@ impl World {
             ld,
             rooms,
             plan,
-            targets,
         })
     }
 
@@ -225,11 +223,20 @@ impl World {
         let outputs = OutputParams::of(&config.params, silent_after);
         outputs.validate()?;
         let plan = Plan::new(config);
-        if plan.sensors.len() != e.sensors.len() || e.tiles.room.iter().flatten().any(|&k| k >= plan.rooms.len()) {
+        let observed = plan.rooms.len();
+        if plan.sensors.len() != e.sensors.len() || e.tiles.room.iter().flatten().any(|r| r.0 >= observed) {
             return Err("the export does not fit the configuration".into());
         }
         let rates = RateModel::new(&e.params);
         let raster = e.raster;
+        // the export's rooms per cell: the number of rooms for none
+        let rooms = RoomGrid::new(
+            raster,
+            e.rooms
+                .iter()
+                .map(|&k| (k < observed as f64).then_some(RoomIdx(k as usize)))
+                .collect(),
+        );
         let (sights, ld) = e
             .sensors
             .into_iter()
@@ -246,15 +253,15 @@ impl World {
                     axis: sensor.ld.axis,
                     dh2: sensor.ld.dh2,
                     los: Grid::new(raster, sensor.ld.los),
-                    view: sensor.ld.view,
+                    // the export's view has a last entry for no room
+                    view: sensor.ld.view.map(|v| v[..observed].to_vec()),
                     tiles: sensor.ld.tiles,
                 };
                 (s, ld)
             })
             .unzip();
-        let rooms = Grid::new(raster, e.rooms);
-        let targets = EntryTargets::new(&plan, raster, &rooms, &e.tiles);
         Ok(Self {
+            targets: EntryTargets::new(&plan, raster, &rooms, &e.tiles),
             ld_lik: Likelihood::new(&e.params),
             params: e.params,
             outputs,
@@ -268,7 +275,6 @@ impl World {
             ld,
             rooms,
             plan,
-            targets,
         })
     }
 

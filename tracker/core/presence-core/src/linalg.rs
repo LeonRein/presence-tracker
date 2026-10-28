@@ -20,11 +20,15 @@ fn product(a: &[f64], b: &[f64], n: usize) -> Vec<f64> {
 }
 
 /// The matrix exponential by scaling and squaring of the Taylor series (tiling.expm): scaled to a
-/// 1-norm of at most 0.25, 15 terms, squared back. For a rate matrix times a time.
-pub fn expm(a: &[f64], n: usize) -> Vec<f64> {
+/// 1-norm of at most 0.25, 15 terms, squared back. For a rate matrix times a time; Err if its norm is
+/// no finite number (scaling it would never end).
+pub fn expm(a: &[f64], n: usize) -> Result<Vec<f64>, String> {
     let norm = (0..n)
         .map(|j| (0..n).fold(0.0, |s, i| s + a[i * n + j].abs()))
         .fold(0.0, f64::max);
+    if !norm.is_finite() || a.iter().any(|x| x.is_nan()) {
+        return Err(format!("the walking model's rates are no numbers (norm {norm})"));
+    }
     let s = if norm > 0.25 {
         (norm / 0.25).log2().ceil() as i32
     } else {
@@ -44,7 +48,7 @@ pub fn expm(a: &[f64], n: usize) -> Vec<f64> {
     for _ in 0..s {
         out = product(&out, &out, n);
     }
-    out
+    Ok(out)
 }
 
 /// The solution X of a X = b (a N x N, b N x m, both row-major), by LU with partial pivoting
@@ -67,7 +71,7 @@ mod tests {
         // two states, rates 3 and 1 per unit: exp(Q t) = stationary + e^(-4t) (I - stationary)
         let t = 0.7;
         let q = [-3.0 * t, t, 3.0 * t, -t];
-        let e = expm(&q, 2);
+        let e = expm(&q, 2).expect("finite");
         let decay = (-4.0 * t).exp();
         let want = [
             0.25 + 0.75 * decay,
@@ -76,6 +80,12 @@ mod tests {
             0.75 + 0.25 * decay,
         ];
         assert!(e.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-14), "{e:?}");
+    }
+
+    #[test]
+    fn a_matrix_without_a_finite_norm_is_refused() {
+        assert!(expm(&[f64::INFINITY, 0.0, 0.0, 1.0], 2).is_err());
+        assert!(expm(&[f64::NAN, 0.0, 0.0, 1.0], 2).is_err());
     }
 
     #[test]

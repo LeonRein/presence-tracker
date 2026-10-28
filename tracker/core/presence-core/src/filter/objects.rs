@@ -39,7 +39,7 @@ impl Objects {
     pub(super) fn release_unheld(&mut self, holders: &Holders) {
         let mut mixture_held = vec![false; self.mixtures.capacity()];
         let mut density_held = vec![false; self.densities.capacity()];
-        for (_, obj) in holders.entries(true) {
+        for (_, obj) in holders.entries() {
             match obj {
                 Obj::Mixture(m) => mixture_held[m.index()] = true,
                 Obj::Density(d) => density_held[d.index()] = true,
@@ -107,7 +107,7 @@ impl Objects {
         let live_mixtures: Vec<MixtureId> = self.mixtures.ids().collect();
         let mut held_mixtures = Vec::new();
         let mut held_densities = Vec::new();
-        for (_, obj) in holders.entries(true) {
+        for (_, obj) in holders.entries() {
             match obj {
                 Obj::Mixture(m) if self.mixtures.contains(m) => held_mixtures.push(m),
                 Obj::Density(d) if self.densities.contains(d) => held_densities.push(d),

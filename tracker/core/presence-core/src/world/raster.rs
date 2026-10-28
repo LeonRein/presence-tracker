@@ -1,6 +1,7 @@
 //! The 0.1 m raster of the plan (world.World, MODEL.md 2): values per cell, looked up at points.
 
 use crate::geometry::Point;
+use crate::plan::RoomIdx;
 
 /// m: side of a raster cell (world.CELL)
 pub const CELL: f64 = 0.1;
@@ -54,6 +55,30 @@ impl Grid {
     /// The value in the cell of a point (kernels.grid_at).
     pub fn at(&self, p: Point) -> f64 {
         self.values[self.raster.cell_of(p)]
+    }
+}
+
+/// Per cell the observed room its centre is in (filter.Tracker.room_of), None in none.
+#[derive(Debug)]
+pub struct RoomGrid {
+    raster: Raster,
+    cells: Vec<Option<RoomIdx>>,
+}
+
+impl RoomGrid {
+    /// Panics if the cells do not fit the raster.
+    pub fn new(raster: Raster, cells: Vec<Option<RoomIdx>>) -> Self {
+        assert_eq!(cells.len(), raster.cells(), "a grid needs one value per cell");
+        Self { raster, cells }
+    }
+
+    pub fn cells(&self) -> &[Option<RoomIdx>] {
+        &self.cells
+    }
+
+    /// The room of the cell of a point.
+    pub fn at(&self, p: Point) -> Option<RoomIdx> {
+        self.cells[self.raster.cell_of(p)]
     }
 }
 

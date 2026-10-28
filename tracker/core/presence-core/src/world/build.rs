@@ -1,20 +1,26 @@
 //! The world built from the plan (world.World, filter.Tracker._grid, _spread_sight, _ld_view,
 //! _ld_tiles, sensormodel.SensorModel, tiling.Tiling.observed): the 0.1 m raster of places and rooms,
-//! the distance to the walls, and per sensor its sight of a person and its LD2410C's.
+//! the distance to the walls, and per sensor its sight of a person and its LD2410C's - in steps, each a
+//! function of what is built before.
 
-use super::raster::{CELL, Grid, Raster};
+use super::raster::{CELL, Grid, Raster, RoomGrid};
 use super::{LdSight, LdTiles, Sight, Tiles};
-use crate::config::{Config, SensorConfig};
+use crate::config::{Config, SensorConfig, TrackerParams};
 use crate::geometry::{Point, Walls};
 use crate::ld2410::profile::expected;
 use crate::ld2410::{CELLS, FLOOR, GATE};
 use crate::params::{Params, STILL, WALK};
-use crate::plan::Plan;
+use crate::plan::{Place, Plan, RoomIdx};
 use crate::vmath::py_hypot;
 
 /// The raster around the rooms (the outside rooms too): a cell beyond them on every side (World).
-pub(super) fn raster_of(config: &Config) -> Raster {
-    let bounds: Vec<[f64; 4]> = config.rooms().map(|z| z.shape.bounds()).collect();
+pub(super) fn raster_of(plan: &Plan) -> Raster {
+    let bounds: Vec<[f64; 4]> = plan
+        .zones
+        .iter()
+        .filter(|z| z.is_room())
+        .map(|z| z.shape.bounds())
+        .collect();
     if bounds.is_empty() {
         return Raster {
             x0: 0.0,
@@ -34,38 +40,26 @@ pub(super) fn raster_of(config: &Config) -> Raster {
     }
 }
 
-/// Per cell its place (World.labels): the first room holding its centre - the observed area (0), a
-/// region (1..), outside for an outside room -, None in no room.
-pub(super) fn labels_of(plan: &Plan, raster: &Raster) -> Vec<Option<usize>> {
-    cells(raster)
-        .map(|c| {
-            plan.all_rooms
-                .iter()
-                .find(|(z, _)| z.contains(c, 0.0))
-                .map(|&(_, place)| place)
-        })
-        .collect()
-}
-
 /// The centres of the cells, row-major (i, j).
 fn cells(raster: &Raster) -> impl Iterator<Item = Point> + '_ {
     (0..raster.nx).flat_map(move |i| (0..raster.ny).map(move |j| raster.centre(i, j)))
 }
 
-/// Per cell its observed room (filter.Tracker.room_of: the last observed room holding its centre among
-/// the cells in view), the number of rooms for none.
-pub(super) fn rooms_of(plan: &Plan, raster: &Raster, labels: &[Option<usize>]) -> Vec<f64> {
-    let none = plan.rooms.len() as f64;
-    cells(raster)
-        .zip(labels)
-        .map(|(c, &label)| {
-            let k = plan.rooms.iter().rposition(|r| r.shape.contains(c, 0.0));
-            match (label, k) {
-                (Some(0), Some(k)) => k as f64,
-                _ => none,
-            }
-        })
-        .collect()
+/// Per cell its place (World.labels): of the first room holding its centre, None in no room.
+pub(super) fn labels_of(plan: &Plan, raster: &Raster) -> Vec<Option<Place>> {
+    cells(raster).map(|c| plan.place_at(c)).collect()
+}
+
+/// Per cell in view its observed room (filter.Tracker.room_of: of overlapping rooms the last one wins,
+/// as the Python tracker writes them in order; the outputs' room_at takes the first - rooms do not
+/// overlap, the faces between the walls).
+pub(super) fn rooms_of(plan: &Plan, raster: &Raster, labels: &[Option<Place>]) -> RoomGrid {
+    let rooms: Vec<_> = plan.observed().collect();
+    let of = |(c, &label): (Point, &Option<Place>)| {
+        let k = rooms.iter().rposition(|z| z.shape.contains(c, 0.0));
+        k.filter(|_| label == Some(Place::Observed)).map(RoomIdx)
+    };
+    RoomGrid::new(*raster, cells(raster).zip(labels).map(of).collect())
 }
 
 /// m: per cell a lower bound of the distance from anywhere in it to the nearest wall (World.wall_dist).
@@ -83,52 +77,59 @@ pub(super) fn wall_dist(raster: &Raster, walls: &[[Point; 2]]) -> Vec<f64> {
         .collect()
 }
 
-/// The cells within `radius` of each cell that a straight line from its centre reaches without crossing
-/// a wall (World.reach): the offsets in cells, and per offset and cell (row-major) whether it is reached.
-fn reach(raster: &Raster, labels: &[Option<usize>], walls: &Walls, radius: f64) -> (Vec<(i64, i64)>, Vec<Vec<bool>>) {
-    let n = (radius / CELL) as i64;
-    let r2 = (radius / CELL) * (radius / CELL);
-    let offsets: Vec<(i64, i64)> = (-n..=n)
-        .flat_map(|di| (-n..=n).map(move |dj| (di, dj)))
-        .filter(|&(di, dj)| ((di * di + dj * dj) as f64) <= r2)
-        .collect();
-    let (nx, ny) = (raster.nx as i64, raster.ny as i64);
-    let inside: Vec<(i64, i64)> = (0..nx)
-        .flat_map(|i| (0..ny).map(move |j| (i, j)))
-        .filter(|&(i, j)| labels[(i * ny + j) as usize].is_some())
-        .collect();
-    let masks = offsets
-        .iter()
-        .map(|&(di, dj)| {
-            let mut mask = vec![false; raster.cells()];
-            let reached: Vec<(i64, i64)> = inside
-                .iter()
-                .copied()
-                .filter(|&(i, j)| {
-                    let (ti, tj) = (i + di, j + dj);
-                    ti >= 0 && ti < nx && tj >= 0 && tj < ny && labels[(ti * ny + tj) as usize].is_some()
-                })
-                .collect();
-            let starts: Vec<Point> = reached
-                .iter()
-                .map(|&(i, j)| raster.centre(i as usize, j as usize))
-                .collect();
-            let crossed = if (di, dj) == (0, 0) {
-                vec![false; starts.len()]
-            } else {
-                let ends: Vec<Point> = starts
+/// The cells within a radius of each cell that a straight line from its centre reaches without crossing
+/// a wall (World.reach).
+struct Reach {
+    /// the offsets in cells
+    offsets: Vec<(i64, i64)>,
+    /// per offset, per cell (row-major) whether it is reached
+    masks: Vec<Vec<bool>>,
+}
+
+impl Reach {
+    fn new(raster: &Raster, labels: &[Option<Place>], walls: &Walls, radius: f64) -> Self {
+        let n = (radius / CELL) as i64;
+        let r2 = (radius / CELL) * (radius / CELL);
+        let offsets: Vec<(i64, i64)> = (-n..=n)
+            .flat_map(|di| (-n..=n).map(move |dj| (di, dj)))
+            .filter(|&(di, dj)| ((di * di + dj * dj) as f64) <= r2)
+            .collect();
+        let (nx, ny) = (raster.nx as i64, raster.ny as i64);
+        let placed = |i: i64, j: i64| i >= 0 && i < nx && j >= 0 && j < ny && labels[(i * ny + j) as usize].is_some();
+        let inside: Vec<(i64, i64)> = (0..nx)
+            .flat_map(|i| (0..ny).map(move |j| (i, j)))
+            .filter(|&(i, j)| placed(i, j))
+            .collect();
+        let masks = offsets
+            .iter()
+            .map(|&(di, dj)| {
+                let mut mask = vec![false; raster.cells()];
+                let reached: Vec<(i64, i64)> = inside
                     .iter()
-                    .map(|p| [p[0] + di as f64 * CELL, p[1] + dj as f64 * CELL])
+                    .copied()
+                    .filter(|&(i, j)| placed(i + di, j + dj))
                     .collect();
-                walls.crosses(&starts, &ends)
-            };
-            for (&(i, j), cross) in reached.iter().zip(crossed) {
-                mask[(i * ny + j) as usize] = !cross;
-            }
-            mask
-        })
-        .collect();
-    (offsets, masks)
+                let starts: Vec<Point> = reached
+                    .iter()
+                    .map(|&(i, j)| raster.centre(i as usize, j as usize))
+                    .collect();
+                let crossed = if (di, dj) == (0, 0) {
+                    vec![false; starts.len()]
+                } else {
+                    let ends: Vec<Point> = starts
+                        .iter()
+                        .map(|p| [p[0] + di as f64 * CELL, p[1] + dj as f64 * CELL])
+                        .collect();
+                    walls.crosses(&starts, &ends)
+                };
+                for (&(i, j), cross) in reached.iter().zip(crossed) {
+                    mask[(i * ny + j) as usize] = !cross;
+                }
+                mask
+            })
+            .collect();
+        Self { offsets, masks }
+    }
 }
 
 // ------------------------------------------------------------------ the LD2450's sight
@@ -158,7 +159,7 @@ fn coarse_centre(i: i64) -> f64 {
 /// How well the sensor sees the spot (SensorModel.prior_pd): full in its field of view, falling toward
 /// its edge and beyond its range; 0 behind walls and in a closed room without a sensor.
 fn prior_pd(s: &SensorConfig, plan: &Plan, p: Point) -> f64 {
-    if plan.closed_rooms.iter().any(|z| z.contains(p, 0.0)) {
+    if plan.closed.iter().any(|z| plan.zones[z.0].shape.contains(p, 0.0)) {
         return 0.0;
     }
     let [lx, ly] = s.to_local(p);
@@ -191,8 +192,13 @@ struct CoarseSight {
 }
 
 impl CoarseSight {
-    fn new(config: &Config, s: &SensorConfig, plan: &Plan) -> Self {
-        let corners: Vec<Point> = config.rooms().flat_map(|z| z.shape.outline(8)).collect();
+    fn new(s: &SensorConfig, plan: &Plan) -> Self {
+        let corners: Vec<Point> = plan
+            .zones
+            .iter()
+            .filter(|z| z.is_room())
+            .flat_map(|z| z.shape.outline(8))
+            .collect();
         if corners.is_empty() {
             return Self {
                 lo: [0, 0],
@@ -231,17 +237,10 @@ impl CoarseSight {
 /// points averaged over where the track sits on the person (Gaussian per axis, the offset's variance
 /// at this distance) over what lies on the person's side of the walls; in the places without a sensor
 /// as the points' sight.
-fn spread(
-    raster: &Raster,
-    labels: &[Option<usize>],
-    reached: &(Vec<(i64, i64)>, Vec<Vec<bool>>),
-    var: &[f64],
-    grid: &[f64],
-) -> Vec<f64> {
+fn spread(raster: &Raster, labels: &[Option<Place>], reach: &Reach, var: &[f64], grid: &[f64]) -> Vec<f64> {
     let (nx, ny) = (raster.nx as i64, raster.ny as i64);
-    let (offsets, masks) = reached;
     let (mut num, mut den) = (vec![0.0; grid.len()], vec![0.0; grid.len()]);
-    for (&(di, dj), mask) in offsets.iter().zip(masks) {
+    for (&(di, dj), mask) in reach.offsets.iter().zip(&reach.masks) {
         let d2 = -0.5 * (di * di + dj * dj) as f64 * CELL * CELL;
         for i in 0..nx {
             for j in 0..ny {
@@ -260,7 +259,7 @@ fn spread(
     }
     (0..grid.len())
         .map(|c| {
-            if labels[c] == Some(0) && den[c] > 0.0 {
+            if labels[c] == Some(Place::Observed) && den[c] > 0.0 {
                 num[c] / den[c].max(1e-300)
             } else {
                 grid[c]
@@ -275,54 +274,20 @@ pub(super) struct Built<'a> {
     pub params: &'a Params,
     pub plan: &'a Plan,
     pub raster: Raster,
-    pub labels: &'a [Option<usize>],
-    pub rooms: &'a Grid,
+    pub labels: &'a [Option<Place>],
+    pub rooms: &'a RoomGrid,
     pub walls: &'a Walls,
     pub tiles: &'a Tiles,
 }
 
 /// A sensor's sight of a person per cell and its LD2410C (filter.Tracker._grid, _export_sensor).
 pub(super) fn sensor(b: &Built, s: &SensorConfig) -> (Sight, LdSight) {
-    let (raster, labels) = (b.raster, b.labels);
-    let coarse = CoarseSight::new(b.config, s, b.plan);
-    let centres: Vec<Point> = cells(&raster).collect();
-    let points: Vec<f64> = centres
-        .iter()
-        .zip(labels)
-        .map(|(&c, l)| {
-            if l.is_some() {
-                coarse.pd(s, b.plan, c) / PD_MAX
-            } else {
-                0.0
-            }
-        })
-        .collect();
-    // the LD2410C sees where the LD2450 in the same housing could see at all: through no wall
-    let los: Vec<f64> = points.iter().map(|&g| if g > 0.0 { 1.0 } else { 0.0 }).collect();
-    let tp = b.config.params.target_height;
-    let p = &b.config.params;
-    let var: Vec<f64> = centres
-        .iter()
-        .map(|&c| {
-            let dist = (c[0] - s.x).hypot(c[1] - s.y);
-            let (sr, st) = (
-                p.range_sigma_base + p.range_sigma_slope * dist,
-                p.lateral_sigma_base + p.lateral_sigma_slope * dist,
-            );
-            0.5 * (sr * sr + st * st)
-        })
-        .collect();
-    let top = var
-        .iter()
-        .zip(labels)
-        .filter(|(_, l)| **l == Some(0))
-        .map(|(&v, _)| v)
-        .fold(None, |m: Option<f64>, v| Some(m.map_or(v, |m| m.max(v))));
-    let radius = top.map_or(0.0, |v| 2.5 * v.sqrt()).min(1.2);
-    let reached = reach(&raster, labels, b.walls, radius);
-    let grid = Grid::new(raster, spread(&raster, labels, &reached, &var, &points));
-    let los = Grid::new(raster, spread(&raster, labels, &reached, &var, &los));
-    let dh = s.height - tp;
+    let (points, los) = point_sight(b, s);
+    let reach = Reach::new(&b.raster, b.labels, b.walls, reach_of(b, s));
+    let var = offset_var(&b.raster, &b.config.params, s);
+    let grid = Grid::new(b.raster, spread(&b.raster, b.labels, &reach, &var, &points));
+    let los = Grid::new(b.raster, spread(&b.raster, b.labels, &reach, &var, &los));
+    let dh = s.height - b.config.params.target_height;
     let mut ld = LdSight {
         at: s.at(),
         axis: s.axis(),
@@ -331,73 +296,124 @@ pub(super) fn sensor(b: &Built, s: &SensorConfig) -> (Sight, LdSight) {
         view: ld_view(b, s),
         tiles: LdTiles::default(),
     };
+    ld.tiles = ld_tiles(b, &ld);
+    let observed = observed(b, &grid, &ld);
+    (Sight::new(s.at(), s.sight_origin(), grid, observed), ld)
+}
+
+/// The sight of the points of each cell in a place, 0..1 (Tracker._grid before it is spread), and where
+/// it is above 0 the LD2410C in the same housing can see too: through no wall.
+fn point_sight(b: &Built, s: &SensorConfig) -> (Vec<f64>, Vec<f64>) {
+    let coarse = CoarseSight::new(s, b.plan);
+    let points: Vec<f64> = cells(&b.raster)
+        .zip(b.labels)
+        .map(|(c, l)| {
+            if l.is_some() {
+                coarse.pd(s, b.plan, c) / PD_MAX
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    let los = points.iter().map(|&g| if g > 0.0 { 1.0 } else { 0.0 }).collect();
+    (points, los)
+}
+
+/// Per cell the variance (per axis) of where a track sits on a person at this distance from the
+/// sensor: the measured spread along and across the line of sight (MODEL.md 4.1).
+fn offset_var(raster: &Raster, p: &TrackerParams, s: &SensorConfig) -> Vec<f64> {
+    cells(raster)
+        .map(|c| {
+            let dist = (c[0] - s.x).hypot(c[1] - s.y);
+            let along = p.range_sigma_base + p.range_sigma_slope * dist;
+            let across = p.lateral_sigma_base + p.lateral_sigma_slope * dist;
+            0.5 * (along * along + across * across)
+        })
+        .collect()
+}
+
+/// m: how far the spreading reaches: 2.5 of the largest offset's spread in view, at most 1.2 m.
+fn reach_of(b: &Built, s: &SensorConfig) -> f64 {
+    let var = offset_var(&b.raster, &b.config.params, s);
+    let top = var
+        .iter()
+        .zip(b.labels)
+        .filter(|(_, l)| **l == Some(Place::Observed))
+        .map(|(&v, _)| v)
+        .fold(None, |m: Option<f64>, v| Some(m.map_or(v, |m| m.max(v))));
+    top.map_or(0.0, |v| 2.5 * v.sqrt()).min(1.2)
+}
+
+/// The tiles the LD2410C sees and what a person there puts into its cells, standing and walking,
+/// averaged over each tile (Tracker._ld_tiles): those above FLOOR in a cell.
+fn ld_tiles(b: &Built, ld: &LdSight) -> LdTiles {
     let tiles = b.tiles;
-    let places: Vec<_> = tiles.points.iter().map(|&q| ld.place(q, b.rooms)).collect();
-    // the tiles its LD2410C sees and what a person there puts into its cells (Tracker._ld_tiles)
     let mut still = vec![[0.0; CELLS]; tiles.n];
     let mut walk = vec![[0.0; CELLS]; tiles.n];
-    for (q, &t) in places.iter().zip(&tiles.point_tile) {
+    for (&q, &t) in tiles.points.iter().zip(&tiles.point_tile) {
+        let at = ld.place(q, b.rooms);
         let (es, ew) = (
-            expected(b.params, STILL, q.angle, q.slant, q.sight),
-            expected(b.params, WALK, q.angle, q.slant, q.sight),
+            expected(b.params, STILL, at.angle, at.slant, at.sight),
+            expected(b.params, WALK, at.angle, at.slant, at.sight),
         );
         for k in 0..CELLS {
             still[t][k] += es[k];
             walk[t][k] += ew[k];
         }
     }
-    for ((ss, sw), &count) in still.iter_mut().zip(&mut walk).zip(&tiles.point_count) {
+    let mut out = LdTiles::default();
+    for (c, ((ss, sw), &count)) in still.iter_mut().zip(&mut walk).zip(&tiles.point_count).enumerate() {
         ss.iter_mut().chain(sw.iter_mut()).for_each(|v| *v /= count);
-    }
-    for (c, (ss, sw)) in still.iter().zip(&walk).enumerate() {
         if ss
             .iter()
-            .zip(sw)
+            .zip(sw.iter())
             .map(|(a, w)| a.max(*w))
             .fold(f64::NEG_INFINITY, f64::max)
             > FLOOR
         {
-            ld.tiles.idx.push(c);
-            ld.tiles.still.push(*ss);
-            ld.tiles.walk.push(*sw);
+            out.idx.push(c);
+            out.still.push(*ss);
+            out.walk.push(*sw);
         }
     }
-    // how well it can test a person per tile: its LD2450's sight or its LD2410C's beam (Tiling.observed)
+    out
+}
+
+/// How well the sensor can test a person per tile: its LD2450's sight or its LD2410C's beam within its
+/// last gate, whichever is better (Tiling.observed of this sensor alone, MODEL.md 5.5).
+fn observed(b: &Built, grid: &Grid, ld: &LdSight) -> Vec<f64> {
+    let tiles = b.tiles;
     let [full, none] = b.params.ld_beam;
-    let beam: Vec<f64> = places
+    let beam: Vec<f64> = tiles
+        .points
         .iter()
-        .map(|q| {
-            let near = if q.slant <= 9.0 * GATE { 1.0 } else { 0.0 };
-            ((none - q.angle) / (none - full)).clamp(0.0, 1.0) * q.sight * near
+        .map(|&q| {
+            let at = ld.place(q, b.rooms);
+            let near = if at.slant <= 9.0 * GATE { 1.0 } else { 0.0 };
+            ((none - at.angle) / (none - full)).clamp(0.0, 1.0) * at.sight * near
         })
         .collect();
     let seen = tiles.average(&tiles.points.iter().map(|&q| grid.at(q)).collect::<Vec<_>>());
-    let observed = tiles
+    tiles
         .average(&beam)
         .iter()
         .zip(&seen)
         .map(|(&a, &g)| f64::max(0.0, g.max(a)).clamp(0.0, 1.0))
-        .collect();
-    (Sight::new(s.at(), s.sight_origin(), grid, observed), ld)
+        .collect()
 }
 
-/// Per room (the last for none) how much of what the geometric sight expects the sensor's LD2410C
-/// gets from a person there, against its own room (filter.Tracker._ld_view, measured: ld_view); None
-/// if nothing is measured for it.
+/// Per observed room how much of what the geometric sight expects the sensor's LD2410C gets from a
+/// person there, against its own room (filter.Tracker._ld_view, measured: ld_view); None if nothing is
+/// measured for it.
 fn ld_view(b: &Built, s: &SensorConfig) -> Option<Vec<f64>> {
     if b.params.ld_view.is_empty() {
         return None;
     }
-    let none = b.plan.rooms.len();
-    let own = b.rooms.at(s.sight_origin()) as usize;
-    if own == none {
-        return None;
-    }
-    let own_id = &b.plan.rooms[own].id;
+    let RoomIdx(own) = b.rooms.at(s.sight_origin())?;
+    let own_id = &b.plan.room(RoomIdx(own)).id;
     let mut v: Vec<f64> = b
         .plan
-        .rooms
-        .iter()
+        .observed()
         .map(|r| {
             b.params
                 .ld_view
@@ -405,7 +421,6 @@ fn ld_view(b: &Built, s: &SensorConfig) -> Option<Vec<f64>> {
                 .copied()
                 .unwrap_or(1.0)
         })
-        .chain([1.0])
         .collect();
     v[own] = 1.0;
     v.iter().any(|&x| x != 1.0).then_some(v)

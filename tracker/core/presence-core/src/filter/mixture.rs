@@ -12,8 +12,9 @@ use crate::filter::densities::{Amp, Densities, DensityId, Kind, TileFactors};
 use crate::filter::pool::PoolId;
 use crate::filter::small_map::SmallMap;
 use crate::geometry::Point;
+use crate::motion::imm::Bounds;
 use crate::params::{Params, STILL, Shapes, WALK};
-use crate::vmath::{logaddexp, nan_max, pairwise_sum};
+use crate::vmath::{logaddexp, max2, nan_max, pairwise_sum};
 use crate::world::World;
 
 /// log(2 pi) (gauss.LOG2PI)
@@ -245,11 +246,6 @@ pub fn weights2(l0: f64, l1: f64) -> [f64; 2] {
     [w0 / s, w1 / s]
 }
 
-/// The larger of two log weights, as numba's max (the first unless the second is larger).
-pub fn max2(a: f64, b: f64) -> f64 {
-    if b > a { b } else { a }
-}
-
 /// log(exp(a) + exp(b)) by the larger one, top + log(exp(a - top) + exp(b - top)) (numba's and
 /// numpy's logsumexp of two; -inf + -inf: NaN, as the Python filter; NaN stays NaN). The Python
 /// filter's other form, numpy's logaddexp (vmath::logaddexp, by log1p), differs in the last bit: each
@@ -272,7 +268,14 @@ fn log_add_or_none(lw: [f64; 2]) -> f64 {
 /// a wall within their reach, seen from where the component is (pos[k]), mirrored at the first wall
 /// their move from pos[k] crosses (walls reflect, MODEL.md 3.2; kernels.sigma_points). All moves
 /// of the modes near a wall are mirrored in one call: the walls tried are those near all of them.
-pub fn sigma_points(world: &World, walls: bool, pos: [Point; 2], mean: [Point; 2], var: [Point; 2]) -> [[Point; 5]; 2] {
+pub fn sigma_points(
+    world: &World,
+    bounds: Bounds,
+    pos: [Point; 2],
+    mean: [Point; 2],
+    var: [Point; 2],
+) -> [[Point; 5]; 2] {
+    let walls = bounds == Bounds::WallsAndDoors;
     let mut pts = [[[0.0; 2]; 5]; 2];
     let mut near = [false; 2];
     for k in 0..2 {
@@ -310,10 +313,10 @@ impl Mixture {
     }
 
     /// The sigma points of each component's position (with walls: mirrored at them).
-    pub fn sigma(&self, world: &World, walls: bool) -> [[Point; 5]; 2] {
+    pub fn sigma(&self, world: &World, bounds: Bounds) -> [[Point; 5]; 2] {
         let pos = self.modes.each_ref().map(Kalman::pos);
         let var = self.modes.each_ref().map(Kalman::pos_var);
-        sigma_points(world, walls, pos, pos, var)
+        sigma_points(world, bounds, pos, pos, var)
     }
 
     /// Weighs the person by no track started on them in dt (kernels.sync_weigh): E[exp(-rate dt)]
@@ -598,7 +601,7 @@ impl Mixture {
             near[k] = f[0] * f[1];
         }
         let pos = self.modes.each_ref().map(Kalman::pos);
-        (near, sigma_points(world, true, pos, mean, var))
+        (near, sigma_points(world, Bounds::WallsAndDoors, pos, mean, var))
     }
 
     /// The density of this person over the tiles (MODEL.md 5.4), when their last track ends: each
@@ -993,7 +996,7 @@ pub fn from_tiles(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::motion::imm::{ImmStep, predict};
+    use crate::motion::imm::{Away, ImmStep, predict};
     use crate::testing::{self, TILE};
 
     /// A walker at the origin with velocity v, as test_gauss.walker.
@@ -1022,7 +1025,7 @@ mod tests {
         }
     }
 
-    fn steps(world: &World, p: &Params, mix: &mut Mixture, dt: f64, n: usize, walls: bool) {
+    fn steps(world: &World, p: &Params, mix: &mut Mixture, dt: f64, n: usize, bounds: Bounds) {
         let mut densities = Densities::new(DensityShape {
             tiles: world.tiles.n,
             kinds: 2,
@@ -1037,8 +1040,8 @@ mod tests {
                 mix,
                 &mut densities,
                 &ImmStep::new(p, &world.shapes, dt),
-                walls,
-                true,
+                bounds,
+                Away::Keep,
             );
         }
     }
@@ -1056,8 +1059,8 @@ mod tests {
             ..Params::default()
         };
         let (mut one, mut two) = (walker([0.8, 0.0]), walker([0.8, 0.0]));
-        steps(&world, &p, &mut one, 0.2, 1, false);
-        steps(&world, &p, &mut two, 0.1, 2, false);
+        steps(&world, &p, &mut one, 0.2, 1, Bounds::Free);
+        steps(&world, &p, &mut two, 0.1, 2, Bounds::Free);
         for (a, b) in one.modes[WALK].mean.iter().zip(&two.modes[WALK].mean) {
             assert!((a - b).abs() < 1e-12);
         }
@@ -1065,7 +1068,7 @@ mod tests {
             assert!((a - b).abs() < 1e-12);
         }
         let mut g = walker([0.8, 0.0]);
-        steps(&world, &p, &mut g, 2.0, 1, false);
+        steps(&world, &p, &mut g, 2.0, 1, Bounds::Free);
         let v = g.modes[WALK].axis(0).0[V];
         assert!((v / (0.8 * (-2.0 * p.turn_rate).exp()) - 1.0).abs() < 1e-9);
     }
@@ -1086,8 +1089,8 @@ mod tests {
         }
         let mut free = walker([0.0, 0.8]);
         free.modes = g.modes.clone(); // the same start, without walls
-        steps(&world, &p, &mut g, 0.2, 10, true);
-        steps(&world, &p, &mut free, 0.2, 10, false);
+        steps(&world, &p, &mut g, 0.2, 10, Bounds::WallsAndDoors);
+        steps(&world, &p, &mut free, 0.2, 10, Bounds::Free);
         assert!(free.modes[WALK].pos()[1] > 5.2);
         assert!(g.modes[WALK].pos()[1] < 4.9 && g.modes[WALK].axis(1).0[V] < 0.0);
         let mut s = walker([0.0, 0.0]);
@@ -1096,7 +1099,7 @@ mod tests {
             m.mean[0] = 3.0;
             m.mean[2] = 4.95;
         }
-        steps(&world, &Params::default(), &mut s, 0.2, 25, true);
+        steps(&world, &Params::default(), &mut s, 0.2, 25, Bounds::WallsAndDoors);
         assert!((s.modes[STILL].pos()[1] - 4.95).abs() < 0.06);
     }
 
@@ -1110,7 +1113,7 @@ mod tests {
             (m.mean[0], m.mean[2]) = (4.5, 3.5);
             (m.cov[0], m.cov[4]) = (2.25, 2.25);
         }
-        let pts = g.sigma(&world, true);
+        let pts = g.sigma(&world, Bounds::WallsAndDoors);
         assert!(
             pts.iter()
                 .flatten()

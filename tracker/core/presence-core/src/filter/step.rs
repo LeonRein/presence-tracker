@@ -11,7 +11,7 @@ use crate::filter::mixture::{Mixture, MixtureId};
 use crate::filter::objects::Objects;
 use crate::filter::tracks::Tracks;
 use crate::ld2450::rates::TrackSpot;
-use crate::motion::imm::{self, ImmStep};
+use crate::motion::imm::{self, Away, Bounds, ImmStep};
 use crate::motion::walk::{leap, move_densities};
 use crate::params::{STILL, WALK};
 use crate::sensors::{SensorSet, SensorState, live};
@@ -153,22 +153,26 @@ fn sync_part(
     mix: &mut Mixture,
     densities: &mut Densities,
     dt: f64,
-    keep_away: bool,
+    away: Away,
     watch: Option<Watch>,
 ) -> Option<f64> {
-    let walls = world.tiles.n > 0 && !mix.phantom;
+    let bounds = if world.tiles.n > 0 && !mix.phantom {
+        Bounds::WallsAndDoors
+    } else {
+        Bounds::Free
+    };
     imm::predict(
         world,
         mix,
         densities,
         &ImmStep::new(&world.params, &world.shapes, dt),
-        walls,
-        keep_away,
+        bounds,
+        away,
     );
     let Watch { spots, users, away } = watch?;
     let rates = world
         .rates
-        .mixture_rates(&world.sights, spots, users, &mix.sigma(world, walls));
+        .mixture_rates(&world.sights, spots, users, &mix.sigma(world, bounds));
     let d_away = match (mix.away, away) {
         (Some(id), Some(f)) => densities.get_mut(id).weigh_person(f),
         _ => 0.0,
@@ -315,7 +319,7 @@ fn flush_parts(
             });
             round.push((
                 m.entry,
-                sync_part(world, mix, &mut objects.densities, g_dt, true, watch),
+                sync_part(world, mix, &mut objects.densities, g_dt, Away::Keep, watch),
             ));
         }
         out.push(round);
@@ -340,7 +344,7 @@ impl Filter {
         let t0 = self.flushed;
         let mut in_view = Vec::new();
         let mut moving = Vec::new();
-        for (entry, obj) in self.holders.entries(true) {
+        for (entry, obj) in self.holders.entries() {
             match obj {
                 Obj::Density(id) => in_view.push((entry, id)),
                 Obj::Mixture(id) => {
@@ -393,7 +397,7 @@ impl Filter {
                 users: at.without(measured),
                 away: None,
             });
-            factors.extend(sync_part(world, mix, &mut objects.densities, dt, false, watch));
+            factors.extend(sync_part(world, mix, &mut objects.densities, dt, Away::Drop, watch));
         }
         mix.t = Some(t);
         factors
@@ -438,6 +442,7 @@ impl Filter {
                 }
                 None => parts.push(Part {
                     unknown: hy.unknown,
+                    // numpy's sum of the parts starts from 0 (the same as wi but for -0.0)
                     weight: 0.0 + wi,
                     given: vec![(wi, g)],
                 }),
@@ -487,7 +492,7 @@ impl Filter {
         let parts = parts_of(gap - lead, p.max_step);
         let seen = world.observed(placed);
         let densities = &mut self.objects.densities;
-        for (_, obj) in self.holders.entries(false) {
+        for (_, obj) in self.holders.people() {
             let Obj::Density(id) = obj else {
                 continue; // nobody has a track after a restart
             };

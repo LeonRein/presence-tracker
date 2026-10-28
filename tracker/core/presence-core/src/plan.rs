@@ -2,7 +2,8 @@
 //! (model.Config._places, floorplan.sight_segments, roomseen.own_room): the places - the observed
 //! area, the regions without a sensor behind doors, outside -, the doors out of the observed area,
 //! the walls the radar does not see through, which room is whose sensor's, and the rule which
-//! detections are reflections.
+//! detections are reflections. Every zone of the configuration is in one table with its role; what
+//! refers to a zone holds its index.
 
 use crate::config::{Config, SensorConfig, WallKind, ZoneConfig, ZoneKind};
 use crate::geometry::{Point, Shape, distance_to_segment, line_of_sight};
@@ -13,11 +14,93 @@ const DOOR_REACH: f64 = 0.25;
 /// m: a sensor hangs on a wall, its point lies at the room's outline (roomseen.MOUNT_MARGIN)
 const MOUNT_MARGIN: f64 = 0.3;
 
-/// A room the sensors see, or a zone of the outputs.
+/// A zone of the plan (an index into Plan::zones).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ZoneIdx(pub usize);
+
+/// An observed room (an index into Plan::rooms, the rooms of the outputs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(test, derive(serde::Deserialize))]
+pub struct RoomIdx(pub usize);
+
+/// A region without a sensor (an index into Plan::regions).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegionIdx(pub usize);
+
+/// Where a person is, as the people model has the house (MODEL.md 2; world.World.places).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    /// the area the sensors see
+    Observed,
+    /// a region without a sensor behind doors
+    Region(RegionIdx),
+    /// out of the house (the outside rooms too)
+    Outside,
+}
+
+impl Place {
+    /// Its index among the places of a plan with this many regions (observed, the regions, outside):
+    /// the order of the arrays per place.
+    pub fn index(self, regions: usize) -> usize {
+        match self {
+            Self::Observed => 0,
+            Self::Region(RegionIdx(r)) => r + 1,
+            Self::Outside => regions + 1,
+        }
+    }
+
+    /// The place of an index, None beyond them.
+    pub fn of_index(index: usize, regions: usize) -> Option<Self> {
+        match index {
+            0 => Some(Self::Observed),
+            i if i <= regions => Some(Self::Region(RegionIdx(i - 1))),
+            i if i == regions + 1 => Some(Self::Outside),
+            _ => None,
+        }
+    }
+}
+
+/// What a zone is to the people model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZoneRole {
+    /// a room of the home the sensors see
+    Observed(RoomIdx),
+    /// a room of the home nobody sees, in a region
+    InRegion(RegionIdx),
+    /// a room outside the home (the stairwell)
+    OutsideRoom,
+    /// an area drawn in a room
+    Area,
+    /// a way in drawn by hand
+    Entry,
+}
+
 #[derive(Debug)]
-pub struct Room {
+pub struct Zone {
     pub id: String,
+    pub name: String,
     pub shape: Shape,
+    pub role: ZoneRole,
+}
+
+impl Zone {
+    /// A room, of the home or outside.
+    pub fn is_room(&self) -> bool {
+        matches!(
+            self.role,
+            ZoneRole::Observed(_) | ZoneRole::InRegion(_) | ZoneRole::OutsideRoom
+        )
+    }
+
+    /// The place of a room (None for an area or an entry).
+    pub fn place(&self) -> Option<Place> {
+        match self.role {
+            ZoneRole::Observed(_) => Some(Place::Observed),
+            ZoneRole::InRegion(r) => Some(Place::Region(r)),
+            ZoneRole::OutsideRoom => Some(Place::Outside),
+            ZoneRole::Area | ZoneRole::Entry => None,
+        }
+    }
 }
 
 /// A region without a sensor (Config.regions): rooms connected by doors. Open if it has ways out of
@@ -28,7 +111,8 @@ pub struct Region {
     /// the id of its first room (Config.regions' key)
     pub id: String,
     pub name: String,
-    pub rooms: Vec<String>,
+    /// its rooms, sorted by id
+    pub rooms: Vec<ZoneIdx>,
     pub exits: usize,
 }
 
@@ -42,48 +126,44 @@ impl Region {
 /// drawn in view; `watch` is where somebody coming out appears (0.5 m into the observed room).
 #[derive(Debug)]
 pub struct Portal {
-    /// the place it leads to (a region's, or outside)
-    pub place: usize,
+    pub place: Place,
     pub watch: Point,
 }
 
-/// A sensor as the plan knows it: its own room (an index into the observed rooms) and whether it is
-/// in use (enabled and placed).
+/// A sensor as the plan knows it: its own room (roomseen.own_room) and whether it is in use.
 #[derive(Debug)]
 pub struct SensorPlan {
     pub id: String,
-    pub own_room: Option<usize>,
+    pub own_room: Option<RoomIdx>,
     pub in_use: bool,
-}
-
-/// A zone of the home the outputs report (Config.home_zones("room", "area")).
-#[derive(Debug)]
-pub struct HomeZone {
-    pub id: String,
-    pub kind: ZoneKind,
-    pub shape: Shape,
-    /// the region a room without a sensor belongs to (an index into regions)
-    pub region: Option<usize>,
 }
 
 #[derive(Debug)]
 pub struct Plan {
+    /// every zone of the configuration, in its order
+    pub zones: Vec<Zone>,
+    /// the observed rooms (Config.observed_rooms), in the order of the configuration
+    pub rooms: Vec<ZoneIdx>,
+    pub regions: Vec<Region>,
+    /// the rooms in which the sensors see nobody of the home: those of closed regions, then the
+    /// outside rooms (Config.closed_rooms)
+    pub closed: Vec<ZoneIdx>,
+    pub portals: Vec<Portal>,
+    pub sensors: Vec<SensorPlan>,
     /// the walls that block the radar's sight and the people: real walls without their door openings
     pub walls: Vec<[Point; 2]>,
-    pub regions: Vec<Region>,
-    /// the doors and entries out of the observed area
-    pub portals: Vec<Portal>,
-    /// the rooms the sensors see (Config.observed_rooms), in the order of the configuration
-    pub rooms: Vec<Room>,
-    /// the rooms in which the sensors see nobody of the home: those of closed regions, and the
-    /// outside rooms (Config.closed_rooms)
-    pub closed_rooms: Vec<Shape>,
-    /// every room, the outside rooms too: (shape, its place) - for the raster of places
-    pub all_rooms: Vec<(Shape, usize)>,
-    pub sensors: Vec<SensorPlan>,
-    pub zones: Vec<HomeZone>,
-    /// the areas (Config.home_zones("area")): with the observed rooms the zones of "wird betreten"
-    pub areas: Vec<Shape>,
+}
+
+/// A door or divider between rooms: the rooms on its sides (None: outside); a door's centre and its
+/// wall's normal.
+struct Link {
+    sides: [Option<usize>; 2],
+    door: Option<DoorSide>,
+}
+
+struct DoorSide {
+    centre: Point,
+    normal: Point,
 }
 
 /// floorplan.wall_pieces: every wall longer than 1 µm.
@@ -168,21 +248,21 @@ fn casefold(s: &str) -> String {
 
 /// The room of a sensor among the observed rooms (roomseen.own_room): named like the room's id, else
 /// like its name, else the one it is mounted in (within MOUNT_MARGIN), if exactly one.
-fn own_room(s: &SensorConfig, rooms: &[&ZoneConfig]) -> Option<usize> {
+fn own_room(s: &SensorConfig, rooms: &[&ZoneConfig]) -> Option<RoomIdx> {
     let name = s.name.trim();
     if !name.is_empty() {
         if let Some(k) = rooms.iter().position(|z| z.id == name) {
-            return Some(k);
+            return Some(RoomIdx(k));
         }
         if let Some(k) = rooms.iter().position(|z| casefold(z.name.trim()) == casefold(name)) {
-            return Some(k);
+            return Some(RoomIdx(k));
         }
     }
     let mut inside = rooms
         .iter()
         .enumerate()
         .filter(|(_, z)| z.contains(s.at(), MOUNT_MARGIN))
-        .map(|(k, _)| k);
+        .map(|(k, _)| RoomIdx(k));
     match (inside.next(), inside.next()) {
         (Some(k), None) => Some(k),
         _ => None,
@@ -190,8 +270,8 @@ fn own_room(s: &SensorConfig, rooms: &[&ZoneConfig]) -> Option<usize> {
 }
 
 /// The middle of a zone's bounds.
-fn middle(z: &ZoneConfig) -> Point {
-    let [x0, y0, x1, y1] = z.shape.bounds();
+fn middle(shape: &Shape) -> Point {
+    let [x0, y0, x1, y1] = shape.bounds();
     [(x0 + x1) / 2.0, (y0 + y1) / 2.0]
 }
 
@@ -199,38 +279,59 @@ impl Plan {
     /// The plan of a configuration (Config.rebuild, _places; World's places).
     pub fn new(config: &Config) -> Self {
         let walls = sight_walls(config);
-        let rooms: Vec<&ZoneConfig> = config.rooms().filter(|z| !z.entry).collect();
+        // the rooms of the home, as indices into the configuration's zones
+        let home: Vec<usize> = (0..config.zones.len())
+            .filter(|&z| config.zones[z].kind == ZoneKind::Room)
+            .collect();
         let placed: Vec<&SensorConfig> = config.sensors.iter().filter(|s| s.in_use()).collect();
-        let (regions, portals) = if placed.is_empty() || rooms.is_empty() {
+        let (regions, portals) = if placed.is_empty() || home.is_empty() {
             (Vec::new(), Vec::new())
         } else {
-            places(config, &rooms, &placed, &walls)
+            places(config, &home, &placed, &walls)
         };
-        let region_of = |id: &str| regions.iter().position(|r| r.rooms.iter().any(|x| x == id));
-        let outside = regions.len() + 1;
-        let observed: Vec<&ZoneConfig> = config
-            .home_zones(&[ZoneKind::Room])
-            .filter(|z| region_of(&z.id).is_none())
-            .collect();
-        let closed_rooms = regions
+        let region_of = |z: usize| {
+            regions
+                .iter()
+                .position(|r| r.rooms.contains(&ZoneIdx(z)))
+                .map(RegionIdx)
+        };
+        let mut rooms = Vec::new();
+        let zones: Vec<Zone> = config
+            .zones
             .iter()
-            .filter(|r| !r.open())
-            .flat_map(|r| r.rooms.iter())
-            .filter_map(|id| rooms.iter().find(|z| &z.id == id))
-            .map(|z| z.shape.clone())
-            .chain(config.rooms().filter(|z| z.entry).map(|z| z.shape.clone()))
-            .collect();
-        let all_rooms = config
-            .rooms()
-            .map(|z| {
-                let place = if z.entry {
-                    outside
-                } else {
-                    region_of(&z.id).map_or(0, |r| r + 1)
+            .enumerate()
+            .map(|(k, z)| {
+                let role = match z.kind {
+                    ZoneKind::Room => region_of(k).map_or_else(
+                        || {
+                            rooms.push(ZoneIdx(k));
+                            ZoneRole::Observed(RoomIdx(rooms.len() - 1))
+                        },
+                        ZoneRole::InRegion,
+                    ),
+                    ZoneKind::OutsideRoom => ZoneRole::OutsideRoom,
+                    ZoneKind::Area => ZoneRole::Area,
+                    ZoneKind::Entry => ZoneRole::Entry,
                 };
-                (z.shape.clone(), place)
+                Zone {
+                    id: z.id.clone(),
+                    name: z.name.clone(),
+                    shape: z.shape.clone(), // the plan's own table of the zones
+                    role,
+                }
             })
             .collect();
+        let closed = regions
+            .iter()
+            .filter(|r| !r.open())
+            .flat_map(|r| r.rooms.iter().copied())
+            .chain(
+                (0..zones.len())
+                    .filter(|&z| zones[z].role == ZoneRole::OutsideRoom)
+                    .map(ZoneIdx),
+            )
+            .collect();
+        let observed: Vec<&ZoneConfig> = rooms.iter().map(|&ZoneIdx(z)| &config.zones[z]).collect();
         let sensors = config
             .sensors
             .iter()
@@ -240,31 +341,14 @@ impl Plan {
                 in_use: s.in_use(),
             })
             .collect();
-        let zones = config
-            .home_zones(&[ZoneKind::Room, ZoneKind::Area])
-            .map(|z| HomeZone {
-                id: z.id.clone(),
-                kind: z.kind,
-                shape: z.shape.clone(),
-                region: region_of(&z.id),
-            })
-            .collect();
         Self {
-            walls,
-            portals,
-            closed_rooms,
-            all_rooms,
-            sensors,
             zones,
-            areas: config.home_zones(&[ZoneKind::Area]).map(|z| z.shape.clone()).collect(),
-            rooms: observed
-                .iter()
-                .map(|z| Room {
-                    id: z.id.clone(),
-                    shape: z.shape.clone(),
-                })
-                .collect(),
+            rooms,
             regions,
+            closed,
+            portals,
+            sensors,
+            walls,
         }
     }
 
@@ -273,14 +357,40 @@ impl Plan {
         self.regions.len() + 2
     }
 
-    /// The index of outside among the places.
-    pub fn outside(&self) -> usize {
-        self.regions.len() + 1
+    /// An observed room's zone.
+    pub fn room(&self, RoomIdx(k): RoomIdx) -> &Zone {
+        &self.zones[self.rooms[k].0]
+    }
+
+    /// The observed rooms' zones, in order.
+    pub fn observed(&self) -> impl Iterator<Item = &Zone> {
+        self.rooms.iter().map(|&ZoneIdx(z)| &self.zones[z])
+    }
+
+    /// The areas, in the order of the configuration.
+    pub fn areas(&self) -> impl Iterator<Item = &Zone> {
+        self.zones.iter().filter(|z| z.role == ZoneRole::Area)
+    }
+
+    /// The zones of the home the outputs report: its rooms and areas (Config.home_zones("room", "area")).
+    pub fn home(&self) -> impl Iterator<Item = &Zone> {
+        self.zones
+            .iter()
+            .filter(|z| matches!(z.role, ZoneRole::Observed(_) | ZoneRole::InRegion(_) | ZoneRole::Area))
     }
 
     /// The observed room a point is in: the first whose outline holds it (roomseen.RoomSeen.frame).
-    pub fn room_at(&self, p: Point) -> Option<usize> {
-        self.rooms.iter().position(|room| room.shape.contains(p, 0.0))
+    pub fn room_at(&self, p: Point) -> Option<RoomIdx> {
+        self.observed().position(|z| z.shape.contains(p, 0.0)).map(RoomIdx)
+    }
+
+    /// The place of a point: the first room (of the home or outside) holding it (World.labels).
+    pub fn place_at(&self, p: Point) -> Option<Place> {
+        self.zones
+            .iter()
+            .filter(|z| z.is_room())
+            .find(|z| z.shape.contains(p, 0.0))
+            .and_then(Zone::place)
     }
 
     /// Whether a target of sensor s at p (u: the unit vector from the sensor to it) is a reflection
@@ -288,12 +398,16 @@ impl Plan {
     /// (the balcony: people are counted at its door), or behind a wall by more than margin - no point
     /// within margin of it is in sight, not only back along the line of sight (a sensor on a wall looks
     /// along it, MODEL.md 4.1).
-    pub fn hidden(&self, config: &Config, s: &SensorConfig, p: Point, u: Point, margin: f64) -> bool {
-        let mut rooms = config.rooms().peekable();
-        if rooms.peek().is_some() && !rooms.any(|z| z.contains(p, margin)) {
+    pub fn hidden(&self, s: &SensorConfig, p: Point, u: Point, margin: f64) -> bool {
+        let mut rooms = self.zones.iter().filter(|z| z.is_room()).peekable();
+        if rooms.peek().is_some() && !rooms.any(|z| z.shape.contains(p, margin)) {
             return true;
         }
-        if self.closed_rooms.iter().any(|z| z.contains(p, -margin)) {
+        if self
+            .closed
+            .iter()
+            .any(|&ZoneIdx(z)| self.zones[z].shape.contains(p, -margin))
+        {
             return true;
         }
         let o = s.sight_origin();
@@ -322,18 +436,16 @@ impl Plan {
     }
 }
 
-/// A door or divider: the rooms on its sides (an index into the rooms; None: outside), and for a door
-/// its centre, width and its wall's normal.
-type Link = ([Option<usize>; 2], Option<(Point, f64, Point)>);
-
-/// The regions without a sensor and the ways out of the observed area (Config._places).
+/// The regions without a sensor and the ways out of the observed area (Config._places); `home` the
+/// rooms of the home as indices into the configuration's zones.
 fn places(
     config: &Config,
-    rooms: &[&ZoneConfig],
+    home: &[usize],
     placed: &[&SensorConfig],
     walls: &[[Point; 2]],
 ) -> (Vec<Region>, Vec<Portal>) {
-    let seen: Vec<bool> = rooms.iter().map(|z| covered(z, placed, walls)).collect();
+    let zone = |r: usize| &config.zones[home[r]];
+    let seen: Vec<bool> = (0..home.len()).map(|r| covered(zone(r), placed, walls)).collect();
     let pieces: Vec<([Point; 2], WallKind)> = pieces(config).collect();
     let real: Vec<[Point; 2]> = pieces
         .iter()
@@ -344,21 +456,16 @@ fn places(
         let length = py_hypot(b[0] - a[0], b[1] - a[1]);
         [-(b[1] - a[1]) / length, (b[0] - a[0]) / length]
     };
-    // the rooms on both sides of a door or divider (an index into rooms; None: outside)
+    // the rooms on both sides of a door or divider (an index into home; None: outside)
     let sides = |c: Point, piece: [Point; 2]| {
         let n = normal(piece);
-        [0.4, -0.4].map(|k| {
-            rooms
-                .iter()
-                .position(|z| z.contains([c[0] + k * n[0], c[1] + k * n[1]], 0.0))
-        })
+        [0.4, -0.4].map(|k| (0..home.len()).position(|r| zone(r).contains([c[0] + k * n[0], c[1] + k * n[1]], 0.0)))
     };
-    // (sides, the door and its wall's normal; None: a divider)
     let mut links: Vec<Link> = Vec::new();
     for d in &config.doors {
-        let c = [d.x, d.y];
+        let centre = [d.x, d.y];
         let nearest = real.iter().fold(None, |best: Option<(f64, [Point; 2])>, &p| {
-            let dist = distance_to_segment(c, p[0], p[1]);
+            let dist = distance_to_segment(centre, p[0], p[1]);
             if best.is_none_or(|(b, _)| dist < b) {
                 Some((dist, p))
             } else {
@@ -366,16 +473,25 @@ fn places(
             }
         });
         if let Some((_, piece)) = nearest {
-            links.push((sides(c, piece), Some((c, d.width, normal(piece)))));
+            links.push(Link {
+                sides: sides(centre, piece),
+                door: Some(DoorSide {
+                    centre,
+                    normal: normal(piece),
+                }),
+            });
         }
     }
     for &(piece @ [a, b], kind) in &pieces {
         if kind == WallKind::Divider {
-            links.push((sides([(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0], piece), None));
+            links.push(Link {
+                sides: sides([(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0], piece),
+                door: None,
+            });
         }
     }
     // the rooms nobody sees, joined across doors and dividers (union-find, Python's dict order)
-    let mut parent: Vec<Option<usize>> = (0..rooms.len()).map(|k| (!seen[k]).then_some(k)).collect();
+    let mut parent: Vec<Option<usize>> = (0..home.len()).map(|r| (!seen[r]).then_some(r)).collect();
     fn find(parent: &[Option<usize>], mut r: usize) -> usize {
         while let Some(p) = parent[r]
             && p != r
@@ -384,8 +500,8 @@ fn places(
         }
         r
     }
-    for ([a, b], _) in &links {
-        if let (Some(a), Some(b)) = (*a, *b)
+    for link in &links {
+        if let [Some(a), Some(b)] = link.sides
             && parent[a].is_some()
             && parent[b].is_some()
         {
@@ -395,7 +511,7 @@ fn places(
         }
     }
     let mut groups: Vec<(usize, Vec<usize>)> = Vec::new();
-    for r in (0..rooms.len()).filter(|&r| parent[r].is_some()) {
+    for r in (0..home.len()).filter(|&r| parent[r].is_some()) {
         let root = find(&parent, r);
         match groups.iter_mut().find(|(g, _)| *g == root) {
             Some((_, members)) => members.push(r),
@@ -408,38 +524,47 @@ fn places(
         .map(|(root, members)| {
             let doors = links
                 .iter()
-                .filter(|([a, b], _)| a.is_none() != b.is_none() && members.contains(&a.or(*b).expect("one side")))
+                .filter(|l| match l.sides {
+                    [Some(r), None] | [None, Some(r)] => members.contains(&r),
+                    _ => false,
+                })
                 .count();
             let drawn = entries
                 .iter()
-                .filter(|z| members.iter().any(|&r| rooms[r].contains(middle(z), 0.0)))
+                .filter(|z| members.iter().any(|&r| zone(r).contains(middle(&z.shape), 0.0)))
                 .count();
-            let mut ids: Vec<&ZoneConfig> = members.iter().map(|&r| rooms[r]).collect();
-            ids.sort_by(|x, y| x.id.cmp(&y.id));
+            let mut rooms = members.clone();
+            rooms.sort_by(|&x, &y| zone(x).id.cmp(&zone(y).id));
             Region {
-                id: rooms[*root].id.clone(),
-                name: ids.iter().map(|z| z.name.as_str()).collect::<Vec<_>>().join(" + "),
-                rooms: ids.iter().map(|z| z.id.clone()).collect(),
+                id: zone(*root).id.clone(),
+                name: rooms
+                    .iter()
+                    .map(|&r| zone(r).name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" + "),
+                rooms: rooms.iter().map(|&r| ZoneIdx(home[r])).collect(),
                 exits: doors + drawn,
             }
         })
         .collect();
-    let region_of_root = |root: usize| groups.iter().position(|(g, _)| *g == root);
+    let region_of_root = |root: usize| groups.iter().position(|(g, _)| *g == root).map(RegionIdx);
     let mut portals = Vec::new();
-    for ([a, b], door) in &links {
-        let Some((c, _, n)) = door else { continue };
+    for link in &links {
+        let Some(door) = &link.door else { continue };
+        let [a, b] = link.sides;
         let side = |r: &Option<usize>| r.is_some_and(|r| seen[r]);
-        let inner: Vec<Option<usize>> = [*a, *b].into_iter().filter(side).collect();
-        let other: Vec<Option<usize>> = [*a, *b].into_iter().filter(|r| !side(r)).collect();
+        let inner: Vec<Option<usize>> = [a, b].into_iter().filter(side).collect();
+        let other: Vec<Option<usize>> = [a, b].into_iter().filter(|r| !side(r)).collect();
         if inner.len() != 1 || other.len() != 1 {
             continue;
         }
         let place = match other[0] {
-            None => regions.len() + 1,
-            Some(r) => region_of_root(find(&parent, r)).expect("a room nobody sees is in a region") + 1,
+            None => Place::Outside,
+            Some(r) => Place::Region(region_of_root(find(&parent, r)).expect("a room nobody sees is in a region")),
         };
         // a point 0.5 m into the observed room: if a sensor sees it, it sees people at the door
-        let k = if *a == inner[0] { 0.5 } else { -0.5 };
+        let k = if a == inner[0] { 0.5 } else { -0.5 };
+        let (c, n) = (door.centre, door.normal);
         portals.push(Portal {
             place,
             watch: [c[0] + k * n[0], c[1] + k * n[1]],
@@ -447,17 +572,142 @@ fn places(
     }
     // entry zones drawn in the observed area lead outside
     for z in &entries {
-        let unseen = regions
+        let mut unseen = regions
             .iter()
             .flat_map(|r| &r.rooms)
-            .filter_map(|id| rooms.iter().find(|x| &x.id == id));
-        if unseen.into_iter().any(|r| r.contains(middle(z), 0.0)) {
+            .map(|&ZoneIdx(k)| &config.zones[k]);
+        if unseen.any(|r| r.contains(middle(&z.shape), 0.0)) {
             continue;
         }
         portals.push(Portal {
-            place: regions.len() + 1,
-            watch: middle(z),
+            place: Place::Outside,
+            watch: middle(&z.shape),
         });
     }
     (regions, portals)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{config, wall};
+
+    /// The living room (6 x 5 m) with its sensor in a corner; right of it a bath (closed: one door,
+    /// into the living room) and a bedroom (a door from the living room and one out to the stairwell),
+    /// a wall without a door between them.
+    fn flat() -> Config {
+        let walls = [
+            wall([0.0, 0.0], [11.0, 0.0]),
+            wall([11.0, 0.0], [11.0, 5.0]),
+            wall([11.0, 5.0], [0.0, 5.0]),
+            wall([0.0, 5.0], [0.0, 0.0]),
+            wall([6.0, 0.0], [6.0, 5.0]),
+            wall([9.0, 0.0], [9.0, 5.0]),
+            wall([6.0, 3.0], [9.0, 3.0]),
+        ];
+        let room = |id: &str, x0: f64, y0: f64, x1: f64, y1: f64| {
+            format!(
+                r#"{{"id": "{id}", "name": "{id}", "kind": "room", "shape": "rect", "points": [[{x0}, {y0}], [{x1}, {y1}]]}}"#
+            )
+        };
+        let stair = r#"{"id": "stair", "name": "stair", "kind": "room", "entry": true, "shape": "rect", "points": [[9, 0], [11, 5]]}"#;
+        let door = |id: &str, x: f64, y: f64| format!(r#"{{"id": "{id}", "x": {x}, "y": {y}, "width": 0.9}}"#);
+        config(
+            &[("w", "wohn", [0.05, 0.05], 45.0)],
+            &format!(
+                "[{}, {}, {}, {stair}]",
+                room("wohn", 0.0, 0.0, 6.0, 5.0),
+                room("bad", 6.0, 0.0, 9.0, 3.0),
+                room("schlaf", 6.0, 3.0, 9.0, 5.0)
+            ),
+            &format!("[{}]", walls.join(", ")),
+            &format!(
+                "[{}, {}, {}]",
+                door("b", 6.0, 1.5),
+                door("s", 6.0, 4.0),
+                door("o", 9.0, 4.0)
+            ),
+        )
+    }
+
+    #[test]
+    fn the_places_of_a_plan_worked_out_by_hand() {
+        let plan = Plan::new(&flat());
+        // wohn is seen (>= 60 % of its points), the others not: two regions, the bath closed
+        let observed: Vec<&str> = plan.observed().map(|z| z.id.as_str()).collect();
+        assert_eq!(observed, ["wohn"]);
+        let regions: Vec<(&str, usize)> = plan.regions.iter().map(|r| (r.id.as_str(), r.exits)).collect();
+        assert_eq!(regions, [("bad", 0), ("schlaf", 1)]);
+        assert!(!plan.regions[0].open() && plan.regions[1].open());
+        let closed: Vec<&str> = plan.closed.iter().map(|z| plan.zones[z.0].id.as_str()).collect();
+        assert_eq!(closed, ["bad", "stair"]);
+        assert_eq!(plan.places(), 4);
+        // the doors out of the observed area: 0.5 m into the living room
+        let portals: Vec<(Place, Point)> = plan.portals.iter().map(|p| (p.place, p.watch)).collect();
+        assert_eq!(
+            portals,
+            [
+                (Place::Region(RegionIdx(0)), [5.5, 1.5]),
+                (Place::Region(RegionIdx(1)), [5.5, 4.0])
+            ]
+        );
+        // the sensor named like the room is its own; every room has its place
+        assert_eq!(plan.sensors[0].own_room, Some(RoomIdx(0)));
+        let place = |p: Point| plan.place_at(p);
+        assert_eq!(place([1.0, 1.0]), Some(Place::Observed));
+        assert_eq!(place([7.0, 1.0]), Some(Place::Region(RegionIdx(0))));
+        assert_eq!(place([10.0, 1.0]), Some(Place::Outside));
+        assert_eq!(place([12.0, 1.0]), None);
+        assert_eq!(Place::of_index(Place::Outside.index(2), 2), Some(Place::Outside));
+        // a reflection: behind the wall in the bath, not in the living room
+        let s = &flat().sensors[0];
+        let unit = |p: Point| {
+            let d = py_hypot(p[0] - s.x, p[1] - s.y);
+            [(p[0] - s.x) / d, (p[1] - s.y) / d]
+        };
+        assert!(plan.hidden(s, [7.5, 1.0], unit([7.5, 1.0]), 0.4));
+        assert!(!plan.hidden(s, [3.0, 3.0], unit([3.0, 3.0]), 0.4));
+    }
+
+    #[test]
+    fn a_configuration_that_does_not_fit_is_refused_by_name() {
+        let good = crate::testing::config(&[("w", "w", [0.0, 0.0], 0.0)], "[]", "[]", "[]");
+        assert_eq!(good.sensors.len(), 1);
+        let json = |sensor: &str, params: &str, zones: &str| {
+            format!(r#"{{"sensors": [{sensor}], "zones": {zones}, "walls": [], "doors": [], "params": {params}}}"#)
+        };
+        let params = crate::testing::PARAMS;
+        for (sensor, params, zones, name) in [
+            (
+                r#"{"id": "s", "name": "", "x": 0, "y": 0, "heading": 0, "height": 1.5, "mirror": false, "scale": 1, "fov": 120, "range": 0, "enabled": true, "placed": true}"#,
+                params.to_string(),
+                "[]",
+                "range",
+            ),
+            (
+                r#"{"id": "s", "name": "", "x": 0, "y": 0, "heading": 0, "height": 1.5, "mirror": false, "scale": 1, "fov": 120, "range": 6, "enabled": true, "placed": true}"#,
+                params.replace(r#""range_sigma_base": 0.15"#, r#""range_sigma_base": 0"#),
+                "[]",
+                "range_sigma_base",
+            ),
+            (
+                r#"{"id": "s", "name": "", "x": 0, "y": 0, "heading": 0, "height": 1.5, "mirror": false, "scale": 1, "fov": 120, "range": 6, "enabled": true, "placed": true}"#,
+                params.replace(r#""target_threshold": 0.8"#, r#""target_threshold": 1.0"#),
+                "[]",
+                "target_threshold",
+            ),
+            (
+                r#"{"id": "s", "name": "", "x": 0, "y": 0, "heading": 0, "height": 1.5, "mirror": false, "scale": 1, "fov": 120, "range": 6, "enabled": true, "placed": true}"#,
+                params.to_string(),
+                r#"[{"id": "r", "name": "R", "kind": "room", "shape": "rect", "points": [[0, 0], [1000000, 5]]}]"#,
+                "extent",
+            ),
+        ] {
+            let err = Config::from_json(&json(sensor, &params, zones)).expect_err(name);
+            assert!(err.contains(name), "{err}");
+        }
+        // a field the shell always writes is required
+        let missing = json(r#"{"id": "s", "x": 0}"#, params, "[]");
+        assert!(Config::from_json(&missing).is_err());
+    }
 }

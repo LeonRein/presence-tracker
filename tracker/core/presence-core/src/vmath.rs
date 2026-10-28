@@ -192,6 +192,11 @@ pub fn vexp(x: &mut [f64]) {
     }
 }
 
+/// The larger of two, as Python's and numba's max (the first unless the second is larger).
+pub fn max2(a: f64, b: f64) -> f64 {
+    if b > a { b } else { a }
+}
+
 /// The larger of x and lo, NaN staying NaN (numpy's maximum; f64::max would give lo).
 pub fn at_least(x: f64, lo: f64) -> f64 {
     if x.is_nan() { x } else { x.max(lo) }

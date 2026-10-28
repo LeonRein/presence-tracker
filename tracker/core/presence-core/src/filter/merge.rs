@@ -211,11 +211,7 @@ fn cut_hyps(hyps: &mut Vec<Hyp>, p: &Params) -> Result<Cut, NotFinite> {
             kept[h] = true;
         }
     }
-    let mut h = 0;
-    hyps.retain(|_| {
-        h += 1;
-        kept[h - 1]
-    });
+    keep_marked(hyps, &kept);
     Ok(if total == f64::NEG_INFINITY {
         Cut::Unexplained
     } else {
@@ -242,11 +238,7 @@ impl Objects {
                 keep[h] = false;
             }
         }
-        let mut h = 0;
-        hyps.retain(|_| {
-            h += 1;
-            keep[h - 1]
-        });
+        keep_marked(hyps, &keep);
     }
 
     fn mix_hyps(&mut self, hs: &[&Hyp]) -> Hyp {
@@ -384,6 +376,12 @@ pub fn odds_shifted(p: f64, log_factor: f64) -> f64 {
         return e / (1.0 + e);
     }
     1.0 / (1.0 + x.exp())
+}
+
+/// Keeps the hypotheses marked to be kept, in their order.
+fn keep_marked(hyps: &mut Vec<Hyp>, keep: &[bool]) {
+    let mut marks = keep.iter();
+    hyps.retain(|_| marks.next().copied().unwrap_or(false));
 }
 
 #[cfg(test)]

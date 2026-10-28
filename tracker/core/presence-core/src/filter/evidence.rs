@@ -13,6 +13,7 @@ use crate::filter::step::TileRates;
 use crate::filter::tracks::{Lost, TrackInfo, Tracks};
 use crate::geometry::Point;
 use crate::ld2450::rates::TrackSpot;
+use crate::motion::imm::Bounds;
 use crate::params::{LostKind, Params, STILL, WALK};
 use crate::sensors::{SensorSet, SensorState};
 use crate::vmath::{logsumexp, pairwise_sum};
@@ -83,7 +84,7 @@ impl Filter {
         // the people and ghosts' sources with this track
         let on: Vec<(usize, MixtureId)> = self
             .holders
-            .entries(true)
+            .entries()
             .filter_map(|(entry, obj)| match obj {
                 Obj::Mixture(m) if self.objects.mixtures.get(m).slots.contains_key(&seg) => Some((entry, m)),
                 _ => None,
@@ -126,7 +127,7 @@ impl Filter {
             };
             let f = TileFactors::same(&f);
             let objects = &mut self.objects;
-            for (entry, obj) in self.holders.entries(false) {
+            for (entry, obj) in self.holders.people() {
                 let dl = match obj {
                     Obj::Density(id) => objects.densities.get_mut(id).weigh(f),
                     Obj::Mixture(id) => {
@@ -213,7 +214,7 @@ impl Filter {
                 .collect(),
         };
         let objects = &mut self.objects;
-        for (entry, obj) in self.holders.entries(false) {
+        for (entry, obj) in self.holders.people() {
             let d = match obj {
                 Obj::Density(id) => objects.densities.get_mut(id).weigh(f.view()),
                 Obj::Mixture(id) => {
@@ -247,13 +248,13 @@ pub(super) fn count_walkers(hyps: &[Hyp], objects: &Objects, holders: &Holders, 
         .collect();
     let grid = &world.sights[si].grid;
     let mut val = vec![0.0; hyps.len()];
-    for (entry, obj) in holders.entries(false) {
+    for (entry, obj) in holders.people() {
         let v = match obj {
             Obj::Density(id) if n > 0 => objects.densities.get(id).walking_in(&seen),
             Obj::Density(_) => 0.0,
             Obj::Mixture(id) => {
                 let mix = objects.mixtures.get(id);
-                let pts = mix.sigma(world, true)[WALK];
+                let pts = mix.sigma(world, Bounds::WallsAndDoors)[WALK];
                 let inside = expect(&pts.map(|p| if grid.at(p) > 0.1 { 1.0 } else { 0.0 }));
                 let mut v = (1.0 - mix.a) * mix.walking() * inside;
                 if let Some(away) = mix.away.filter(|_| n > 0) {
@@ -367,5 +368,5 @@ pub fn mixture_rates(
     let users: SensorSet = [si].into_iter().collect();
     world
         .rates
-        .mixture_rates(&world.sights, spots, users, &mix.sigma(world, true))
+        .mixture_rates(&world.sights, spots, users, &mix.sigma(world, Bounds::WallsAndDoors))
 }

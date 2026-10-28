@@ -3,8 +3,9 @@
 
 use crate::filter::densities::{Densities, DensityData, DensityId, DensityMut, DensityShape, Kind};
 use crate::filter::hyp::Hyp;
-use crate::filter::mixture::max2;
 use crate::filter::{Filter, PeopleState};
+use crate::plan::{Place, RegionIdx};
+use crate::vmath::max2;
 use crate::vmath::{logsumexp, pairwise_sum};
 use crate::world::World;
 
@@ -13,8 +14,8 @@ use crate::world::World;
 pub enum Start {
     /// nothing known of them: in view, behind a door or out (one density for all of them)
     Anywhere,
-    /// at this place (observed, regions..., outside)
-    Place(usize),
+    /// at this place
+    Place(Place),
 }
 
 /// Standing in view anywhere alike, the stay seen at a random time, times `share` (the prior of a
@@ -68,19 +69,18 @@ fn anywhere(densities: &mut Densities, world: &World, kind: Kind, people: f64) -
 
 /// A known person at a place (Hidden.at_place): in view standing anywhere alike, in a region at the
 /// start of a stay seen at a random time, or out.
-fn at_place(densities: &mut Densities, world: &World, place: usize) -> DensityId {
+fn at_place(densities: &mut Densities, world: &World, place: Place) -> DensityId {
     let id = densities.alloc(Kind::Person);
     let mut d = densities.get_mut(id);
-    let (regions, ages) = (world.tiles.regions, world.tiles.ages);
-    if place == 0 && world.tiles.n > 0 {
+    let ages = world.tiles.ages;
+    match place {
         // 1 x the prior: the same numbers as the prior alone
-        standing_anywhere(&mut d, world, 1.0);
-    } else if place == 0 || place == regions + 1 {
+        Place::Observed if world.tiles.n > 0 => standing_anywhere(&mut d, world, 1.0),
         // in view without tiles, or outside
-        *d.out = 1.0;
-    } else {
-        let r = place - 1;
-        d.region[r * ages..][..ages].copy_from_slice(&world.tiles.region_start[r * ages..][..ages]);
+        Place::Observed | Place::Outside => *d.out = 1.0,
+        Place::Region(RegionIdx(r)) => {
+            d.region[r * ages..][..ages].copy_from_slice(&world.tiles.region_start[r * ages..][..ages])
+        }
     }
     d.normalize();
     id
@@ -213,10 +213,14 @@ mod tests {
     fn known_people_at_their_places_the_unknown_ones_none() {
         let world = testing::flat();
         let mut f = Filter::new(world.density_shape(), world.sights.len());
-        let outside = world.tiles.regions + 1;
         f.start_over(
             &world,
-            Some(&[Start::Anywhere, Start::Place(0), Start::Anywhere, Start::Place(outside)]),
+            Some(&[
+                Start::Anywhere,
+                Start::Place(Place::Observed),
+                Start::Anywhere,
+                Start::Place(Place::Outside),
+            ]),
         );
         let hy = f.hyps()[0].clone();
         // the people nothing is known of are one density
@@ -233,7 +237,7 @@ mod tests {
         let world = testing::flat();
         let shape: DensityShape = world.density_shape();
         let mut f = Filter::new(shape, world.sights.len());
-        f.start_over(&world, Some(&[Start::Place(0)]));
+        f.start_over(&world, Some(&[Start::Place(Place::Observed)]));
         let PeopleState { hyps, densities } = f.people_state(&world);
         let state = |hyps: Vec<(f64, Vec<usize>, usize)>| PeopleState {
             hyps,

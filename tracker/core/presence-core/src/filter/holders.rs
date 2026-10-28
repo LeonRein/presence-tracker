@@ -108,12 +108,14 @@ impl Holders {
         &self.objects
     }
 
-    pub fn entries(&self, sources: bool) -> impl Iterator<Item = (usize, Obj)> + '_ {
-        self.objects
-            .iter()
-            .copied()
-            .enumerate()
-            .filter(move |&(e, _)| sources || !self.source[e])
+    /// Every entry with its object, the sources of ghost tracks too.
+    pub fn entries(&self) -> impl Iterator<Item = (usize, Obj)> + '_ {
+        self.objects.iter().copied().enumerate()
+    }
+
+    /// The entries of people and of the unknown ones: without the sources of ghost tracks.
+    pub fn people(&self) -> impl Iterator<Item = (usize, Obj)> + '_ {
+        self.entries().filter(|&(e, _)| !self.source[e])
     }
 
     /// The hypotheses holding an entry's object, as often as they hold it.
@@ -170,7 +172,7 @@ mod tests {
             },
         );
         let h = Holders::build(&[a, b], 3, 5);
-        let all: Vec<(Obj, Vec<usize>)> = h.entries(true).map(|(e, o)| (o, h.refs(e).to_vec())).collect();
+        let all: Vec<(Obj, Vec<usize>)> = h.entries().map(|(e, o)| (o, h.refs(e).to_vec())).collect();
         assert_eq!(
             all,
             vec![
@@ -184,7 +186,7 @@ mod tests {
         assert_eq!(h.entry(Obj::Density(d(4))), 3);
         assert_eq!(h.holding(1).collect::<Vec<_>>(), vec![0], "each hypothesis once");
         assert_eq!(h.holding(0).collect::<Vec<_>>(), vec![0, 1]);
-        assert_eq!(h.entries(false).count(), 4);
+        assert_eq!(h.people().count(), 4);
         let mut hyps = [Hyp::new(0.0, Vec::new(), d(0)), Hyp::new(1.0, Vec::new(), d(0))];
         h.book(&mut hyps, 1, 0.5);
         assert_eq!((hyps[0].logw, hyps[1].logw), (1.0, 1.0));

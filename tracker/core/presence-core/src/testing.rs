@@ -42,7 +42,10 @@ use crate::geometry::Point;
 use crate::ld2410::{FLOOR, profile::expected};
 use crate::params::{Params, Shapes};
 use crate::params::{STILL, WALK};
-use crate::world::{CELL, Grid, LdExport, LdPlace, LdSight, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
+use crate::plan::RoomIdx;
+use crate::world::{
+    CELL, Grid, LdExport, LdPlace, LdSight, LdTiles, Raster, RoomGrid, SensorExport, Tiles, World, WorldExport,
+};
 
 /// What a person at each tile's centre puts into an LD2410C at `at` looking along `axis` (1.5 m
 /// above a person's height: dh2 0.64), the tiles it sees.
@@ -57,7 +60,7 @@ fn ld_tiles(raster: Raster, at: Point, axis: Point, centers: &[Point]) -> LdTile
         view: None,
         tiles: LdTiles::default(),
     };
-    let rooms = everywhere(0.0);
+    let rooms = RoomGrid::new(raster, vec![Some(RoomIdx(0)); raster.cells()]);
     let mut out = LdTiles::default();
     for (c, &q) in centers.iter().enumerate() {
         let LdPlace { angle, slant, sight } = ld.place(q, &rooms);
@@ -101,34 +104,61 @@ fn segment_distance(p: Point, [x0, y0, x1, y1]: [f64; 4]) -> f64 {
     (p[0] - x0 - t * dx).hypot(p[1] - y0 - t * dy)
 }
 
+/// model.TrackerParams' defaults as the shell writes them.
+pub const PARAMS: &str = r#"{"target_height": 1.0, "range_sigma_base": 0.15, "range_sigma_slope": 0.02,
+    "lateral_sigma_base": 0.1, "lateral_sigma_slope": 0.05, "wall_margin": 0.4, "dwell_median": 120.0,
+    "dwell_spread": 1.5, "ld2410_hold": 1.5, "light_cost": 2.0, "seen_hold": 10.0, "lead_time": 2.0,
+    "approach_cost": 0.05, "target_threshold": 0.8, "target_thresholds": {}}"#;
+
+/// A configuration as the shell writes it (every field): these sensors (id, name, where, heading;
+/// placed), the zones, walls and doors as JSON.
+pub fn config(sensors: &[(&str, &str, Point, f64)], zones: &str, walls: &str, doors: &str) -> Config {
+    let sensors = sensors
+        .iter()
+        .map(|(id, name, [x, y], heading)| {
+            format!(
+                r#"{{"id": "{id}", "name": "{name}", "x": {x}, "y": {y}, "heading": {heading}, "height": 1.5,
+                "mirror": false, "scale": 1.0, "fov": 120.0, "range": 6.0, "enabled": true, "placed": true}}"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let json = format!(
+        r#"{{"sensors": [{sensors}], "zones": {zones}, "walls": {walls}, "doors": {doors}, "params": {PARAMS}}}"#
+    );
+    Config::from_json(&json).expect("a test configuration")
+}
+
+/// A wall (JSON) from a to b.
+pub fn wall(a: Point, b: Point) -> String {
+    format!(r#"{{"points": [{a:?}, {b:?}], "kind": "wall"}}"#)
+}
+
 /// A configuration of these sensors (ids s0, s1, ...), placed, and nothing else (for worlds of
 /// fixtures: the outputs count nobody in a room).
 pub fn config_of_sensors(sensors: usize) -> Config {
-    let json = (0..sensors)
-        .map(|si| format!(r#"{{"id": "s{si}", "placed": true}}"#))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Config::from_json(&format!(r#"{{"sensors": [{json}]}}"#)).expect("a configuration")
+    let ids: Vec<String> = (0..sensors).map(|si| format!("s{si}")).collect();
+    let specs: Vec<(&str, &str, Point, f64)> = ids.iter().map(|id| (id.as_str(), "", [0.0, 0.0], 0.0)).collect();
+    config(&specs, "[]", "[]", "[]")
 }
 
 /// The configuration of the flat test world: the room "wohn" (6 x 5 m) with walls around, an area
 /// "sofa" in its upper left corner (0..2 x 3..5), sensor 0 ("wohn") and sensor 1 ("b") in the bottom
 /// corners.
 pub fn flat_config() -> Config {
-    Config::from_json(
-        r#"{
-        "sensors": [
-            {"id": "wohn", "name": "wohn", "x": 0.05, "y": 0.05, "heading": 45, "placed": true},
-            {"id": "b", "name": "b", "x": 5.95, "y": 0.05, "heading": 135, "placed": true}],
-        "zones": [
-            {"id": "wohn", "name": "Wohn", "kind": "room", "shape": "rect", "points": [[0, 0], [6, 5]]},
-            {"id": "sofa", "name": "Sofa", "kind": "area", "shape": "rect", "points": [[0, 3], [2, 5]]}],
-        "walls": [
-            {"points": [[0, 0], [6, 0]]}, {"points": [[6, 0], [6, 5]]},
-            {"points": [[6, 5], [0, 5]]}, {"points": [[0, 5], [0, 0]]}]
-    }"#,
+    let walls = [
+        wall([0.0, 0.0], [6.0, 0.0]),
+        wall([6.0, 0.0], [6.0, 5.0]),
+        wall([6.0, 5.0], [0.0, 5.0]),
+        wall([0.0, 5.0], [0.0, 0.0]),
+    ];
+    config(
+        &[("wohn", "wohn", [0.05, 0.05], 45.0), ("b", "b", [5.95, 0.05], 135.0)],
+        r#"[{"id": "wohn", "name": "Wohn", "kind": "room", "shape": "rect", "points": [[0, 0], [6, 5]]},
+            {"id": "sofa", "name": "Sofa", "kind": "area", "shape": "rect", "points": [[0, 3], [2, 5]]}]"#,
+        &format!("[{}]", walls.join(", ")),
+        "[]",
     )
-    .expect("the flat configuration")
 }
 
 /// The room of test_filter.flat_config without its doors: 6 x 5 m with walls around, square tiles
@@ -214,10 +244,10 @@ pub fn flat_export() -> WorldExport {
         points,
         point_tile,
         point_count,
-        walk_end: Vec::new(),
-        room: vec![Some(0); n],
+        room: vec![Some(RoomIdx(0)); n],
         region_start: Vec::new(),
         generator: Vec::new(),
+        walk_end: Default::default(),
     };
     WorldExport {
         params: Params::default(),

@@ -1,8 +1,8 @@
 //! The zones "wird betreten" is computed for (filter.Tracker._entry_targets): the observed rooms, then
 //! the areas - per zone its cells, and which sample points of the tiles lie in it.
 
-use crate::plan::Plan;
-use crate::world::raster::{Grid, Raster};
+use crate::plan::{Plan, RoomIdx};
+use crate::world::raster::{Raster, RoomGrid};
 use crate::world::tiles::Tiles;
 
 #[derive(Debug, Default)]
@@ -14,23 +14,22 @@ pub struct EntryTargets {
 }
 
 impl EntryTargets {
-    /// The rooms' cells are those of `rooms` (per cell its observed room, the last index for none), the
-    /// areas' those whose centres they hold (world.World.zone_mask); a sample point is in its tile's room.
-    pub fn new(plan: &Plan, raster: Raster, rooms: &Grid, tiles: &Tiles) -> Self {
+    /// The rooms' cells are those of `rooms`, the areas' those whose centres they hold (world.World.
+    /// zone_mask); a sample point is in its tile's room.
+    pub fn new(plan: &Plan, raster: Raster, rooms: &RoomGrid, tiles: &Tiles) -> Self {
         let mut cells: Vec<Vec<bool>> = (0..plan.rooms.len())
-            .map(|k| rooms.values().iter().map(|&r| r == k as f64).collect())
+            .map(|k| rooms.cells().iter().map(|&r| r == Some(RoomIdx(k))).collect())
             .collect();
         let centres: Vec<_> = (0..raster.nx)
             .flat_map(|i| (0..raster.ny).map(move |j| raster.centre(i, j)))
             .collect();
         cells.extend(
-            plan.areas
-                .iter()
-                .map(|shape| centres.iter().map(|&c| shape.contains(c, 0.0)).collect()),
+            plan.areas()
+                .map(|z| centres.iter().map(|&c| z.shape.contains(c, 0.0)).collect()),
         );
         let mut points = Vec::new();
         for (i, (&p, &tile)) in tiles.points.iter().zip(&tiles.point_tile).enumerate() {
-            if let Some(k) = tiles.room[tile] {
+            if let Some(RoomIdx(k)) = tiles.room[tile] {
                 points.push((i, k));
             }
             let cell = raster.cell_of(p);

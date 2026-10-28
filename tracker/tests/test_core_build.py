@@ -73,6 +73,12 @@ def test_the_core_builds_the_world_python_builds(name, config):
         assert all(close(c[k], p[k]) for k in ("grid", "observed", "ld_los", "ld_still", "ld_walk"))
         assert list(c["ld_idx"]) == list(p["ld_idx"])
         assert (c["ld_view"] is None) == (p["ld_view"] is None)
+        if c["ld_view"] is not None:  # the core's has no entry for "in no room" (always 1)
+            assert list(c["ld_view"]) == list(p["ld_view"])[:-1] and p["ld_view"][-1] == 1.0
+    # the zones of the outputs are the home's, each by its own name (an outside room among them shifts nothing)
+    assert set(tr.zone_states()) - {"_total"} == {z.id for z in config.home_zones("room", "area")}
+    # where walks end (LU in the core, LAPACK in numpy): up to rounding
+    assert close(core["walk_end"], tr.tiles.walk_end(), 1e-10)
 
 
 @pytest.mark.parametrize("name, config", configs(), ids=lambda v: v if isinstance(v, str) else "")

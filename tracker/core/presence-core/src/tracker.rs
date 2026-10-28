@@ -11,10 +11,9 @@ use crate::filter::{Filter, NotFinite, PeopleState, Start};
 use crate::geometry::Point;
 use crate::ld2410::CELLS;
 use crate::ld2410::sensor::LdCollect;
-use crate::outputs::{
-    self, Cloud, Distributions, Entering, HouseNumbers, OutputCache, Person, Source, ZoneInputs, ZoneNumbers,
-};
+use crate::outputs::{self, Cloud, Distributions, Entering, HouseNumbers, OutputCache, Person, Source, ZoneNumbers};
 use crate::params::LostKind;
+use crate::plan::Place;
 use crate::room_seen::RoomSeen;
 use crate::sensors::{SensorSet, SensorState};
 use crate::world::World;
@@ -65,15 +64,21 @@ impl Tracker {
         &self.filter
     }
 
-    /// A world rebuilt on the same tiles (sensors recalibrated): what is known stays; where walks
-    /// end depends on the tiles only and is kept.
-    pub fn set_world(&mut self, mut world: World) {
-        if world.tiles.walk_end.is_empty() {
-            world.tiles.walk_end = std::mem::take(&mut self.world.tiles.walk_end);
+    /// A world rebuilt on the same tiles (sensors recalibrated, the outputs' numbers changed): what is
+    /// known stays. Err, and nothing changed, if the densities would not fit it: another shape of a
+    /// density, other tiles (Tiles::same_as) or another number of sensors.
+    pub fn set_world(&mut self, world: World) -> Result<(), String> {
+        let (old, new) = (&self.world, &world);
+        if new.density_shape() != old.density_shape()
+            || !new.tiles.same_as(&old.tiles)
+            || new.sights.len() != old.sights.len()
+        {
+            return Err("the new world has other tiles or sensors: the people do not fit it".into());
         }
         self.world = world;
         self.seen.follow(&self.world.plan);
         self.filter.void_cache();
+        Ok(())
     }
 
     /// What an earlier tracker's rooms' own LD2450s saw and when its sensors were last heard (the
@@ -116,13 +121,10 @@ impl Tracker {
     /// Start over at t (Tracker.reset_people): nothing known about the people, or known people at
     /// these places and nobody unknown; Err, and nothing changed, for a place there is not.
     pub fn reset_people(&mut self, t: f64, people: Option<&[Start]>) -> Result<(), String> {
-        let places = self.world.plan.places();
-        if people
-            .into_iter()
-            .flatten()
-            .any(|s| matches!(s, Start::Place(p) if *p >= places))
-        {
-            return Err("a place there is not".into());
+        let regions = self.world.plan.regions.len();
+        let unknown = |s: &Start| matches!(s, Start::Place(Place::Region(r)) if r.0 >= regions);
+        if people.into_iter().flatten().any(unknown) {
+            return Err("a region there is not".into());
         }
         self.clear(t);
         self.filter.start_over(&self.world, people);
@@ -215,11 +217,6 @@ impl Tracker {
 
     /// Everybody moves on over a gap in the data; the sensors placed could have tested them.
     pub fn predict_gap(&mut self, gap: f64, placed: SensorSet) {
-        // where walks end, for the leaps of a long gap: once, when first needed (Tiling.walk_end)
-        let tiles = &self.world.tiles;
-        if gap > self.world.params.gap_exact && tiles.walk_end.is_empty() {
-            self.world.tiles.walk_end = tiles.compute_walk_end(&self.world.params);
-        }
         self.filter.predict_gap(&self.world, placed, gap);
     }
 
@@ -286,29 +283,19 @@ impl Tracker {
     /// Per observed room the distribution of the number of people in it, then of those in view at
     /// all; computed once per epoch (Tracker.count_distribution).
     pub fn count_distribution(&mut self) -> &Distributions {
-        let (filter, world) = (&self.filter, &self.world);
-        let cache = self.outputs.at(filter.epoch());
-        cache
-            .counts
-            .get_or_insert_with(|| outputs::count_distribution(filter, world))
+        self.outputs.at(self.filter.epoch()).counts(&self.filter, &self.world)
     }
 
     /// Per place the distribution of the number of people there, then of those in the house; once
     /// per epoch (Tracker.place_distribution).
     pub fn place_distribution(&mut self) -> &Distributions {
-        let filter = &self.filter;
-        let cache = self.outputs.at(filter.epoch());
-        cache.places.get_or_insert_with(|| outputs::place_distribution(filter))
+        self.outputs.at(self.filter.epoch()).places(&self.filter)
     }
 
     /// "wird betreten" per zone of the world's targets; once per epoch (Tracker.entering). Its
     /// look-ahead is the world's: a new one comes with a new world, and that voids the cache.
     pub fn entering(&mut self) -> &[Entering] {
-        let (filter, world) = (&self.filter, &self.world);
-        let cache = self.outputs.at(filter.epoch());
-        cache
-            .entering
-            .get_or_insert_with(|| outputs::entering(filter, world, world.outputs.lead_time))
+        self.outputs.at(self.filter.epoch()).entering(&self.filter, &self.world)
     }
 
     /// Per observed room whether it is occupied at `now` and by what (Tracker.occupancy): the
@@ -339,25 +326,7 @@ impl Tracker {
     pub fn zone_numbers(&mut self, now: f64, start: Option<f64>) -> (Vec<ZoneNumbers>, HouseNumbers) {
         let occupancy = self.occupancy(now);
         let silent = self.silent(now, start);
-        let (filter, world) = (&self.filter, &self.world);
-        let persons = outputs::persons(filter, world);
-        let cache = self.outputs.at(filter.epoch());
-        let counts = &*cache
-            .counts
-            .get_or_insert_with(|| outputs::count_distribution(filter, world));
-        let places = &*cache.places.get_or_insert_with(|| outputs::place_distribution(filter));
-        let entering = &*cache
-            .entering
-            .get_or_insert_with(|| outputs::entering(filter, world, world.outputs.lead_time));
-        let inputs = ZoneInputs {
-            counts,
-            places,
-            entering,
-            occupancy: &occupancy,
-            silent: &silent,
-            persons: &persons,
-        };
-        outputs::zone_numbers(world, &inputs)
+        outputs::zones_of(&mut self.outputs, &self.filter, &self.world, &occupancy, &silent)
     }
 
     /// A frame of the sensor with this id at t, whatever is in it (also of a sensor the plan lacks).

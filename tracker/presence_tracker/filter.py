@@ -224,11 +224,8 @@ class Tracker:
         loglik = self._c.loglik if self._c is not None else (0.0, 0.0)  # the evidence goes on over a rebuild
         self._c = _core(presence_core.Core, *self._world())
         self._c.loglik = loglik
-        # the core built its own world: the shell's (still read by what is not ported yet) must be the same
+        self._check_world()
         rooms, places, areas, own = self._c.names()
-        if (rooms != self.rooms or places != self.world.places
-                or self._c.shape() != (self.tiles.n, self.tiles.R, self.tiles.A)):
-            raise CoreError(f"the core's plan {rooms, places, self._c.shape()} is not the shell's")
         self._own = {sid: r for sid, r in zip(self.sensors, own) if r is not None}
         self._entry_ids = rooms + areas
         if old is not None:  # what the rooms' own LD2450s saw goes on
@@ -239,6 +236,22 @@ class Tracker:
         self._sent = None  # the sensors' state the core has
         self._mirror = None
         self._out_cache = {}
+
+    def _check_world(self):
+        """The core built its own world: the shell's, still read by what is not ported yet (the
+        destination map, the saved state's format and fingerprint, the mirror, /api/tiles), must be the
+        same - the rooms and places, and the tiles bit for bit; else a CoreError (nothing would fit)."""
+        rooms, places, _, _ = self._c.names()
+        tl = self.tiles
+        centers, area, room, exits, entries, doors = self._c.tiles()
+        same = (rooms == self.rooms and places == self.world.places
+                and self._c.shape() == (tl.n, tl.R, tl.A)
+                and np.array_equal(np.asarray(centers), np.ravel(tl.centers))
+                and np.array_equal(np.asarray(area), tl.area) and list(room) == [int(r) for r in tl.room]
+                and list(exits) == [int(x) for x in tl.exits] and list(entries) == [int(c) for c in tl.entries]
+                and [list(d) for d in doors] == [[int(c) for c in tl.doors[r]] for r in range(tl.R)])
+        if not same:
+            raise CoreError(f"the core's world {rooms, places, self._c.shape()} is not the shell's")
 
     def _world(self) -> tuple:
         """What the core builds its world of (docs/rust-core.md 1): the configuration and the model as
@@ -565,6 +578,7 @@ class Tracker:
         for si in range(len(self.sensors)):
             self._g(si, np.zeros((1, 2)))
         self._call("set_world", *self._world())  # the sensors' sight anew, what is known stays
+        self._check_world()
         self._sent = None
 
     def use_ghost_map(self, gm) -> bool:

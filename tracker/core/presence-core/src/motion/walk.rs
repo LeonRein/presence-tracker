@@ -115,9 +115,10 @@ pub fn leap(world: &World, densities: &mut Densities, id: DensityId, dt: f64) {
         return;
     }
     let rows = n + tiles.regions + 1;
+    let walk_end = tiles.walk_end(p);
     let end: Vec<f64> = (0..rows)
         .map(|i| {
-            tiles.walk_end[i * n..][..n]
+            walk_end[i * n..][..n]
                 .iter()
                 .zip(&*d.walk)
                 .fold(0.0, |s, (a, w)| s + a * w)

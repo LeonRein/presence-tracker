@@ -104,7 +104,7 @@ fn settle(ld: &LdSight, objects: &mut Objects, holders: &Holders) {
     if ld.tiles.idx.is_empty() {
         return;
     }
-    for (_, obj) in holders.entries(false) {
+    for (_, obj) in holders.people() {
         let id = match obj {
             Obj::Density(id) => Some(id),
             Obj::Mixture(m) => {
@@ -626,9 +626,9 @@ impl Filter {
         let amp: Vec<f64> = world.shapes.amp.iter().copied().chain([1.0]).collect(); // and g = 1: nothing measured
         let Objects { mixtures, densities } = &self.objects;
         // by entry in the holders; the sources of ghost tracks put nothing in
-        let objs: Vec<Obj> = self.holders.entries(true).map(|(_, obj)| obj).collect();
+        let objs: Vec<Obj> = self.holders.entries().map(|(_, obj)| obj).collect();
         let mut points: Vec<Points> = objs.iter().map(|_| Points::none()).collect();
-        for (e, obj) in self.holders.entries(false) {
+        for (e, obj) in self.holders.people() {
             let pts = &mut points[e];
             *pts = match obj {
                 Obj::Density(id) => tile_points(world, ld, densities, &amp, id, densities.get(id).r),

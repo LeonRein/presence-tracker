@@ -157,17 +157,31 @@ fn linear(g: &Kalman, f: &Square, q: &Square) -> Kalman {
     out
 }
 
-/// One step of the mixture (module doc). With walls_and_doors (tiles there, a person and not a
-/// ghost's source) walls reflect and walkers go through doors; keep_away false: the part gone
-/// through a door is dropped next (a measurement follows), only its weight a changes. A part made
-/// here is a new density.
+/// What a mixture's motion meets (MODEL.md 3.2, 5.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bounds {
+    /// nothing: a ghost's source, or a world without tiles
+    Free,
+    /// walls reflect, walkers go through doors into the part gone through a door
+    WallsAndDoors,
+}
+
+/// What becomes of the part gone through a door in a step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Away {
+    Keep,
+    /// it is dropped next (a measurement follows): only its weight a changes
+    Drop,
+}
+
+/// One step of the mixture (module doc), meeting its bounds. A part made here is a new density.
 pub fn predict(
     world: &World,
     mix: &mut Mixture,
     densities: &mut Densities,
     step: &ImmStep,
-    walls_and_doors: bool,
-    keep_away: bool,
+    bounds: Bounds,
+    away: Away,
 ) {
     let shapes = &world.shapes;
     let w = mix.weights();
@@ -198,7 +212,7 @@ pub fn predict(
     let (mut l0, mut l1) = (ln_or_none(tot_s), ln_or_none(tot_w));
     let tot = log_add(l0, l1);
     (l0, l1) = (l0 - tot, l1 - tot);
-    if walls_and_doors {
+    if bounds == Bounds::WallsAndDoors {
         reflect_at_walls(world, &walk0, &mut mix.modes[WALK], &f[WALK], &q[WALK]);
         let walking = weights2(l0, l1)[WALK];
         if let Some(rate) = door_rates(world, &mix.modes[WALK], walking) {
@@ -206,7 +220,7 @@ pub fn predict(
             let frac = -(-total * step.dt).exp_m1();
             let moved = (1.0 - mix.a) * walking * frac;
             if total > 0.0 && moved > 0.0 {
-                if keep_away {
+                if away == Away::Keep {
                     go_through_doors(densities, mix, moved, &rate, total);
                 }
                 l1 += if frac < 1.0 { (-frac).ln_1p() } else { f64::NEG_INFINITY };

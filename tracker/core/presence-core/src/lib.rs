@@ -6,16 +6,16 @@ pub mod config;
 pub mod filter;
 pub mod geometry;
 pub mod ld2410;
-pub mod ld2450;
-pub mod linalg;
-pub mod motion;
+pub(crate) mod ld2450;
+pub(crate) mod linalg;
+pub(crate) mod motion;
 pub mod outputs;
 pub mod params;
 pub mod plan;
-pub mod room_seen;
+pub(crate) mod room_seen;
 pub mod sensors;
 pub mod tracker;
-pub mod vmath;
+pub(crate) mod vmath;
 pub mod world;
 
 #[cfg(test)]

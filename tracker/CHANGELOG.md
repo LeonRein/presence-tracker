@@ -2,6 +2,40 @@
 
 ## Unveröffentlicht
 
+## 0.36.1 (Branch `rust-core`, nach Leons Prüfung von Phase 6, nicht live)
+
+- **H1:** Die Welt ist nach dem Bau unveränderlich: `walk_end` als `OnceLock` in `Tiles` (`walk_end(&Params)`,
+  gelöst beim ersten Bedarf), keine Übernahme aus der alten Welt. `Tracker::set_world -> Result` lehnt eine Welt mit
+  anderer Dichteform, anderen Kacheln (`Tiles::same_as`: Zahl, Zentren, Flächen, Räume, Regionen, Altersstufen,
+  Ausgänge bitgleich – statt eines Fingerabdrucks der genaue Vergleich) oder anderer Sensorzahl ab.
+- **M1:** Konfiguration je Feld mit Namen geprüft (Sensor x/y/Höhe/Maßstab/fov ≤ 180/range, Sigmas > 0, Anstiege,
+  Wandabstand, Haltezeiten, Kosten, Schwellen in (0, 1), Türen, Wände), höchstens 4·10⁶ Rasterzellen; die Felder,
+  die die Hülle immer schreibt, sind Pflicht (keine serde-Vorgaben mehr, die eine Umbenennung verdecken).
+- **M2:** `expm` gibt `Err` bei nicht endlicher Norm; `Params::validate` prüft turn_rate, go_share/go_time,
+  stay_points (≥ 2, > 0), Stufen ≥ 2, kappa_amp_corr. Tests für abgelehnte Modelle und Konfigurationen.
+- **M3:** Die Hülle vergleicht beim Bau und nach `_recalibrated` die Kacheln exakt (Zentren, Flächen, Räume,
+  Ausgänge, Eingänge, Türkacheln je Region; `Core.tiles()`); `test_core_build.py` vergleicht `ld_view`-Werte und
+  `walk_end` (Toleranz 1e-10, LU gegen LAPACK).
+- **M4:** Typen statt Zahlen und Strings: der Plan ist eine Zonentabelle mit `ZoneRole` und Indizes (`ZoneIdx`,
+  `RoomIdx`, `RegionIdx`), `Place { Observed, Region, Outside }`, `ZoneKind::OutsideRoom` statt `entry`,
+  `ShapeKind`, `RoomGrid` statt Grid mit f64, `Decision` statt `Option<Option<Source>>`, `Link`, `Reach`,
+  `Start::Place(Place)`, `Bounds`/`Away` statt der Bool-Flags von `predict`/`sigma`, `Holders::{entries,
+  people}` statt `entries(bool)`.
+- **M5:** `Tiles::build` in Schritten (`Cells`, `Layout`, `Moments`, `Samples`, `borders`, `door_rates`,
+  `generator`, `walk_tick`, `RegionStays`), die Struct erst am Ende; `AGE_EDGES`/`AGES`; `build::sensor` in
+  `point_sight`, `offset_var`, `Reach`, `spread`, `ld_tiles`, `observed`.
+- **M6:** Rust-Tests ohne Python-Referenz: Plan von Hand (Regionen offen/geschlossen, Ausgänge, Pforten, ≥ 60 %,
+  eigener Raum, Orte, Reflexion), zwei Kacheln (Generator, Gehschritt), `walk_end` bei zwei Zuständen gegen die
+  Lösung von Hand, `zone_numbers`, `set_world` leert den Cache und lehnt andere Kacheln ab.
+- **Niedrig:** `max2` nach `vmath`; `Plan::hidden` ohne `&Config`; Cache-Getter in `OutputCache`; Module, die
+  nur der Kern braucht, `pub(crate)`; `retain` mit `keep_marked`; `0.0 + wi` kommentiert.
+- **Fehler gefunden und behoben:** Die Bindung paarte die Zonenzahlen mit allen Zonen statt mit den Heim-Zonen;
+  steht ein Außenraum vor einem Heimraum (live: `entry_treppe` vor `r4ade416`), verrutschten die Namen (beim
+  Umbau entstanden, in keiner Spur von 0.36.0). `test_core_build.py` vergleicht jetzt die Zonennamen von
+  `zone_states` mit den Heim-Zonen.
+- **Prüfung:** Spuren aller drei Stunden mit eigener und mit Pythons Welt bitgleich mit 0.36.0 (a810241), samt
+  aller Zonenfelder. `ab.sh 1200` 20,7 s gegen 48,2 s (0.31.1). 87 Rust-, 271 Python-Tests.
+
 ## 0.36.0 (Branch `rust-core`, Phase 6 des Rust-Kerns, nicht live)
 
 - **Der Kern baut seine Welt selbst** aus der Konfiguration (`config.rs`: serde von `Config.to_dict()`) und dem

@@ -19,8 +19,9 @@ use presence_core::filter::{NotFinite, PeopleState, Start};
 use presence_core::geometry::Point;
 use presence_core::ld2410::CELLS;
 use presence_core::ld2410::sensor::LdCollect;
-use presence_core::outputs::Source;
+use presence_core::outputs::{Decision, Source};
 use presence_core::params::{LostKind, Params, Shapes};
+use presence_core::plan::{Place, RoomIdx};
 use presence_core::sensors::SensorSet;
 use presence_core::tracker::{TrackEvents, Tracker};
 use presence_core::world::{DoorTile, LdExport, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
@@ -134,8 +135,11 @@ fn export_from(e: &Bound<'_, PyDict>) -> PyResult<WorldExport> {
         points: points(&floats(e, "points")?),
         point_tile: ints(e, "point_tile")?,
         point_count: floats(e, "point_count")?,
-        walk_end: Vec::new(),
-        room: ints_or_none(e, "tile_room")?,
+        walk_end: Default::default(),
+        room: ints_or_none(e, "tile_room")?
+            .into_iter()
+            .map(|r| r.map(RoomIdx))
+            .collect(),
         region_start: floats(e, "region_start")?,
         generator: floats(e, "generator")?,
     };
@@ -336,9 +340,26 @@ impl Core {
         silent_after: f64,
         export: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<()> {
-        self.tracker.set_world(world_of(config, model, silent_after, export)?);
+        self.tracker
+            .set_world(world_of(config, model, silent_after, export)?)
+            .map_err(PyValueError::new_err)?;
         self.changed();
         Ok(())
+    }
+
+    /// The tiles as the shell's tiling has them (it must have the same, bit for bit): centres (n x 2),
+    /// areas, rooms (-1 none), the regions' ways out, the entries, per region its door tiles.
+    #[allow(clippy::type_complexity)]
+    fn tiles(&self) -> (Vec<f64>, Vec<f64>, Vec<i64>, Vec<usize>, Vec<usize>, Vec<Vec<usize>>) {
+        let t = &self.tracker.world().tiles;
+        (
+            t.centers.iter().flatten().copied().collect(),
+            t.area.clone(),
+            t.room.iter().map(|r| r.map_or(-1, |k| k.0 as i64)).collect(),
+            t.exits.clone(),
+            t.entries.clone(),
+            t.region_doors.clone(),
+        )
     }
 
     /// (tiles, regions, ages) of the world: the shell's own tiles must be the same.
@@ -719,8 +740,14 @@ impl Core {
     /// is not.
     #[pyo3(signature = (t, people=None))]
     fn reset_people(&mut self, t: f64, people: Option<Vec<Option<usize>>>) -> PyResult<()> {
-        let people: Option<Vec<Start>> =
-            people.map(|v| v.into_iter().map(|p| p.map_or(Start::Anywhere, Start::Place)).collect());
+        let regions = self.tracker.world().plan.regions.len();
+        let start = |p: Option<usize>| match p {
+            None => Ok(Start::Anywhere),
+            Some(i) => Place::of_index(i, regions)
+                .map(Start::Place)
+                .ok_or_else(|| PyValueError::new_err(format!("no place {i}"))),
+        };
+        let people: Option<Vec<Start>> = people.map(|v| v.into_iter().map(start).collect()).transpose()?;
         self.tracker
             .reset_people(t, people.as_deref())
             .map_err(PyValueError::new_err)?;
@@ -854,8 +881,12 @@ impl Core {
         let tracker = &mut self.tracker;
         let (zones, house) = py.detach(|| tracker.zone_numbers(now, start));
         let out = PyList::empty(py);
-        for (z, n) in self.tracker.world().plan.zones.iter().zip(&zones) {
-            let decided = n.decided.map(|s| (s.is_some(), s.map(source_name)));
+        for (z, n) in self.tracker.world().plan.home().zip(&zones) {
+            let decided = match n.decided {
+                Decision::None => None,
+                Decision::Free => Some((false, None)),
+                Decision::Occupied(s) => Some((true, Some(source_name(s)))),
+            };
             let entering = n.entering.map(|e| (e.p, e.distance, e.eta, e.person));
             out.append((
                 z.id.as_str(),
@@ -902,18 +933,13 @@ impl Core {
             .chain(p.regions.iter().map(|r| r.id.clone()))
             .chain(["outside".to_string()])
             .collect();
-        let areas = p
-            .zones
-            .iter()
-            .filter(|z| z.kind == presence_core::config::ZoneKind::Area)
-            .map(|z| z.id.clone())
-            .collect();
+        let areas = p.areas().map(|z| z.id.clone()).collect();
         let own = p
             .sensors
             .iter()
-            .map(|s| s.own_room.map(|k| p.rooms[k].id.clone()))
+            .map(|s| s.own_room.map(|k| p.room(k).id.clone()))
             .collect();
-        (p.rooms.iter().map(|r| r.id.clone()).collect(), places, areas, own)
+        (p.observed().map(|r| r.id.clone()).collect(), places, areas, own)
     }
 
     /// Per room id the last time its own LD2450 measured somebody in it.
@@ -955,7 +981,10 @@ pub fn build_export<'py>(
             .collect::<Vec<_>>())?,
     )?;
     d.set_item("wall_dist", a(w.wall_dist.values())?)?;
-    d.set_item("rooms", a(w.rooms.values())?)?;
+    // per cell its observed room, the number of rooms for none (as the Python tracker exports it)
+    let none = w.plan.rooms.len() as f64;
+    let rooms: Vec<f64> = w.rooms.cells().iter().map(|r| r.map_or(none, |k| k.0 as f64)).collect();
+    d.set_item("rooms", a(&rooms)?)?;
     for (k, v) in [
         ("go", &sh.go),
         ("go_w", &sh.go_w),
@@ -995,7 +1024,7 @@ pub fn build_export<'py>(
     d.set_item("point_tile", t.point_tile.clone())?;
     d.set_item(
         "tile_room",
-        t.room.iter().map(|r| r.map_or(-1, |k| k as i64)).collect::<Vec<_>>(),
+        t.room.iter().map(|r| r.map_or(-1, |k| k.0 as i64)).collect::<Vec<_>>(),
     )?;
     let sensors = PyList::empty(py);
     for (s, ld) in w.sights.iter().zip(&w.ld) {
@@ -1021,28 +1050,32 @@ pub fn build_export<'py>(
         "regions",
         p.regions
             .iter()
-            .map(|r| (r.id.clone(), r.name.clone(), r.rooms.clone(), r.exits))
+            .map(|r| {
+                let rooms: Vec<&str> = r.rooms.iter().map(|z| p.zones[z.0].id.as_str()).collect();
+                (r.id.as_str(), r.name.as_str(), rooms, r.exits)
+            })
             .collect::<Vec<_>>(),
     )?;
     d.set_item(
         "observed_rooms",
-        p.rooms.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+        p.observed().map(|r| r.id.as_str()).collect::<Vec<_>>(),
     )?;
     d.set_item(
         "own_rooms",
         p.sensors
             .iter()
-            .map(|s| s.own_room.map(|k| p.rooms[k].id.clone()))
+            .map(|s| s.own_room.map(|k| p.room(k).id.as_str()))
             .collect::<Vec<_>>(),
     )?;
     d.set_item(
         "portals",
         p.portals
             .iter()
-            .map(|q| (q.place, q.watch[0], q.watch[1]))
+            .map(|q| (q.place.index(p.regions.len()), q.watch[0], q.watch[1]))
             .collect::<Vec<_>>(),
     )?;
-    d.set_item("closed_rooms", p.closed_rooms.len())?;
+    d.set_item("closed_rooms", p.closed.len())?;
+    d.set_item("walk_end", a(w.tiles.walk_end(&w.params))?)?;
     Ok(d)
 }
 
@@ -1061,6 +1094,6 @@ pub fn hidden_at(config: &str, si: usize, points: Vec<Point>, us: Vec<Point>, ma
     Ok(points
         .iter()
         .zip(&us)
-        .map(|(&p, &u)| plan.hidden(&config, s, p, u, margin))
+        .map(|(&p, &u)| plan.hidden(s, p, u, margin))
         .collect())
 }
