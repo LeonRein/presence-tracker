@@ -309,8 +309,8 @@ class Tracker:
         rt.frames += 1
         sensor = self.config.sensor_by_id.get(sensor_id)
         if sensor is not None:
-            rt.detections = [Detection(np.array([x, y]), (lx, ly), v, hidden, stale)
-                             for x, y, lx, ly, v, hidden, stale in self._c.detections(self.sidx[sensor_id])]
+            rt.detections = [Detection(np.array(d.pos), tuple(d.local), d.speed, d.hidden, d.stale)
+                             for d in self._c.detections(self.sidx[sensor_id])]
             self._ld_runtime(sensor, rt, t, frame.ld2410 or {})
             for listener in self.listeners:
                 listener("frame", (sensor, t, rt.detections))
@@ -419,7 +419,8 @@ class Tracker:
         it watched."""
         if sensor_id not in self.sidx:
             return {}
-        (x0, y0), cell, cols, rows, prior = self._call("sensor_map", self.sidx[sensor_id])
+        m = self._call("sensor_map", self.sidx[sensor_id])
+        (x0, y0), cell, cols, rows, prior = m.corner, m.cell, m.cols, m.rows, m.prior
         prior = np.asarray(prior, dtype=float).reshape(cols, rows)
         ii, jj = np.meshgrid(np.arange(cols), np.arange(rows), indexing="ij")
         pts = np.stack([x0 + (ii.ravel() + 0.5) * cell, y0 + (jj.ravel() + 0.5) * cell], axis=1)
@@ -492,9 +493,9 @@ class Tracker:
         x, y, sd x, sd y]] as they are; without (and their part gone through a door), [[tile, mass per
         m^2]] of the tiles holding at least 0.2 % (anywhere in a tile alike: all the model knows about
         where an unseen person is; the tiles' squares: /api/tiles)."""
-        return [{"id": pid, "gauss": [[round(v, 3) for v in g] for g in gauss],
-                 "tiles": [[i, round(m, 4)] for i, m in tiles]}
-                for pid, gauss, tiles in self._call("clouds")]
+        return [{"id": c.id, "gauss": [[round(v, 3) for v in g] for g in c.gauss],
+                 "tiles": [[i, round(m, 4)] for i, m in c.tiles]}
+                for c in self._call("clouds")]
 
     # ------------------------------------------------- "about to be entered" (MODEL.md 6)
 
@@ -504,8 +505,8 @@ class Tracker:
         (lead_time), and for the one who most probably does, the expected time and distance to it and
         their id in the display (persons(); None if not in the most probable hypothesis). In the core,
         once per move of everybody or event."""
-        return {z: {"p": p, "eta": eta, "distance": dist, "person": person}
-                for z, (p, dist, eta, person) in zip(self._entry_ids, self._call("entering"))}
+        return {z: {"p": e.p, "eta": e.eta, "distance": e.distance, "person": e.person}
+                for z, e in zip(self._entry_ids, self._call("entering"))}
 
     # ------------------------------------------------------- "Ziel" (MODEL.md 6)
 
@@ -513,13 +514,14 @@ class Tracker:
         """room id -> "Ziel" for the observed rooms (MODEL.md 6; in the core): {"p", "on", "map", "weight",
         "walks", "from", "distance", "eta", "person"}. The walkers' own motion ("wird betreten") is the
         prior, the learned destination map its data; on if P >= the room's threshold."""
-        keys = ("p", "on", "map", "weight", "walks", "from", "distance", "eta", "person")
-        return {z: dict(zip(keys, v)) for z, v in zip(self.rooms, self._call("targets"))}
+        return {z: {"p": t.p, "on": t.on, "map": t.map, "weight": t.weight, "walks": t.walks,
+                    "from": None if t.from_room is None else self.rooms[t.from_room], "distance": t.distance,
+                    "eta": t.eta, "person": t.person}
+                for z, t in zip(self.rooms, self._call("targets"))}
 
     def threshold(self, zone: str) -> float:
-        """The room's threshold for "Ziel" (its own, else the default)."""
-        p = self.p
-        return float((p.target_thresholds or {}).get(zone, p.target_threshold))
+        """The room's threshold for "Ziel" (its own, else the default; the core's, kept inside (0, 1))."""
+        return self._c.target_above(zone)
 
     def occupancy(self) -> dict:
         """Observed room id -> (occupied, source), MODEL.md 6 "Belegt" (in the core): P(somebody there)
@@ -541,17 +543,17 @@ class Tracker:
         "unavailable" instead of its state (ha.py); the state itself is computed as always. The numbers
         are the core's (zone_numbers); here they become ZoneStates, with "Ziel"."""
         from .zones import ZoneState
-        zones, (count, moving, still) = self._call("zone_numbers", self.now)
+        zones, house = self._call("zone_numbers", self.now)
         c_enter = self._c.thresholds()[1]
         states = {}
-        for zid, n, prob, decided, mov, sti, enter, approaching, available in zones:
-            st = ZoneState(count=n, moving=mov, still=sti, probability=prob, available=available)
-            if decided is not None:
-                st.decided, st.source = decided
-            if enter is not None:
-                st.p_enter, st.distance, st.eta, st.person = enter
-                st.approaching, st.c_enter = approaching, c_enter
-            states[zid] = st
+        for z in zones:
+            st = ZoneState(count=z.count, moving=z.moving, still=z.still, probability=z.probability,
+                           available=z.available, decided=z.decided, source=z.source)
+            e = z.entering
+            if e is not None:
+                st.p_enter, st.distance, st.eta, st.person = e.p, e.distance, e.eta, e.person
+                st.approaching, st.c_enter = z.approaching, c_enter
+            states[z.id] = st
         # the rooms first, then the areas (as Home Assistant and the display have them)
         kind = {z.id: z.kind for z in self.config.zones}
         states = {z: states[z] for z in sorted(states, key=lambda z: kind[z] != "room")}
@@ -560,10 +562,10 @@ class Tracker:
             if st is None:
                 continue
             st.target = e["on"]
-            st.c_target = min(max(self.threshold(zid), 1e-6), 1.0 - 1e-6)
+            st.c_target = self.threshold(zid)
             st.p_target, st.target_weight, st.target_walks = e["p"], e["weight"], e["walks"]
             st.target_from, st.target_distance, st.target_eta, st.target_person = e["from"], e["distance"], e["eta"], e["person"]
-        states["_total"] = ZoneState(count=count, moving=moving, still=still)
+        states["_total"] = ZoneState(count=house.count, moving=house.moving, still=house.still)
         return states
 
     def snapshot(self) -> dict:

@@ -2,6 +2,15 @@
 
 ## Unveröffentlicht
 
+## 0.40.1 (Branch `rust-core`, nach Leons Prüfung der Aufräumrunde; nicht live)
+
+Modell unverändert; Spuren der drei Referenzstunden byte-gleich mit 0.40.0.
+
+- **Alle Sichten der Bindung benannt** (`presence-py/src/views.rs`): `DetectionView`, `SensorMapView`, `EnteringView`,
+  `TargetView` (Raum als Index, die Hülle setzt die ID ein), `CloudView`, `ZoneView`/`HouseView` neben `HypView`,
+  `TilesView`, `PersonView`; kein `allow(clippy::type_complexity)` mehr in `presence-py`.
+- **Schwelle „Ziel“ nur im Kern:** `Tracker.threshold` liest `OutputParams::target_above` (mit der Klemme in (0, 1));
+  `zone_states` rechnet sie nicht mehr selbst.
 ## 0.40.0 (Branch `rust-core`, Aufräumrunde vor Phase 10; nicht live)
 
 Modell unverändert; Spuren der drei Referenzstunden byte-gleich mit 0.39.1 (mit der eingetragenen `ld_view`-Tabelle);
