@@ -2,6 +2,13 @@
 
 ## Unveröffentlicht
 
+## 0.53.2 (Branch `rust-core`, keine Fächer beim Laden)
+
+- **Die Sichtfächer blitzten beim Neuladen etwa 1 s auf**, bis `/api/coverage` die Sicht je Kachel lieferte: Der
+  Ersatz „Sichtfeld wie eingegeben“ griff auch beim Laden. Er gilt jetzt nur, solange eine Änderung nicht gespeichert
+  ist (Vorschau beim Verschieben eines Sensors; Speichern verwirft Kalibrierdaten und Gelerntes). Headless geprüft:
+  beim Laden des Tabs Sensoren vorher bis zu 7 Fächer, jetzt keine; danach 1646 Sichtkacheln wie vorher.
+
 ## 0.53.1 (Branch `rust-core`, Abnahme mit fast_eval; nicht live)
 
 - **`presence_core.forgetting` wieder da (nur mit Feature `testing`).** 0.50.0 hatte es als tot gelöscht; `fast_eval`

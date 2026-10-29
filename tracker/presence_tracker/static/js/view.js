@@ -1,6 +1,6 @@
 // SVG map: projection, pan/zoom, and drawing of the plan, sensors, zones and live data.
 // Everything is drawn in screen pixels; world coordinates are meters with y pointing up.
-import { api, coverageNow, heldBadges, openingsNow, state, sensorColor } from './store.js';
+import { api, coverageNow, heldBadges, openingsNow, state, sensorColor, unsaved } from './store.js';
 import { PERSON_COLORS, ZONE_KINDS, crossesWall, dist, esc, fmt, personColor, rad, zoneCenter, zoneOutline } from './util.js';
 
 // coverage: tiles that no sensor, one, two or more see (the core's count per tile); a room the sensors don't
@@ -266,7 +266,7 @@ export class MapView {
     // sensors
     const showFov = editing || state.showRaw;
     // what each sees, per tile as the filter weighs it (the core's sight of the saved configuration, beneath
-    // the walls); until an edit is saved its field of view as entered
+    // the walls); while an edit is not saved its field of view as entered (not while the sight loads: no flash)
     const world = showFov && coverageNow();
     if (world) out.splice(firstWall, 0, this._sight(world, sel?.kind === 'sensor' ? sel.id : null));
     for (const s of c.sensors) {
@@ -276,7 +276,7 @@ export class MapView {
       const [x, y] = this.P(s.x, s.y);
       const a0 = rad(s.heading - s.fov / 2), a1 = rad(s.heading + s.fov / 2);
       const r = s.range * this.s;
-      if (showFov && !world) {
+      if (showFov && !world && unsaved()) {
         const [x0, y0] = [x + r * Math.cos(a0), y - r * Math.sin(a0)];
         const [x1, y1] = [x + r * Math.cos(a1), y - r * Math.sin(a1)];
         out.push(`<path class="fov" d="M${x},${y} L${x0},${y0} A${r},${r} 0 0 0 ${x1},${y1} Z" fill="${color}"
