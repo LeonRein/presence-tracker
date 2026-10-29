@@ -26,6 +26,9 @@ fertige aus der GitHub Container Registry.
   10.10. 12 Uhr bis 4e-5, 8.10. 19 Uhr kippen Hypothesen (bis 0,47, 4 Raumsekunden auf der anderen Seite von 0,5).
   Im Image sind Rust (presence-replay) und Hülle (`trace.py`) untereinander byte-gleich. `test_core_build` prüft die
   Digests nur unter hermanns `hypot` (sonst übersprungen, wie in CI).
+- **`test_geometry_change.py` als `hooks` markiert:** es simuliert über `test_robust.run_a_while`, das `conftest` nicht
+  erkennt (nur `sim.simulate` im eigenen Modul); gegen das Release-Wheel scheiterten seine 9 Tests (seit 0.51.0, im
+  ersten CI-Lauf gefunden). Gegen das Release-Wheel 78 Tests grün.
 
 ## 0.51.1 (Branch `rust-core`, ohne den Umzug des LD2410C-Blicks; nicht live)
 

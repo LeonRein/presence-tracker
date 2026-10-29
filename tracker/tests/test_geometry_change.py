@@ -19,6 +19,8 @@ from test_config_api import call
 from test_filter import flat_config
 from test_robust import run_a_while
 
+pytestmark = pytest.mark.hooks  # run_a_while simulates frames (sim.simulate), which conftest sees only in its own module
+
 UTIL = pathlib.Path(__file__).parents[1] / "presence_tracker" / "static" / "js" / "util.js"
 VIEW = {"wohn<-balkon": 0.5}  # a measured view of the LD2410C, as tools/ld2410/footprint.py measures it
 
