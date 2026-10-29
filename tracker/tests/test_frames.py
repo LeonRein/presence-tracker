@@ -151,56 +151,32 @@ def _ghost_source(tr, raw=(0.6, 4.0), n=30):
     return spot
 
 
-def test_a_recalibrated_sensor_keeps_its_ghost_map_in_its_frame():
-    # MODEL.md 4.2: a new calibration changes how the sensor's reports are read, not what it reports:
-    # its ghosts stay where it reports them, and in the house frame they go with the new pose
-    raw = (0.6, 4.0)
-    for change in ({"heading": 48}, {"heading": 42}, {"scale": 1.05}, {"scale": 0.95},
-                   {"heading": 48, "scale": 1.05}, {"heading": 55}, {"x": 0.35}, {"mirror": True}):
-        tr = Tracker(room_config())
-        spot = _ghost_source(tr, raw)
-        before = _rate(tr, "a", spot)[0]
-        b_before = _rate(tr, "b", [[3.0, 2.5]])[0]
-        d = tr.learned()["ghost_map"]
-        prior_rate, prior_time = d["prior_rate"], d["prior_time"]
-        assert before > 5 * prior_rate
-        new = _changed(**change)
-        tr.reconfigure(new)
-        assert tr.learned()["ghost_map"]["time"]["a"] == 86400.0, change
-        s = new.data["sensors"][0]
-        moved = _floor(new, raw)
-        # the same cell of its frame; per m^2 of the floor as much less as a cell covers more of it
-        k0 = prior_rate * 0.16 * prior_time
-        area = lambda scale: k0 / prior_rate + (0.4 * scale) ** 2 * 86400.0  # noqa: E731
-        assert _rate(tr, "a", moved)[0] == pytest.approx(before * area(1.0) / area(s["scale"]), rel=1e-9), change
-        assert _rate(tr, "b", [[3.0, 2.5]])[0] == b_before  # the other sensor: untouched
-    # turned by 10 deg the reflection 4 m away lands 0.7 m off: the map goes along
-    tr = Tracker(room_config())
-    spot = _ghost_source(tr, raw)
-    tr.reconfigure(_changed(heading=55))
-    moved = _floor(tr.config, raw)
-    assert np.hypot(*(moved - spot)[0]) > 0.6
-    assert _rate(tr, "a", moved)[0] > 3 * _rate(tr, "a", spot)[0]
-
-
-def test_a_remounted_sensor_starts_its_part_of_the_ghost_map_over():
-    for change in ({"x": 1.0}, {"x": 0.45, "y": 0.45}, {"heading": 80}, {"heading": 10}, {"height": 2.2}):
+def test_any_change_of_where_a_sensor_hangs_or_how_it_sees_starts_the_whole_ghost_map_over():
+    # MODEL.md 4.2, 9 "Gelerntes und Geometrie" (0.51, Leon 29.10.): no "recalibrated" (kept) or "remounted"
+    # (started over) per sensor any more - a new heading or scale too, and the other sensors' parts with it
+    for change in ({"heading": 48}, {"scale": 1.05}, {"mirror": True}, {"x": 0.35}, {"x": 1.0}, {"height": 2.2},
+                   {"fov": 100}, {"range": 5}, {"placed": False}):
         tr = Tracker(room_config())
         _ghost_source(tr)
-        b_before = _rate(tr, "b", [[3.0, 2.5]])[0]
         tr.reconfigure(_changed(**change))
         d = tr.learned()["ghost_map"]
-        assert "a" not in d["count"] and d["time"].get("a", 0.0) == 0.0, change
-        assert _rate(tr, "a", [[2.0, 2.0]])[0] == pytest.approx(_prior_rate(tr))
-        assert _rate(tr, "b", [[3.0, 2.5]])[0] == b_before, change  # the other one keeps its part
-    # a sensor removed takes its part along; a new one starts from the prior
+        assert not d["count"] and not any(d["time"].values()), change
+        assert _rate(tr, "b", [[3.0, 2.5]])[0] == pytest.approx(_prior_rate(tr)), change
+    # a sensor removed or a new one: the same
     tr = Tracker(room_config())
     _ghost_source(tr)
     d = room_config().to_dict()
     d["sensors"] = [d["sensors"][1], dict(id="c", name="", x=3.0, y=4.95, heading=270, placed=True)]
     tr.reconfigure(Config.from_dict(d))
     d = tr.learned()["ghost_map"]
-    assert set(d["poses"]) == {"b", "c"} and set(d["count"]) == {"b"}
+    assert set(d["poses"]) == {"b", "c"} and not d["count"]
+    # a name or a sensor switched off, where it hangs: all of it stays
+    for change in ({"name": "Ecke"}, {"enabled": False}):
+        tr = Tracker(room_config())
+        _ghost_source(tr)
+        before = tr.learned()["ghost_map"]
+        tr.reconfigure(_changed(**change))
+        assert tr.learned()["ghost_map"] == before, change
 
 
 def test_a_saved_ghost_map_reads_back_the_same():
@@ -220,10 +196,11 @@ def test_a_saved_ghost_map_reads_back_the_same():
                              "prior_time": saved["prior_time"], "time": {}, "poses": {}, "count": {}})
 
 
-def test_the_ld2410c_background_stays_with_a_recalibration_not_with_a_remount():
-    # its cells are distances from the sensor (MODEL.md 4.3): a new heading or scale changes nothing
-    for change, kept in (({"heading": 48, "scale": 1.05}, True), ({"x": 0.3, "mirror": True}, True),
-                         ({"x": 1.0}, False), ({"heading": 90}, False)):
+def test_the_ld2410c_background_stays_only_where_the_sensors_hang_as_they_hung():
+    # MODEL.md 4.3, 9 "Gelerntes und Geometrie" (0.51): any change of a sensor's place or reading starts it over
+    # for every sensor; a name or a sensor switched off keeps it
+    for change, kept in (({"heading": 48, "scale": 1.05}, False), ({"x": 0.3, "mirror": True}, False),
+                         ({"x": 1.0}, False), ({"enabled": False}, True), ({"name": "Ecke"}, True)):
         tr = Tracker(room_config())
         prior = ld_prior()
         bg = tr.learned()["ld_background"]
@@ -234,7 +211,7 @@ def test_the_ld2410c_background_stays_with_a_recalibration_not_with_a_remount():
         tr.reconfigure(_changed(**change))
         now = tr.learned()["ld_background"]
         assert now["num"].get("a") == (learned["num"]["a"] if kept else None), change
-        assert now["num"]["b"] == learned["num"]["b"]
+        assert now["num"].get("b") == (learned["num"]["b"] if kept else None), change
         # what the core wrote it reads back the same (the format in Python's: a dict made by hand above;
         # ld2410/background.rs the_format_comes_back_and_a_broken_one_is_named)
         again = Tracker(tr.config)

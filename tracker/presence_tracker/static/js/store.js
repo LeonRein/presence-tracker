@@ -1,6 +1,6 @@
 // Application state, server API, saving and undo.
 import { syncRooms } from './floorplan.js';
-import { layersError, problemText, rebase, toast } from './util.js';
+import { discardedText, layersError, problemText, rebase, toast } from './util.js';
 
 const listeners = new Set();
 
@@ -170,8 +170,12 @@ async function save() {
       state.derivedMap = mapOf(r.config);
       emit('config');
       if (r.derived) refreshCoverage();
-      // the model starts over for most edits (walls, rooms, parameters): say so, it changes the live view
-      toast([saveNote, 'Gespeichert', r.restarted ? 'Modell neu gestartet' : ''].filter(Boolean).join(' · '));
+      // the model starts over for most edits (walls, rooms, parameters): say so, it changes the live view; and
+      // what another geometry discarded (the server's: the calibration tab shows 0 now)
+      const gone = discardedText(r.discarded);
+      if (r.discarded) state.calibResult = null;  // computed from the measurements discarded
+      toast([saveNote, 'Gespeichert', r.restarted ? 'Modell neu gestartet' : '', gone].filter(Boolean).join(' · '),
+        gone ? 10000 : 2500);
       saveNote = '';
     } catch (e) {
       toast('Nicht gespeichert: ' + e.message + ' Der Entwurf bleibt.', 8000);

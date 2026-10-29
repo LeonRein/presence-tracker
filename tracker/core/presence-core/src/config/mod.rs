@@ -24,6 +24,7 @@ pub use check::{
     check,
 };
 
+use crate::formats::Fingerprint;
 use crate::geometry::{Point, Shape, line_of_sight};
 use crate::vmath::py_hypot;
 
@@ -540,6 +541,20 @@ pub fn canonical(json: &str) -> Result<Value, ConfigError> {
     Ok(out)
 }
 
+/// The configuration (JSON, the canonical form) without what was measured with the sensors where they hung and
+/// the plan as it was: the LD2410Cs' view of the other rooms (ld_view, MODEL.md 4.3), and how many room pairs of
+/// it went. The shell takes it in place of a new configuration of another geometry (`Config::geometry_key`), as
+/// it discards what was collected and learned under the old one.
+pub fn forget_measured(json: &str) -> Result<(Value, usize), ConfigError> {
+    let mut value: Value = serde_json::from_str(json).map_err(ConfigError::unreadable)?;
+    let gone = value
+        .as_object_mut()
+        .and_then(|o| o.insert("ld_view".into(), Value::Object(Map::new())))
+        .and_then(|v| v.as_object().map(Map::len))
+        .unwrap_or(0);
+    Ok((value, gone))
+}
+
 impl Config {
     /// The configuration of its JSON (the model's part of `canonical`), checked field by field (check.rs; the
     /// error names the first problem).
@@ -547,6 +562,54 @@ impl Config {
         let value: Value = serde_json::from_str(json).map_err(ConfigError::unreadable)?;
         check(&value)?;
         Self::deserialize(value).map_err(ConfigError::unreadable)
+    }
+
+    /// The key of the geometry: where every sensor hangs and how it sees and is read (place, heading, height,
+    /// mirror, scale, field of view, range, placed or not), the walls, the doors and the zones' shapes and kinds:
+    /// the one definition of "the sensors or the floor plan changed". What was collected or learned holds only
+    /// under the key it was collected under (the calibration's measurements, the ghost map, the LD2410C
+    /// background, the destination map, the measured ld_view): a sensor's sight, its frame and the rooms are
+    /// all read from these. Not in it: names, a sensor switched on or off, the parameters, ld_view itself.
+    /// The numbers by value (1 is 1.0, -0 is 0), in the order of the configuration; sha1, 16 hex digits.
+    pub fn geometry_key(&self) -> String {
+        let mut h = Fingerprint::default();
+        let flag = |b: bool| f64::from(u8::from(b));
+        let points = |pts: &[Point]| pts.iter().flatten().map(|&v| v + 0.0).collect::<Vec<_>>();
+        for s in &self.sensors {
+            let read = [
+                s.x,
+                s.y,
+                s.heading,
+                s.height,
+                flag(s.mirror),
+                s.scale,
+                s.fov,
+                s.range,
+                flag(s.placed),
+            ];
+            h.text("sensor\n").text(&s.id).text("\n").floats(read.map(|v| v + 0.0));
+        }
+        for z in &self.zones {
+            let (shape, pts) = match &z.shape {
+                Shape::Rect { lo, hi } => ("rect", points(&[*lo, *hi])),
+                Shape::Circle { center, radius } => ("circle", [points(&[*center]), vec![radius + 0.0]].concat()),
+                Shape::Polygon { corners, .. } => ("polygon", points(corners)),
+            };
+            h.text("zone\n")
+                .text(&z.id)
+                .text(&format!("\n{:?}\n{shape}\n", z.kind))
+                .floats(pts);
+        }
+        for w in &self.walls {
+            h.text(&format!("wall\n{:?}\n", w.kind)).floats(points(&[w.a, w.b]));
+        }
+        for d in &self.doors {
+            h.text("door\n")
+                .text(&d.id)
+                .text("\n")
+                .floats([d.x, d.y, d.width].map(|v| v + 0.0));
+        }
+        h.hex()
     }
 
     /// The rooms, the outside rooms too.
@@ -623,6 +686,70 @@ mod tests {
         ));
         let far = given.replace(r#""fov": 90"#, r#""fov": 200"#);
         assert_eq!(canonical(&far).expect_err("refused").field, Some("fov"));
+    }
+
+    #[test]
+    fn the_geometry_key_changes_with_a_sensors_place_and_the_plan_only() {
+        let zone = r#"[{"id": "r", "name": "R", "kind": "room", "shape": "rect", "points": [[0, 0], [4, 4]]}]"#;
+        let walls = format!("[{}]", crate::testing::wall([0.0, 0.0], [4.0, 0.0]));
+        let doors = r#"[{"id": "d", "x": 2, "y": 0, "width": 0.9}]"#;
+        let old = config_json(&[("s", "S", [0.5, 0.5], 0.0)], zone, &walls, doors);
+        let key = |json: &str| {
+            Config::from_json(json)
+                .unwrap_or_else(|e| panic!("{json}: {e:?}"))
+                .geometry_key()
+        };
+        let k = key(&old);
+        assert_eq!(k.len(), 16);
+        // what does not change where and how the sensors see, nor the plan
+        for (from, to) in [
+            (r#""name": "S""#, r#""name": "Bad""#),
+            (r#""name": "R""#, r#""name": "Raum""#),
+            (r#""enabled": true"#, r#""enabled": false"#),
+            (r#""light_cost": 2.0"#, r#""light_cost": 3"#),
+            (r#""wall_margin": 0.4"#, r#""wall_margin": 0.5"#),
+            (r#""ld_view": {}"#, r#""ld_view": {"r<-r": 0.5}"#),
+            (r#""x": 0.5"#, r#""x": 0.50"#),
+            (r#""heading": 0.0"#, r#""heading": -0.0"#),
+            (r#"[[0, 0], [4, 4]]"#, r#"[[0.0, 0], [4, 4.0]]"#),
+        ] {
+            let new = old.replace(from, to);
+            assert_ne!(new, old, "{from}");
+            assert_eq!(key(&new), k, "{from} -> {to}");
+        }
+        // every part of a sensor's place, sight and reading, placed or not, the walls, doors and zones
+        for (from, to) in [
+            (r#""x": 0.5"#, r#""x": 0.51"#),
+            (r#""y": 0.5"#, r#""y": 1.5"#),
+            (r#""heading": 0.0"#, r#""heading": 1"#),
+            (r#""height": 1.5"#, r#""height": 2.0"#),
+            (r#""mirror": false"#, r#""mirror": true"#),
+            (r#""scale": 1.0"#, r#""scale": 1.05"#),
+            (r#""fov": 120.0"#, r#""fov": 100"#),
+            (r#""range": 6.0"#, r#""range": 5"#),
+            (r#""placed": true"#, r#""placed": false"#),
+            (r#"[4.0, 0.0]]"#, r#"[5.0, 0.0]]"#),
+            (r#""x": 2, "y": 0"#, r#""x": 3, "y": 0"#),
+            (r#""width": 0.9"#, r#""width": 1"#),
+            (r#"[[0, 0], [4, 4]]"#, r#"[[0, 0], [4, 5]]"#),
+            (r#""kind": "room""#, r#""kind": "area""#),
+            (r#""id": "s""#, r#""id": "t""#),
+        ] {
+            let new = old.replace(from, to);
+            assert_ne!(new, old, "{from}");
+            assert_ne!(key(&new), k, "{from} -> {to}");
+        }
+        let more = old.replace(
+            r#""walls": ["#,
+            &format!(r#""walls": [{}, "#, crate::testing::wall([4.0, 0.0], [4.0, 4.0])),
+        );
+        assert_ne!(key(&more), k);
+        let divided = more.replacen(r#""kind": "wall""#, r#""kind": "divider""#, 1);
+        assert_ne!(key(&divided), key(&more));
+        // what was measured under a geometry goes with it, the rest stays as it was
+        let measured = old.replace(r#""ld_view": {}"#, r#""ld_view": {"r<-r": 0.5}"#);
+        let forgotten = forget_measured(&measured).expect("JSON");
+        assert_eq!(forgotten, (serde_json::from_str::<Value>(&old).expect("JSON"), 1));
     }
 
     #[test]

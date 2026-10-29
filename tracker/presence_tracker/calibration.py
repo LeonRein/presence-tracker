@@ -5,9 +5,10 @@ rows of every frame (presence_core.Walking: the walking targets through the boar
 progress of the data (presence_core.calibration_status).
 
 Here the app's session: the rows of the last KEEP seconds, collected all the time (in raw sensor
-coordinates, so a change of the drawing doesn't spoil them; a sensor turned or moved for real needs
-`reset`), stored for the next start, handed to the core in a thread; and the core's reasons in the words
-of the web UI. Everyday walking connects the sensors as well as a calibration walk does, and over a day
+coordinates), stored for the next start with the key of the geometry they were collected under (the core's:
+presence_core.geometry_key; a saved configuration of another one discards them, app.App._forget, as a file
+of another one at the start: load), handed to the core in a thread; and the core's reasons in the words of the
+web UI. A sensor turned or moved for real while its drawing stays needs `reset`. Everyday walking connects the sensors as well as a calibration walk does, and over a day
 far better (MODEL.md 10: a 10-minute walk alone put the hall's heading 15 deg off); a walk alone through
 rooms and doors adds what everyday walking doesn't reach. `tools/calibrate_offline.py` (its analyses need
 a tree of 0.43.0, where the estimator was Python) feeds recordings through the same collection.
@@ -110,27 +111,35 @@ class Calibrator:
                 chunks.pop(0)
             self.since = max(self.since, t - KEEP)
 
+    def geometry(self) -> str:
+        """The key of the geometry of the configuration (the core's): what the data are collected under."""
+        return presence_core.geometry_key(self.config.model_json())
+
     def save(self, path):
         """The collected data, for the next start (a restart would otherwise lose up to a day)."""
         atomic_write(path, self.snapshot()())
 
     def snapshot(self):
-        """The collected data as they are now (copied), and a function that packs them for the file:
-        it may run in a thread while the frames go on. Not compressed: np.savez_compressed took 98 ms
-        for a day of data (1.6 MB instead of 6.7 MB), np.savez 2 ms (MODEL.md 10)."""
+        """The collected data as they are now (copied), with the key of their geometry, and a function that packs
+        them for the file: it may run in a thread while the frames go on. Not compressed: np.savez_compressed
+        took 98 ms for a day of data (1.6 MB instead of 6.7 MB), np.savez 2 ms (MODEL.md 10)."""
         parts = self._parts()
         since = np.array([self.since if self.since is not None else np.nan])
+        geometry = np.array(self.geometry())
 
         def pack() -> bytes:
             buf = io.BytesIO()
-            np.savez(buf, since=since, **{"s_" + sid: a for sid, a in self._join(parts).items()})
+            np.savez(buf, since=since, geometry=geometry, **{"s_" + sid: a for sid, a in self._join(parts).items()})
             return buf.getvalue()
         return pack
 
-    def load(self, path):
-        """What `save` wrote; track numbers go on after the loaded ones."""
+    def load(self, path) -> bool:
+        """What `save` wrote, if it was collected under the geometry of the configuration; else nothing (False:
+        the caller discards the file). Track numbers go on after the loaded ones."""
         self.reset()
         with np.load(path) as f:
+            if str(f["geometry"]) != self.geometry():
+                return False
             since = float(f["since"][0])
             self.since = None if math.isnan(since) else since
             last = -1
@@ -139,6 +148,7 @@ class Calibrator:
                     self._chunks[key[2:]].append(np.array(f[key], float))
                     last = max(last, int(f[key][:, SEG].max()))
         self._walking = presence_core.Walking(last + 1)
+        return True
 
     def _parts(self) -> dict:
         """Per sensor the packed arrays (never changed afterwards) and a copy of the rows gathered
@@ -157,6 +167,10 @@ class Calibrator:
 
     def data(self) -> dict:
         return self._join(self._parts())
+
+    def count(self) -> int:
+        """The walking measurements kept, of all sensors."""
+        return sum(sum(len(c) for c in chunks) + len(rows) for chunks, rows in self._parts().values())
 
     def status(self) -> dict:
         """Since when and how many hours are kept ("keep_h"), walking measurements per sensor ("frames"), the

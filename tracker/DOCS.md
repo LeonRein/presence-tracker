@@ -47,20 +47,31 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   nicht mehr, ist wahrscheinlich gegangen; wer auf dem Sofa selten erfasst wird, nicht.
 - **Geister**: Eine Spur, die zu keiner Person gehört. Wo jeder Sensor Geister sieht, **lernt die App
   selbst** (Geisterkarte); wie lange Geister leben, ist fest (daran unterscheidet das Modell sie von
-  Sitzenden). Die Karte liegt für jeden Sensor in seinem eigenen Blick: Eine neue Kalibrierung (Richtung,
-  Maßstab) behält sie, sie wandert mit. Wird ein Sensor anders montiert (um mehr als 0,5 m versetzt oder um
-  mehr als 30° gedreht), beginnt sein Teil neu, die der anderen bleiben. Eine Stelle wird erst nach vielen Geistern zur Geisterquelle (ein
+  Sitzenden). Die Karte liegt für jeden Sensor in seinem eigenen Blick; sie gilt nur, solange Sensoren und
+  Grundriss so bleiben, wie sie beim Lernen waren (siehe *Gespeicherte Änderung von Sensorlage oder
+  Grundriss*). Eine Stelle wird erst nach vielen Geistern zur Geisterquelle (ein
   Platz, an dem jemand sitzt, soll nicht durch ein paar Fehlurteile dazu werden); bis die Karte einige
   Tage gelernt hat, werden Geister an festen Stellen (Möbel, Ladestation) leichter für Personen gehalten.
-- **Sensor drehen oder neu kalibrieren** (gleicher Grundriss): Was über die Personen bekannt ist, bleibt.
+- **Sensor drehen oder neu kalibrieren** (gleicher Grundriss): Was über die Personen bekannt ist, bleibt
+  (alles Gelernte nicht, siehe nächster Punkt).
   Nur die Spuren dieses Sensors beginnen neu, wie nach einer Datenlücke. Andere Parameter: Das Modell
   beginnt neu mit dem, was es über die Personen wusste. Ein geänderter Grundriss (Wände, Räume, Türen):
   Es beginnt ohne Wissen (siehe *Personen*).
+- **Gespeicherte Änderung von Sensorlage oder Grundriss verwirft alles Gesammelte und Gelernte**, für alle
+  Sensoren: die Messungen der Kalibrierung, die Geisterkarte, den LD2410C-Hintergrund, die Zielkarte und den
+  gemessenen Blick des LD2410C (`ld_view`). Das gilt für Position, Blickrichtung, Höhe, x-Richtung, Maßstab,
+  Öffnungswinkel und Reichweite eines Sensors, für *platziert* / *Von Karte nehmen*, für einen neuen oder
+  entfernten Sensor, für Wände, Türen und Zonen, und auch, wenn ein Kalibrierergebnis übernommen und
+  gespeichert wird (es ändert Richtung und Maßstab). All das wurde unter der alten Lage gesammelt und passt
+  nicht mehr. Nichts verworfen wird bei Namen, beim Aus- und Einschalten eines Sensors und bei Einstellungen.
+  Die Meldung nach dem Speichern sagt, was verworfen wurde; der Tab *Kalibrierung* beginnt bei 0. Auch eine
+  `tracker.json`, die geändert wurde, während die App nicht lief, verwirft beim Start, was zur alten Lage
+  gehört (jede Datei in `/data` trägt den Schlüssel der Lage, unter der sie gesammelt wurde).
 - Der **LD2410C** zählt mit seinen Energien je 0,75-m-Entfernungsring (bewegt und ruhig): Wo eine Person
   Energie machen müsste und keine ist, ist niemand; Energie, die niemand erklärt, spricht für jemanden in
   diesem Ring, auch wenn der LD2450 ihn verloren hat. Was eine andere Person schon erklärt, sagt über die
-  übrigen nichts. Was jeder LD2410C ohne Personen sieht (Hintergrund), **lernt die App selbst**; eine neue
-  Kalibrierung behält es, wird ein Sensor anders montiert, beginnt es für ihn neu. Seine Flags und die gemeldete Entfernung zählen nicht mehr.
+  übrigen nichts. Was jeder LD2410C ohne Personen sieht (Hintergrund), **lernt die App selbst**, wie die
+  Geisterkarte nur für Sensoren und Grundriss, wie sie sind. Seine Flags und die gemeldete Entfernung zählen nicht mehr.
 - **Wände**: Die Radare sehen nicht durch die Betonwände. Ein Messpunkt hinter einer Wand oder außerhalb aller
   Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*).
 - **Personen**: Wie viele es sind, wird nirgends eingestellt. Nach einem Neustart der App macht das Modell
@@ -134,8 +145,10 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
    Übernommen wird nur, was sicher bestimmt ist: aus mindestens 3 verschiedenen Stunden mit Gehenden,
    stabil zwischen ihnen, und ohne dass mehr Gehende außerhalb der Sicht des Sensors lägen. Widersprechen
    sich Grundriss und gemeinsame Messungen,
-   sagt die App das: Dann stimmt meist die eingezeichnete Position des Sensors nicht. Nach dem Drehen
-   oder Versetzen eines Sensors *Neu sammeln*.
+   sagt die App das: Dann stimmt meist die eingezeichnete Position des Sensors nicht. *Übernehmen* und
+   Speichern verwirft danach die gesammelten Messungen und alles Gelernte (sie gehören zur alten Lage); ebenso
+   jede andere gespeicherte Änderung von Sensorlage oder Grundriss. *Neu sammeln* nur, wenn ein Sensor real
+   gedreht oder versetzt wurde, ohne dass sich seine Zeichnung ändert.
    Unter *Gesammelt seit* steht je Sensor, wie viele Punkte in Bewegung er hat (höchstens einer je
    Sekunde und Spur, so zählt auch die Berechnung) und wie viele der nötigen 3 Stunden mit Gehenden
    schon da sind. Das Ergebnis steht direkt unter *Berechnen*; was für mehrere Sensoren gilt (zu wenig
@@ -147,7 +160,8 @@ nebenbei; das Tracking nutzt es in dieser Version noch nicht.
 
 Wie viel der LD2410C eines Raums von einer Person in einem anderen Raum mitbekommt, ist gemessen (MODEL.md 4.3
 „Blick des LD2410C“) und steht in `tracker.json` unter `ld_view` („eigener Raum<-anderer Raum“ → Anteil, fehlt: 1).
-Die Oberfläche zeigt es nicht; *Alle auf Standard* lässt es stehen. Eine `tracker.json` von 0.39 oder älter bekommt
+Die Oberfläche zeigt es nicht; *Alle auf Standard* lässt es stehen, eine gespeicherte Änderung von Sensorlage oder
+Grundriss leert es (gemessen unter der alten Lage). Eine `tracker.json` von 0.39 oder älter bekommt
 beim ersten Start einmal die Messung von 6.–10.10. eingetragen, für die Paare ihrer Räume (gleiche Raum-IDs).
 
 Änderungen sind ein Entwurf, bis *Speichern* (Knopf unten rechts auf der Karte, hervorgehoben, solange etwas
@@ -156,9 +170,11 @@ Konfiguration dabei in die eine Form des Modells (was fehlt, mit seinen Standard
 bekommen im Editor schon dieselben Werte), legt genau diese in `/data/tracker.json` ab und schickt sie zurück; die
 Oberfläche arbeitet damit weiter. Eine kurze Meldung sagt *Gespeichert* und, wenn das Modell dabei neu startet,
 *Modell neu gestartet* (bei fast jeder Änderung an Grundriss, Zonen und
-Einstellungen; nicht, wenn nur Sensoren kalibriert oder verschoben wurden, nicht bei Einstellungen, die nur
+Einstellungen; nicht, wenn nur Sensoren kalibriert oder verschoben wurden – außer wenn dabei ein gemessener Blick
+der LD2410C verworfen wird –, nicht bei Einstellungen, die nur
 die Ausgaben betreffen: *Kosten: Licht ohne Person*, *Haltezeit eigener LD2450*, *Kosten: Einschalten auf Verdacht*, *Vorausschau*,
-*Haltezeit LD2410C (Anzeige)*, die Schwellen „Ziel“, und nicht beim Umbenennen). Rückgängig und Wiederholen mit den Knöpfen ↶ ↷ unten
+*Haltezeit LD2410C (Anzeige)*, die Schwellen „Ziel“, und nicht beim Umbenennen), und, wenn sich Sensorlage oder
+Grundriss geändert haben, was dabei verworfen wurde. Rückgängig und Wiederholen mit den Knöpfen ↶ ↷ unten
 rechts auf der Karte oder mit Strg+Z / Strg+Y. Sie wirken nur auf Änderungen im aktuellen Tab; liegt die
 letzte Änderung in einem anderen Tab, sagt die App, in welchem, statt sie unsichtbar zurückzunehmen.
 Löschen mit Entf oder Rücktaste, *Von Karte nehmen*, *Neu sammeln* (Kalibrierung) und *Neu beginnen*

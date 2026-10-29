@@ -56,7 +56,8 @@ def test_the_saved_configuration_comes_with_the_model_of_it(tmp_path):
     assert {k: v for k, v in got["derived"].items() if k != "thresholds"} == \
         {k: v for k, v in put["derived"].items() if k != "thresholds"}
     # nothing of the model changed: nothing new to show
-    assert again == {"ok": True, "restarted": False, "derived": None, "config": put["config"]}
+    assert again == {"ok": True, "restarted": False, "derived": None, "config": put["config"], "discarded": None}
+    assert put["discarded"] is None  # only a parameter: nothing collected or learned goes
     d = got["derived"]
     assert set(d) == {"plan", "thresholds", "ld2410_gate", "output_params"}  # the model's numbers; nothing to draw
     assert d["plan"]["observed"] == ["wohn"] and abs(d["thresholds"]["occupied"] - 2 / 3) < 1e-12  # light_cost 2

@@ -1,7 +1,8 @@
 //! Which way a new configuration takes while the model runs (Tracker.reconfigure, docs/rust-core.md 4):
 //! only what the outputs read changed (nothing is built), only sensors changed and the regions stay (a
 //! new world the people may live in: recalibrated, turned, moved, switched on or off), or anything else
-//! (the model starts over in a new world).
+//! (the model starts over in a new world). Whether what was collected and learned holds is not decided here:
+//! that is the one key of the geometry (Config::geometry_key; Learned::follow, the shell's files).
 
 use serde_json::{Map, Value};
 

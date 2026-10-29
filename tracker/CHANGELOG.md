@@ -2,6 +2,53 @@
 
 ## Unveröffentlicht
 
+## 0.51.0 (Branch `rust-core`, Gesammeltes und Gelerntes gelten nur unter ihrer Geometrie; nicht live)
+
+Modell unverändert, solange niemand Sensorlage oder Grundriss ändert. Spuren der drei Referenzstunden byte-gleich mit
+0.50.0 (presence-replay und `trace.py` über die Hülle). Anlass: Nach dem Umhängen eines Sensors und dem Ändern von
+Lage und Richtung in der Oberfläche zeigte der Tab „Kalibrierung“ weiter zehntausende Messungen dieses Sensors und bot
+an zu kalibrieren; verworfen wurde Gesammeltes nur über „Neu sammeln“, Gelerntes nur in Einzelfällen.
+- **Regel (Leon, 29.10., ohne Ausnahme):** Ändert der Nutzer Lage oder Sicht eines Sensors (x, y, Blickrichtung,
+  Höhe, Spiegelung, Maßstab, Öffnungswinkel, Reichweite, platziert oder nicht; ein Sensor dazu oder weg) oder den
+  Grundriss (Wände, Türen, Zonen mit Form und Art) und speichert, werden alle Messungen der Kalibrierung, die
+  Geisterkarte, der LD2410C-Hintergrund und die Zielkarte, für alle Sensoren, und der gemessene Blick des LD2410C
+  (`ld_view`) verworfen; ebenso, wenn ein Kalibrierergebnis übernommen und gespeichert wird. Namen, ein Sensor aus
+  oder an, Parameter (auch Ausgabeparameter) verwerfen nichts. Öffnungswinkel und Reichweite gehören dazu: aus ihnen
+  folgt die Sicht jedes Sensors je Kachel (`SensorConfig::in_fov`/`sees`), welche Räume beobachtet sind, und was die
+  Kalibrierung „außerhalb der Sicht“ zählt.
+- **Eine Quelle, der Schlüssel der Geometrie:** `Config::geometry_key` (Bindung `presence_core.geometry_key`, sha1
+  16 Hex über die genannten Felder, Zahlen nach Wert: 1 = 1,0, −0 = 0). `World::geometry` trägt ihn, `Learned` den,
+  unter dem es lernt; `Learned::follow` beginnt unter einem anderen ganz neu, sonst bleibt alles. Weg sind
+  `Pose::remounted` (0,5 m / 30°, angenommen) und das Folgen je Sensor in Geisterkarte und LD2410C-Hintergrund
+  (bisher behielt ein „neu kalibrierter“ Sensor seinen Teil, nur ein „anders montierter“ begann neu).
+  `reconfigure::change` bleibt der Weg des Modells und definiert keine Geometrie.
+- **Ein Mechanismus für Speichern und Start:** Jede Datei des Gesammelten trägt den Schlüssel, unter dem es
+  gesammelt wurde (`ghostmap.json`, `ld2410.json`, `destinations.json` als `{"geometry", "learned"}`,
+  `calibration.npz` mit `geometry`). Passt er beim Start nicht (eine `tracker.json`, die anderswo geändert wurde),
+  wird die Datei gelöscht (geloggt). `PUT /api/config` mit einem anderen Schlüssel: `presence_core.forget_measured`
+  leert `ld_view` vor dem Rekonfigurieren, das Modell beginnt sein Gelerntes im Kern neu, die Hülle setzt die
+  Kalibrierdaten zurück und löscht die vier Dateien (`App._forget`); die Antwort hat
+  `"discarded": {"calibration": Messungen, "ld_view": Raumpaare}` (sonst `null`; die Raumpaare zählt
+  `forget_measured`, Python liest `ld_view` nicht). Die Oberfläche sagt es nach dem
+  Speichern (`util.discardedText`, 10 s), vergisst ein altes Kalibrierergebnis, und der Tab „Kalibrierung“ zeigt
+  „Noch keine Messungen in Bewegung“. Verworfen wird erst, wenn das Modell mit der neuen Konfiguration läuft; lehnt
+  es sie ab, bleibt alles.
+- **Sonderfälle:** Die Geisterkarte prüft weiter ihren Prior (Modellparameter, keine Geometrie), die Zielkarte ihr
+  Raster (`fingerprint`, hängt auch am Code); „mit anderen Räumen oder Türen gelernt“ fängt jetzt der Schlüssel vorher
+  ab. `POST /api/learned` speichert eine eingespielte Geisterkarte unter der Geometrie, die gilt.
+- **Folge:** Mit einem nicht leeren `ld_view` geht ein Speichern, das nur Sensoren verschiebt, jetzt den Weg „world“
+  (das Modell beginnt neu, mit dem, was es über die Personen wusste), weil `ld_view` dabei geleert wird.
+- Texte der Kalibrierung (Schritte, „Neu sammeln“ nur bei realem Umhängen ohne neue Zeichnung, „Übernehmen“),
+  DOCS.md (*Gespeicherte Änderung von Sensorlage oder Grundriss …*), MODEL.md 4.2, 4.3, 9 „Gelerntes und Geometrie“,
+  docs/rust-core.md 4.
+- Tests: Rust `the_geometry_key_changes_with_a_sensors_place_and_the_plan_only`,
+  `what_was_learned_holds_under_its_geometry_only`; Python `test_geometry_change.py` (Sensor verschoben, Kalibrierung
+  übernommen, Wand geändert, Öffnungswinkel: alles weg, Kalibrierstatus leer, Dateien weg, Tracker ohne Gelerntes,
+  `ld_view` leer; Ausgabeparameter, Modellparameter, Namen, aus: alles bleibt; Start mit geänderter `tracker.json`:
+  verworfen, mit unveränderter: behalten; Satz der Oberfläche in Node); `test_frames` statt „neu kalibriert behält,
+  anders montiert beginnt neu“ jetzt „jede Änderung beginnt alles neu, Name/aus behält“; `test_destination`:
+  eine neue Blickrichtung beginnt die Zielkarte neu (bisher: behielt sie).
+
 ## 0.50.0 (Branch `rust-core`, eine Fassung der Konfiguration, die letzten Verstöße gegen die Grenzregel; nicht live)
 
 Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.49.0 (presence-replay und `trace.py` über die

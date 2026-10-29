@@ -120,18 +120,20 @@ def test_the_map_is_saved_restored_and_belongs_to_its_floor_plan():
     trained = dest_map(tr)
     assert np.array_equal(dest_map(other)["count"], trained["count"]) and trained["count"].sum() > 0
     assert dest_map(other)["walks"] == trained["walks"]
-    # a recalibrated sensor keeps it
+    # a name or a sensor switched off keeps it, a threshold too: the outputs decide differently, the model goes on
     d = two_rooms().to_dict()
-    d["sensors"][0]["heading"] = 50
-    assert not other.reconfigure(Config.from_dict(d))
-    assert np.array_equal(dest_map(other)["count"], trained["count"])
-    # a threshold neither: the outputs decide differently, the model goes on
-    d = two_rooms().to_dict()
-    d["sensors"][0]["heading"] = 50
+    d["sensors"][0]["name"] = "Ecke"
+    d["sensors"][1]["enabled"] = False
     d["params"]["target_thresholds"] = {"b": 0.6}
     assert not other.reconfigure(Config.from_dict(d))
     assert np.array_equal(dest_map(other)["count"], trained["count"]) and other.zone_states()["b"].c_target == 0.6
-    # another door starts it over
+    # a recalibrated sensor starts it over (0.51: another geometry, MODEL.md 9 "Gelerntes und Geometrie"), as
+    # another door does
+    d["sensors"][0]["heading"] = 50
+    assert not other.reconfigure(Config.from_dict(d))
+    assert dest_map(other)["count"].sum() == 0
+    other.load_learned(saved)  # (learned under another geometry: the caller's to know, the app's files say it)
+    assert dest_map(other)["count"].sum() > 0
     d = two_rooms().to_dict()
     d["doors"][0]["y"] = 1.5
     other.reconfigure(Config.from_dict(d))

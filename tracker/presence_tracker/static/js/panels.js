@@ -206,6 +206,7 @@ const LIVE = {
     // towards the min_hours a proposal needs
     const need = c.min_hours;
     const ids = Object.keys(c.points || c.frames);
+    if (!ids.length) return '<h3>Gesammelt</h3><p class="note">Noch keine Messungen in Bewegung.</p>';
     const frames = ids.map(id => {
       const hrs = c.hours?.[id] ?? 0;
       const n = c.points?.[id] ?? c.frames[id];
@@ -756,7 +757,7 @@ function calibrationPanel(panel, view) {
     <ol class="steps">
       <li>Sensoren genau an ihrer Position einzeichnen, mit Montagehöhe und der x-Richtung, wie sie eingebaut sind. Die Blickrichtung muss nur grob stimmen.</li>
       <li>Die App sammelt laufend, wo Gehende gemessen werden${cal?.keep_h ? ` (die letzten ${fmt(cal.keep_h, 0)} Stunden)` : ''}. Ein Tag normales Leben reicht meist. Vorgeschlagen wird für einen Sensor erst etwas, wenn er in ${cal?.min_hours ? `mindestens ${cal.min_hours}` : 'mehreren'} verschiedenen Stunden Gehende gemessen hat: Ein einzelner Gang zeigt nicht, ob die Lage auch im Alltag passt. Ein Gang allein kreuz und quer durch die Räume und Türen ergänzt den Alltag um Stellen, an die man sonst selten kommt.</li>
-      <li>Berechnen, Ergebnis prüfen und übernehmen.</li>
+      <li>Berechnen, Ergebnis prüfen, übernehmen und speichern. Das Speichern verwirft die gesammelten Messungen und alles Gelernte: Sie gehören zur alten Lage.</li>
     </ol>
     <p class="note">Die eingezeichneten Positionen und die x-Richtung bleiben. Blickrichtung und Maßstab (wie viel zu kurz oder zu lang ein Sensor misst) folgen für alle Sensoren gemeinsam aus drei Dingen: Was zwei Sensoren gleichzeitig sehen, muss übereinanderliegen. Wer aus dem Blickfeld eines Sensors in das eines anderen geht, geht dazwischen weiter. Und wer geht, ist in einem Raum und geht durch Türen, nicht durch Wände. Übernommen wird nur, was die Messungen sicher bestimmen.</p>
     <div class="row" style="margin-top:10px">
@@ -765,7 +766,7 @@ function calibrationPanel(panel, view) {
     </div>
     <label class="check"><input type="checkbox" id="mirror" ${state.calibMirror ? 'checked' : ''}> Auch die x-Richtung prüfen (nur nötig, wenn unklar ist, wie ein Sensor eingebaut ist)</label>
     <div id="result"></div>
-    <p class="note"><i>Neu sammeln</i> nach dem Drehen oder Versetzen eines Sensors: seine alten Messungen passen dann nicht mehr.</p>
+    <p class="note">Wer die Lage eines Sensors (Position, Blickrichtung, Höhe, x-Richtung, Maßstab, Öffnungswinkel, Reichweite, platziert) oder den Grundriss ändert und speichert, verwirft alle gesammelten Messungen aller Sensoren und alles Gelernte. <i>Neu sammeln</i> nur, wenn ein Sensor real gedreht oder versetzt wurde, ohne dass sich seine Zeichnung ändert.</p>
     <div data-live="calib"></div>
     <details class="pairs"><summary>Gleichzeitig gesehen: Sekunden, in denen zwei Sensoren je genau einen Gehenden sahen</summary><div class="list" data-live="calibPairs"></div></details>
     <h3>Sichtprüfung</h3>
@@ -776,7 +777,7 @@ function calibrationPanel(panel, view) {
     const now = state.live?.calibration;
     const hours = now?.since && state.live?.t ? Math.max(0, (state.live.t - now.since) / 3600) : null;
     if (!confirm(`Neu sammeln? Das verwirft alle gesammelten Messungen in Bewegung${hours != null ? ` (${fmt(hours, 1)} h)` : ''}. `
-      + `Für einen Vorschlag braucht es danach wieder Gehende aus ${now?.min_hours ? `mindestens ${now.min_hours}` : 'mehreren'} verschiedenen Stunden. Nur nach dem Drehen oder Versetzen eines Sensors nötig.`)) return;
+      + `Für einen Vorschlag braucht es danach wieder Gehende aus ${now?.min_hours ? `mindestens ${now.min_hours}` : 'mehreren'} verschiedenen Stunden. Nur nötig, wenn ein Sensor real gedreht oder versetzt wurde und seine Zeichnung gleich bleibt (eine gespeicherte Änderung der Lage verwirft ohnehin alles).`)) return;
     await api('api/calibration/reset', { method: 'POST' });
     state.calibResult = null;
     toast('Gesammelte Messungen verworfen. Die App sammelt neu.');
@@ -850,7 +851,7 @@ function calibrationResult(el, r) {
       }
     });
     state.calibResult = null;
-    toast(`${usable.length} Sensoren übernommen: Speichern, damit das Modell damit rechnet`);
+    toast(`${usable.length} Sensoren übernommen: Speichern, damit das Modell damit rechnet (verwirft die gesammelten Messungen und alles Gelernte)`, 5000);
     emit('tab');
   });
 }

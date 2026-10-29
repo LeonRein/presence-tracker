@@ -185,3 +185,20 @@ pub fn changes(old: &str, new: &str) -> PyResult<(&'static str, Vec<String>)> {
         Change::World => ("world", Vec::new()),
     })
 }
+
+/// The key of the configuration's geometry (presence_core::config::Config::geometry_key; the JSON of
+/// model.Config.model_json()): what was collected or learned holds only under the key it was collected under.
+/// ConfigError if it cannot be read.
+#[pyfunction]
+pub fn geometry_key(json: &str) -> PyResult<String> {
+    Ok(config_from(json)?.geometry_key())
+}
+
+/// The configuration (JSON, the canonical form) without what was measured under its geometry: the LD2410Cs' view
+/// of the other rooms (presence_core::config::forget_measured), as JSON, and how many room pairs of it went.
+/// ConfigError if it is no JSON.
+#[pyfunction]
+pub fn forget_measured(json: &str) -> PyResult<(String, usize)> {
+    let (value, gone) = config::forget_measured(json).map_err(config_error)?;
+    Ok((value.to_string(), gone))
+}

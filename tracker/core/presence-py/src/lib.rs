@@ -30,6 +30,8 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(config::config_limits, m)?)?;
     m.add_function(wrap_pyfunction!(config::config_defaults, m)?)?;
     m.add_function(wrap_pyfunction!(config::canonical, m)?)?;
+    m.add_function(wrap_pyfunction!(config::geometry_key, m)?)?;
+    m.add_function(wrap_pyfunction!(config::forget_measured, m)?)?;
     m.add_class::<config::ConfigProblem>()?;
     // the hooks of the shell's tests and the tools (feature "testing"; maturin develop --features testing)
     #[cfg(feature = "testing")]

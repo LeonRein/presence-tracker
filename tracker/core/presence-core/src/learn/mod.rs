@@ -16,12 +16,14 @@ use crate::world::World;
 use destination::Destinations;
 use ghost_map::GhostMap;
 
-/// The three learners, each lent alone to the step that learns (docs/rust-core.md 2.0).
+/// The three learners, each lent alone to the step that learns (docs/rust-core.md 2.0), and the key of the
+/// geometry they learn under (World::geometry).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Learned {
     pub ghosts: GhostMap,
     pub background: Background,
     pub destinations: Destinations,
+    geometry: String,
 }
 
 impl Learned {
@@ -35,12 +37,18 @@ impl Learned {
             ghosts,
             background,
             destinations: Destinations::new(&world.destinations),
+            geometry: world.geometry.clone(),
         }
     }
 
-    /// Follow a new world: the parts of the sensors that hang where they hung stay (a ghost map learned
-    /// with another prior, a destination map of another plan start over).
+    /// Follow a new world: under another geometry (a sensor placed, moved, turned, read otherwise, the walls,
+    /// doors or zones changed: Config::geometry_key) all of it starts over, for every sensor; under the same
+    /// one it stays (a ghost map learned with another prior, a destination map of another grid start over).
     pub fn follow(&mut self, world: &World) {
+        if self.geometry != world.geometry {
+            *self = Self::new(world);
+            return;
+        }
         if !self.ghosts.learned_with(&world.params) {
             self.ghosts = GhostMap::from_prior(&world.params);
         }
@@ -109,5 +117,29 @@ impl fmt::Display for PackedFault {
             Self::Length => "another number of values",
             Self::Value => "a value out of range",
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing;
+
+    #[test]
+    fn what_was_learned_holds_under_its_geometry_only() {
+        let w = testing::flat();
+        let mut learned = Learned::new(&w);
+        learned.ghosts.add_watch(0, 3600.0);
+        learned.ghosts.add_birth(0, [1.0, 1.0], 1.0);
+        let kept = learned.clone();
+        // the same geometry (a sensor switched off, a name, a parameter): all of it stays
+        learned.follow(&w);
+        assert_eq!(learned, kept);
+        // another one (a sensor moved, a wall): all of it starts over, for every sensor
+        let mut moved = testing::flat();
+        moved.geometry = "another".into();
+        learned.follow(&moved);
+        assert_eq!(learned, Learned::new(&moved));
+        assert_ne!(learned, kept);
     }
 }

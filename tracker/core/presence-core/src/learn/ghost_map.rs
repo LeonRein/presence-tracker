@@ -3,8 +3,8 @@
 //! by EM (Kantas et al. 2015): each track that ends counts at the cell where it began with the filter's
 //! P(ghost) - judged without what the map said at the birth (Park et al. 2020, eq. 37-41) - against
 //! the time the sensor watched. Counts fade with FORGET. A sensor's part is in its own frame (on the
-//! floor, x to its right, y forward, its scale taken out): it follows a recalibrated sensor; only one
-//! mounted elsewhere starts its part over.
+//! floor, x to its right, y forward, its scale taken out); it holds only under the geometry it was learned
+//! under (Learned::follow: a sensor moved, turned or read otherwise, all of it starts over).
 //!
 //! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
@@ -158,21 +158,20 @@ impl GhostMap {
         self.prior_rate
     }
 
-    /// Follow the sensors of the plan: a recalibrated one keeps its part (in its own
-    /// frame it moves with the new pose), one mounted elsewhere or new starts from the prior, the part
-    /// of one no longer there goes.
+    /// Follow the sensors of the plan (of the same geometry: Learned::follow), each keeps its part by id; a new
+    /// one starts from the prior, the part of one no longer there goes.
     pub fn follow(&mut self, plan: &Plan) {
         let mut old = std::mem::take(&mut self.parts);
         self.parts = plan
             .sensors
             .iter()
             .map(|s| match old.iter().position(|p| p.id == s.id) {
-                Some(k) if !s.pose.remounted(&old[k].pose) => Part {
+                Some(k) => Part {
                     pose: s.pose,
                     total: None,
                     ..old.swap_remove(k)
                 },
-                _ => Part::new(&s.id, s.pose),
+                None => Part::new(&s.id, s.pose),
             })
             .collect();
     }
@@ -366,12 +365,11 @@ mod tests {
         );
         assert!(c.smooth[20 * NY + 5] < 0.5 && c.smooth[21 * NY + 5] > 0.0);
         assert!(g.rate(0, ahead) > before);
-        // a recalibrated sensor keeps its part, one mounted elsewhere starts over
+        // a sensor keeps its part by its id, a new one starts from the prior
         let mut plan = testing::flat().plan;
-        plan.sensors[0].pose.scale = 1.1;
         g.follow(&plan);
         assert!(g.parts[0].counts.is_some());
-        plan.sensors[0].pose.x += 1.0;
+        plan.sensors[0].id = "new".into();
         g.follow(&plan);
         assert!(g.parts[0].counts.is_none());
     }

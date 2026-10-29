@@ -293,18 +293,15 @@ Eine Spur, die zu keiner Person gehört.
   eigenen Rahmen, auf dem Boden, Maßstab herausgerechnet, x-Achse wie der LD2450 sie meldet
   (`SensorConfig::to_local` des Kerns; Zellen 0,4 m, bis 8 m seitlich und nach vorn). Wo ein Sensor Geister sieht,
   ist eine Eigenschaft seines Blicks: Reflexionen an Wänden und Möbeln, wie er sie sieht, Mehrwege am
-  eigenen Gehäuse. Eine neue Kalibrierung (Richtung, Maßstab, Spiegelung, eine berichtigte Zeichnung)
-  ändert, wie seine Meldungen gelesen werden, nicht, was er meldet. Im Hausrahmen folgt die Karte der
-  Lage, die der Sensor jetzt hat; eine Zelle seines Rahmens deckt (0,4 m · Maßstab)² Boden. Nur ein
-  **anders montierter** Sensor beginnt seinen Teil neu, die übrigen behalten ihren, ebenso ein neuer;
-  der Teil eines entfernten geht. Anders montiert heißt: Ort oder Höhe um mehr als 0,5 m oder die Richtung
-  um mehr als 30° geändert (`model.remounted`, angenommen). Die Kalibrierung ändert nur Richtung, Maßstab
-  und Spiegelung, die Richtung mit ihrem Prior von ±20° um die gezeichnete (hier bisher 320° → 324°,
-  324,4° → 321,6°; die alte App-Rechnung schlug −15° vor); eine berichtigte Zeichnung bleibt in ihrem Fehler
-  (4.1: 0,2–0,3 m). Wer einen Sensor an eine andere Wand oder Ecke hängt, verschiebt ihn weiter; wer ihn
-  woanders hinsehen lässt, dreht ihn um mehr als ein Viertel seines Blickfelds. Die Oberfläche bietet keine
-  eigene Unterscheidung („Neu sammeln“ der Kalibrierung gilt für alle Sensoren zugleich). Eine mit einem
-  anderen Prior gelernte Karte beginnt ganz neu. Bis 0.27 lag die Karte im Hausrahmen, und jede Änderung
+  eigenen Gehäuse. Im Hausrahmen folgt die Karte der Lage, die der Sensor hat; eine Zelle seines Rahmens
+  deckt (0,4 m · Maßstab)² Boden. **Seit 0.51 (Leon, 29.10.) gilt die Karte nur unter der Geometrie, unter
+  der sie gelernt wurde** (`Config::geometry_key`: Lage, Blickrichtung, Höhe, Spiegelung, Maßstab,
+  Öffnungswinkel, Reichweite und „platziert“ jedes Sensors, Wände, Türen, Zonen): Jede gespeicherte Änderung
+  daran, auch das Übernehmen einer Kalibrierung, lässt die ganze Karte aller Sensoren neu beginnen, ebenso
+  alles andere Gelernte und die Messungen der Kalibrierung (9, „Gelerntes und Geometrie“). Eine mit einem
+  anderen Prior gelernte Karte beginnt ganz neu. 0.28–0.50 behielt ein Sensor seinen Teil bei einer neuen
+  Kalibrierung und begann ihn nur „anders montiert“ neu (Ort oder Höhe um mehr als 0,5 m, Richtung um mehr
+  als 30°, `remounted`, angenommen). Bis 0.27 lag die Karte im Hausrahmen, und jede Änderung
   der Lage irgendeines Sensors um mehr als 5 cm, 2° oder 2 % Maßstab ließ die ganze Karte neu beginnen (10,
   „Gelerntes bleibt bei neuer Kalibrierung“). 0.28 rechnete eine gespeicherte Karte von 0.27 beim Laden
   einmal um (jede Zelle des Hausrahmens in die Zelle des Sensorrahmens, in der ihre Mitte liegt, mit der
@@ -377,7 +374,7 @@ Das Modell, je Sensor:
   mal Strahl mal Sicht (Wände wie beim LD2450: der Anteil der Person, den der LD2450 im selben Gehäuse
   ohne Wand dazwischen sehen könnte, über ihren Versatz gemittelt wie in 4.1; bis 0.10.0 ja/nein). Ruhig zählt das Verzögerte: M ist, was die Personen
   zuletzt hineingaben (geglättet mit 2 s), w_m sein Anteil im Block; bewegt w_m = 0.
-- **Blick des LD2410C in einen anderen Raum** (gemessen; seit 0.40 eine Angabe des Hauses in `tracker.json`, `ld_view`, wie Wände und Türen; vorher `Model.ld_view`): Die Sicht durch eine
+- **Blick des LD2410C in einen anderen Raum** (gemessen; seit 0.40 eine Angabe des Hauses in `tracker.json`, `ld_view`, wie Wände und Türen; vorher `Model.ld_view`; seit 0.51 mit jeder gespeicherten Änderung von Sensorlage oder Grundriss geleert, 9 „Gelerntes und Geometrie“): Die Sicht durch eine
   Türöffnung oder über den Raumteiler ist geometrisch, was dort ankommt, nicht: Je Paar „Sensor ← Raum“ trägt
   die Sicht einen gemessenen Faktor v ≤ 1, S(x) = v_{s,Raum(x)} · Profil · Strahl · Sicht; im eigenen Raum und
   wo nichts gemessen ist v = 1. Gemessen (`tools/ld2410/footprint.py`) mit Bezeichnungen, die nicht vom Filter
@@ -467,10 +464,10 @@ Das Modell, je Sensor:
   6.–9.10. (je Sensor 0,4–2,5 h). Bis 0.26 6 h (angenommen; leere Nächte 24 h
   auseinander unterscheiden sich je Sensor um höchstens 7 %, aber mit 1 Tag Log-Evidenz bis 6.10. −2530, 10):
   Der Hintergrund des Flurs hing morgens stundenlang beim Nachtwert, und eine Person mit kleinem g erklärte
-  den Überschuss (10 „Sitzende im Bad und auf dem Sofa“). Seine Zellen sind Entfernungen vom Sensor: Eine
-  neue Kalibrierung (Richtung, Maßstab, Spiegelung, berichtigte Zeichnung) ändert an ihm nichts, er bleibt;
-  neu nur für einen anders montierten Sensor (4.2, `model.remounted`; bis 0.27 bei jeder Änderung der Lage).
-  Gespeichert mit der Geisterkarte.
+  den Überschuss (10 „Sitzende im Bad und auf dem Sofa“). Seine Zellen sind Entfernungen vom Sensor. Er gilt
+  wie die Geisterkarte nur unter der Geometrie, unter der er gelernt wurde (4.2; seit 0.51 beginnt er bei jeder
+  gespeicherten Änderung von Sensorlage oder Grundriss für alle Sensoren neu, 0.28–0.50 nur für einen anders
+  montierten, bis 0.27 bei jeder Änderung der Lage). Gespeichert mit dem Schlüssel der Geometrie.
   **Anker (seit 0.28):** Vergessen wird nicht mehr zum Prior hin (ruhig 5), sondern zum eigenen Niveau des
   Sensors: derselbe Online-EM, mit 1 Tag vergessen und nur aus Frames nach 10 min, in denen der LD2450 des
   Gehäuses nichts sah (ein leerer Raum: Stunden; Sitzende und Schlafende lassen Lücken von Sekunden bis
@@ -1087,14 +1084,18 @@ Näherungen, die man prüfen oder ersetzen kann:
   kleine Alternative „neue Person“, und daraus werden nach dem Zusammenlegen viele Bernoullis mit
   r von wenigen %, je eine Dichte (latency.py 21 Uhr: 30 s statt 18,5 s mit einer bekannten Person
   „irgendwo“ statt der Intensität; 5 % statt 1 % beim Zurückgeben 26 s, 5.5).
-- Ob ein Sensor nur neu kalibriert oder anders montiert wurde, entscheidet die App an der Größe der Änderung
-  (4.2, `model.remounted`: mehr als 0,5 m oder 30°), nicht an einer Angabe: Die Oberfläche hat keine je
-  Sensor. Ein Sensor, der an derselben Stelle um weniger als 30° gedreht wird, behält seine Geisterkarte
-  (im eigenen Rahmen; die Reflexionen an den Wänden liegen danach anders) und seinen LD2410C-Hintergrund;
-  die Karte vergisst mit 14 Tagen, der Hintergrund mit 0,7 h. Ob ein anders montierter Sensor die Geister
-  der anderen ändert (gegenseitige Störung der LD2450), ist nicht gemessen; ihre Teile bleiben. Bis 0.27
-  ließ jede neue Kalibrierung die Geisterkarte aller Sensoren und den LD2410C-Hintergrund des Sensors neu
-  beginnen (10, „Gelerntes bleibt bei neuer Kalibrierung“).
+- **Gelerntes und Geometrie** (seit 0.51, Leon 29.10., ohne Ausnahme): Ändert der Nutzer Lage oder Sicht eines
+  Sensors (Ort, Blickrichtung, Höhe, Spiegelung, Maßstab, Öffnungswinkel, Reichweite, platziert oder nicht) oder
+  den Grundriss (Wände, Türen, Zonen) und speichert, werden alle Messungen der Kalibrierung, die Geisterkarte, der
+  LD2410C-Hintergrund, die Zielkarte (aller Sensoren) und der gemessene Blick des LD2410C (`ld_view`) verworfen;
+  ebenso, wenn ein Kalibrierergebnis übernommen wird (es ändert Richtung und Maßstab). Eine Quelle: der Schlüssel
+  der Geometrie (`Config::geometry_key`), den jede Datei des Gesammelten trägt; passt er beim Start nicht, wird
+  sie verworfen. Öffnungswinkel und Reichweite gehören dazu: Aus ihnen folgt die Sicht jedes Sensors je Kachel,
+  welche Räume beobachtet sind, und was die Kalibrierung „außerhalb der Sicht“ nennt. Namen, ein Sensor aus- oder
+  eingeschaltet und die Parameter verwerfen nichts. 0.28–0.50 unterschied die App „neu kalibriert“ (Teile
+  bleiben) von „anders montiert“ (mehr als 0,5 m oder 30°, `remounted`, angenommen); die Messungen der
+  Kalibrierung verwarf nur „Neu sammeln“. Bis 0.27 ließ jede neue Kalibrierung die Geisterkarte aller Sensoren
+  und den LD2410C-Hintergrund des Sensors neu beginnen (10, „Gelerntes bleibt bei neuer Kalibrierung“).
 - **Wen der Filter verliert, lernt der LD2410C-Hintergrund** (10, „Lernschleifen“), soweit der LD2450 im
   Gehäuse ihn nicht sieht und keine Echoquelle seine Energie hält. Die Schlafenden im Schlafzimmer
   7./8.10. verlor der Filter um 00:25 an eine Echoquelle, die bis zum Morgen an blieb: Eine ungesehene

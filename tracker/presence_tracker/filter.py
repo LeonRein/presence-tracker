@@ -215,8 +215,9 @@ class Tracker:
         self._sync_pauses()  # the ends of the changed sensors' tracks learn, or not, as at any time
         way, changed = presence_core.changes(self.config.model_json(), config.model_json())
         self.config = config
-        # what was learned follows (in the core): recalibrated sensors keep their parts, a remounted one
-        # starts over; the destination map holds while the rooms and doors are the same
+        # what was learned follows (in the core): under the same geometry it holds, under another one (a sensor
+        # placed, moved, turned, read otherwise; walls, doors, zones: presence_core.geometry_key) all of it
+        # starts over
         if way == "outputs":
             self.core.set_outputs(config.model_json())  # only what the outputs read: nothing built
             return False
@@ -239,20 +240,21 @@ class Tracker:
 
     def use_ghost_map(self, gm) -> bool:
         """Use a learned ghost map (MODEL.md 4.2; its dict, as learned()["ghost_map"]) if it was learned
-        with the prior the model has now; else (also None) start a new one from the prior. Each sensor's
-        part is in its own frame: it follows a recalibrated sensor, and only a sensor mounted elsewhere
-        starts its part over. Returns whether the learned map is used; ValueError if it cannot be read."""
+        with the prior the model has now; else (also None) start a new one from the prior. Only one learned
+        under this geometry (presence_core.geometry_key: the app keeps the key with the file). Returns whether
+        the learned map is used; ValueError if it cannot be read."""
         return self.core.use_ghost_map(None if gm is None else json.dumps(gm))
 
     def use_dest_map(self, dm) -> bool:
-        """Use a learned destination map (MODEL.md 6 "Ziel"; its dict) if it was learned with these rooms,
-        doors and regions; else (also None) start an empty one. ValueError if it cannot be read."""
+        """Use a learned destination map (MODEL.md 6 "Ziel"; its dict), learned under this geometry (as
+        use_ghost_map), if it is of this grid; else (also None) start an empty one. ValueError if it cannot be
+        read."""
         return self.core.use_dest_map(None if dm is None else json.dumps(dm))
 
     def use_ld_background(self, bg) -> list:
-        """Use a learned LD2410C background (MODEL.md 4.3; its dict, None: nothing learned), per sensor only
-        where it was learned with the sensor where it is now. Returns why sensors' parts were dropped (a
-        part out of range is dropped alone, the others are used); ValueError if it is no background."""
+        """Use a learned LD2410C background (MODEL.md 4.3; its dict, None: nothing learned), learned under this
+        geometry (as use_ghost_map). Returns why sensors' parts were dropped (a part out of range is dropped
+        alone, the others are used); ValueError if it is no background."""
         return self.core.use_ld_background(None if bg is None else json.dumps(bg))
 
     def hold_background(self, seconds: float):
@@ -469,10 +471,10 @@ class Tracker:
         return self.core.learned()
 
     def load_learned(self, data: dict):
-        """Take over what was learned (learned()), each part present: the ghost map if learned with the
-        prior the model has now, the destination map if with these rooms and doors (ValueError if one
+        """Take over what was learned (learned()) under this geometry, each part present: the ghost map if
+        learned with the prior the model has now, the destination map if of this grid (ValueError if one
         cannot be read)."""
-        if data.get("ghost_map"):  # per sensor unless mounted elsewhere since (offline: tools/ghostmap.py, an old tree)
+        if data.get("ghost_map"):
             self.use_ghost_map(data["ghost_map"])
         if data.get("ld_background"):
             for why in self.use_ld_background(data["ld_background"]):

@@ -5,7 +5,8 @@
 //! with P(no echo source on). Forgotten with ld_forget s towards an anchor: the sensor's own long-run
 //! level, learned the same way over days from frames after ld_anchor_quiet s with nothing in sight of
 //! the housing's LD2450 (a stationary AR(1) level, Harvey 1989). With it the rate at which echo sources
-//! begin. A part holds while its sensor hangs where it hung (cells are distances from the sensor).
+//! begin. A part holds only under the geometry it was learned under (Learned::follow; cells are distances
+//! from the sensor).
 //!
 //! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
@@ -112,22 +113,15 @@ pub struct Background {
 }
 
 impl Background {
-    /// Keep what was learned for the sensors that hang where they hung (recalibrated or not); the ones
-    /// mounted elsewhere and new ones start over.
+    /// Keep what was learned per sensor of the plan (of the same geometry: Learned::follow), by id; new ones
+    /// start over.
     pub fn follow(&mut self, plan: &Plan) {
         self.of = plan
             .sensors
             .iter()
             .map(|s| match self.parts.iter().position(|p| p.id == s.id) {
                 Some(k) => {
-                    let part = &mut self.parts[k];
-                    if s.pose.remounted(&part.pose) {
-                        *part = Part {
-                            held: part.held,
-                            ..Part::new(&s.id, s.pose)
-                        };
-                    }
-                    part.pose = s.pose;
+                    self.parts[k].pose = s.pose;
                     k
                 }
                 None => {
@@ -562,14 +556,13 @@ mod tests {
         let mut bad = v;
         bad["num"] = json!([]);
         assert_eq!(Background::from_json(&bad, &w.plan), Err(LearnedError::Field("num")));
-        // a part mounted elsewhere starts over, a recalibrated one keeps it
+        // a sensor keeps its part by its id, a new one starts over
         let mut plan = testing::flat().plan;
-        plan.sensors[0].pose.mirror = true;
         back.follow(&plan);
         assert!(back.part(0).level.is_some());
-        plan.sensors[0].pose.heading += 45.0;
+        plan.sensors[0].id = "new".into();
         back.follow(&plan);
-        assert!(back.part(0).level.is_none() && back.part(0).held == 2.0);
+        assert!(back.part(0).level.is_none());
     }
 
     // ------------------------------------------------------------ test_learning

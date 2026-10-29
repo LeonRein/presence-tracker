@@ -777,7 +777,8 @@ impl Tracker {
 
     /// Sensors changed, the people's world not: the people stay as they are;
     /// the changed sensors' tracks end as at lost data (the ghost map learns from them), their next
-    /// frame is a start, their LD2410C starts over; then the new world.
+    /// frame is a start, their LD2410C starts over; then the new world (what was learned follows it:
+    /// under another geometry all of it starts over, Learned::follow).
     pub fn recalibrate(&mut self, changed: SensorSet, world: World) -> Result<Vec<Event>, Recalibrate> {
         // checked first: a world the people do not fit (the sensors changed which rooms are observed)
         // changes nothing here, the shell starts the model over in it
@@ -807,9 +808,9 @@ impl Tracker {
 
     // ------------------------------------------------------------------ what was learned
 
-    /// Use a saved ghost map (MODEL.md 4.2) if it was learned with the prior the model has now, else
-    /// the prior's (also for None); per sensor only where it hangs where it hung. Whether the saved
-    /// one is used; Err, and nothing changed, if it cannot be read.
+    /// Use a saved ghost map (MODEL.md 4.2), learned under this geometry (the shell's files carry its key,
+    /// World::geometry), if it was learned with the prior the model has now, else the prior's (also for
+    /// None). Whether the saved one is used; Err, and nothing changed, if it cannot be read.
     pub fn use_ghost_map(&mut self, saved: Option<&Value>) -> Result<bool, LearnedError> {
         let plan = &self.world.plan;
         let map = saved.map(|v| GhostMap::from_json(v, plan)).transpose()?;
@@ -822,7 +823,7 @@ impl Tracker {
         Ok(used)
     }
 
-    /// Use a saved LD2410C background (MODEL.md 4.3), per sensor where it hangs where it hung; None:
+    /// Use a saved LD2410C background (MODEL.md 4.3), learned under this geometry (as use_ghost_map); None:
     /// nothing learned. The parts not taken (a sensor's part out of range: dropped alone); Err, and
     /// nothing changed, if it is no background at all.
     pub fn use_background(&mut self, saved: Option<&Value>) -> Result<Vec<LearnedError>, LearnedError> {
@@ -839,8 +840,8 @@ impl Tracker {
         Ok(dropped)
     }
 
-    /// Use a saved destination map (MODEL.md 6 "Ziel") if it was learned with these rooms, doors and
-    /// regions, else an empty one (also for None). Whether the saved one is used; Err, and nothing
+    /// Use a saved destination map (MODEL.md 6 "Ziel"), learned under this geometry (as use_ghost_map), if
+    /// it is of this grid (its fingerprint), else an empty one (also for None). Whether the saved one is used; Err, and nothing
     /// changed, if it cannot be read.
     pub fn use_dest_map(&mut self, saved: Option<&Value>) -> Result<bool, LearnedError> {
         let used = self.learned.destinations.load(saved, &self.world.destinations)?;

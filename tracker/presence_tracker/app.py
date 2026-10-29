@@ -77,6 +77,9 @@ def ld_view_into_config(path: pathlib.Path) -> bool:
 
 
 RETRY = 60.0  # s: while down, the model is rebuilt and tried again this often (a rebuild is seconds of CPU)
+# what was collected and learned under a geometry (the sensors' places, the plan: presence_core.geometry_key), each
+# file with its key: the calibration's measurements, the ghost map, the LD2410C background, the destination map
+COLLECTED = ("calibration.npz", "ghostmap.json", "ld2410.json", "destinations.json")
 
 
 class LiveClient:
@@ -212,17 +215,14 @@ class App:
         at all."""
         self.tracker = Tracker(self.config)
         self.tracker.pauses = self.pauses  # Lernen pausieren: the app's switch (pause.py)
-        # where the sensors start ghost tracks (learned online, MODEL.md 4.2), each sensor's part in its
-        # own frame: it follows a recalibrated sensor, a sensor mounted elsewhere starts its part over
+        # what was learned online, each part only under the geometry it was learned under (_load_learned): where
+        # the sensors start ghost tracks (MODEL.md 4.2), what each LD2410C sees without anybody (4.3), where walks
+        # go (6 "Ziel")
         self._load_learned("ghostmap.json", self.tracker.use_ghost_map, "ghost map",
                            "learned with another prior: starting a new one")
-        # what each LD2410C sees without anybody (learned online, MODEL.md 4.3), per sensor while it
-        # hangs where it hung (a recalibration keeps it)
         self._load_learned("ld2410.json", self.tracker.use_ld_background, "LD2410C background")
-        # where walks go (learned online, MODEL.md 6 "Ziel"): it holds while the rooms and doors are the
-        # same, else it starts empty
         self._load_learned("destinations.json", self.tracker.use_dest_map, "destination map",
-                           "learned with other rooms or doors: starting a new one")
+                           "learned on another grid: starting a new one")
         # what was known about the people when the app stopped (MODEL.md 5.3), moved on over the
         # time it did not run; without it (first start, another floor plan) nothing is known
         people_path = self.data_dir / "people.json"
@@ -243,7 +243,8 @@ class App:
             cal_path = self.data_dir / "calibration.npz"
             if not self.replay and cal_path.exists():
                 try:
-                    self.calibrator.load(cal_path)
+                    if not self.calibrator.load(cal_path):
+                        self._discard(["calibration.npz"])
                 except Exception as e:  # noqa: BLE001
                     log.warning("calibration.npz unreadable (%r), collecting anew", e)
                     self.calibrator.reset()
@@ -452,14 +453,43 @@ class App:
             return False
         return True
 
+    @property
+    def geometry(self) -> str:
+        """The key of the configuration's geometry (the core's: where the sensors hang and how they see and are
+        read, the walls, doors and zones): what is collected and learned now holds under it only."""
+        return presence_core.geometry_key(self.config.model_json())
+
+    def _discard(self, names: list):
+        """Delete these files of what was collected or learned under another geometry (logged)."""
+        for name in names:
+            (self.data_dir / name).unlink(missing_ok=True)
+        log.info("%s: collected under another geometry (a sensor's place or the floor plan), discarded", ", ".join(names))
+
+    def _forget(self, measured: int) -> dict:
+        """A configuration of another geometry is in use (h_put_config): everything collected and learned under the
+        old one is discarded, for every sensor - the calibration's measurements and the files of what was learned
+        (the tracker started its parts over itself, the core's Learned::follow; the measured view of the
+        LD2410Cs went with the configuration, presence_core.forget_measured: its room pairs, measured). What it
+        was, for the web UI: the measurements and those room pairs."""
+        rows = self.calibrator.count()
+        self.calibrator.reset()
+        self._discard(list(COLLECTED))
+        return {"calibration": rows, "ld_view": measured}
+
     def _load_learned(self, name: str, use, what: str, not_used: str | None = None):
         """A learned part from its file in the data directory, if there is one: used by the tracker (it
-        checks it); unreadable, the tracker starts the part over (logged)."""
+        checks it) if it was learned under the geometry of the configuration (the key saved with it,
+        _learned_files), else discarded (the sensors or the floor plan changed while the app did not run);
+        unreadable, the tracker starts the part over (logged)."""
         path = self.data_dir / name
         if not path.exists():
             return
         try:
-            used = use(json.loads(path.read_text()))
+            stored = json.loads(path.read_text())
+            if stored["geometry"] != self.geometry:
+                self._discard([name])
+                return
+            used = use(stored["learned"])
             if used is False and not_used:
                 log.info("%s %s", what, not_used)
             for why in used if isinstance(used, list) else ():  # the LD2410C background's parts dropped
@@ -474,7 +504,7 @@ class App:
         is logged and left out; a people's state the model refuses to save (not finite: the core's filter/saved.rs) is a
         model failure (_model_failed: it starts over from the last save)."""
         files = []
-        part = self._learned_packer(self.tracker.learned_snapshot())
+        part = self._learned_packer(self.tracker.learned_snapshot(), self.geometry)
         parts = [("ghostmap.json", lambda: part("ghost_map")),
                  ("ld2410.json", lambda: part("ld_background")),
                  ("destinations.json", lambda: part("dest_map")),
@@ -494,16 +524,17 @@ class App:
         return files
 
     @staticmethod
-    def _learned_packer(learned):
-        """Per part of a copy of what was learned a function packing it, all packed at once at the first
-        call - in the thread that writes them (the destination map's compression takes milliseconds)."""
+    def _learned_packer(learned, geometry: str):
+        """Per part of a copy of what was learned a function packing it with the key of the geometry it was
+        learned under ({"geometry", "learned"}), all packed at once at the first call - in the thread that
+        writes them (the destination map's compression takes milliseconds)."""
         packed = {}
 
         def part(name: str):
             def pack() -> bytes:
                 if not packed:
                     packed.update(json.loads(learned.json()))
-                return json.dumps(packed[name]).encode()
+                return json.dumps({"geometry": geometry, "learned": packed[name]}).encode()
             return pack
         return part
 
@@ -687,7 +718,10 @@ class App:
         comes finished from the web UI's editor (rooms between the walls, doors on their walls). Answers
         "derived", what the web UI shows of the model of the saved configuration (None: the model's did not
         change). A change of what only the web UI reads (the background image: it checks the layers; the rooms'
-        label points) is only stored: the model never reads it."""
+        label points) is only stored: the model never reads it. A configuration of another geometry (the core's
+        key: a sensor placed, moved, turned, read otherwise, its view; the walls, doors, zones; also a
+        calibration taken over) discards everything collected and learned under the old one, for every sensor
+        (_forget), with the measured view of the LD2410Cs in it; "discarded" says what (None: nothing)."""
         try:
             data = await request.json()
         except ValueError:
@@ -704,7 +738,12 @@ class App:
             except OSError as e:
                 log.exception("tracker.json not saved")
                 return web.json_response({"error": f"Nicht gespeichert: {e}"}, status=500)
-            return web.json_response({"ok": True, "restarted": False, "derived": None, "config": config.to_dict()})
+            return web.json_response({"ok": True, "restarted": False, "derived": None, "config": config.to_dict(),
+                                      "discarded": None})
+        moved = presence_core.geometry_key(config.model_json()) != self.geometry
+        if moved:  # what was measured under the old geometry goes with it, before the model runs with the new one
+            forgotten, measured = presence_core.forget_measured(json.dumps(config.data))
+            config = Config.from_dict(json.loads(forgotten))
         # only sensors recalibrated: the people stay; else the model starts over as after a restart (MODEL.md 5.3)
         try:
             restarted = self.tracker.reconfigure(config)
@@ -717,6 +756,7 @@ class App:
             return web.json_response({"error": f"Das Modell läuft mit dieser Konfiguration nicht: {e!r}. "
                                                "Es gilt die vorige."}, status=400)
         self.config = config
+        discarded = self._forget(measured) if moved else None
         if restarted:
             self._model_started(self.tracker.now)
         else:
@@ -730,7 +770,7 @@ class App:
             log.exception("tracker.json not saved")
             return web.json_response({"error": f"In Gebrauch, aber nicht gespeichert: {e}"}, status=500)
         return web.json_response({"ok": True, "restarted": restarted, "derived": model.derive(config.to_dict()),
-                                  "config": config.to_dict()})
+                                  "config": config.to_dict(), "discarded": discarded})
 
     async def h_live(self, request):
         ws = web.WebSocketResponse(heartbeat=30)
@@ -775,7 +815,7 @@ class App:
 
     async def h_calibration(self, request):
         action = request.match_info["action"]
-        if action == "reset":  # a sensor was turned or moved for real: its old measurements are wrong
+        if action == "reset":  # a sensor turned or moved for real, its drawing not: its old measurements are wrong
             self.calibrator.reset()
         elif action == "solve":
             # seconds of numpy: in a thread, the frames keep coming (the data is copied first)
@@ -796,11 +836,12 @@ class App:
 
     async def h_import_learned(self, request):
         """Take over a ghost map learned elsewhere, e.g. offline from recordings: {"ghost_map":
-        <tools/ghostmap.py output>}. Replaces the current one."""
+        <tools/ghostmap.py output>}. Replaces the current one; saved as learned under the geometry in use."""
         data = await request.json()
         if "ghost_map" in data:
             used = self.tracker.use_ghost_map(data["ghost_map"])  # ValueError if it cannot be read
-            atomic_write(self.data_dir / "ghostmap.json", json.dumps(data["ghost_map"]).encode())
+            atomic_write(self.data_dir / "ghostmap.json",
+                         json.dumps({"geometry": self.geometry, "learned": data["ghost_map"]}).encode())
             log.info("ghost map imported, %s", "in use" if used else "not used: learned with another prior")
         return web.json_response({"ghost_map": True})
 

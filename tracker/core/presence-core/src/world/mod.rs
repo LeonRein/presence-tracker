@@ -58,6 +58,8 @@ pub struct World {
     pub targets: EntryTargets,
     /// the cells and outcomes of the destination map ("Ziel")
     pub destinations: DestGeometry,
+    /// the key of the configuration's geometry (Config::geometry_key): what was learned holds only under it
+    pub geometry: String,
 }
 
 #[cfg(test)]
@@ -213,6 +215,7 @@ impl World {
             s.set_rates(&rates, &tiles);
         }
         Ok(Self {
+            geometry: config.geometry_key(),
             destinations: DestGeometry::new(&plan, &raster, &labels, &rooms, &walls),
             targets: EntryTargets::new(&plan, raster, &rooms, &tiles),
             ld_lik: Likelihood::new(&params),
@@ -281,6 +284,7 @@ impl World {
         let walls = Walls::new(e.walls);
         let labels = build::labels_of(&plan, &raster);
         Ok(Self {
+            geometry: config.geometry_key(),
             destinations: DestGeometry::new(&plan, &raster, &labels, &rooms, &walls),
             targets: EntryTargets::new(&plan, raster, &rooms, &e.tiles),
             ld_lik: Likelihood::new(&e.params),

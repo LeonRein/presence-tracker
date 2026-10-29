@@ -271,6 +271,7 @@ zone_states(now), persons(), clouds(), online(id, now), silent(now), seen_last()
 regions(), dwell, ld_shown(si)
 Sichten: plan(), tiles_view(), sensor_map(si), detections(si), last_frame(si), coverage()
 Modul: plan(config), check_config(config), canonical(config), config_defaults(), config_limits(), derive(config),
+geometry_key(config), forget_measured(config) (0.51.0),
 calibrate, calibration_status, Walking, Frame, SensorClock, WorldChanged, ConfigError (ValueError; args[0] ein
 ConfigProblem: Teil, Name, Feld, Grund, Grenzen, Wert), PanicException, SOURCE_HASH (Fingerabdruck der Quellen
 des Kerns, beim Bauen eingebettet: build.rs, 0.50.0)
@@ -362,13 +363,31 @@ Fehler: Nicht endliche Gewichte werden in Python ein `FloatingPointError` wie he
    **kein Neubau** (`Core.set_outputs`), nichts beginnt neu, nur die Parameter und der Ausgabe-Cache;
 2. nur Sensoren oder Namen geändert (gedreht, verschoben, kalibriert, ein/aus; die Namen liest der Plan, z. B. den
    eigenen Raum eines Sensors): Personen bleiben, deren Spuren enden wie bei Datenverlust, die Welt neu gebaut
-   (`Core.recalibrate`), Geisterkarte folgt (ein anders montierter beginnt neu); passen die Personen nicht in die neue
+   (`Core.recalibrate`), das Gelernte nur unter derselben Geometrie (unten); passen die Personen nicht in die neue
    Welt, sagt der Kern `WorldChanged` (nur das fängt die Hülle; jeder andere Fehler bleibt ein Fehler), und Weg 3
    nimmt die schon gebaute Welt;
 3. sonst: Neubau, Personen aus `people_state`, wenn die Kacheln gleich bleiben.
 
 Je Weg ein Test; für 1 zusätzlich: Hypothesen, Gewichte und Spuren sind danach bitgleich wie davor, und der Lauf geht
 bitgleich weiter wie ohne die Änderung (bis auf die geänderten Ausgaben).
+
+**Gelerntes und Geometrie (0.51.0, Leon 29.10., ohne Ausnahme):** Was gesammelt und gelernt ist, gilt nur unter der
+Geometrie, unter der es gesammelt wurde. Eine Quelle: `Config::geometry_key` (Bindung `presence_core.geometry_key`,
+sha1 16 Hex) über Lage, Blickrichtung, Höhe, Spiegelung, Maßstab, Öffnungswinkel, Reichweite, `placed` und ID jedes
+Sensors, Wände (Strecke, Art), Türen (ID, Mitte, Breite) und Zonen (ID, Art, Form), Zahlen nach Wert; nicht: Namen,
+`enabled`, Parameter, `ld_view`. Öffnungswinkel und Reichweite gehören dazu, weil aus ihnen die Sicht je Kachel, die
+beobachteten Räume und das „außerhalb der Sicht“ der Kalibrierung folgen. Die `World` trägt den Schlüssel
+(`World::geometry`), `Learned` den, unter dem es lernt: `Learned::follow` beginnt bei einem anderen ganz neu (alle
+Sensoren, alle drei Teile), sonst bleibt es; `Pose::remounted` (0,5 m / 30°) und das Folgen je Sensor sind weg.
+`reconfigure::change` bleibt nur der Weg des Modells (er definiert keine Geometrie). Die Hülle führt aus: Jede Datei
+des Gesammelten trägt den Schlüssel (`ghostmap.json`, `ld2410.json`, `destinations.json` als
+`{"geometry", "learned"}`, `calibration.npz` mit `geometry`); passt er beim Start nicht, wird sie gelöscht
+(`App._discard`). PUT mit einem anderen Schlüssel: `presence_core.forget_measured` leert `ld_view` (gemessen unter der
+alten Geometrie; gibt die Zahl der Raumpaare zurück, Python liest das Feld nicht) vor dem Rekonfigurieren, danach `App._forget` (Kalibrierdaten zurückgesetzt, die vier Dateien
+gelöscht) und `"discarded": {"calibration": Messungen, "ld_view": Raumpaare}` in der Antwort; die Oberfläche sagt es
+(`util.discardedText`). Die Sonderfälle bleiben, was sie prüfen: die Geisterkarte ihren Prior (Modellparameter, keine
+Geometrie), die Zielkarte ihr Raster (`fingerprint`, hängt auch am Code); „andere Räume oder Türen“ fängt jetzt der
+Schlüssel vorher ab.
 
 ## 5. Build
 

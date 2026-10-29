@@ -218,6 +218,17 @@ export function bindNumber(input, lim, apply, { allowEmpty = false } = {}) {
   };
 }
 
+// What a save of another geometry (a sensor's place or view, the walls, doors, zones; the server's "discarded":
+// the calibration's measurements and the room pairs of the LD2410Cs' measured view) discarded, as a sentence;
+// '' for nothing
+export function discardedText(d) {
+  if (!d) return '';
+  const n = d.calibration.toLocaleString('de-DE');
+  const view = d.ld_view ? `, gemessener Blick der LD2410C (${d.ld_view} ${d.ld_view === 1 ? 'Raumpaar' : 'Raumpaare'})` : '';
+  return `Sensorlage oder Grundriss geändert, verworfen: ${n} Kalibriermessungen aller Sensoren, alles Gelernte `
+    + `(Geisterkarte, LD2410C-Hintergrund, Zielkarte)${view}.`;
+}
+
 export function toast(text, ms = 2500) {
   const el = document.getElementById('toast');
   el.textContent = text;
