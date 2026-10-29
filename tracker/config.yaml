@@ -1,5 +1,6 @@
 name: Presence Tracker
-version: "0.51.1"
+version: "0.52.0"
+image: "ghcr.io/leonrein/{arch}-presence-tracker"
 slug: presence_tracker
 description: Verfolgt Personen über mehrere LD2450/LD2410C-Radarsensoren und meldet belegte Zonen an Home Assistant
 url: https://github.com/LeonRein/presence-tracker/tree/main/tracker

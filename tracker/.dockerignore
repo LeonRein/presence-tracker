@@ -1,4 +1,5 @@
-.venv
-tests
-__pycache__
-*.pyc
+# the image takes only the app and the core wheel (Dockerfile)
+*
+!presence_tracker
+!dist
+**/__pycache__

@@ -1,0 +1,96 @@
+# Checks on every push and pull request; on a tag v<version> also the images for Home Assistant (docs/rust-core.md 5)
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: tracker
+    env:
+      # as the image for amd64; tracker/.cargo/config.toml holds only for cargo started below tracker/
+      RUSTFLAGS: -C target-cpu=x86-64-v3
+      CI: "1"  # test_replay fails instead of skipping without presence-replay
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tracker/core
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - name: Rust
+        working-directory: tracker/core
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-features
+      - name: Python with the core's test hooks
+        run: |
+          uv sync --locked
+          uv run maturin develop --uv --release --features testing -m core/presence-py/Cargo.toml
+          (cd core && cargo build --release -p presence-replay)
+          uv run pytest
+      - name: Python against the release wheel
+        run: |
+          uv run maturin build --release -m core/presence-py/Cargo.toml --out dist
+          uv pip install --reinstall dist/presence_core-*.whl
+          PT_RELEASE_WHEEL=1 uv run pytest -m "not hooks"
+
+  image:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            rustflags: -C target-cpu=x86-64-v3  # inge: AVX2 and FMA, no AVX-512
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            rustflags: ""
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: tracker
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+      IMAGE: ghcr.io/leonrein/${{ matrix.arch }}-presence-tracker
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tag is the version in config.yaml
+        run: |
+          version=$(sed -n 's/^version: "\(.*\)"$/\1/p' config.yaml)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, config.yaml $version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tracker/core
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - name: Wheel of the core
+        run: uv run maturin build --release -m core/presence-py/Cargo.toml --out dist
+      - name: Image
+        run: |
+          docker build --build-arg BUILD_ARCH=${{ matrix.arch }} --build-arg BUILD_VERSION=$VERSION -t $IMAGE:$VERSION .
+          docker run --rm $IMAGE:$VERSION python -c "import presence_tracker.app"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push $IMAGE:$VERSION

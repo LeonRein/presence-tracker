@@ -394,13 +394,31 @@ Schlüssel vorher ab.
 - **Lokal (hermann):** Rust stable 1.99.1 ist da. `maturin` als Entwicklungsabhängigkeit über `uv`;
   `maturin develop --release` baut `presence_core` in `tracker/.venv`. `cargo run --release -p presence-replay`
   für die Wiedergabe. Keine Systempakete.
-- **Image (Variante B):** GitHub Actions bei einem Tag `v<version>`: Wheels mit `maturin-action` (amd64
-  `RUSTFLAGS=-C target-cpu=x86-64-v3`, aarch64 generisch, quer kompiliert; cp313, abi3 falls `numpy`/PyO3 es
-  hergeben), dann `docker buildx` für beide Architekturen: `python:3.13-slim` + Wheels, ohne numba/llvmlite, nach
-  `ghcr.io/leonrein/{arch}-presence-tracker:<version>`; `config.yaml` bekommt `image:`. Leon stellt das ghcr-Paket
-  einmal auf öffentlich. Release: Tag → Image fertig → erst dann main vorspulen. Im README: amd64 braucht AVX2.
-- **Prüfung in CI:** `cargo fmt --check`, `cargo clippy -- -D warnings -W clippy::redundant_clone
-  -W clippy::needless_pass_by_value`, `cargo test`, `pytest`.
+- **CI (`.github/workflows/ci.yml`), bei jedem Push und Pull Request:** `cargo fmt --check`, `cargo clippy
+  --all-targets -- -D warnings` ohne und mit allen Features, `cargo test --all-features`; dann Python 3.13 über `uv`:
+  der Kern mit den Hooks (`maturin develop --features testing`), `presence-replay` gebaut, `pytest` mit `CI=1`;
+  zuletzt das Release-Wheel (`maturin build --release`, ohne Features) installiert und `PT_RELEASE_WHEEL=1 pytest -m
+  "not hooks"`. `RUSTFLAGS=-C target-cpu=x86-64-v3` steht im Workflow (`tracker/.cargo/config.toml` greift nur für
+  ein `cargo`, das unter `tracker/` startet). Kein Image.
+- **Image (Variante B), nur bei einem Tag `v<version>`:** derselbe Workflow prüft, dass der Tag `version` in
+  `tracker/config.yaml` ist, und baut je Architektur auf einem eigenen Runner (amd64 `ubuntu-24.04` mit
+  `x86-64-v3`, aarch64 `ubuntu-24.04-arm` generisch): das Wheel (`maturin build --release`, `cp313-abi3`,
+  manylinux), dann `docker build` mit `tracker/Dockerfile` (`python:3.13-slim`, installiert nur das Wheel aus
+  `tracker/dist/` und numpy, aiomqtt, aiohttp; Labels `io.hass.type/arch/version`), ein Import als Rauchtest und
+  `docker push` nach `ghcr.io/leonrein/{arch}-presence-tracker:<version>`. `config.yaml` hat `image:`; HA setzt
+  `{arch}` ein und zieht den Tag `version`, gebaut wird auf inge nichts mehr. Kein `home-assistant/builder` und kein
+  `buildx` für fremde Plattformen: je Architektur ein nativer Runner ist einfacher (kein QEMU, kein Manifest, das
+  Wheel kommt aus dem Cargo-Cache von `Swatinem/rust-cache`).
+- **Release:** (1) `version` in `config.yaml` und `presence_tracker/__init__.py`, CHANGELOG, Commit auf dem Branch,
+  CI grün. (2) Tag `v<version>` auf genau diesen Commit pushen → CI baut und pusht beide Images. (3) Beim ersten Mal:
+  die Pakete `amd64-presence-tracker` und `aarch64-presence-tracker` unter github.com/LeonRein → Packages →
+  Package settings auf **Public** stellen (HA zieht ohne Anmeldung). (4) Prüfen, dass beide Tags ohne Anmeldung
+  ziehbar sind (`podman pull ghcr.io/leonrein/amd64-presence-tracker:<version>`). (5) Erst dann main auf den Commit
+  vorspulen: HA zeigt das Update, sobald `version` auf main steigt, und das Image muss dann schon da sein.
+- **Gleitkomma und C-Bibliothek:** `f64::hypot` ist die `hypot` der C-Bibliothek. Die von hermann (CachyOS glibc
+  2.44) weicht im letzten Bit von Debians (Image, 2.41) und Ubuntus (CI) ab; die Spuren im Image sind deshalb nicht
+  byte-gleich mit denen auf hermann (`exp`, `log`, `pow`, `atan2`, `expm1`, `log1p`, `sin`, `cos` sind gleich). Die
+  Digests von `test_core_build` gelten nur unter hermanns `hypot` (sonst übersprungen).
 
 ## 6. Wiedergabe in Rust und Prüfplan
 

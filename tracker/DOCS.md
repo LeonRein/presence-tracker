@@ -395,3 +395,12 @@ uv run pytest
 ```
 
 Gegen ein Wheel ohne die Hooks (wie im Image): `PT_RELEASE_WHEEL=1 uv run pytest -m "not hooks"`.
+
+Dasselbe macht CI (`.github/workflows/ci.yml`) bei jedem Push. Das Image baut nur CI, bei einem Tag `v<version>`
+(docs/rust-core.md 5); lokal zum Ausprobieren:
+
+```bash
+cd tracker
+uv run maturin build --release -m core/presence-py/Cargo.toml --out dist  # das Wheel, das das Image installiert
+podman build --build-arg BUILD_ARCH=amd64 --build-arg BUILD_VERSION=dev -t presence-tracker .
+```
