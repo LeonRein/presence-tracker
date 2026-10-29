@@ -5,6 +5,13 @@ export const PERSON_COLORS = ['#2f6fde', '#d9822b', '#2e9d5a', '#a855c7', '#c241
 export function personColor(id) { return PERSON_COLORS[((id - 1) % PERSON_COLORS.length + PERSON_COLORS.length) % PERSON_COLORS.length]; }
 
 // color: fills and strokes; text: labels on the map (darker in light mode, for 4.5:1 contrast)
+// where walks went next on the destination map (the core's outcomes: observed rooms, regions, "outside"), a colour each
+const OUTCOME_COLORS = ['#2f6fde', '#d9822b', '#2e9d5a', '#a855c7', '#c2413b', '#0f8f9c', '#b8961c', '#d6589c', '#5d8a2e', '#8a5a3c'];
+export function outcomeColor(outcomes, k) {
+  if (outcomes[k] === 'outside') return '#3a3f47';
+  return OUTCOME_COLORS[k % OUTCOME_COLORS.length];
+}
+
 export const ZONE_KINDS = {
   room: { label: 'Raum', color: '#2f6fde', text: 'var(--accent-text)' },  // from the walls, not drawn
   area: { label: 'Bereich', color: '#1f9d55', text: 'var(--ok-text)', note: 'Wird an Home Assistant gemeldet (z. B. Sofa, Esstisch)' },

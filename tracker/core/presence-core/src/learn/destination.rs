@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::f64::consts::PI;
 use std::sync::LazyLock;
 
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::{LearnedError, PackedFault};
@@ -465,6 +466,78 @@ impl DestMap {
             forget: m.get("forget").map_or(Ok(FORGET), |x| number(x, "forget", 0.0))?,
             ..empty
         })
+    }
+}
+
+/// A cell of the map as the web UI shows it (DestMap::shown).
+#[derive(Debug, Serialize)]
+pub struct DestCellShown {
+    /// its centre, the lower left corner of its CELL square (cut by its room) and its room (id)
+    pub at: Point,
+    pub square: Point,
+    pub room: String,
+    /// the walks counted in its most frequent velocity cell: the way most walks went through it, at this velocity
+    pub walks: f64,
+    pub velocity: Point,
+    /// per outcome the share of the walks through it that went so, over all velocities, and the largest but
+    /// "stays": where they most often went next (None: none went on)
+    pub shares: Vec<f64>,
+    pub likely: Option<usize>,
+}
+
+/// What the map learned, for the web UI (derived::learned): its cells with walks counted.
+#[derive(Debug, Serialize)]
+pub struct DestShown {
+    /// m: side of a cell's square
+    pub cell: f64,
+    /// walks counted, faded like the counts
+    pub walks: f64,
+    /// h: the counts fade with this time constant
+    pub forget_hours: f64,
+    /// the outcomes: the observed rooms, the regions (ids), "outside", "stays"
+    pub outcomes: Vec<String>,
+    pub cells: Vec<DestCellShown>,
+}
+
+impl DestMap {
+    /// The map per cell as the web UI shows it (computed when asked, the map unchanged).
+    pub fn shown(&self, geo: &DestGeometry) -> DestShown {
+        let k = self.outcomes;
+        let fine = ((CELL / raster::CELL).round() as usize).max(1); // map_cells' blocks
+        let r = &geo.raster;
+        let corner = |v: f64, v0: f64| v0 + (((v - v0) / raster::CELL) as usize / fine * fine) as f64 * raster::CELL;
+        let cells = geo
+            .cells
+            .iter()
+            .zip(self.count.chunks(V * k))
+            .filter_map(|(cell, count)| {
+                let per_v: Vec<f64> = count.chunks(k).map(|o| o.iter().map(|&c| f64::from(c)).sum()).collect();
+                let total: f64 = per_v.iter().sum();
+                if !(total > 0.0) {
+                    return None;
+                }
+                let best = crate::outputs::argmax(&per_v);
+                let shares: Vec<f64> = (0..k)
+                    .map(|o| count.chunks(k).map(|v| f64::from(v[o])).sum::<f64>() / total)
+                    .collect();
+                Some(DestCellShown {
+                    at: cell.centre,
+                    square: [corner(cell.centre[0], r.x0), corner(cell.centre[1], r.y0)],
+                    room: geo.names[cell.room.0].clone(),
+                    walks: per_v[best],
+                    velocity: VELOCITIES[best],
+                    likely: Some(crate::outputs::argmax(&shares[..geo.stay()])).filter(|&o| shares[o] > 0.0),
+                    shares,
+                })
+            })
+            .collect();
+        DestShown {
+            cell: fine as f64 * raster::CELL,
+            walks: self.walks,
+            forget_hours: self.forget / 3600.0,
+            outcomes: geo.names.clone(),
+            cells,
+        }
     }
 }
 
@@ -1067,6 +1140,40 @@ mod tests {
         assert_eq!(map.walks, 2.0);
         let (cells, cw) = g.around([4.2, 1.5]).expect("in view");
         assert!(map.lookup(cells, &cw, [1.0, 0.0])[g.stay()] > 0.0);
+    }
+
+    #[test]
+    fn the_map_is_shown_per_cell_with_its_most_frequent_velocity_and_where_its_walks_went() {
+        // a cell of a: 3 walks east at 0.9 m/s into b and 1 that stayed, 1 walk north at 0.5 m/s into b; one
+        // further east where they all stayed
+        let w = two_rooms(false);
+        let g = &w.destinations;
+        let mut map = DestMap::new(g);
+        let c = g.cell([1.0, 1.5]).expect("in view");
+        let (east, north) = (SECTORS, SECTORS / 4); // speed class 1, sector 0; speed class 0, sector 4
+        let at = |v: usize, o: usize| (c * V + v) * g.outcomes() + o;
+        (
+            map.count[at(east, 1)],
+            map.count[at(east, g.stay())],
+            map.count[at(north, 1)],
+        ) = (3.0, 1.0, 1.0);
+        let stayed = g.cell([2.0, 1.5]).expect("in view");
+        map.count[(stayed * V + east) * g.outcomes() + g.stay()] = 2.0;
+        map.walks = 5.0;
+        let shown = map.shown(g);
+        assert_eq!(shown.outcomes, ["a", "b", "outside", "stays"]);
+        assert_eq!((shown.walks, shown.forget_hours), (5.0, FORGET / 3600.0));
+        assert!((shown.cell - CELL).abs() < 1e-12);
+        let [cell, still] = &shown.cells[..] else {
+            panic!("two cells with walks")
+        };
+        assert_eq!((cell.room.as_str(), cell.walks, cell.likely), ("a", 4.0, Some(1)));
+        assert_eq!((still.walks, still.likely), (2.0, None));
+        assert!((cell.velocity[0] - 0.9).abs() < 1e-12 && cell.velocity[1].abs() < 1e-12);
+        assert_eq!(cell.shares, [0.0, 0.8, 0.0, 0.2]);
+        let centre = g.cells[c].centre;
+        assert_eq!(cell.at, centre);
+        assert!((0..2).all(|k| cell.square[k] <= centre[k] && centre[k] < cell.square[k] + CELL));
     }
 
     #[test]

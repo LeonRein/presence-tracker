@@ -161,6 +161,12 @@ impl Background {
         (p.ld_echo_rate * p.ld_echo_prior_time + e.began) / (p.ld_echo_prior_time + e.quiet)
     }
 
+    /// s sensor si's level and its anchor learned from (each forgotten as it is: ld_forget, ld_anchor_forget).
+    pub fn learned_for(&self, si: usize) -> [f64; 2] {
+        let part = self.part(si);
+        [part.level, part.anchor].map(|l| l.map_or(0.0, |l| l.den))
+    }
+
     /// The level learned for sensor si: s x the background's share of the energies, s watched.
     #[cfg(test)]
     pub(crate) fn level(&self, si: usize) -> Option<(Cells, f64)> {

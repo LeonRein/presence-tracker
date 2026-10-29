@@ -632,7 +632,7 @@ class App:
         app.router.add_get("/api/ha/cameras", self.h_cameras)
         app.router.add_get("/api/ha/map", self.h_map)
         app.router.add_post("/api/tracks/reset", self.h_reset_tracks)
-        app.router.add_get("/api/sensormodel", self.h_sensormodel)
+        app.router.add_get("/api/learned", self.h_learned)
         app.router.add_post("/api/learned", self.h_import_learned)
         app.router.add_get("/api/tiles", self.h_tiles)
         app.router.add_get("/api/reports", self.h_reports)
@@ -804,9 +804,13 @@ class App:
             cal.use_status(await asyncio.to_thread(cal.status_job()))
         return web.json_response(cal.last_status())
 
-    async def h_sensormodel(self, request):
-        """What one sensor sees (from the geometry) and where it starts ghost tracks (learned)."""
-        return web.json_response({"maps": self.tracker.sensor_map(request.query.get("sensor", ""))})
+    async def h_learned(self, request):
+        """What the running model learned (the core's, computed only when asked; the model is only read): per sensor
+        in use its ghost map, its LD2410C's background and the measured view of the rooms, the destination map."""
+        try:
+            return web.json_response(self.tracker.learned_view())
+        except Exception as e:  # noqa: BLE001 - the model is down (restarting after an error)
+            return web.json_response({"error": f"Das Modell läuft gerade nicht: {e!r}"}, status=503)
 
     async def h_import_learned(self, request):
         """Take over a ghost map learned elsewhere, e.g. offline from recordings: {"ghost_map":

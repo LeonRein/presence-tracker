@@ -361,21 +361,6 @@ class Tracker:
             r.update({k: mm(r[k]) for k in ("area", "share", "blind", "single", "blind_share", "single_share")})
         return c
 
-    def sensor_map(self, sensor_id: str) -> dict:
-        """For the web UI: what one sensor sees from the geometry (its coarse map, MODEL.md 4.1) and the
-        ghost map's rate (ghost tracks per m^2 and hour; None where the sensor doesn't see), the hours
-        it watched (the core's, in columns of rows here)."""
-        if sensor_id not in self.sidx:
-            return {}
-        m = self.core.sensor_map(self.sidx[sensor_id])
-        (x0, y0), rows = m.corner, m.rows
-        columns = [range(i * rows, (i + 1) * rows) for i in range(m.cols)]
-        return {"cell": m.cell, "x0": x0, "y0": y0, "cols": m.cols, "rows": rows,
-                # [column][row], row 0 = lowest y
-                "prior": [[round(float(m.prior[k]), 3) for k in col] for col in columns],
-                "ghosts": [[None if m.ghosts[k] is None else round(m.ghosts[k], 4) for k in col] for col in columns],
-                "watched_h": round(m.watched_h, 1)}
-
     # -------------------------------------------------------------- LD2410C
 
     def _ld_runtime(self, rt, ld):
@@ -465,6 +450,33 @@ class Tracker:
     def learned(self) -> dict:
         """What was learned in its saved formats: {"ghost_map", "ld_background", "dest_map"}."""
         return json.loads(self.learned_snapshot().json())
+
+    def learned_view(self) -> dict:
+        """What the running model learned, for the web UI (the core's, computed when asked): per sensor in use its
+        ghost map per tile (ghost tracks per m^2 and hour, None where it does not watch), its LD2410C's background
+        per gate and the measured view of the rooms; the destination map per cell. Rounded for the web UI:
+        positions to mm, rates and energies to two or four places, shares to three."""
+        v = json.loads(self.core.learned_view())
+        r = round
+        xy = lambda p: [r(p[0], 3), r(p[1], 3)]  # noqa: E731
+        v["tiles"] = [[xy(square), room] for square, room in v["tiles"]]
+        for s in v["sensors"].values():
+            g, b = s["ghosts"], s["background"]
+            g["rate"] = [None if x is None else r(x, 4) for x in g["rate"]]
+            g.update(prior=r(g["prior"], 4), hours=r(g["hours"], 2), forget_hours=r(g["forget_hours"], 2))
+            for gates in (b["now"], b["anchor"]):
+                gates["moving"] = [r(x, 2) for x in gates["moving"]]
+                gates["still"] = [None if x is None else r(x, 2) for x in gates["still"]]
+            b.update({k: r(b[k], 4) for k in ("hours", "forget_hours", "anchor_hours", "anchor_forget_hours",
+                                              "echo_rate", "echo_prior")})
+            if s["ld_view"] is not None:
+                s["ld_view"] = {k: r(x, 3) for k, x in s["ld_view"].items()}
+        d = v["destinations"]
+        d.update(cell=r(d["cell"], 3), walks=r(d["walks"], 2), forget_hours=r(d["forget_hours"], 2))
+        for c in d["cells"]:
+            c.update(at=xy(c["at"]), square=xy(c["square"]), walks=r(c["walks"], 3), velocity=xy(c["velocity"]),
+                     shares=[r(x, 3) for x in c["shares"]])
+        return v
 
     def learned_snapshot(self):
         """A copy of what was learned now; its json() packs it without the tracker (the app: in a thread)."""

@@ -11,6 +11,7 @@ const SELECTABLE = {
   sensors: ['sensor'],
   zones: ['zone', 'room'],
   calibration: [],
+  learned: [],
   settings: [],
 };
 
@@ -82,7 +83,8 @@ function showTab(tab) {
   for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('active', x.dataset.tab === tab);
   state.tool = null;
   if (state.selection && !SELECTABLE[state.tab].includes(state.selection.kind)) state.selection = null;
-  if (state.tab !== 'sensors') { state.showCoverage = false; state.sensorMap = null; }
+  if (state.tab !== 'sensors') state.showCoverage = false;
+  if (state.tab !== 'learned') state.learned = null;  // fetched anew when the tab opens
   emit('tab');
   panel.scrollTop = 0;  // each tab starts at its top (its tools, the totals)
 }

@@ -12,7 +12,6 @@ use presence_core::geometry::Point;
 use presence_core::outputs::{Cloud, Person, RegionShown, Source, ZoneState, argmax};
 use presence_core::plan::{Plan, RoomIdx, ZoneIdx};
 use presence_core::world::World;
-use presence_core::world::sight::SensorMap;
 use presence_core::world::tiles::SIZE;
 
 /// A hypothesis for reading (tests, tools; feature "testing"): per person with tracks their track ids, the
@@ -177,34 +176,6 @@ impl DetectionView {
             speed: d.speed,
             hidden: d.hidden,
             stale: !d.hidden && !measured,
-        }
-    }
-}
-
-/// A sensor's coarse sight map for the web UI: the lower left corner, the cell side, columns, rows, the
-/// sight per cell column by column, the ghost map's rate there (ghost tracks per m^2 and hour; None where
-/// the sensor does not see) and the hours it watched.
-#[pyclass(module = "presence_core", frozen, get_all)]
-pub struct SensorMapView {
-    corner: Point,
-    cell: f64,
-    cols: usize,
-    rows: usize,
-    prior: Vec<f32>,
-    ghosts: Vec<Option<f64>>,
-    watched_h: f64,
-}
-
-impl SensorMapView {
-    pub(crate) fn of(m: &SensorMap, ghosts: Vec<Option<f64>>, watched_h: f64) -> Self {
-        Self {
-            corner: m.corner,
-            cell: m.cell,
-            cols: m.cols,
-            rows: m.rows,
-            prior: m.prior.clone(), // the view's own copy, for Python
-            ghosts,
-            watched_h,
         }
     }
 }

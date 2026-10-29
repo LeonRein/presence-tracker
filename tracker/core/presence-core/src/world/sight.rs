@@ -8,17 +8,6 @@ use crate::geometry::Point;
 use crate::ld2450::rates::RateModel;
 use crate::world::Tiles;
 
-/// The sensor model's coarse map of a sensor, for the web UI: its sight
-/// of a point on square cells of side `cell` over the rooms' box, column by column from `corner`.
-#[derive(Debug, Default)]
-pub struct SensorMap {
-    pub corner: Point,
-    pub cell: f64,
-    pub cols: usize,
-    pub rows: usize,
-    pub prior: Vec<f32>,
-}
-
 /// A sensor's sight of a person, 0..1 per 0.1 m cell, and its rates per tile without live tracks.
 #[derive(Debug)]
 pub struct Sight {
@@ -33,8 +22,6 @@ pub struct Sight {
     /// how well it can test a person in each tile, 0..1: its LD2450's sight or its LD2410C's beam,
     /// whichever is better (tiling.Tiling.observed of this sensor alone, MODEL.md 5.5)
     pub observed: Vec<f64>,
-    /// the coarse map the sight of a point comes from (set by the build)
-    pub map: SensorMap,
     /// [STILL, WALK] rates at the tiles' sample points and per tile, without live tracks
     base_points: [Vec<f64>; 2],
     base_tiles: [Vec<f64>; 2],
@@ -50,7 +37,6 @@ impl Sight {
             area: seen as f64 * CELL * CELL,
             observed,
             grid,
-            map: SensorMap::default(),
             tiles: Vec::new(),
             base_points: [Vec::new(), Vec::new()],
             base_tiles: [Vec::new(), Vec::new()],

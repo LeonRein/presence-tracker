@@ -15,7 +15,12 @@ export const state = {
   tool: null,           // active drawing tool name
   selectable: [],       // element kinds that can be selected in the current tab
   showCoverage: false,
-  sensorMap: null,      // {sensor, layer: 'prior' | 'clutter'} shown on the map
+  // the tab "Gelerntes": what the model learned (api/learned, the core's; null: not fetched since the tab opened),
+  // the layer shown (remembered per browser), its sensor, the destination cells coloured by their likeliest outcome
+  learned: null,
+  learnedLayer: loadPref('learnedLayer', 'ghosts'),
+  learnedSensor: null,
+  learnedColors: false,
   showRaw: loadPref('showRaw', false),  // the raw sensor data on the live map (remembered per browser)
   holds: {},            // zone id -> {approach, target}: badges held for HOLD_MS after they went off
   calibResult: null,
@@ -187,7 +192,7 @@ async function save() {
 // save the draft and wait for it (the "Speichern" button, Ctrl+S, before reloading the page)
 export function saveNow() { return save(); }
 
-export const TAB_NAMES = { live: 'Live', plan: 'Grundriss', sensors: 'Sensoren', zones: 'Zonen', calibration: 'Kalibrierung', settings: 'Einstellungen' };
+export const TAB_NAMES = { live: 'Live', plan: 'Grundriss', sensors: 'Sensoren', zones: 'Zonen', calibration: 'Kalibrierung', learned: 'Gelerntes', settings: 'Einstellungen' };
 
 export function edit(fn, { merge = null } = {}) {
   const before = JSON.stringify(state.config);

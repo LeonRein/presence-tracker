@@ -13,7 +13,7 @@ pub mod tiles;
 
 pub use ld::{LdPlace, LdSight, LdTiles};
 pub use raster::{CELL, Grid, Raster, RoomGrid};
-pub use sight::{SensorMap, Sight};
+pub use sight::Sight;
 pub use targets::EntryTargets;
 pub use tiles::{AGE_EDGES, DoorTile, POINT, Tiles};
 

@@ -33,7 +33,7 @@ pub const FORGET: f64 = 14.0 * 86400.0;
 /// s between two fadings
 const DECAY_EVERY: f64 = 60.0;
 /// sight above this counts as watched
-const WATCHED: f64 = 0.05;
+pub const WATCHED: f64 = 0.05;
 
 /// The expected number of ghost births per cell (NX x NY, row-major) and the same spread with SPREAD.
 #[derive(Debug, Clone, PartialEq)]

@@ -2,6 +2,35 @@
 
 ## Unveröffentlicht
 
+## 0.54.0 (Branch `rust-core`, Tab „Gelerntes“; nicht live, kein Tag)
+
+Modell unverändert: die Spuren der drei Referenzstunden sind byte-gleich mit 0.53.x.
+- **Neuer Tab „Gelerntes“:** alles, was die App im Betrieb lernt, an einer Stelle, so wie das Modell es gerade
+  verwendet; je Ebene eine kurze Erklärung, ein Sensor-Auswahlfeld, wo nötig, *Aktualisieren*. Ebenen:
+  - *Geister*: die Geisterkarte des Sensors je Kachel (Rate je m² und Stunde an ihrer Mitte, wo er hinsieht), je röter,
+    desto öfter gegenüber dem Vorwissen (log, bis zur häufigsten); dazu häufigste Rate, Vorwissen, Stunden beobachtet.
+  - *LD2410C-Hintergrund*: je Stufe (bewegt, ruhig; Entfernung aus `ld2410_gate`) der gelernte Hintergrund, wie der
+    Filter ihn jetzt nimmt, neben der jetzt gemessenen Energie, der Langzeitwert (Anker) als Strich; Stunden, aus
+    denen beide gelernt sind, ihre Zeitkonstanten, die Rate der Echoquellen gegen das Vorwissen.
+  - *Ziele*: die Zielkarte als Vektorfeld, je Zelle ein Pfeil in ihrer häufigsten Geschwindigkeitsklasse (Richtung,
+    Länge nach dem Tempo), Deckkraft nach den Gängen in dieser Klasse; schaltbar die Zellen in der Farbe des
+    häufigsten Ziels (über alle Richtungen, ohne „bleibt“: Raum hinter der ersten Tür, Bereich ohne Sensor, außer
+    Haus), kräftiger, je größer sein Anteil; ohne Farbe, wo alle Gänge blieben. Nur für „Ziel“.
+  - *Blick des LD2410C*: `ld_view` des Sensors, die Räume nach ihrem Anteil gefärbt; gemessen, nicht gelernt;
+    ohne Messung „nicht gemessen (Anteil 1)“.
+- **Kern liefert, Python reicht durch, JS zeichnet:** `presence_core::derived::learned` (Gelerntes je Sensor in
+  Gebrauch, Zielkarte über `DestMap::shown`; liest nur), Bindung `Core.learned_view()` (JSON), `Tracker.learned_view()`
+  (rundet), `GET /api/learned` (rechnet nur bei Abruf; `POST /api/learned` zum Import bleibt). In JS keine Zahl des
+  Modells: die Skala der Geister ist das Vorwissen des Kerns, die Farbe einer Zelle der Ausgang, den der Kern nennt,
+  die Stufenlänge `derived.ld2410_gate`. Im Tab sind Personen und Wolken ausgeblendet.
+- **Weg:** im Tab Sensoren „Was der Sensor sieht“ / „Karte einblenden“ mit der Ebene „Erkennung: aus der Geometrie“
+  (dieselbe Größe zeigt die Grundansicht als Sicht je Kachel aus `/api/coverage`) und „Geister“ (jetzt im neuen Tab);
+  `GET /api/sensormodel`, `Tracker.sensor_map`, `Core.sensor_map`, `SensorMapView`, `presence_core::world::SensorMap`
+  (`Sight::map`, `CoarseSight::into_map`), `tracker.rs` `sensor_map` und `SEES_ON_MAP`; JS `showSensorMap`,
+  `state.sensorMap`, `sensorMapImage`. Das grobe Raster selbst bleibt (Sicht eines Punkts im Weltbau).
+- **DOCS:** der „gelernte Messfehler nach Abstand“ und „das Tracking nutzt es noch nicht“ waren falsch (der
+  Messfehler ist eine Einstellung, Geisterkarte und Hintergrund nutzt der Filter); Abschnitt *Gelerntes* neu.
+
 ## 0.53.2 (Branch `rust-core`, keine Fächer beim Laden)
 
 - **Die Sichtfächer blitzten beim Neuladen etwa 1 s auf**, bis `/api/coverage` die Sicht je Kachel lieferte: Der

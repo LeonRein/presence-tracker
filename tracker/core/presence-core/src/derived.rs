@@ -1,7 +1,8 @@
 //! The model's quantities the web UI shows (docs/rust-core.md 1: the model is the core's, how it looks the web
 //! UI's): of a saved configuration the plan (observed rooms with the share the sensors see, regions) and the
 //! thresholds that follow from the parameters; of the running world, per tile how many sensors see it and
-//! each sensor's sight there (the numbers the filter computes with). No geometry for drawing: the web UI
+//! each sensor's sight there (the numbers the filter computes with); of what the running model learned, each part
+//! as the filter (or "Ziel") reads it. No geometry for drawing: the web UI
 //! draws the walls, doors, tiles and clouds itself (static/js/view.js), from the numbers as they are (the
 //! shell rounds what it sends).
 
@@ -11,6 +12,10 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::geometry::Point;
+use crate::ld2410::{CELLS, MOVING};
+use crate::learn::Learned;
+use crate::learn::destination::DestShown;
+use crate::learn::ghost_map::WATCHED;
 use crate::params::{OUTPUT_FIELDS, OutputParams, Params};
 use crate::plan::{DOOR_ON_WALL, OBSERVED_SHARE, Opening, Plan, RoomIdx, ZoneRole, door_openings};
 use crate::world::World;
@@ -208,6 +213,132 @@ pub fn coverage(world: &World) -> Coverage {
     }
 }
 
+/// An LD2410C's energies per gate (ld2410::GATE m each, from the sensor): moving 0..8, still 0..8 (gates 0 and 1
+/// have no still energy: None).
+#[derive(Debug, Serialize)]
+pub struct Gates {
+    pub moving: Vec<f64>,
+    pub still: Vec<Option<f64>>,
+}
+
+impl Gates {
+    fn of(cells: &[f64; CELLS]) -> Self {
+        let (moving, still) = cells.split_at(MOVING);
+        Self {
+            moving: moving.to_vec(),
+            still: [None, None]
+                .into_iter()
+                .chain(still.iter().copied().map(Some))
+                .collect(),
+        }
+    }
+}
+
+/// What a sensor's LD2410C learned (MODEL.md 4.3): the energy without anybody the filter weighs with now and the
+/// level it goes back to while nothing is learned (the sensor's own over days), the hours each learned from
+/// (faded) and how long each remembers; the echo sources begun per hour, learned and the prior's.
+#[derive(Debug, Serialize)]
+pub struct BackgroundShown {
+    pub now: Gates,
+    pub anchor: Gates,
+    pub hours: f64,
+    pub forget_hours: f64,
+    pub anchor_hours: f64,
+    pub anchor_forget_hours: f64,
+    pub echo_rate: f64,
+    pub echo_prior: f64,
+}
+
+/// What a sensor's part of the ghost map learned (MODEL.md 4.2): per tile of LearnedShown::tiles the rate of
+/// ghost tracks per m^2 and hour at its centre where the sensor watches it (sight above WATCHED; None
+/// elsewhere), the prior's rate, the hours it watched (faded like the counts) and how long they last.
+#[derive(Debug, Serialize)]
+pub struct GhostsShown {
+    pub rate: Vec<Option<f64>>,
+    pub prior: f64,
+    pub hours: f64,
+    pub forget_hours: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SensorLearned {
+    pub ghosts: GhostsShown,
+    pub background: BackgroundShown,
+    /// per observed room (id) the share of its geometric sight the LD2410C gets from a person there: measured
+    /// (the configuration's ld_view), not learned; None: nothing measured for this sensor (all of it)
+    pub ld_view: Option<BTreeMap<String, f64>>,
+}
+
+/// What the running model learned, for the web UI: per sensor in use its ghost map, its LD2410C's background
+/// and its measured view; the destination map ("Ziel": an output only). The tiles in a room (lower left
+/// corner of the square of side `size`, the room, which cuts it) carry the ghost map's rates.
+#[derive(Debug, Serialize)]
+pub struct LearnedShown {
+    pub size: f64,
+    pub tiles: Vec<(Point, String)>,
+    pub sensors: BTreeMap<String, SensorLearned>,
+    pub destinations: DestShown,
+}
+
+/// What `learned` learned in `world`, as LearnedShown (computed when asked; nothing changes).
+pub fn learned(world: &World, learned: &Learned) -> LearnedShown {
+    let (plan, tiles, p) = (&world.plan, &world.tiles, &world.params);
+    let in_room: Vec<usize> = (0..tiles.n).filter(|&t| tiles.room[t].is_some()).collect();
+    let hours = |s: f64| s / 3600.0;
+    let sensors = (0..plan.sensors.len())
+        .filter(|&si| plan.sensors[si].in_use)
+        .map(|si| {
+            let (g, bg) = (&learned.ghosts, &learned.background);
+            let sight = &world.sights[si].tiles;
+            let ghosts = GhostsShown {
+                rate: in_room
+                    .iter()
+                    .map(|&t| (sight[t] > WATCHED).then(|| g.rate(si, tiles.centers[t]) * 3600.0))
+                    .collect(),
+                prior: g.prior_rate() * 3600.0,
+                hours: hours(g.watched(si)),
+                forget_hours: hours(crate::learn::ghost_map::FORGET),
+            };
+            let [level, anchor] = bg.learned_for(si);
+            let background = BackgroundShown {
+                now: Gates::of(&bg.b(si, p)),
+                anchor: Gates::of(&bg.anchor(si, p)),
+                hours: hours(level),
+                forget_hours: hours(p.ld_forget),
+                anchor_hours: hours(anchor),
+                anchor_forget_hours: hours(p.ld_anchor_forget),
+                echo_rate: bg.rate(si, p) * 3600.0,
+                echo_prior: p.ld_echo_rate * 3600.0,
+            };
+            let ld_view = world.ld[si].view.as_ref().map(|v| {
+                (0..plan.rooms.len())
+                    .map(|k| (plan.room(RoomIdx(k)).id.clone(), v[k]))
+                    .collect()
+            });
+            let shown = SensorLearned {
+                ghosts,
+                background,
+                ld_view,
+            };
+            (plan.sensors[si].id.clone(), shown)
+        })
+        .collect();
+    LearnedShown {
+        size: SIZE,
+        tiles: in_room
+            .iter()
+            .map(|&t| {
+                (
+                    tiles.squares[t],
+                    plan.room(tiles.room[t].expect("in a room")).id.clone(),
+                )
+            })
+            .collect(),
+        sensors,
+        destinations: learned.destinations.map().shown(&world.destinations),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,6 +397,47 @@ mod tests {
         let o = derive(&c).plan.doors[0].expect("on a wall");
         assert_eq!(o.wall, 1);
         assert!(o.t0 == 0.0 && (o.t1 - 0.6).abs() < 1e-12);
+    }
+
+    #[test]
+    fn what_was_learned_is_shown_per_sensor_in_use_as_the_filter_reads_it() {
+        let w = World::build(&flat_config(), Params::default()).expect("the flat world");
+        let mut l = Learned::new(&w);
+        l.ghosts.add_watch(0, 3600.0);
+        l.ghosts.add_birth(0, [3.0, 2.5], 1.0);
+        let shown = learned(&w, &l);
+        assert!(shown.tiles.iter().all(|t| t.1 == "wohn") && !shown.tiles.is_empty());
+        assert_eq!(shown.sensors.keys().collect::<Vec<_>>(), ["b", "wohn"]);
+        let (s, other) = (&shown.sensors["wohn"], &shown.sensors["b"]);
+        // the ghost map: where it began above the prior (per m^2 and hour), an hour watched; the other one the prior
+        let g = &s.ghosts;
+        assert_eq!(g.rate.len(), shown.tiles.len());
+        assert!((g.hours - 1.0).abs() < 1e-12 && (g.prior - l.ghosts.prior_rate() * 3600.0).abs() < 1e-12);
+        let near = shown
+            .tiles
+            .iter()
+            .position(|(c, _)| (c[0] - 2.8).abs() < 0.3 && (c[1] - 2.3).abs() < 0.3);
+        assert!(g.rate[near.expect("a tile there")].expect("watched") > g.prior);
+        assert!(
+            other
+                .ghosts
+                .rate
+                .iter()
+                .flatten()
+                .all(|&r| (r - g.prior).abs() < 1e-9 * g.prior)
+        );
+        // the LD2410C: nothing learned yet, the prior per gate, no still energy in gates 0 and 1
+        let bg = &s.background;
+        let prior = crate::ld2410::background::prior(&w.params);
+        assert_eq!(bg.now.moving, prior[..MOVING]);
+        assert_eq!(bg.now.still[..3], [None, None, Some(prior[MOVING])]);
+        assert_eq!(
+            (bg.hours, bg.anchor_hours, bg.now.moving.len(), bg.anchor.still.len()),
+            (0.0, 0.0, 9, 9)
+        );
+        assert!((bg.echo_rate - bg.echo_prior).abs() < 1e-12);
+        // nothing measured of the view, no walks
+        assert!(s.ld_view.is_none() && shown.destinations.cells.is_empty() && shown.destinations.walks == 0.0);
     }
 
     #[test]

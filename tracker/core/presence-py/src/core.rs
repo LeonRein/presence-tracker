@@ -13,9 +13,7 @@ use crate::config::config_from;
 use crate::frames::PyFrame;
 #[cfg(feature = "testing")]
 use crate::views::HypView;
-use crate::views::{
-    CloudView, DetectionView, PersonView, RegionView, SensorMapView, TilesView, ZoneStateView, plan_view,
-};
+use crate::views::{CloudView, DetectionView, PersonView, RegionView, TilesView, ZoneStateView, plan_view};
 
 use presence_core::filter::{NotFinite, Start};
 #[cfg(feature = "testing")]
@@ -368,10 +366,10 @@ impl Core {
         TilesView::of(self.tracker.world())
     }
 
-    /// The coarse sight map of sensor si for the web UI.
-    fn sensor_map(&self, si: usize) -> PyResult<SensorMapView> {
-        let (map, ghosts, watched_h) = self.tracker.sensor_map(self.sensor(si)?);
-        Ok(SensorMapView::of(map, ghosts, watched_h))
+    /// What the running model learned, for the web UI (presence_core::derived::learned), as JSON.
+    fn learned_view(&self) -> String {
+        let shown = presence_core::derived::learned(self.tracker.world(), self.tracker.learned());
+        serde_json::to_string(&shown).expect("what was learned is finite numbers and text")
     }
 
     /// The energies of sensor si's last LD2410C frame that counted (16), or None.

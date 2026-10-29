@@ -131,7 +131,7 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
    - *Eingang*: kleine Bereiche, wo Personen von außen kommen oder das Haus verlassen (Haustür im
      beobachteten Raum). Räume ohne Sensor, die über Türen zusammenhängen, erkennt die App selbst.
    Stellen, an denen ein Sensor oft Geister meldet (Ventilator, Vorhang), lernt die App selbst
-   (Tab *Sensoren*, Karte „Geister“); eine eigene Zone dafür gibt es nicht mehr.
+   (Tab *Gelerntes*, Ebene *Geister*); eine eigene Zone dafür gibt es nicht mehr.
 4. **Sensoren** (Tab *Sensoren*): jeden Sensor platzieren, Blickrichtung drehen, Montagehöhe eintragen.
    *Tote Winkel zeigen* färbt Stellen, die kein Sensor sieht, rot.
 5. **Kalibrierung** (Tab *Kalibrierung*): Die App sammelt laufend, wo Gehende gemessen werden (die letzten
@@ -154,15 +154,31 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
    schon da sind. Das Ergebnis steht direkt unter *Berechnen*; was für mehrere Sensoren gilt (zu wenig
    Stunden, mehr herumgehen), steht dort einmal, je Sensor nur das Eigene.
 
-**Sensormodell** (Tab *Sensoren*, Sensor auswählen): Karten, wo der Sensor wie zuverlässig erkennt (angenommen und
-aus dem Betrieb gelernt) und wo er Geister meldet, dazu der gelernte Messfehler nach Abstand. Die App lernt das
-nebenbei; das Tracking nutzt es in dieser Version noch nicht.
+Was ein Sensor sieht, zeigt der Tab *Sensoren* auf der Karte: je Kachel seine Sicht einer Person, so wie der
+Filter mit ihr rechnet (der ausgewählte Sensor kräftiger), und *Tote Winkel zeigen* die Abdeckung.
 
-Wie viel der LD2410C eines Raums von einer Person in einem anderen Raum mitbekommt, ist gemessen (MODEL.md 4.3
-„Blick des LD2410C“) und steht in `tracker.json` unter `ld_view` („eigener Raum<-anderer Raum“ → Anteil, fehlt: 1).
-Die Oberfläche zeigt es nicht; *Alle auf Standard* lässt es stehen, eine gespeicherte Änderung von Sensorlage oder
-Grundriss leert es (gemessen unter der alten Lage). Eine `tracker.json` ohne `ld_view` (0.39 oder älter) bleibt
-ohne: Die Messung von 6.–10.10. galt nur für die Sensorlage von damals.
+**Gelerntes** (Tab *Gelerntes*): alles, was die App im Betrieb lernt, so wie das Modell es gerade verwendet, je
+Ebene mit einer kurzen Erklärung. Nur zum Anschauen; geholt wird es beim Öffnen des Tabs und mit *Aktualisieren*
+(gerechnet nur dann, das Modell wird dabei nur gelesen).
+- *Geister* (je Sensor): wo der Sensor Spuren beginnt, die zu keiner Person gehören, je Kachel als Rate je m² und
+  Stunde, je röter, desto öfter gegenüber dem Vorwissen; dazu, über wie viele Stunden er beobachtet hat. Der Filter
+  nutzt die Karte.
+- *LD2410C-Hintergrund* (je Sensor): die Energie ohne Person je Entfernungsstufe (bewegt und ruhig), gelernt neben
+  jetzt gemessen, mit dem Langzeitwert des Sensors, aus wie vielen Stunden beides gelernt ist und wie oft
+  Echoquellen beginnen. Der Filter nutzt ihn.
+- *Ziele*: die Zielkarte, je Zelle ein Pfeil in die häufigste Gehrichtung (Länge nach dem Tempo, Deckkraft nach
+  der Zahl der Gänge); auf Wunsch die Zellen in der Farbe des häufigsten Ziels der Gänge von dort (Raum hinter der
+  ersten Tür, Bereich ohne Sensor, außer Haus; kräftiger, je größer sein Anteil, ohne Farbe, wo alle stehen
+  blieben). Sie dient nur der Ausgabe *Ziel* und ändert den Filter nicht.
+- *Blick des LD2410C* (je Sensor): wie viel sein LD2410C von einer Person in einem anderen Raum mitbekommt, die
+  Räume nach diesem Anteil eingefärbt. Er ist **gemessen, nicht gelernt** (MODEL.md 4.3 „Blick des LD2410C“,
+  `tools/ld2410/footprint.py`) und steht in `tracker.json` unter `ld_view` („eigener Raum<-anderer Raum“ → Anteil,
+  fehlt: 1); ohne Messung zeigt der Tab „nicht gemessen (Anteil 1)“. *Alle auf Standard* lässt ihn stehen, eine
+  gespeicherte Änderung von Sensorlage oder Grundriss leert ihn (gemessen unter der alten Lage). Eine `tracker.json`
+  ohne `ld_view` (0.39 oder älter) bleibt ohne: Die Messung von 6.–10.10. galt nur für die Sensorlage von damals.
+
+Einen gelernten Messfehler nach Abstand gibt es nicht: Wie stark ein Messpunkt in Blickrichtung und seitlich streut,
+sind feste Einstellungen (*Messfehler …*, Tab *Einstellungen*).
 
 Änderungen sind ein Entwurf, bis *Speichern* (Knopf unten rechts auf der Karte, hervorgehoben, solange etwas
 nicht gespeichert ist, oder Strg+S) gedrückt wird; erst dann rechnet das Modell damit. Der Server bringt die

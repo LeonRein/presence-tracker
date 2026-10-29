@@ -6,7 +6,6 @@
 //! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use super::raster::{CELL, Grid, Raster, RoomGrid};
-use super::sight::SensorMap;
 use super::{LdSight, LdTiles, Sight, Tiles};
 use crate::config::{Config, SensorConfig, TrackerParams};
 use crate::geometry::{Point, Walls};
@@ -240,20 +239,6 @@ impl CoarseSight {
         Self { lo, hi, grid }
     }
 
-    fn into_map(self) -> SensorMap {
-        let size = |k: usize| usize::try_from(self.hi[k] - self.lo[k]).unwrap_or(0);
-        SensorMap {
-            corner: [
-                coarse_centre(self.lo[0]) - COARSE / 2.0,
-                coarse_centre(self.lo[1]) - COARSE / 2.0,
-            ],
-            cell: COARSE,
-            cols: size(0),
-            rows: size(1),
-            prior: self.grid,
-        }
-    }
-
     fn pd(&self, s: &SensorConfig, plan: &Plan, p: Point) -> f64 {
         let (i, j) = (coarse_cell(p[0]), coarse_cell(p[1]));
         if self.lo[0] <= i && i < self.hi[0] && self.lo[1] <= j && j < self.hi[1] {
@@ -334,9 +319,7 @@ pub(super) fn sensor(b: &Built, s: &SensorConfig) -> (Sight, LdSight) {
     };
     ld.tiles = ld_tiles(b, &ld);
     let observed = observed(b, &grid, &ld);
-    let mut sight = Sight::new(s.at(), s.sight_origin(), grid, observed);
-    sight.map = coarse.into_map();
-    (sight, ld)
+    (Sight::new(s.at(), s.sight_origin(), grid, observed), ld)
 }
 
 /// The sight of the points of each cell in a place, 0..1 (Tracker._grid before it is spread), and where

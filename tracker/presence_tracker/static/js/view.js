@@ -1,11 +1,14 @@
 // SVG map: projection, pan/zoom, and drawing of the plan, sensors, zones and live data.
 // Everything is drawn in screen pixels; world coordinates are meters with y pointing up.
 import { api, coverageNow, heldBadges, openingsNow, state, sensorColor, unsaved } from './store.js';
-import { PERSON_COLORS, ZONE_KINDS, crossesWall, dist, esc, fmt, personColor, rad, zoneCenter, zoneOutline } from './util.js';
+import { PERSON_COLORS, ZONE_KINDS, crossesWall, dist, esc, fmt, outcomeColor, personColor, rad, zoneCenter, zoneOutline } from './util.js';
 
 // coverage: tiles that no sensor, one, two or more see (the core's count per tile); a room the sensors don't
 // see enough of to be observed is drawn as blind
 const COVERAGE_COLORS = ['rgba(214,69,69,0.59)', 'rgba(240,180,41,0.22)', 'rgba(31,157,85,0.18)'];
+
+// s: an arrow of the destination map is as long as a walk at its speed goes in this time
+const ARROW_S = 0.2;
 
 // m: a trail breaks where the person was shown this much farther than the point before (or through a wall):
 // a line there would draw a way nobody walked
@@ -168,16 +171,10 @@ export class MapView {
         ${pe('layer')}/>`);
     }
 
-    // blind-spot map
-    // map of one sensor (detection probability from the geometry, or learned ghosts)
-    if (state.sensorMap && this.sensorMapImage) {
-      const sm = this.sensorMapImage;
-      const [sx, sy] = this.P(sm.x0, sm.y1);
-      const k = sm.cell * this.s;
-      out.push(`<image href="${sm.url}" width="${sm.cols}" height="${sm.rows}" style="image-rendering:pixelated;pointer-events:none"
-        transform="matrix(${k},0,0,${k},${sx},${sy})"/>`);
-    }
+    // what the model learned (the tab "Gelerntes"), the layer chosen there
+    if (state.tab === 'learned' && state.learned?.sensors) out.push(this._learned(state.learned));
 
+    // blind-spot map
     const coverage = state.showCoverage && coverageNow();
     if (coverage) out.push(this._coverage(coverage));
 
@@ -322,7 +319,8 @@ export class MapView {
   // live layer: detections, LD2410C distance, tracks
   renderLive() {
     const live = state.live;
-    if (!live || !state.config) { this.gDyn.innerHTML = ''; return; }
+    // the tab "Gelerntes" shows what was learned, not the people now
+    if (!live || !state.config || state.tab === 'learned') { this.gDyn.innerHTML = ''; return; }
     const out = [];
     const c = state.config;
     const showRaw = state.showRaw || state.tab === 'calibration' || state.tab === 'sensors';
@@ -487,6 +485,65 @@ MapView.prototype._sight = function (cv, selected) {
       out.push(`<rect class="sight" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${size}" height="${size}" fill="${color}"
         fill-opacity="${(k * sight[t]).toFixed(3)}" clip-path="url(#sight-${esc(room)})" pointer-events="none"/>`);
     });
+  }
+  return out.join('');
+};
+
+// What the model learned (the core's, api/learned), the layer chosen in the tab "Gelerntes": the ghost map of a sensor
+// per tile (its square cut by its room) as red as its rate above the prior's (log scale up to the most frequent);
+// the destination map per cell an arrow in its most frequent velocity, as strong as its walks, and if asked the cell
+// in the colour of where its walks most often went next (the core's), as strong as their share; the LD2410C's measured view per room in the sensor's colour as strong as
+// the share it gets. The LD2410C's background has no map: its bars are in the panel.
+MapView.prototype._learned = function (L) {
+  const out = [];
+  const zones = new Map(state.config.zones.map(z => [z.id, z]));
+  const clips = rooms => `<defs>${[...new Set(rooms)].filter(id => zones.has(id)).map(id =>
+    `<clipPath id="lrn-${esc(id)}"><polygon points="${this.pts(zoneOutline(zones.get(id)))}"/></clipPath>`).join('')}</defs>`;
+  const square = ([x0, y0], size, room, attrs) => {
+    const [x, y] = this.P(x0, y0 + size);
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(size * this.s).toFixed(1)}" height="${(size * this.s).toFixed(1)}"
+      ${attrs} clip-path="url(#lrn-${esc(room)})" pointer-events="none"/>`;
+  };
+  const s = L.sensors[state.learnedSensor];
+  if (state.learnedLayer === 'ghosts' && s) {
+    const g = s.ghosts;
+    const top = Math.log(Math.max(2, ...g.rate.filter(v => v != null).map(v => v / g.prior)));
+    out.push(clips(L.tiles.map(t => t[1])));
+    L.tiles.forEach(([corner, room], t) => {
+      const v = g.rate[t];
+      if (v == null) return;
+      const a = 0.04 + 0.6 * Math.min(1, Math.max(0, Math.log(v / g.prior)) / top);
+      out.push(square(corner, L.size, room, `fill="#d64545" fill-opacity="${a.toFixed(3)}"`));
+    });
+  } else if (state.learnedLayer === 'destinations') {
+    const d = L.destinations;
+    const top = Math.max(1e-9, ...d.cells.map(c => c.walks));
+    if (state.learnedColors) {
+      out.push(clips(d.cells.map(c => c.room)));
+      for (const c of d.cells) {
+        if (c.likely == null) continue;
+        out.push(square(c.square, d.cell, c.room, `fill="${outcomeColor(d.outcomes, c.likely)}" fill-opacity="${(0.15 + 0.6 * c.shares[c.likely]).toFixed(3)}"`));
+      }
+    }
+    for (const c of d.cells) {
+      const w = c.walks / top;
+      if (w < 0.02) continue;
+      const [vx, vy] = c.velocity.map(v => v * ARROW_S / 2);
+      const [x0, y0] = this.P(c.at[0] - vx, c.at[1] - vy), [x1, y1] = this.P(c.at[0] + vx, c.at[1] + vy);
+      const len = Math.hypot(x1 - x0, y1 - y0) || 1, ux = (x1 - x0) / len, uy = (y1 - y0) / len, k = Math.min(5, 0.4 * len);
+      const head = sgn => `${(x1 - k * (ux - sgn * 0.5 * uy)).toFixed(1)},${(y1 - k * (uy + sgn * 0.5 * ux)).toFixed(1)}`;
+      out.push(`<path d="M${x0.toFixed(1)},${y0.toFixed(1)}L${x1.toFixed(1)},${y1.toFixed(1)}M${head(1)}L${x1.toFixed(1)},${y1.toFixed(1)}L${head(-1)}"
+        fill="none" stroke="var(--text)" stroke-opacity="${(0.15 + 0.85 * w).toFixed(3)}" stroke-width="1.4" stroke-linecap="round" pointer-events="none"/>`);
+    }
+  } else if (state.learnedLayer === 'ld_view' && s?.ld_view) {
+    const color = sensorColor(state.learnedSensor);
+    for (const [id, share] of Object.entries(s.ld_view)) {
+      const z = zones.get(id);
+      if (!z) continue;
+      const [x, y] = this.P(...zoneCenter(z));
+      out.push(`<polygon points="${this.pts(zoneOutline(z))}" fill="${color}" fill-opacity="${(0.05 + 0.5 * Math.min(1, share)).toFixed(3)}" pointer-events="none"/>
+        <text class="zone-label" x="${x}" y="${y + 16}" text-anchor="middle" fill="${color}" pointer-events="none">${Math.round(share * 100)} %</text>`);
+    }
   }
   return out.join('');
 };

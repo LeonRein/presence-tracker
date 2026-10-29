@@ -1,4 +1,4 @@
-"""The configuration over HTTP (app.App: GET/PUT /api/config, GET /api/coverage). The map comes finished from the
+"""The configuration over HTTP (app.App: GET/PUT /api/config, GET /api/coverage, GET /api/learned). The map comes finished from the
 web UI's editor (rooms between the walls, doors on walls); the core checks what the model reads and answers with
 the model's quantities of the saved configuration (derived: plan, thresholds, the numbers the editor reads; the
 coverage and each sensor's sight per tile of the running world): no geometry for drawing, the web UI draws. The
@@ -117,6 +117,28 @@ def test_the_coverage_is_of_the_running_world(tmp_path):
     # each sensor in use: its sight per tile (aligned with the tiles), what the filter weighs with
     assert cov["sees"] == 0.5 and set(cov["sight"]) == {"a", "b"}
     assert all(len(v) == len(cov["tiles"]) and max(v) > 0.9 for v in cov["sight"].values())
+
+
+def test_what_was_learned_comes_whole_from_the_core_and_changes_nothing(tmp_path):
+    app = an_app(tmp_path)
+    before = app.tracker.learned()
+    [(status, got)] = call(app, ("GET", "/api/learned", None))
+    assert status == 200 and app.tracker.learned() == before  # only read
+    assert set(got) == {"size", "tiles", "sensors", "destinations"} and {t[1] for t in got["tiles"]} == {"wohn"}
+    assert set(got["sensors"]) == {"a", "b"}
+    for s in got["sensors"].values():
+        g, bg = s["ghosts"], s["background"]
+        # the ghost map per tile where the sensor watches (nothing learned: the prior's rate), its hours
+        assert len(g["rate"]) == len(got["tiles"]) and {x for x in g["rate"] if x is not None} == {g["prior"]}
+        assert g["hours"] == 0 and g["forget_hours"] == 14 * 24
+        # the LD2410C per gate: what the filter weighs with now and its anchor, 9 moving, 9 still (none in 0, 1)
+        for gates in (bg["now"], bg["anchor"]):
+            assert len(gates["moving"]) == 9 and gates["still"][:2] == [None, None] and None not in gates["still"][2:]
+        assert bg["hours"] == bg["anchor_hours"] == 0 and bg["echo_rate"] == bg["echo_prior"] > 0
+        assert s["ld_view"] is None  # measured, not learned: nothing measured here
+    d = got["destinations"]
+    assert d["walks"] == 0 and d["cells"] == [] and d["outcomes"][0] == "wohn" and d["outcomes"][-2:] == ["outside", "stays"]
+    assert d["cell"] == 0.3 and d["forget_hours"] == 14 * 24
 
 
 def test_an_edit_of_the_background_image_alone_does_not_touch_the_core(tmp_path, monkeypatch):
