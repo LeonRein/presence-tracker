@@ -8,10 +8,7 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::config::config_from;
 use crate::frames::PyFrame;
-use crate::views::{
-    CloudView, DetectionView, EnteringView, HypView, PersonView, SensorMapView, TargetView, TilesView, ZoneStateView,
-    plan_view,
-};
+use crate::views::{CloudView, DetectionView, HypView, PersonView, SensorMapView, TilesView, ZoneStateView, plan_view};
 
 use presence_core::filter::{NotFinite, Start};
 use presence_core::geometry::Point;
@@ -24,7 +21,7 @@ use presence_core::outputs::Source;
 use presence_core::params::{OutputParams, Params, STILL, WALK};
 use presence_core::plan::Place;
 use presence_core::sensors::SensorSet;
-use presence_core::tracker::{Branched, Event, Fault, Tracker};
+use presence_core::tracker::{Branched, Event, Fault, Recalibrate, Tracker};
 use presence_core::world::World;
 use serde_json::Value;
 
@@ -234,13 +231,19 @@ impl Core {
             .map(|si| self.sensor(si))
             .collect::<PyResult<SensorSet>>()?;
         let new = world.take()?;
-        if let Err(why) = self.tracker.fits(&new) {
-            world.0 = Some(new);
-            return Err(WorldChanged::new_err(why));
-        }
         let tracker = &mut self.tracker;
-        let events = py.detach(|| tracker.recalibrate(changed, new)).map_err(fault)?;
-        events_out(py, events)
+        let refused = match py.detach(|| tracker.recalibrate(changed, new)) {
+            Ok(events) => return events_out(py, events),
+            Err(e) => e,
+        };
+        let why = refused.to_string();
+        match refused {
+            Recalibrate::WorldChanged(new) => {
+                world.0 = Some(*new); // whole, for the new Core
+                Err(WorldChanged::new_err(why))
+            }
+            Recalibrate::Fault(e) => Err(fault(e)),
+        }
     }
 
     /// Only what the outputs read changed (the configuration's OUTPUT_PARAMS): nothing is built, nothing
@@ -454,23 +457,6 @@ impl Core {
         Ok(rows.into_pyobject(py)?.into_any())
     }
 
-    /// Per zone (the observed rooms, then the areas) "wird betreten".
-    fn entering(&mut self, py: Python<'_>) -> Vec<EnteringView> {
-        let tracker = &mut self.tracker;
-        py.detach(|| tracker.entering()).iter().map(EnteringView::of).collect()
-    }
-
-    /// Per observed room "Ziel".
-    fn targets(&mut self, py: Python<'_>) -> Vec<TargetView> {
-        let tracker = &mut self.tracker;
-        py.detach(|| tracker.targets().iter().map(TargetView::of).collect())
-    }
-
-    /// The threshold of "Ziel" in a room: its own, else the default, kept inside (0, 1).
-    fn target_above(&self, room: &str) -> f64 {
-        self.tracker.world().outputs.target_above(room)
-    }
-
     /// Per observed room what decided it occupied at now ("filter", "ld2450", "beide"), None: not.
     fn occupancy(&mut self, now: f64) -> Vec<Option<&'static str>> {
         self.tracker
@@ -506,12 +492,6 @@ impl Core {
     /// Per observed room whether its own sensors in use all went silent.
     fn silent(&self, now: f64) -> Vec<bool> {
         self.tracker.silent(now)
-    }
-
-    /// The thresholds of the outputs: of P(somebody there) for occupied, of p_enter for "wird betreten".
-    fn thresholds(&self) -> (f64, f64) {
-        let o = &self.tracker.world().outputs;
-        (o.occupied_above(), o.entering_above())
     }
 
     /// The plan of the world (plan_view).

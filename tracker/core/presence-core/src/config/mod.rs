@@ -16,7 +16,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 pub use check::{
-    ConfigError, DOOR, LAYER, Limits, MAX_CELLS, MAX_RANGE, MAX_SENSORS, PARAMS, Part, Problem, SENSOR, check,
+    ConfigError, DOOR, LAYER, Limits, MAX_CELLS, MAX_RANGE, MAX_SENSORS, PARAMS, Part, Problem, SENSOR,
+    TARGET_THRESHOLD, check, check_edit,
 };
 
 use crate::geometry::{Point, Shape, line_of_sight};

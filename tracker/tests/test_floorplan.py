@@ -5,14 +5,17 @@ import pytest
 import presence_core
 
 from presence_tracker.filter import plan
-from presence_tracker.floorplan import faces, sync_rooms
-from presence_tracker.model import Config
+from presence_tracker.model import Config, sync_rooms
 
 OUTER = [{"points": [a, b], "kind": "wall"} for a, b in [([0, 0], [6, 0]), ([6, 0], [6, 4]), ([6, 4], [0, 4]), ([0, 4], [0, 0])]]
 
 
 def area(poly):
     return abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1]))) / 2
+
+
+def faces(walls):
+    return presence_core.faces(json.dumps(walls))
 
 
 def wall(*pts, kind="wall"):

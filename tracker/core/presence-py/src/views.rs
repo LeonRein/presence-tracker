@@ -8,8 +8,7 @@ use crate::config::config_from;
 use presence_core::filter;
 use presence_core::frames::Detection;
 use presence_core::geometry::Point;
-use presence_core::learn::destination::Target;
-use presence_core::outputs::{Cloud, Entering, Person, Source, ZoneState};
+use presence_core::outputs::{Cloud, Person, Source, ZoneState};
 use presence_core::plan::{Plan, RoomIdx, ZoneIdx};
 use presence_core::world::World;
 use presence_core::world::sight::SensorMap;
@@ -179,58 +178,6 @@ impl SensorMapView {
             cols: m.cols,
             rows: m.rows,
             prior: m.prior.clone(), // the view's own copy, for Python
-        }
-    }
-}
-
-/// "wird betreten" of a zone: the probability, and for who most probably enters the way, the time and
-/// their id in the display (None: not known).
-#[pyclass(module = "presence_core", frozen, get_all)]
-pub struct EnteringView {
-    p: f64,
-    distance: Option<f64>,
-    eta: Option<f64>,
-    person: Option<usize>,
-}
-
-impl EnteringView {
-    pub(crate) fn of(e: &Entering) -> Self {
-        Self {
-            p: e.p,
-            distance: e.distance,
-            eta: e.eta,
-            person: e.person,
-        }
-    }
-}
-
-/// "Ziel" of an observed room (MODEL.md 6): P, on, the map's P and its weight, the walks behind it; for
-/// the walker who most probably goes there their observed room (index), way, time and id in the display.
-#[pyclass(module = "presence_core", frozen, get_all)]
-pub struct TargetView {
-    p: f64,
-    on: bool,
-    map: f64,
-    weight: f64,
-    walks: f64,
-    from_room: Option<usize>,
-    distance: Option<f64>,
-    eta: Option<f64>,
-    person: Option<usize>,
-}
-
-impl TargetView {
-    pub(crate) fn of(t: &Target) -> Self {
-        Self {
-            p: t.p,
-            on: t.on,
-            map: t.map,
-            weight: t.weight,
-            walks: t.walks,
-            from_room: t.from.map(|k| k.0),
-            distance: t.distance,
-            eta: t.eta,
-            person: t.person,
         }
     }
 }

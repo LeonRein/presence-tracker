@@ -170,11 +170,11 @@ def test_reconfigure_builds_nothing_for_the_outputs_and_starts_over_only_in_anot
     config = flat_config(entry=True)
     tr = Tracker(config, start=0.0, people=["anywhere"])
     d = config.to_dict()
-    d["params"].update(light_cost=3.0, lead_time=3.0)
+    d["params"].update(light_cost=3.0, lead_time=3.0, approach_cost=0.5)
     with monkeypatch.context() as m:
         m.setattr(tr, "_new_world", lambda: pytest.fail("a world was built"))
         assert not tr.reconfigure(Config.from_dict(d))
-    assert tr._c.thresholds()[0] == 3.0 / 4.0
+    assert next(iter(tr.zone_states().values())).c_enter == 0.5 / 1.5
     bad = {**d, "sensors": [{**s, "range": 50.0} for s in d["sensors"]]}  # beyond what the core holds
     with pytest.raises(ValueError, match="range"):
         tr.reconfigure(Config.from_dict(bad))

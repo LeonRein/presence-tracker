@@ -120,8 +120,8 @@ class App:
             log.info("tracker.json: the LD2410C's measured view of the other rooms entered (until 0.39 the model's)")
         self.config = Config.load(self.config_path)
         if self.config_path.exists():  # stored, it loads as it is: say loudly if the model may fail with it
-            try:
-                model.check(json.loads(self.config_path.read_text()))
+            try:  # (what the model reads; the background image's layers only the web UI)
+                model.check(json.loads(self.config_path.read_text()), layers=False)
             except ValueError as e:
                 log.error("tracker.json does not pass the check: %s - the model may fail with it", e)
         self.prefix = prefix

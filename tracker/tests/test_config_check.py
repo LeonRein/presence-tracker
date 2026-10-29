@@ -156,3 +156,68 @@ def test_a_configuration_the_model_fails_with_is_refused_and_the_old_one_holds(a
     assert app.config is old and app.tracker.config is old
     assert (tmp_path / "tracker.json").read_text() == before
     app.tracker.zone_states()  # the model runs
+
+
+def test_every_field_of_the_ui_has_a_label():
+    # the web UI's fields: the core's limits; each needs its words here (and nothing else is worded)
+    import presence_core
+    limits = presence_core.config_limits()
+    assert {group: set(fields) for group, fields in limits.items()} == \
+        {group: set(LABELS[group]) for group in limits}
+
+
+def _sensor(**kw):
+    return {"id": "s", "name": "Bad", "x": 1, "y": 1, **kw}
+
+
+# every reason the core gives (ConfigProblem.reason), each with a configuration that has it
+_PROBLEMS = {
+    "not_an_object": [5, {"params": 5}, {"params": {"target_thresholds": 5}}, {"zones": [5]}, {"ld_view": 5},
+                      {"background": {"layers": [5]}}],
+    "not_a_list": [{"zones": 5}],
+    "empty": [{"params": {"light_cost": None}}],
+    "not_a_number": [{"params": {"light_cost": "x"}}],
+    "out_of_range": [{"params": {"light_cost": 0}}, {"params": {"target_thresholds": {"wohn": 1}}},
+                     {"sensors": [_sensor(range=50)]}, {"doors": [{"x": 1, "y": 1, "width": 0}]},
+                     {"background": {"layers": [{"opacity": 2}]}}],
+    "not_at_least_0": [{"zones": [_area(radius=-1)]}, {"ld_view": {"a<-b": "x"}}],
+    "not_a_bool": [{"sensors": [_sensor(mirror=1)]}],
+    "no_id": [{"sensors": [{"name": "x"}]}, {"zones": [_area(id=None)]}],
+    "id_chars": [{"sensors": [_sensor(id="a#b")]}],
+    "id_twice": [{"sensors": [_sensor(), _sensor()]}, {"zones": [_area(), _area()]}],
+    "not_points": [{"walls": [{"points": [[1, "a"], [2, 2]]}]}, {"zones": [_area(points=[[1, None], [2, 2]])]}],
+    "not_a_segment": [{"walls": [{"points": [[1, 1]]}]}],
+    "unknown_kind": [{"walls": [{"points": [[1, 1], [2, 2]], "kind": "glass"}]}, {"zones": [_area(kind="x")]}],
+    "unknown_shape": [{"zones": [_area(shape="blob")]}],
+    "rect_corners": [{"zones": [_area(points=[[1, 1]])]}],
+    "polygon_corners": [{"zones": [_area(shape="polygon")]}],
+    "no_centre": [{"zones": [_area(shape="circle", points=[])]}],
+    "no_position": [{"doors": [{"x": 1}]}],
+    "too_many_sensors": [{"sensors": [_sensor(id=f"s{k}") for k in range(65)]}],
+    "too_large": [{"zones": [{"id": "r", "name": "R", "kind": "room", "shape": "polygon",
+                              "points": [[0, 0], [200, 0], [200, 200]]}]}],
+    "unreadable": [],  # not JSON: below
+}
+
+
+@pytest.mark.parametrize("reason, config", [(r, c) for r, cs in _PROBLEMS.items() for c in cs])
+def test_every_problem_of_the_core_is_a_german_sentence(reason, config):
+    import presence_core
+    with pytest.raises(presence_core.ConfigError) as e:
+        presence_core.check_edit(json.dumps(config))
+    problem = e.value.args[0]
+    assert problem.reason == reason
+    with pytest.raises(ValueError) as words:
+        check(config)
+    text = str(words.value)
+    assert text and text[0].isupper() and text.endswith((".", "?")) or "unvollständig" in text, text
+    assert "None" not in text and "{" not in text, text
+
+
+def test_an_unreadable_configuration_is_a_german_sentence():
+    import presence_core
+    from presence_tracker.model import message
+    with pytest.raises(presence_core.ConfigError) as e:
+        presence_core.check_config("{")
+    assert e.value.args[0].reason == "unreadable"
+    assert message(e.value.args[0]).startswith("Konfiguration unvollständig oder falsch: ")

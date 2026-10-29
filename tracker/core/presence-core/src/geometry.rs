@@ -110,7 +110,7 @@ impl Walls {
     }
 }
 
-/// The distance from a point to a segment a-b (geometry.distance_to_segment, by CPython's hypot).
+/// The distance from a point to a segment a-b (by CPython's hypot, as the Python plan had it).
 pub fn distance_to_segment([x, y]: Point, [ax, ay]: Point, [bx, by]: Point) -> f64 {
     let (dx, dy) = (bx - ax, by - ay);
     let length2 = dx * dx + dy * dy;
@@ -232,7 +232,7 @@ fn bounds_of(corners: &[Point]) -> [f64; 4] {
 }
 
 /// Even-odd rule (geometry.point_in_polygon): the edges crossed by a ray from the point to the right.
-fn in_polygon([x, y]: Point, corners: &[Point]) -> bool {
+pub(crate) fn in_polygon([x, y]: Point, corners: &[Point]) -> bool {
     let mut inside = false;
     let mut j = corners.len().wrapping_sub(1);
     for (i, &[xi, yi]) in corners.iter().enumerate() {

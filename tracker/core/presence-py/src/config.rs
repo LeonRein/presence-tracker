@@ -73,7 +73,7 @@ impl ConfigProblem {
             Problem::Empty => "empty",
             Problem::NotANumber(_) => "not_a_number",
             Problem::OutOfRange { .. } => "out_of_range",
-            Problem::Negative(_) => "negative",
+            Problem::NotAtLeast0(_) => "not_at_least_0",
             Problem::NotABool => "not_a_bool",
             Problem::NoId => "no_id",
             Problem::IdChars => "id_chars",
@@ -103,7 +103,7 @@ impl ConfigProblem {
     #[getter]
     fn value<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         match &self.0.problem {
-            Problem::NotANumber(v) | Problem::Negative(v) | Problem::UnknownKind(v) | Problem::UnknownShape(v) => {
+            Problem::NotANumber(v) | Problem::NotAtLeast0(v) | Problem::UnknownKind(v) | Problem::UnknownShape(v) => {
                 python(py, v)
             }
             Problem::OutOfRange { value, .. } => Ok(value.into_pyobject(py)?.into_any()),
@@ -133,11 +133,19 @@ fn python<'py>(py: Python<'py>, v: &Value) -> PyResult<Bound<'py, PyAny>> {
     json.call_method1("loads", (v.to_string(),))
 }
 
-/// Checks a configuration (JSON; what is missing is not checked): ConfigError with the first problem.
+/// Checks a configuration (JSON; what is missing is not checked) for what the model reads: ConfigError with
+/// the first problem.
 #[pyfunction]
 pub fn check_config(json: &str) -> PyResult<()> {
     let value: Value = serde_json::from_str(json).map_err(|e| config_error(ConfigError::unreadable(e)))?;
     config::check(&value).map_err(config_error)
+}
+
+/// Checks an edit in the web UI: what the model reads, and the background image's layers (check_config).
+#[pyfunction]
+pub fn check_edit(json: &str) -> PyResult<()> {
+    let value: Value = serde_json::from_str(json).map_err(|e| config_error(ConfigError::unreadable(e)))?;
+    config::check_edit(&value).map_err(config_error)
 }
 
 /// The limits of the configuration's numbers, for the web UI's fields: {"params", "sensor", "door",

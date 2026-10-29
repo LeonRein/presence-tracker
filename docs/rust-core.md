@@ -13,6 +13,12 @@ laufen nur auf einem Arbeitsbaum von 0.31.1. Die frühere Frage „Gelerntes ble
 
 ## 1. Schnitt
 
+**Grundsatz (Leon, 29.10.): Alles, was aus Konfiguration oder Messwerten einen neuen Wert berechnet – Zahl, Geometrie,
+Entscheidung, Schätzung – ist Rust; Python und JavaScript berechnen nichts Neues: Sie nehmen entgegen (MQTT, HTTP, Maus
+und Tastatur), speichern und laden, senden (Home Assistant, Browser) und zeigen an, und dabei formatieren sie Werte des
+Kerns nur (runden, übersetzen, auswählen, was gezeigt und wann gesendet wird).** Tests und Dev-Werkzeuge gehören nicht
+zum Programm. Ohne Ausnahme; was nicht passt, ist ein Fehler im Aufbau.
+
 **Rust ist der ganze Filter: alles, was MODEL.md beschreibt.** Er ist ein reiner Kern: keine Ein-/Ausgabe
 (keine Dateien, kein Netz), keine Uhr (jede Zeit kommt als Argument), keine Threads, keine Zufallszahlen.
 **Python ist die Hülle.**
@@ -35,7 +41,7 @@ laufen nur auf einem Arbeitsbaum von 0.31.1. Die frühere Frage „Gelerntes ble
 | Python (Hülle) | |
 |---|---|
 | MQTT (`sources.py`), Home Assistant (`ha.py`, `ZoneState`-Rundung und Ausgabe-Halten), Web-Oberfläche (`app.py`, `static/`) | unverändert |
-| Konfiguration bearbeiten und speichern (`model.py` ohne das Abgeleitete, `floorplan.py`: Räume aus Wänden im Editor); geprüft wird sie im Kern (`presence_core.check_config`, die Grenzen aller Zahlen, `config_limits()` für die Eingabefelder), die Hülle übersetzt nur dessen `ConfigError` in die deutschen Sätze der Oberfläche (0.43.0) | gekürzt |
+| Konfiguration bearbeiten und speichern (`model.py` ohne das Abgeleitete; die Räume aus den Wänden rechnet der Kern, `presence_core.sync_rooms`, 0.44.0); geprüft wird sie im Kern (`presence_core.check_config`, beim Bearbeiten `check_edit` mit den Bildebenen; die Grenzen aller Zahlen, `config_limits()` für die Eingabefelder), die Hülle übersetzt nur dessen `ConfigError` in die deutschen Sätze der Oberfläche (0.43.0) | gekürzt |
 | Kalibrierung (`calibration.py`, vorerst Python mit numpy, der Schätzer): die LD2450-Spuren aus dem Kern (`TrackStage`, `Frame`), die Sensorgeometrie auch (`presence_core.Geometry`: Bodenpunkt, Sicht, freie Fläche, Schritte durch Wände; 0.43.0) | angepasst |
 | Simulation (`sim.py`, mit der Sensorgeometrie des Kerns seit 0.43.0), Pausen schalten und speichern (`pause.py`), Dateien und Fehlerberichte schreiben | unverändert |
 | `filter.Tracker` als dünne Hülle mit der heutigen API (4) | neu, klein |

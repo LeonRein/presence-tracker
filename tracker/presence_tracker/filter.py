@@ -150,7 +150,6 @@ class Tracker:
         self.plan = self._c.plan()  # as plan(self.config)
         self.rooms, self.places = self.plan["observed"], self.plan["places"]
         self._own = {sid: r for sid, r in zip(self.sensors, self.plan["own_rooms"]) if r is not None}
-        self._entry_ids = self.rooms + self.plan["areas"]
         self._tiles = self._c.tiles_view()
 
     def _new_world(self):
@@ -509,32 +508,6 @@ class Tracker:
         return [{"id": c.id, "gauss": [[round(v, 3) for v in g] for g in c.gauss],
                  "tiles": [[i, round(m, 4)] for i, m in c.tiles]}
                 for c in self._c.clouds()]
-
-    # ------------------------------------------------- "about to be entered" (MODEL.md 6)
-
-    def entering(self) -> dict:
-        """zone id -> {"p", "eta", "distance", "person"} for the observed rooms and the areas: the
-        probability that somebody walking with a track enters the zone within the look-ahead
-        (lead_time), and for the one who most probably does, the expected time and distance to it and
-        their id in the display (persons(); None if not in the most probable hypothesis). In the core,
-        once per move of everybody or event."""
-        return {z: {"p": e.p, "eta": e.eta, "distance": e.distance, "person": e.person}
-                for z, e in zip(self._entry_ids, self._c.entering())}
-
-    # ------------------------------------------------------- "Ziel" (MODEL.md 6)
-
-    def targets(self) -> dict:
-        """room id -> "Ziel" for the observed rooms (MODEL.md 6; in the core): {"p", "on", "map", "weight",
-        "walks", "from", "distance", "eta", "person"}. The walkers' own motion ("wird betreten") is the
-        prior, the learned destination map its data; on if P >= the room's threshold."""
-        return {z: {"p": t.p, "on": t.on, "map": t.map, "weight": t.weight, "walks": t.walks,
-                    "from": None if t.from_room is None else self.rooms[t.from_room], "distance": t.distance,
-                    "eta": t.eta, "person": t.person}
-                for z, t in zip(self.rooms, self._c.targets())}
-
-    def threshold(self, zone: str) -> float:
-        """The room's threshold for "Ziel" (its own, else the default; the core's, kept inside (0, 1))."""
-        return self._c.target_above(zone)
 
     def occupancy(self) -> dict:
         """Observed room id -> (occupied, source), MODEL.md 6 "Belegt" (in the core): P(somebody there)

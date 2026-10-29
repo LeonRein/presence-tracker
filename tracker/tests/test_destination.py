@@ -130,7 +130,7 @@ def test_the_map_is_saved_restored_and_belongs_to_its_floor_plan():
     d["sensors"][0]["heading"] = 50
     d["params"]["target_thresholds"] = {"b": 0.6}
     assert not other.reconfigure(Config.from_dict(d))
-    assert np.array_equal(dest_map(other)["count"], trained["count"]) and other.threshold("b") == 0.6
+    assert np.array_equal(dest_map(other)["count"], trained["count"]) and other.zone_states()["b"].c_target == 0.6
     # another door starts it over
     d = two_rooms().to_dict()
     d["doors"][0]["y"] = 1.5

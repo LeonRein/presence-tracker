@@ -2,6 +2,34 @@
 
 ## Unveröffentlicht
 
+## 0.44.0 (Branch `rust-core`, Regel „Rust rechnet, Python verbindet“ Teil 1: Räume aus Wänden; REVIEW_0430; nicht live)
+
+Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.43.0 (presence-replay und `trace.py` über die
+Hülle).
+
+- **Grundsatz** in `docs/rust-core.md` 1: Was aus Konfiguration oder Messwerten einen neuen Wert berechnet, ist Rust;
+  Python und JavaScript nehmen entgegen, speichern, senden und zeigen an (nur formatieren).
+- **Räume aus Wänden im Kern** (`floorplan.rs`, vorher `floorplan.py`): Schnitte und T-Stöße, Einrasten (3 cm), lose
+  Enden, Flächen des ebenen Graphen ab 0,3 m², ein Punkt im Inneren, Abgleich mit den Räumen über ihre Anker.
+  `presence_core.sync_rooms(zones, walls)` (JSON), `presence_core.faces(walls)`; `model.sync_rooms` gibt einem neuen
+  Raum nur noch die ID (der Kern zieht keine Zufallszahlen). Gegen Python 0.43.0 auf 655 Fällen (alle Test- und
+  Dev-Konfigurationen, je ohne Räume und je ohne eine Wand) gleich: dieselben Flächen, Anker, IDs, Namen und
+  entry-Flags. Anders, bewusst: die Reihenfolge der Knoten, Kanten und Flächen folgt den Wänden statt Pythons Mengen
+  (nur bei mehreren neuen Räumen auf einmal bekommt ein anderer „Raum 1“), und ein Raum, dessen Fläche gleich blieb,
+  behält seine gespeicherten Ecken (Python drehte den Ring je nach Reihenfolge). `floorplan.py` ist gelöscht.
+- **REVIEW_0430 1:** Die Bildebenen (`background.layers`, nur die Oberfläche liest sie) prüft nur noch der Weg einer
+  Änderung in der Oberfläche (`presence_core.check_edit`, `model.check(d)`); `check_config` und `Config::from_json`
+  prüfen, was das Modell liest. Eine gespeicherte Konfiguration mit einer Ebene außerhalb ihrer Grenzen blockiert das
+  Modell nicht mehr.
+- **REVIEW_0430 4:** totes API gelöscht: `Tracker.entering/targets/threshold`, `Core.entering/targets/target_above/
+  thresholds`, `EnteringView`, `TargetView`.
+- **REVIEW_0430 5:** `Tracker::recalibrate -> Result<_, Recalibrate>` mit `WorldChanged(Box<World>)` (die Welt kommt
+  ganz zurück) und `Fault`; `fits` ist privat und wird einmal geprüft; `CallError::World` ist weg.
+- **Niedrig:** `Problem::Negative` heißt `NotAtLeast0` („abc“ und null sind auch keine Zahl ≥ 0), `TARGET_THRESHOLD`
+  statt `PARAMS[len-1]`, `occupancy` mit `occupied_above()`; Tests: jedes Feld von `TrackerParams` hat eine Zeile in
+  `PARAMS` und umgekehrt (Rust), jeder Grund des Kerns ergibt einen deutschen Satz (31 Fälle, alle 21 Gründe), die
+  Schlüssel von `LABELS` sind die von `config_limits()`; veraltete Verweise in `plan.rs`/`geometry.rs`.
+
 ## 0.43.0 (Branch `rust-core`, keine doppelte Logik zwischen Python und Rust; nicht live)
 
 Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.42.0 (presence-replay und `trace.py` über die

@@ -6,11 +6,11 @@ All lengths in meters, angles in degrees, in the house frame (the axes of the Do
 import json
 import math
 import pathlib
+import uuid
 from dataclasses import asdict, dataclass, field, fields
 
 import presence_core
 
-from .floorplan import sync_rooms
 from .geometry import Shape
 from .util import atomic_write
 
@@ -100,8 +100,9 @@ class TrackerParams:
     target_thresholds: dict = field(default_factory=dict)
 
 # The configuration is checked by the core (presence_core.check_config: what the model can't run with, and
-# the limits of every number, which the web UI reads for its fields). Here only its problems in the words of
-# the web UI: the labels of the numbers, the sentences.
+# the limits of every number, which the web UI reads for its fields; check_edit: an edit in the web UI, also
+# the background image's layers). Here only its problems in the words of the web UI: the labels of the
+# numbers, the sentences.
 LABELS = {
     "params": {
         "target_height": "Höhe des Oberkörpers",
@@ -133,8 +134,8 @@ _SENTENCES = {
     (None, "empty"): "{where}{label}: leer, eine Zahl fehlt.",
     (None, "not_a_number"): "{where}{label}: keine Zahl ({value}).",
     (None, "out_of_range"): "{where}{label} muss {low} und {high} sein, nicht {value}.",
-    (None, "not_an_object"): "{field} ist kein Objekt.",
-    (None, "not_a_list"): "{field} ist keine Liste.",
+    (None, "not_an_object"): "Konfiguration: „{field}“ ist kein Objekt.",
+    (None, "not_a_list"): "Konfiguration: „{field}“ ist keine Liste.",
     (None, "unreadable"): "Konfiguration unvollständig oder falsch: {raw}",
     ("config", "not_an_object"): "Konfiguration ist kein Objekt.",
     ("config", "too_many_sensors"): "Höchstens {value} Sensoren.",
@@ -158,9 +159,9 @@ _SENTENCES = {
     ("zone", "rect_corners"): "Zone {name}: ein Rechteck braucht zwei Ecken.",
     ("zone", "polygon_corners"): "Zone {name}: eine Fläche braucht mindestens drei Eckpunkte.",
     ("zone", "no_centre"): "Zone {name}: ein Kreis braucht einen Mittelpunkt.",
-    ("zone", "negative"): "Zone {name}: Radius ist keine Zahl ≥ 0.",
+    ("zone", "not_at_least_0"): "Zone {name}: Radius ist keine Zahl ≥ 0.",
     ("ld_view", "not_an_object"): "Blick des LD2410C ist kein Objekt.",
-    ("ld_view", "negative"): "Blick des LD2410C {name}: keine Zahl ≥ 0 ({value}).",
+    ("ld_view", "not_at_least_0"): "Blick des LD2410C {name}: keine Zahl ≥ 0 ({value}).",
     ("layer", "not_an_object"): "Bildebene ist kein Objekt.",
 }
 _WHERE = {"threshold": "Raum {name}: ", "sensor": "Sensor {name}: "}
@@ -195,14 +196,25 @@ def _plain(v):
     return v
 
 
-def check(d) -> None:
+def sync_rooms(zones: list, walls: list) -> list:
+    """The zones with the rooms between the walls (the core's: presence_core.sync_rooms; a room keeps its id,
+    name and entry flag while its anchor lies in it); a new room gets a fresh id here."""
+    out = json.loads(presence_core.sync_rooms(json.dumps(zones), json.dumps(walls)))
+    for z in out:
+        if z.get("kind") == "room" and z.get("id") is None:
+            z["id"] = "r" + uuid.uuid4().hex[:7]
+    return out
+
+
+def check(d, layers: bool = True) -> None:
     """Rejects what the model can't run with (the core's check: values outside their limits, coordinates that
     are no finite numbers, ids twice, walls that are no segment, zones of an unknown kind or shape or
     without what their shape needs, ...): ValueError with the sentence for the web UI. Only what is present
     is checked; what is missing takes its default. (A circle without a center passed until 0.18 and failed
-    every tick after, also after every restart.)"""
+    every tick after, also after every restart.) layers: also the background image's layers, which only the
+    web UI reads (an edit in the web UI; the model runs without that check)."""
     try:
-        presence_core.check_config(json.dumps(_plain(d)))
+        (presence_core.check_edit if layers else presence_core.check_config)(json.dumps(_plain(d)))
     except presence_core.ConfigError as e:
         raise ValueError(message(e.args[0])) from e
 
@@ -263,7 +275,8 @@ class Config:
     @classmethod
     def from_dict(cls, d: dict) -> "Config":
         """The configuration as stored or sent (what is missing: the defaults); unchecked (check(d) first for
-        an edit in the web UI: a stored configuration loads as it is)."""
+        an edit in the web UI). A stored configuration loads as it is; the core checks what the model reads
+        when it builds the world (a layer of the background image out of its limits doesn't stop it)."""
         def pick(dc, data):
             names = {f.name for f in fields(dc)}
             return dc(**{k: v for k, v in data.items() if k in names})

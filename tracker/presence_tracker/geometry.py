@@ -1,5 +1,5 @@
 """Plane geometry in the house frame (meters, Dobby map axes) for drawing the plan: the zones' outlines, the
-rooms between the walls (floorplan.py). What the sensors see is the core's (Config.geometry)."""
+rooms between the walls are the core's (presence_core.sync_rooms). What the sensors see is the core's (Config.geometry)."""
 
 import math
 

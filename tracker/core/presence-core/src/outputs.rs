@@ -336,16 +336,14 @@ impl Source {
 }
 
 /// Per observed room whether it is occupied and by what (Tracker.occupancy): P(somebody there) above
-/// c = light_cost / (light_cost + 1), the threshold with the least expected cost of the light (a second
-/// of light without anybody costs light_cost seconds dark), or its own LD2450 measured somebody in it
-/// lately (`seen`).
-pub fn occupancy(counts: &Distributions, seen: &[bool], light_cost: f64) -> Vec<Option<Source>> {
-    let c = light_cost / (light_cost + 1.0);
+/// `above` (OutputParams::occupied_above, the threshold with the least expected cost of the light), or its
+/// own LD2450 measured somebody in it lately (`seen`).
+pub fn occupancy(counts: &Distributions, seen: &[bool], above: f64) -> Vec<Option<Source>> {
     // the rooms' rows (the last row is in view at all)
     counts[..seen.len()]
         .iter()
         .zip(seen)
-        .map(|(dist, &s)| match (1.0 - dist[0] > c, s) {
+        .map(|(dist, &s)| match (1.0 - dist[0] > above, s) {
             (true, true) => Some(Source::Both),
             (true, false) => Some(Source::Filter),
             (false, true) => Some(Source::Ld2450),
@@ -1377,9 +1375,9 @@ mod tests {
         // other tiles (the core's own build of the flat room: 0.4 m squares): refused, nothing changed
         let other = World::build(&testing::flat_config(), crate::params::Params::default()).expect("a world");
         let refused = tr.recalibrate(crate::sensors::SensorSet::default(), other);
-        assert_eq!(
-            refused,
-            Err(crate::tracker::Fault::Call(crate::frames::CallError::World))
+        // handed back whole, for a new tracker
+        assert!(
+            matches!(refused, Err(crate::tracker::Recalibrate::WorldChanged(w)) if w.tiles.n != testing::flat_export().tiles.n)
         );
         assert_eq!(tr.world().tiles.n, testing::flat_export().tiles.n);
     }
@@ -1388,11 +1386,14 @@ mod tests {
     fn occupied_by_the_filter_or_the_rooms_own_ld2450() {
         let rows = vec![vec![0.2, 0.8], vec![0.9, 0.1]];
         // light_cost 2: above 2/3
-        assert_eq!(occupancy(&rows, &[false, false], 2.0), [Some(Source::Filter), None]);
         assert_eq!(
-            occupancy(&rows, &[true, true], 2.0),
+            occupancy(&rows, &[false, false], 2.0 / 3.0),
+            [Some(Source::Filter), None]
+        );
+        assert_eq!(
+            occupancy(&rows, &[true, true], 2.0 / 3.0),
             [Some(Source::Both), Some(Source::Ld2450)]
         );
-        assert_eq!(occupancy(&rows, &[false, false], 1000.0), [None, None]);
+        assert_eq!(occupancy(&rows, &[false, false], 1000.0 / 1001.0), [None, None]);
     }
 }

@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod filter;
+pub mod floorplan;
 pub mod formats;
 pub mod frames;
 pub mod geometry;

@@ -11,7 +11,7 @@ use crate::config::{Config, SensorConfig, WallKind, ZoneConfig, ZoneKind};
 use crate::geometry::{Point, Shape, distance_to_segment, line_of_sight};
 use crate::vmath::{py_dist, py_hypot};
 
-/// m: a door belongs to a wall piece this close to its centre (floorplan.DOOR_REACH)
+/// m: a door belongs to a wall piece this close to its centre
 const DOOR_REACH: f64 = 0.25;
 /// m: a sensor hangs on a wall, its point lies at the room's outline
 const MOUNT_MARGIN: f64 = 0.3;
@@ -446,6 +446,16 @@ impl Plan {
         self.zones
             .iter()
             .filter(|z| matches!(z.role, ZoneRole::Observed(_) | ZoneRole::InRegion(_) | ZoneRole::Area))
+    }
+
+    /// The rooms in which the sensors may see people of the home: not those of closed regions nor the outside
+    /// rooms (the calibration's free space).
+    pub fn open_rooms(&self) -> impl Iterator<Item = &Zone> {
+        self.zones
+            .iter()
+            .enumerate()
+            .filter(|&(k, z)| z.is_room() && !self.closed.contains(&ZoneIdx(k)))
+            .map(|(_, z)| z)
     }
 
     /// The observed room a point is in: the first whose outline holds it.

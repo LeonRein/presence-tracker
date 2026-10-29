@@ -28,6 +28,27 @@ pub fn pairwise_sum(a: &[f64]) -> f64 {
     pairwise_sum(&a[..half]) + pairwise_sum(&a[half..])
 }
 
+/// Python's sum() of floats (since 3.12): Neumaier's compensated sum, the compensation added at the end
+/// if it is a finite number other than 0.
+pub fn py_sum(a: impl IntoIterator<Item = f64>) -> f64 {
+    let (mut s, mut c) = (0.0_f64, 0.0_f64);
+    for x in a {
+        let t = s + x;
+        c += if s.abs() >= x.abs() { (s - t) + x } else { (x - t) + s };
+        s = t;
+    }
+    if c != 0.0 && c.is_finite() { s + c } else { s }
+}
+
+/// Python's round(x, digits): the decimal nearest to the exact binary value, ties to even (Rust's
+/// formatting with a precision rounds the same way).
+pub fn py_round(x: f64, digits: usize) -> f64 {
+    if !x.is_finite() {
+        return x;
+    }
+    format!("{x:.digits$}").parse().unwrap_or(x)
+}
+
 /// numpy's max of an array: NaN if any is NaN; -inf if empty.
 pub fn nan_max(a: &[f64]) -> f64 {
     let mut top = f64::NEG_INFINITY;

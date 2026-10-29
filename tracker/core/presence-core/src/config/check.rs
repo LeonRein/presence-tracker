@@ -1,7 +1,9 @@
 //! The check of a configuration (the JSON the shell stores, or what the web UI sends: only what is there is
 //! checked, what is missing the shell fills with its defaults): what the model cannot run with, named by
-//! where it is, what is wrong and the limits it broke. The one place that knows the limits: the web UI
-//! reads them for its fields (config_limits), the shell only words the problems for it.
+//! where it is, what is wrong and the limits it broke (`check`); an edit in the web UI also the placement of
+//! the background image's layers, which only the web UI reads (`check_edit`: a stored configuration with a
+//! layer out of its limits still runs the model). The one place that knows the limits: the web UI reads them
+//! for its fields (config_limits), the shell only words the problems for it.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -73,6 +75,9 @@ pub const MAX_CELLS: f64 = 1e6;
 /// sensors at most (a set of sensors is a bit set, SensorSet)
 pub const MAX_SENSORS: usize = 64;
 
+/// The threshold of "Ziel", the default and each room's own (target_thresholds).
+pub const TARGET_THRESHOLD: Limits = Limits::between(0.0, 1.0);
+
 /// The tracker's parameters and their limits. A value outside is a typo, not a setting: light_cost 0 (an
 /// emptied field) put every room above its threshold, every light on.
 pub const PARAMS: [(&str, Limits); 14] = [
@@ -89,7 +94,7 @@ pub const PARAMS: [(&str, Limits); 14] = [
     ("seen_hold", Limits::closed(0.0, 120.0)),  // 0: the filter alone
     ("lead_time", Limits::above(0.0, 5.0)),
     ("approach_cost", Limits::above(0.0, 1000.0)),
-    ("target_threshold", Limits::between(0.0, 1.0)), // also each room's own (target_thresholds)
+    ("target_threshold", TARGET_THRESHOLD),
 ];
 
 /// A sensor's numbers and their limits.
@@ -156,8 +161,8 @@ pub enum Problem {
         value: f64,
         limits: Limits,
     },
-    /// a number that should be at least 0, as it was given
-    Negative(Value),
+    /// no finite number of at least 0, as it was given (a negative number, a text, null)
+    NotAtLeast0(Value),
     NotABool,
     NoId,
     /// a sensor's id with /, + or # (its MQTT topic is presence/<id>/frame)
@@ -238,7 +243,7 @@ impl fmt::Display for ConfigError {
             Problem::Empty => write!(f, ": empty"),
             Problem::NotANumber(v) => write!(f, ": no number ({v})"),
             Problem::OutOfRange { value, limits } => write!(f, ": {value} outside {limits}"),
-            Problem::Negative(v) => write!(f, ": no number >= 0 ({v})"),
+            Problem::NotAtLeast0(v) => write!(f, ": no number >= 0 ({v})"),
             Problem::NotABool => write!(f, ": not true or false"),
             Problem::NoId => write!(f, ": no id"),
             Problem::IdChars => write!(f, ": its id has /, + or #"),
@@ -282,7 +287,7 @@ fn number(v: &Value, limits: Limits) -> Result<(), Problem> {
 fn at_least_0(v: &Value) -> Result<(), Problem> {
     match finite(v) {
         Some(x) if x >= 0.0 => Ok(()),
-        _ => Err(Problem::Negative(v.clone())),
+        _ => Err(Problem::NotAtLeast0(v.clone())),
     }
 }
 
@@ -334,8 +339,8 @@ fn text(v: Option<&Value>) -> Option<&str> {
     v.and_then(Value::as_str).filter(|s| !s.is_empty())
 }
 
-/// Checks a configuration (its JSON as a value): the first problem, in the order params, sensors, walls,
-/// doors, zones, ld_view, background, the number of sensors, the plan's extent.
+/// Checks a configuration (its JSON as a value) for what the model reads: the first problem, in the order
+/// params, sensors, walls, doors, zones, ld_view, the number of sensors, the plan's extent.
 pub fn check(config: &Value) -> Result<(), ConfigError> {
     let Some(d) = config.as_object() else {
         return Err(ConfigError::at(Part::Config, None, Problem::NotAnObject));
@@ -343,9 +348,8 @@ pub fn check(config: &Value) -> Result<(), ConfigError> {
     if let Some(params) = object(d, "params", Part::Params)? {
         numbers(params, &PARAMS, &Part::Params)?;
         if let Some(rooms) = object(params, "target_thresholds", Part::Params)? {
-            let (_, lim) = PARAMS[PARAMS.len() - 1];
             for (room, v) in rooms {
-                number(v, lim)
+                number(v, TARGET_THRESHOLD)
                     .map_err(|p| ConfigError::at(Part::Threshold(room.clone()), Some("target_threshold"), p))?;
             }
         }
@@ -382,14 +386,6 @@ pub fn check(config: &Value) -> Result<(), ConfigError> {
             at_least_0(v).map_err(|p| ConfigError::at(Part::LdView(Some(pair.clone())), None, p))?;
         }
     }
-    if let Some(background) = object(d, "background", Part::Layer)? {
-        for layer in list(background, "layers")? {
-            let Some(o) = layer.as_object() else {
-                return Err(ConfigError::at(Part::Layer, None, Problem::NotAnObject));
-            };
-            numbers(o, &LAYER, &Part::Layer)?;
-        }
-    }
     if sensors.len() > MAX_SENSORS {
         return Err(ConfigError::at(
             Part::Config,
@@ -403,6 +399,23 @@ pub fn check(config: &Value) -> Result<(), ConfigError> {
             Some("zones"),
             Problem::TooLarge { most: MAX_CELLS },
         ));
+    }
+    Ok(())
+}
+
+/// Checks an edit in the web UI: what the model reads (`check`), then the background image's layers.
+pub fn check_edit(config: &Value) -> Result<(), ConfigError> {
+    check(config)?;
+    let Some(d) = config.as_object() else {
+        return Ok(()); // check refused it
+    };
+    if let Some(background) = object(d, "background", Part::Layer)? {
+        for layer in list(background, "layers")? {
+            let Some(o) = layer.as_object() else {
+                return Err(ConfigError::at(Part::Layer, None, Problem::NotAnObject));
+            };
+            numbers(o, &LAYER, &Part::Layer)?;
+        }
     }
     Ok(())
 }
@@ -562,8 +575,11 @@ mod tests {
         );
         let range = problem(json!({"sensors": [{"id": "s", "name": "Bad", "range": 50}]}));
         assert_eq!((range.0, range.1), (Part::Sensor(Some("Bad".into())), Some("range")));
-        let layer = problem(json!({"background": {"layers": [{"scale": 11}]}}));
-        assert_eq!((layer.0, layer.1), (Part::Layer, Some("scale")));
+        // the background image's layers only on the way of an edit: the model does not read them
+        let image = json!({"background": {"layers": [{"scale": 11}]}});
+        check(&image).expect("the model runs with it");
+        let layer = check_edit(&image).expect_err("an edit is refused");
+        assert_eq!((layer.part, layer.field), (Part::Layer, Some("scale")));
         assert_eq!(
             problem(json!({"doors": [{"x": 1, "y": 1, "width": 0}]})).1,
             Some("width")
@@ -608,7 +624,7 @@ mod tests {
         );
         assert_eq!(area(json!({"shape": "polygon"})).2, Problem::PolygonCorners);
         assert_eq!(area(json!({"points": [[1, 1]]})).2, Problem::RectCorners);
-        assert_eq!(area(json!({"radius": -1})).2, Problem::Negative(json!(-1)));
+        assert_eq!(area(json!({"radius": -1})).2, Problem::NotAtLeast0(json!(-1)));
         assert_eq!(area(json!({"id": null})), (Part::Zone(None), Some("id"), Problem::NoId));
         assert_eq!(area(json!({"kind": "foo"})).0, Part::Zone(Some("Z".into())));
         let twice = json!({"id": "z", "name": "Z", "points": [[1, 1], [2, 2]]});
@@ -616,8 +632,30 @@ mod tests {
         let view = problem(json!({"ld_view": {"a<-b": -0.5}}));
         assert_eq!(
             view,
-            (Part::LdView(Some("a<-b".into())), None, Problem::Negative(json!(-0.5)))
+            (
+                Part::LdView(Some("a<-b".into())),
+                None,
+                Problem::NotAtLeast0(json!(-0.5))
+            )
         );
+    }
+
+    #[test]
+    fn every_parameter_the_core_reads_has_its_limits() {
+        // every field of TrackerParams is required (no serde defaults): with exactly the rows of PARAMS (and
+        // the rooms' own thresholds, checked with TARGET_THRESHOLD) the parameters read, without any one not
+        let mut params: Map<String, Value> = PARAMS.iter().map(|&(k, l)| (k.to_string(), json!(l.hi))).collect();
+        params.insert("target_thresholds".into(), json!({}));
+        params.insert("target_threshold".into(), json!(0.5));
+        serde_json::from_value::<super::super::TrackerParams>(Value::Object(params.clone())).expect("read");
+        for (key, _) in PARAMS {
+            let mut fewer = params.clone();
+            fewer.remove(key);
+            assert!(
+                serde_json::from_value::<super::super::TrackerParams>(Value::Object(fewer)).is_err(),
+                "{key} is no field of TrackerParams"
+            );
+        }
     }
 
     #[test]

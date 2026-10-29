@@ -168,18 +168,16 @@ impl fmt::Display for FrameError {
 
 impl std::error::Error for FrameError {}
 
-/// A call with what no frame can be: a time that is no number; or a new world the people do not fit.
+/// A call with what no frame can be: a time that is no number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallError {
     Time,
-    World,
 }
 
 impl fmt::Display for CallError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Time => write!(f, "a time that is no number"),
-            Self::World => write!(f, "the new world has other tiles or sensors: the people do not fit it"),
         }
     }
 }

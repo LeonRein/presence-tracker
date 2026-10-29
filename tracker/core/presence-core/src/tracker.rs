@@ -96,6 +96,39 @@ impl std::fmt::Display for Fault {
     }
 }
 
+/// Why a recalibration did not take place: the people do not live in the new world (other tiles or sensors;
+/// it is handed back whole, the shell starts the model over in it), or the ends of the changed sensors'
+/// tracks failed (Fault).
+#[derive(Debug)]
+pub enum Recalibrate {
+    WorldChanged(Box<World>),
+    Fault(Fault),
+}
+
+impl From<Fault> for Recalibrate {
+    fn from(e: Fault) -> Self {
+        Self::Fault(e)
+    }
+}
+
+impl From<NotFinite> for Recalibrate {
+    fn from(e: NotFinite) -> Self {
+        Self::Fault(e.into())
+    }
+}
+
+impl std::fmt::Display for Recalibrate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WorldChanged(_) => write!(
+                f,
+                "the new world has other tiles or sensors: the people do not live in it"
+            ),
+            Self::Fault(e) => e.fmt(f),
+        }
+    }
+}
+
 impl From<CallError> for Fault {
     fn from(e: CallError) -> Self {
         Self::Call(e)
@@ -221,16 +254,12 @@ impl Tracker {
         self.outputs = OutputCache::default();
     }
 
-    /// Whether the people of this world live in that one too: the same tiles and sensors (Err says not).
-    pub fn fits(&self, world: &World) -> Result<(), String> {
+    /// Whether the people of this world live in that one too: the same tiles and sensors.
+    fn fits(&self, world: &World) -> bool {
         let (old, new) = (&self.world, world);
-        if new.density_shape() != old.density_shape()
-            || !new.tiles.same_as(&old.tiles)
-            || new.sights.len() != old.sights.len()
-        {
-            return Err("the new world has other tiles or sensors: the people do not fit it".into());
-        }
-        Ok(())
+        new.density_shape() == old.density_shape()
+            && new.tiles.same_as(&old.tiles)
+            && new.sights.len() == old.sights.len()
     }
 
     /// What goes on from an earlier tracker (the shell's rebuild): what its rooms' own LD2450s saw,
@@ -737,10 +766,12 @@ impl Tracker {
     /// Sensors changed, the people's world not: the people stay as they are;
     /// the changed sensors' tracks end as at lost data (the ghost map learns from them), their next
     /// frame is a start, their LD2410C starts over; then the new world.
-    pub fn recalibrate(&mut self, changed: SensorSet, world: World) -> Result<Vec<Event>, Fault> {
+    pub fn recalibrate(&mut self, changed: SensorSet, world: World) -> Result<Vec<Event>, Recalibrate> {
         // checked first: a world the people do not fit (the sensors changed which rooms are observed)
-        // changes nothing here, the shell starts the model over instead
-        self.fits(&world).map_err(|_| CallError::World)?;
+        // changes nothing here, the shell starts the model over in it
+        if !self.fits(&world) {
+            return Err(Recalibrate::WorldChanged(Box::new(world)));
+        }
         let mut events = Vec::new();
         let now = self.clock.now;
         if changed.iter().any(|si| !self.filter.tracks().of(si).is_empty()) {
@@ -916,9 +947,9 @@ impl Tracker {
     /// Per observed room whether it is occupied at `now` and by what (Tracker.occupancy): the
     /// filter by the cost of the light, or its own LD2450 within the last seen_hold s.
     pub fn occupancy(&mut self, now: f64) -> Vec<Option<Source>> {
-        let (light_cost, hold) = (self.world.outputs.light_cost, self.world.outputs.seen_hold);
+        let (above, hold) = (self.world.outputs.occupied_above(), self.world.outputs.seen_hold);
         let seen = self.seen.seen(&self.world.plan, now, hold);
-        outputs::occupancy(self.count_distribution(), &seen, light_cost)
+        outputs::occupancy(self.count_distribution(), &seen, above)
     }
 
     /// The known people of the most probable hypothesis for the display (Tracker.persons).
