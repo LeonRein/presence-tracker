@@ -2,6 +2,15 @@
 
 ## Unveröffentlicht
 
+## 0.51.1 (Branch `rust-core`, ohne den Umzug des LD2410C-Blicks; nicht live)
+
+- **`LD_VIEW_0_39` und `app.ld_view_into_config` gelöscht (V4 der Prüfung von 0.49.0, vorgezogen).** Der Umzug trug
+  in eine `tracker.json` ohne `ld_view` die Messung von 6.–10.10. ein. Seitdem hängt auf HA der Sensor Esszimmer
+  anders (29.10.); nach der Regel von 0.51.0 gilt Gemessenes nur unter seiner Geometrie, ein Eintrag beim ersten
+  Start hätte eine ungültige Messung ohne Schlüssel in die Konfiguration geschrieben. Eine solche `tracker.json`
+  startet jetzt ohne gemessenen Blick (`ld_view` leer, jeder Anteil 1) wie das Modell vor 0.30. Offen: wie `ld_view`
+  ohne Aufnahmen neu gemessen wird (`tools/ld2410/footprint.py` braucht Aufnahmen).
+
 ## 0.51.0 (Branch `rust-core`, Gesammeltes und Gelerntes gelten nur unter ihrer Geometrie; nicht live)
 
 Modell unverändert, solange niemand Sensorlage oder Grundriss ändert. Spuren der drei Referenzstunden byte-gleich mit
