@@ -1,4 +1,4 @@
-import { refreshCoverage, renderPanel, seenTotal, updateLive } from './panels.js';
+import { renderPanel, seenTotal, updateDerived, updateLive } from './panels.js';
 import { TAB_NAMES, emit, loadConfig, onChange, redo, redoState, select, setTool, state, undo, undoState, updateHolds, heldBadges } from './store.js';
 import { AlignTool, DoorTool, PlaceSensorTool, SelectTool, WallTool, ZoneTool } from './tools.js';
 import { fmt, sensorsOnline, toast } from './util.js';
@@ -59,9 +59,10 @@ onChange(what => {
   updateUndo();
   if (what === 'tool' || what === 'tab') makeController();
   if (what === 'selection') view.renderOverlay();
-  if ((what === 'config' || what === 'rooms') && state.showCoverage) refreshCoverage(view);
-  else view.render();
+  view.render();
   updateHint();
+  // what the core derived from the configuration: the map above, the panel's parts here
+  if (what === 'derived') { updateDerived(panel); return; }
   // new room outlines from the server: don't rebuild the panel under the user's typing
   if (what === 'rooms' && panel.contains(document.activeElement) && document.activeElement.matches('input, select')) return;
   renderPanel(panel, view, what);

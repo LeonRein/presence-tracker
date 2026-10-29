@@ -458,7 +458,15 @@ pub struct Status {
     pub hours: BTreeMap<String, usize>,
     pub min_hours: usize,
     pub pairs: BTreeMap<String, usize>,
+    /// per pair how far it is for the display: "ok" from PAIRS_GOOD seconds, "warn" from PAIRS_SOME, else ""
+    pub pair_grades: BTreeMap<String, &'static str>,
+    /// the sensors with walking data from min_hours hours: a proposal is made for them
+    pub ready: Vec<String>,
 }
+
+/// s of pairs that the display shows as plenty, as a start (a minute: about two rulers, MIN_RULER; 15 s)
+const PAIRS_GOOD: usize = 60;
+const PAIRS_SOME: usize = 15;
 
 pub fn status(config: &Config, data: &BTreeMap<String, Vec<Row>>) -> Status {
     let mut out = Status {
@@ -467,6 +475,8 @@ pub fn status(config: &Config, data: &BTreeMap<String, Vec<Row>>) -> Status {
         hours: BTreeMap::new(),
         min_hours: MIN_STRETCHES,
         pairs: BTreeMap::new(),
+        pair_grades: BTreeMap::new(),
+        ready: Vec::new(),
     };
     let mut seconds: Vec<(&str, Vec<f64>)> = Vec::new();
     for (id, rows) in data.iter().filter(|(_, rows)| !rows.is_empty()) {
@@ -480,8 +490,11 @@ pub fn status(config: &Config, data: &BTreeMap<String, Vec<Row>>) -> Status {
         for &t in &times {
             *per_hour.entry(hour(t)).or_default() += 1;
         }
-        out.hours
-            .insert(id.clone(), per_hour.values().filter(|&&n| n >= MIN_POINTS).count());
+        let hours = per_hour.values().filter(|&&n| n >= MIN_POINTS).count();
+        out.hours.insert(id.clone(), hours);
+        if hours >= MIN_STRETCHES {
+            out.ready.push(id.clone());
+        }
         let mut s: Vec<f64> = rows
             .iter()
             .filter(|r| r.single)
@@ -498,7 +511,15 @@ pub fn status(config: &Config, data: &BTreeMap<String, Vec<Row>>) -> Status {
                 .filter(|x| sb.binary_search_by(|y| y.total_cmp(x)).is_ok())
                 .count();
             if n > 0 {
+                let grade = if n >= PAIRS_GOOD {
+                    "ok"
+                } else if n >= PAIRS_SOME {
+                    "warn"
+                } else {
+                    ""
+                };
                 out.pairs.insert(format!("{a}|{b}"), n);
+                out.pair_grades.insert(format!("{a}|{b}"), grade);
             }
         }
     }

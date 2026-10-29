@@ -416,6 +416,20 @@ pub struct Shown {
     pub walk: f64,
 }
 
+/// P(walking) above which, and m/s of the shown velocity above which, a person with a measuring track counts
+/// as moving (bewegt) in the display and the zones' numbers
+const MOVING_WALK: f64 = 0.5;
+const MOVING_SPEED: f64 = 0.15;
+
+impl Person {
+    /// Shown as moving: with a measuring track, walking and fast enough (the zones' moving / still).
+    pub fn moving(&self) -> bool {
+        self.shown.is_some_and(|s| {
+            !self.lost && s.walk > MOVING_WALK && crate::vmath::py_hypot(s.velocity[0], s.velocity[1]) > MOVING_SPEED
+        })
+    }
+}
+
 /// The known people of the most probable hypothesis that more probably exist than not, for the
 /// display: those with a track first (Tracker.persons).
 pub fn persons(filter: &Filter, world: &World) -> Vec<Person> {
@@ -498,7 +512,13 @@ pub struct Cloud {
     /// without (and their part gone through a door): (tile, mass per m^2) of the tiles holding at
     /// least 0.2 %
     pub tiles: Vec<(usize, f64)>,
+    /// per Gaussian where it may be drawn: what is in sight from its mean out to 3 standard deviations
+    /// (derived::cloud_clip; None: no wall that near)
+    pub clips: Vec<Option<Vec<Point>>>,
 }
+
+/// m added to 3 standard deviations: the reach of a cloud's cut at the walls
+const CLIP_MARGIN: f64 = 0.05;
 
 /// The clouds of the people of the display (persons()).
 pub fn clouds(filter: &Filter, world: &World) -> Vec<Cloud> {
@@ -536,7 +556,18 @@ pub fn clouds(filter: &Filter, world: &World) -> Vec<Cloud> {
                 .filter(|&(_, (&m, _))| m > 0.002)
                 .map(|(c, (m, a))| (c, m / a))
                 .collect();
-            Cloud { id, gauss, tiles }
+            let clips = gauss
+                .iter()
+                .map(|&[_, x, y, sx, sy]| {
+                    crate::derived::cloud_clip([x, y], 3.0 * sx.max(sy) + CLIP_MARGIN, &world.plan.walls)
+                })
+                .collect();
+            Cloud {
+                id,
+                gauss,
+                tiles,
+                clips,
+            }
         })
         .collect()
 }
@@ -845,7 +876,7 @@ pub fn zone_numbers(world: &World, x: &ZoneInputs) -> (Vec<ZoneNumbers>, HouseNu
     };
     for p in x.persons {
         let Some(shown) = p.shown else { continue };
-        let moving = !p.lost && shown.walk > 0.5 && crate::vmath::py_hypot(shown.velocity[0], shown.velocity[1]) > 0.15;
+        let moving = p.moving();
         let (m, s) = (usize::from(moving), usize::from(!moving));
         (total.moving, total.still) = (total.moving + m, total.still + s);
         for (z, n) in home.iter().zip(&mut zones) {

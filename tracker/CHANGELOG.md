@@ -2,6 +2,29 @@
 
 ## Unveröffentlicht
 
+## 0.47.0 (Branch `rust-core`, Regel „Rust rechnet, Python verbindet“ Runde 2: die Oberfläche; nicht live)
+
+Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.46.0 (presence-replay und `trace.py` über die
+Hülle). Kein JavaScript rechnet mehr Modell oder Geometrie:
+- **Kern `derived.rs`:** `presence_core.derive(config)` – Wände mit Türöffnungen (dieselbe Rechnung wie die Sicht des
+  Filters, `plan::door_openings`), je Tür ihre Öffnung, Längen, Flächen und Etikettpunkte der Zonen, je Sensor seine
+  Sichtfläche (Blickfeld × Reichweite·Maßstab, Sichtlinien ab dem Ursprung der Sicht bis zur ersten Wand; auf 5-cm-
+  Gittern aller Dev-Konfigurationen gleich `SensorConfig::sees`), der Plan (beobachtete Räume mit ihrem Anteil der
+  60-%-Regel, Regionen, Sensoren in Gebrauch), die Schwellen aus den Parametern. `World.coverage()` – je Kachel, wie
+  viele Sensoren sie sehen (Sicht ≥ ½) und die beste Sicht; je Raum Fläche, beobachtet, tot, nur ein Sensor.
+- **Kern `editor.rs`:** `presence_core.edit(config, op)` – das Einrasten (Ecken, 45°, Wände), Mitgehen angeschlossener
+  Wände, T-Wände und Türen, Gleiten der Enden, Tür auf die Wand, Türbreite, Wände teilen/verbinden, Zonen anlegen und
+  bearbeiten, Sensor setzen/verschieben, Bild ausrichten (zwei Punkte, Kalibrierpunkte des Saugroboters).
+- **Live:** Wolken je Gauß-Komponente mit ihrer Schnittfläche an den Wänden (`clips`), Personen mit `moving` und
+  `jumped` (Spur bricht: > 1 m oder durch eine Wand), `seen` (Personen im beobachteten Bereich: die Zahl des Kerns),
+  Zonen mit `c_occupied` (auch an HA, unbenutzt). Kalibrierstatus mit `pair_grades` und `ready`.
+- **Hülle:** `POST /api/preview {config, edit?, coverage?}` (speichert nichts, fasst das Modell nicht an);
+  `GET`/`PUT /api/config` mit `derived`. `sim.py` nach `tracker/tests/`.
+- **Oberfläche:** `coverage.js` gelöscht; Einrasten, Sicht, Türöffnungen, Flächen, Längen, Schwellen, Gesamtzahl,
+  „bewegt“, Spurbruch kommen vom Kern. Beim Ziehen zeigt die Karte nur die rohe Eingabe (das gezogene Element allein,
+  keine Hilfslinien, keine Länge am Zeiger); beim Loslassen rastet der Kern ein und angeschlossene Wände/Türen springen
+  nach. Neue Sensoren schauen anfangs nach +x (Standard der Hülle) statt nach +y.
+
 ## 0.46.0 (Branch `rust-core`, Regel „Rust rechnet, Python verbindet“ Teil 3: die übrigen Ableitungen; nicht live)
 
 Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.43.0, nachdem die drei neuen Felder der

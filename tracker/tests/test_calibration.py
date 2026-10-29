@@ -6,7 +6,7 @@ import pytest
 from presence_tracker.frames import Frame
 from presence_tracker.calibration import Calibrator, solve
 from presence_tracker.model import Config, SensorConfig, TrackerParams
-from presence_tracker.sim import Person, SimSensor, simulate
+from sim import Person, SimSensor, simulate
 
 from test_frames import walk
 

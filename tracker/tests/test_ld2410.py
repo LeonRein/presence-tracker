@@ -5,7 +5,7 @@ learning, the amplitude of a stay on the tiles and the view of other rooms: the 
 import pytest
 
 from presence_tracker.filter import Tracker
-from presence_tracker.sim import Person, simulate
+from sim import Person, simulate
 from presence_tracker.frames import Frame
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk

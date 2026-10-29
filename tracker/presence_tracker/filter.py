@@ -445,16 +445,19 @@ class Tracker:
         out["_house"] = c[-1]
         return out
 
-    def persons(self) -> list:
+    def persons(self, live: bool = False) -> list:
         """The known people of the most probable hypothesis that more probably exist than not
         (Garcia-Fernandez et al. 2018, sec. VI), for the display: those with a track first. Where to
         draw them: with a measuring track the mean of the mixture, without the densest tile of the most
-        probable place, and the room there; their most probable place (the core's, rounded here)."""
+        probable place, and the room there; their most probable place, whether they move (the core's,
+        rounded here). live: for the live view, with "jumped" (their trail on the map breaks: the core
+        remembers where it showed them)."""
         places = self.places
         out = []
-        for p in self._c.persons():
+        for p in self._c.persons_shown() if live else self._c.persons():
             d = {"id": p.id, "places": {places[i]: round(v, 3) for i, v in enumerate(p.places) if v >= 0.005},
-                 "place": places[p.place], "lost": p.lost, "r": round(p.r, 3), "room": p.room}
+                 "place": places[p.place], "lost": p.lost, "r": round(p.r, 3), "room": p.room,
+                 "moving": p.moving, "jumped": p.jumped}
             s = p.shown
             if s is None:
                 d.update({"x": None, "y": None, "vx": 0.0, "vy": 0.0, "sigma": 0.0, "walk": 0.0})
@@ -471,7 +474,7 @@ class Tracker:
         m^2]] of the tiles holding at least 0.2 % (anywhere in a tile alike: all the model knows about
         where an unseen person is; the tiles' squares: /api/tiles)."""
         return [{"id": c.id, "gauss": [[round(v, 3) for v in g] for g in c.gauss],
-                 "tiles": [[i, round(m, 4)] for i, m in c.tiles]}
+                 "clips": c.clips, "tiles": [[i, round(m, 4)] for i, m in c.tiles]}
                 for c in self._c.clouds()]
 
     def occupancy(self) -> dict:
@@ -497,8 +500,9 @@ class Tracker:
         """For the web UI: the people of the most probable hypothesis at their most probable place (and the
         room there), their densities as heat maps, the sensors' raw data, the places without a sensor."""
         t = self.now
-        tracks = self.persons()
+        tracks = self.persons(live=True)
         clouds = self._clouds()
+        count, moving, still = self._c.observed_total()
         sensors = {}
         for sid, rt in self.runtime.items():
             known = sid in self.sidx
@@ -521,7 +525,8 @@ class Tracker:
             plan = self.plan["regions"][r.id]
             regions[r.id] = {"name": plan["name"], "rooms": plan["rooms"], "open": plan["open"], "count": r.count,
                              "probabilities": [round(r.p_any, 3)] if r.p_any >= 0.005 else [], "dwell": dwell}
-        return {"t": t, "tracks": tracks, "clouds": clouds, "tiling": self._tiles.fingerprint, "sensors": sensors, "regions": regions}
+        return {"t": t, "tracks": tracks, "clouds": clouds, "tiling": self._tiles.fingerprint, "sensors": sensors,
+                "regions": regions, "seen": {"count": count, "moving": moving, "still": still}}
 
     # ------------------------------------------------------------- learned
 

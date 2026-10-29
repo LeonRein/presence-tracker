@@ -40,6 +40,7 @@ zum Programm. Ohne Ausnahme; was nicht passt, ist ein Fehler im Aufbau.
 | Räume aus Wänden für den Editor: Flächen des ebenen Graphen, Einrasten, Anker (`floorplan.rs`, 0.44.0) | 2 | `floorplan.py` |
 | Kalibrierung: Messzeilen je Frame, Schätzer (Paare, Übergaben, Grundriss, Maßstäbe; EM, Gauß-Newton, robuste Kovarianz, Jackknife), Vorschlag mit Gründen, Fortschritt (`calibration/`, 0.45.0) | 10 | `calibration.py` |
 | Was die Anzeige ableitet: Raum und wahrscheinlichster Ort einer Person, Regionen (Zahl, P, Aufenthalt), Karte eines Sensors mit Geisterrate, LD2410C-Anzeige mit Haltezeit, „belegt“ und Schwellen je Zone, Heim-Zonen für HA; der Weg einer neuen Konfiguration (`reconfigure.rs`) (0.46.0) | 6 | `filter.py`, `zones.py`, `ha.py`, `geometry.py` |
+| Was die Oberfläche zeichnet und wie sie bearbeitet (0.47.0): `derived.rs` (Wände mit Öffnungen, Türöffnungen, Längen, Flächen, Etiketten, Sichtfläche je Sensor, Plan mit dem Anteil der 60-%-Regel, Schwellen; Abdeckung je Kachel; Wolken an Wänden geschnitten), `editor.rs` (Einrasten, Mitgehen angeschlossener Wände und Türen, Tür auf die Wand, Wände teilen/verbinden, Zonen, Sensor setzen, Bild ausrichten), „bewegt“ und Spurbruch je Person, Gesamtzahl im beobachteten Bereich | 2, 4.1, 5.3, 6 | `static/js` (util, tools, view, panels, coverage) |
 
 | Python (Hülle): Modul | was es tut (nach dem Grundsatz oben, Stand 0.46.0) |
 |---|---|
@@ -50,7 +51,9 @@ zum Programm. Ohne Ausnahme; was nicht passt, ist ein Fehler im Aufbau.
 | `ha.py`, `zones.py` | Home Assistant: Entitäten der Heim-Zonen des Kerns (`plan()["home"]`), Verfügbarkeit, Rundung und Halten der Ausgabe (wann gesendet wird). |
 | `pause.py` | der Schalter „Lernen pausieren“: Nachrichten lesen, Intervalle halten und speichern; ob eine Zeit pausiert ist, sagt der Kern. |
 | `frames.py`, `sources.py`, `util.py`, `__main__.py` | Daten der Anzeige eines Frames; MQTT und Wiedergabe; atomar schreiben, Log drosseln; Start. |
-| `sim.py` | erzeugt Frames für Tests und Werkzeuge (kein Teil des Programms: die App importiert es nicht). |
+| `static/js/*` | die Oberfläche: nimmt Maus und Tastatur entgegen, zeigt an und formatiert (Pixel, Rundung, Texte). Beim Ziehen zeigt sie nur die rohe Eingabe; beim Loslassen geht die Bearbeitung an den Kern (`POST /api/preview`, `presence_core.edit`), und alles Gezeichnete (Wände mit Öffnungen, Türöffnungen, Sichtflächen, Etiketten, Flächen, Längen, Plan, Schwellen, Abdeckung) kommt fertig vom Kern (`presence_core.derive`, `World.coverage`; 0.47.0). |
+
+`sim.py` (erzeugt Frames, rechnet) gehört nur zu Tests und Werkzeugen: `tracker/tests/sim.py` (0.47.0).
 
 Was dabei aus Python verschwindet: `kernels.py`, `gauss.py`, `hidden.py`, `filter.py` (bis auf die Hülle),
 `tiling.py`, `world.py`, `sensormodel.py`, `sensortracks.py`, `frames.detections`, `ghostmap.py`, `destination.py`,

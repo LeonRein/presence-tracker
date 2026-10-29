@@ -202,6 +202,9 @@ pub struct Plan {
     pub walls: Vec<[Point; 2]>,
     /// the dividers: open boundaries between rooms (no walls)
     pub dividers: Vec<[Point; 2]>,
+    /// per zone, for the rooms of the home: the share of it the sensors in use see (observed from
+    /// OBSERVED_SHARE on)
+    pub shares: Vec<Option<f64>>,
 }
 
 /// A door or divider between rooms: the rooms on its sides (None: outside); a door's centre and its
@@ -226,59 +229,78 @@ fn pieces(config: &Config) -> impl Iterator<Item = ([Point; 2], WallKind)> + '_ 
 }
 
 /// The real walls as lines, their doors not cut out.
-fn wall_lines(config: &Config) -> Vec<[Point; 2]> {
+pub fn wall_lines(config: &Config) -> Vec<[Point; 2]> {
     pieces(config)
         .filter(|&(_, k)| k == WallKind::Wall)
         .map(|(p, _)| p)
         .collect()
 }
 
+/// Per door the real wall piece it is on (an index into wall_lines: the nearest within DOOR_REACH of its
+/// centre) and its opening along it, metres from the piece's first end (door_openings); None: on no wall.
+pub fn door_openings(config: &Config) -> Vec<Option<(usize, f64, f64)>> {
+    let walls = wall_lines(config);
+    config
+        .doors
+        .iter()
+        .map(|d| {
+            let c = [d.x, d.y];
+            let mut best: Option<(f64, usize)> = None;
+            for (i, &[a, b]) in walls.iter().enumerate() {
+                let dist = distance_to_segment(c, a, b);
+                if dist < DOOR_REACH && best.is_none_or(|(d0, _)| dist < d0) {
+                    best = Some((dist, i));
+                }
+            }
+            best.map(|(_, i)| {
+                let [a, b] = walls[i];
+                let length = py_dist(a, b);
+                let t = ((c[0] - a[0]) * (b[0] - a[0]) + (c[1] - a[1]) * (b[1] - a[1])) / length;
+                let half = d.width / 2.0;
+                (i, (t - half).max(0.0), (t + half).min(length))
+            })
+        })
+        .collect()
+}
+
+/// The point t metres along the piece from a to b.
+pub fn along([a, b]: [Point; 2], t: f64) -> Point {
+    let length = py_dist(a, b);
+    let u = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+    [a[0] + u[0] * t, a[1] + u[1] * t]
+}
+
 /// The walls that block the radar: real walls without their door openings.
 fn sight_walls(config: &Config) -> Vec<[Point; 2]> {
     let walls = wall_lines(config);
-    // per piece the openings of its doors (door_openings), along it in metres
+    // per piece the openings of its doors, along it in metres
     let mut cuts: Vec<Vec<(f64, f64)>> = vec![Vec::new(); walls.len()];
-    for d in &config.doors {
-        let c = [d.x, d.y];
-        let mut best: Option<(f64, usize)> = None;
-        for (i, &[a, b]) in walls.iter().enumerate() {
-            let dist = distance_to_segment(c, a, b);
-            if dist < DOOR_REACH && best.is_none_or(|(d0, _)| dist < d0) {
-                best = Some((dist, i));
-            }
-        }
-        if let Some((_, i)) = best {
-            let [a, b] = walls[i];
-            let length = py_dist(a, b);
-            let t = ((c[0] - a[0]) * (b[0] - a[0]) + (c[1] - a[1]) * (b[1] - a[1])) / length;
-            let half = d.width / 2.0;
-            cuts[i].push(((t - half).max(0.0), (t + half).min(length)));
-        }
+    for (i, t0, t1) in door_openings(config).into_iter().flatten() {
+        cuts[i].push((t0, t1));
     }
     let mut out = Vec::new();
     for (&[a, b], cuts) in walls.iter().zip(&mut cuts) {
         let length = py_dist(a, b);
-        let u = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
-        let along = |t: f64| [a[0] + u[0] * t, a[1] + u[1] * t];
+        let at = |t: f64| along([a, b], t);
         let mut start = 0.0;
         cuts.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.total_cmp(&y.1)));
         for &(t0, t1) in cuts.iter() {
             if t0 > start {
-                out.push([along(start), along(t0)]);
+                out.push([at(start), at(t0)]);
             }
             start = f64::max(start, t1);
         }
         if start < length {
-            out.push([along(start), b]);
+            out.push([at(start), b]);
         }
     }
     out
 }
 
-/// Sensors see most of the room: at least 60 % of the points of a 0.4 m raster in it (Config.
-/// _room_covered). Seeing a part through a door (31 % of the balcony through the glass door) does not
-/// make it observed.
-fn covered(room: &ZoneConfig, sensors: &[&SensorConfig], walls: &[[Point; 2]]) -> bool {
+/// The share of a room the sensors see (Config._room_covered): of the points of a 0.4 m raster in it, those
+/// some sensor sees; 0 without points. Sensors see most of the room (it is observed) at OBSERVED_SHARE or
+/// more. Seeing a part through a door (31 % of the balcony through the glass door) does not make it observed.
+fn seen_share(room: &ZoneConfig, sensors: &[&SensorConfig], walls: &[[Point; 2]]) -> f64 {
     let [x0, y0, x1, y1] = room.shape.bounds();
     let (mut n, mut seen) = (0usize, 0usize);
     let mut y = y0 + 0.2;
@@ -293,8 +315,11 @@ fn covered(room: &ZoneConfig, sensors: &[&SensorConfig], walls: &[[Point; 2]]) -
         }
         y += 0.4;
     }
-    n > 0 && seen as f64 / n as f64 >= 0.6
+    if n > 0 { seen as f64 / n as f64 } else { 0.0 }
 }
+
+/// A room of the home is observed when the sensors see this share of it (MODEL.md 2).
+pub const OBSERVED_SHARE: f64 = 0.6;
 
 /// Python's str.casefold for the names here (lower case, ß as ss).
 fn casefold(s: &str) -> String {
@@ -339,10 +364,14 @@ impl Plan {
             .filter(|&z| config.zones[z].kind == ZoneKind::Room)
             .collect();
         let placed: Vec<&SensorConfig> = config.sensors.iter().filter(|s| s.in_use()).collect();
+        let shares: Vec<f64> = home
+            .iter()
+            .map(|&z| seen_share(&config.zones[z], &placed, &walls))
+            .collect();
         let (regions, portals) = if placed.is_empty() || home.is_empty() {
             (Vec::new(), Vec::new())
         } else {
-            places(config, &home, &placed, &walls)
+            places(config, &home, &shares)
         };
         let region_of = |z: usize| {
             regions
@@ -397,6 +426,10 @@ impl Plan {
                 pose: Pose::of(s),
             })
             .collect();
+        let mut share_of = vec![None; zones.len()];
+        for (&z, &share) in home.iter().zip(&shares) {
+            share_of[z] = Some(share);
+        }
         Self {
             zones,
             rooms,
@@ -405,6 +438,7 @@ impl Plan {
             portals,
             sensors,
             walls,
+            shares: share_of,
             dividers: pieces(config)
                 .filter(|&(_, kind)| kind == WallKind::Divider)
                 .map(|(piece, _)| piece)
@@ -523,14 +557,9 @@ impl Plan {
 
 /// The regions without a sensor and the ways out of the observed area (Config._places); `home` the
 /// rooms of the home as indices into the configuration's zones.
-fn places(
-    config: &Config,
-    home: &[usize],
-    placed: &[&SensorConfig],
-    walls: &[[Point; 2]],
-) -> (Vec<Region>, Vec<Portal>) {
+fn places(config: &Config, home: &[usize], shares: &[f64]) -> (Vec<Region>, Vec<Portal>) {
     let zone = |r: usize| &config.zones[home[r]];
-    let seen: Vec<bool> = (0..home.len()).map(|r| covered(zone(r), placed, walls)).collect();
+    let seen: Vec<bool> = shares.iter().map(|&s| s >= OBSERVED_SHARE).collect();
     let pieces: Vec<([Point; 2], WallKind)> = pieces(config).collect();
     let real = wall_lines(config);
     let normal = |[a, b]: [Point; 2]| {

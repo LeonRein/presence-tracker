@@ -1,8 +1,7 @@
 // Side panel per tab.
-import { computeCoverage } from './coverage.js';
-import { api, edit, emit, heldBadges, savePref, saveNow, select, sensorById, sensorColor, setTool, state } from './store.js';
-import { AlignTool, PlaceSensorTool, WallTool, ZoneTool, autoFitImage, deleteSelection } from './tools.js';
-import { ZONE_KINDS, bindNumber, dist, esc, fmt, h, personColor, regionOfRoom, roomsWithSensor, toast, uid, zoneOutline } from './util.js';
+import { api, applyEdit, edit, emit, heldBadges, refreshDerived, savePref, saveNow, select, sensorById, sensorColor, setTool, state } from './store.js';
+import { autoFitImage, deleteSelection } from './tools.js';
+import { ZONE_KINDS, bindNumber, esc, fmt, h, personColor, regionOfRoom, roomsWithSensor, toast, uid } from './util.js';
 import { loadSize } from './view.js';
 
 let skipRender = false;
@@ -35,6 +34,16 @@ export function renderPanel(panel, view, what) {
   panel.innerHTML = '';
   fn(panel, view);
   updateLive(panel);
+  updateDerived(panel);
+}
+
+// parts of the panel that show what the core derives from the configuration (state.derived, the coverage):
+// replaced when a new derived view comes, without rebuilding the panel under the user's typing
+export function updateDerived(panel) {
+  for (const el of panel.querySelectorAll('[data-derived]')) {
+    const out = DERIVED_PARTS[el.dataset.derived]?.(el.dataset);
+    if (out != null && el._html !== out) { el.innerHTML = out; el._html = out; }
+  }
 }
 
 // parts of the panel that change with the live messages. Only what changed is replaced: a list
@@ -72,11 +81,6 @@ function patchRows(el, rows) {
 }
 
 const pct = p => `${Math.round(p * 100)}\u00a0%`;
-// P(somebody there) above which a room is occupied (light on): light_cost / (light_cost + 1)
-function occupiedAbove() {
-  const k = state.config.params?.light_cost ?? 2;
-  return k / (k + 1);
-}
 const people = n => `${n}\u00a0${n === 1 ? 'Person' : 'Personen'}`;
 // what decided "besetzt" (the attribute quelle in Home Assistant): [badge, explanation]
 const SOURCE = {
@@ -95,16 +99,10 @@ function whereText(t) {
     .map(([k, v]) => `${esc(name(k))} ${pct(v)}`).join(' · ');
 }
 
-// people in the rooms the sensors see (the house total counts guesses about rooms without a sensor)
+// people in the rooms the sensors see (the core's: the most probable number there, of those shown there
+// how many move; the house total counts guesses about rooms without a sensor)
 export function seenTotal() {
-  const live = state.live;
-  if (!live?.zones || !state.config) return null;
-  const t = { count: 0, moving: 0, still: 0 };
-  for (const z of roomsWithSensor(state.config, live)) {
-    const st = live.zones[z.id];
-    if (st) { t.count += st.count; t.moving += st.moving; t.still += st.still; }
-  }
-  return t;
+  return state.live?.seen ?? null;
 }
 
 const LIVE = {
@@ -113,12 +111,11 @@ const LIVE = {
   zones() {
     const live = state.live;
     if (!live) return '';  // which rooms have no sensor comes with the first live message
-    const zones = [...roomsWithSensor(state.config, live), ...state.config.zones.filter(z => z.kind === 'area')];
+    const zones = [...roomsWithSensor(state.config, state.derived), ...state.config.zones.filter(z => z.kind === 'area')];
     if (!zones.length) return '<p class="note">Noch keine Räume oder Bereiche mit Sensor. Im Tab „Zonen“ einzeichnen, Sensoren platzieren.</p>';
     // occupied first (what the lights follow), else in the order of the plan
     const rows = zones.map((z, i) => ({ z, i, st: live?.zones?.[z.id] }))
       .sort((a, b) => (b.st?.occupied ? 1 : 0) - (a.st?.occupied ? 1 : 0) || a.i - b.i);
-    const c = occupiedAbove();
     return rows.map(({ z, st }) => {
       const color = ZONE_KINDS[z.kind].color;
       const occ = !!st?.occupied;
@@ -136,7 +133,7 @@ const LIVE = {
         ${gone ? '<span class="badge bad" title="Der Sensor des Raums sendet nichts: In Home Assistant ist der Raum nicht verfügbar (weder besetzt noch leer), das Licht bleibt, wie es ist.">nicht verfügbar</span>' : ''}
         ${st && !gone ? `<span class="badge ${occ ? 'on' : ''}">${occ ? 'besetzt' : 'leer'}</span>` : ''}
         ${occ && SOURCE[st.source] ? `<span class="badge" title="${SOURCE[st.source][1]}">${SOURCE[st.source][0]}</span>` : ''}
-        ${st?.probability != null ? `<span class="badge num" title="Wahrscheinlichkeit, dass jemand im Raum ist; besetzt ab ${pct(c)}">${pct(st.probability)}</span>` : ''}
+        ${st?.probability != null ? `<span class="badge num" title="Wahrscheinlichkeit, dass jemand im Raum ist${st.c_occupied != null ? `; besetzt ab ${pct(st.c_occupied)}` : ''}">${pct(st.probability)}</span>` : ''}
         ${extra ? `<div class="meta sub">${extra}</div>` : ''}</div>`];
     });
   },
@@ -152,7 +149,7 @@ const LIVE = {
     const tracks = state.live?.tracks || [];
     if (!tracks.length) return '<p class="note">Keine Personen im Modell.</p>';
     return tracks.map(t => {
-      const moving = t.x != null && !t.lost && t.walk > 0.5 && Math.hypot(t.vx, t.vy) > 0.15;
+      const moving = t.x != null && t.moving;
       const state_ = t.x == null ? '' : t.lost ? '<span class="badge">nicht gesehen</span>' : moving ? '<span class="badge ok">bewegt</span>' : '<span class="badge">ruhig</span>';
       return [String(t.id), `<div class="item" style="flex-wrap:wrap"><span class="swatch dot" style="background:${personColor(t.id)}"></span><span class="grow">Person ${t.id}</span>${state_}
         <div class="meta sub">${whereText(t)}</div></div>`];
@@ -182,7 +179,7 @@ const LIVE = {
     const names = Object.fromEntries(state.config.zones.map(z => [z.id, z.name]));
     return regions.map(r => [r.name, `<div class="item" style="flex-wrap:wrap"><span class="grow" style="white-space:normal">${(r.rooms || []).map(id => esc(names[id] || id)).join(', ') || esc(r.name)}</span>
       ${r.open ? '<span class="badge" title="Von hier aus kann man das Haus verlassen (Tür nach draußen, Eingang)">Ausgang</span>' : ''}
-      ${r.probabilities.length ? r.probabilities.map(p => `<span class="badge ${p >= 0.5 ? 'on' : ''}" title="Wahrscheinlichkeit, dass jemand hier ist">${pct(p)}</span>`).join('') : '<span class="badge">leer</span>'}
+      ${r.probabilities.length ? r.probabilities.map(p => `<span class="badge ${r.count > 0 ? 'on' : ''}" title="Wahrscheinlichkeit, dass jemand hier ist${r.count > 0 ? '; wahrscheinlich ist jemand da' : ''}">${pct(p)}</span>`).join('') : '<span class="badge">leer</span>'}
       <div class="meta sub">${(r.rooms || []).length > 1 ? 'Ohne Sensor über Türen verbunden, deshalb zusammen. ' : ''}Aufenthalt typisch ${fmtS(r.dwell.median)}, 90\u00a0% unter ${fmtS(r.dwell.p90)} (Annahme)</div></div>`]);
   },
   sensorNow(ds) {
@@ -206,17 +203,17 @@ const LIVE = {
     const since = c.since ? new Date(c.since * 1000).toLocaleString('de-DE', { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '–';
     // per sensor: its walking points (as the result counts them) and its hours with walking data
     // towards the min_hours a proposal needs
-    const need = c.min_hours || 3;
+    const need = c.min_hours;
     const ids = Object.keys(c.points || c.frames);
     const frames = ids.map(id => {
       const hrs = c.hours?.[id] ?? 0;
       const n = c.points?.[id] ?? c.frames[id];
       return `<div class="item calib-progress"><span class="swatch" style="background:${sensorColor(id)}"></span><span class="grow">${esc(sensorById(id)?.name || id)}</span>
         <span class="meta">${n} Punkte</span>
-        <span class="badge ${hrs >= need ? 'ok' : ''}" title="Stunden mit Gehenden; ein Vorschlag braucht ${need}">${Math.min(hrs, need)}/${need}\u00a0h</span>
+        <span class="badge ${(c.ready || []).includes(id) ? 'ok' : ''}" title="Stunden mit Gehenden; ein Vorschlag braucht ${need}">${Math.min(hrs, need)}/${need}\u00a0h</span>
         <progress max="${need}" value="${Math.min(hrs, need)}" aria-label="Stunden mit Gehenden"></progress></div>`;
     }).join('');
-    const ready = ids.filter(id => (c.hours?.[id] ?? 0) >= need).length;
+    const ready = (c.ready || []).length;
     return `<h3>Gesammelt seit ${since}</h3>
       <p class="note">Punkte in Bewegung: höchstens einer je Sekunde und Spur, wie die Berechnung sie zählt. ${ready} von ${ids.length} Sensoren haben Gehende aus ${need} verschiedenen Stunden${ready < ids.length ? '; für die übrigen schlägt die Berechnung noch nichts vor' : ''}.</p>${frames}`;
   },
@@ -225,7 +222,7 @@ const LIVE = {
     if (!c) return '';
     const pairs = Object.entries(c.pairs).map(([k, n]) => {
       const [a, b] = k.split('|');
-      const ok = n >= 60 ? 'ok' : n >= 15 ? 'warn' : '';
+      const ok = c.pair_grades?.[k] || '';
       return `<div class="item"><span class="grow">${esc(sensorById(a)?.name || a)} ↔ ${esc(sensorById(b)?.name || b)}</span><span class="badge ${ok}">${n}\u00a0s</span></div>`;
     }).join('');
     return pairs || '<p class="note">Noch nichts. Auch Sensoren, die sich nur in einer Tür überschneiden, werden über den Grundriss und die Übergänge kalibriert.</p>';
@@ -249,6 +246,47 @@ function gateBars(ld) {
     <span><span class="swatch" style="background:var(--still)"></span>ruhig</span><span>Abstand in m</span></div>`;
 }
 
+// what the panels show of the core's derived view (updateDerived)
+const DERIVED_PARTS = {
+  occupied: () => (state.derived ? pct(state.derived.thresholds.occupied) : '–'),
+  occupiedText: () => (state.derived ? `Damit: besetzt ab ${pct(state.derived.thresholds.occupied)}.` : ''),
+  enteringText: () => (state.derived ? `Damit: „wird betreten“ ab ${pct(state.derived.thresholds.entering)}.` : ''),
+  wallLength: ds => { const v = state.derived?.lengths[+ds.index]; return v == null ? '' : `${fmt(v)} m`; },
+  area: ds => { const v = state.derived?.zones[ds.id]?.area; return v == null ? '–' : `${fmt(v)} m²`; },
+  roomRow: ds => {
+    const d = state.derived;
+    if (!d) return '';
+    const seen = ds.entry ? '' : regionOfRoom(d, ds.id) ? '<span class="badge">ohne Sensor</span> ' : '<span class="badge ok">Sensor</span> ';
+    const area = d.zones[ds.id]?.area;
+    return `${seen}<span class="meta">${area == null ? '' : `${fmt(area, 1)} m²`}</span>`;
+  },
+  roomText: ds => {
+    const d = state.derived;
+    if (!d) return '';
+    const names = Object.fromEntries(state.config.zones.map(x => [x.id, x.name]));
+    const region = regionOfRoom(d, ds.id);
+    const share = d.plan.shares[ds.id];
+    const others = (region?.rooms || []).filter(id => id !== ds.id).map(id => esc(names[id] || id));
+    const seen = !region ? 'Die Sensoren sehen diesen Raum: Personen darin werden gezählt.'
+      : `Kein Sensor sieht diesen Raum überwiegend${share != null ? ` (${pct(share)} gesehen, nötig ${pct(d.plan.observed_share)})` : ''}.${others.length ? ` Über Türen mit ${others.join(', ')} verbunden: Das Modell weiß nur, dass jemand in dieser Gruppe ist, nicht in welchem Raum.` : ''}${region.open ? ' Von hier kann man das Haus verlassen.' : ' Wer herauskommt, muss vorher hineingegangen sein.'}`;
+    const outside = 'Außer Haus: Wer hier ist, hat die Wohnung verlassen. Keine Personenzahl, nichts an Home Assistant; die Tür hierher ist die Wohnungstür.';
+    const area = d.zones[ds.id]?.area;
+    return `${area == null ? '' : `Fläche ${fmt(area)} m². `}${ds.entry ? outside : seen}`;
+  },
+  coverage: () => {
+    if (!state.showCoverage) return '';
+    const cov = state.coverage;
+    if (!cov) return '<p class="note">Rechnet …</p>';
+    if (!cov.rooms.length) return '<p class="note">Dafür braucht es Räume.</p>';
+    return `<table class="data"><tr><th>Raum</th><th>Fläche</th><th>tot</th><th>nur 1 Sensor</th></tr>${cov.rooms.map(r => `
+      <tr><td>${esc(r.name)}</td><td>${fmt(r.area, 1)} m²</td>
+      ${r.observed ? `<td style="color:${r.blind > 0 ? 'var(--bad)' : 'inherit'}">${fmt(r.blind, 2)} m² (${pct(r.blind_share)})</td>
+      <td>${pct(r.single_share)}</td>`
+        : `<td colspan="2" style="color:var(--bad)">ohne Sensor: ${pct(r.share)} gesehen</td>`}</tr>`).join('')}</table>
+      <p class="note">Je Kachel (${fmt(cov.size * 100, 0)} cm), wie das Modell sie sieht: Ein Sensor sieht sie, wo seine Sicht einer Person dort mindestens die Hälfte ist. Ein Raum zählt als beobachtet, wenn die Sensoren mindestens ${pct(state.derived?.plan.observed_share ?? 0)} von ihm sehen; sonst ist er für das Modell ein Raum ohne Sensor. Wände blockieren die Sicht, Möbel kennt die Karte nicht.</p>`;
+  },
+};
+
 // ------------------------------------------------------------------- live
 
 function livePanel(panel, view) {
@@ -269,7 +307,7 @@ function livePanel(panel, view) {
       <div class="list" id="rep-list"></div>
     </details>
     <h3>Räume mit Sensor</h3>
-    <p class="note">% = Wahrscheinlichkeit, dass jemand im Raum ist. Besetzt (Licht an) ab ${pct(occupiedAbove())}, aus den Kosten in den Einstellungen${(state.config.params?.seen_hold ?? 10) > 0 ? ', oder solange der LD2450 des Raums dort jemanden misst (Filter / LD2450 / beide: was entschied)' : ''}.</p>
+    <p class="note">% = Wahrscheinlichkeit, dass jemand im Raum ist. Besetzt (Licht an) ab <span data-derived="occupied"></span>, aus den Kosten in den Einstellungen${state.config.params.seen_hold > 0 ? ', oder solange der LD2450 des Raums dort jemanden misst (Filter / LD2450 / beide: was entschied)' : ''}.</p>
     <div class="list" data-live="zones"></div>
     <h3>Räume ohne Sensor</h3><div class="list" data-live="unobserved"></div>
     <p class="note">Aus dem Grundriss: Räume, die kein Sensor überwiegend sieht, über Türen zu Gruppen verbunden. Wer hineingeht, ist dort. Die Wahrscheinlichkeit, dass jemand noch drin ist, sinkt mit der Zeit, je nachdem, wie lange Besuche dort üblicherweise dauern. % = Wahrscheinlichkeit, dass jemand dort ist.</p>
@@ -388,8 +426,7 @@ function planPanel(panel, view) {
     const item = h(`<div class="item ${sel?.kind === 'room' && sel.id === z.id ? 'selected' : ''}">
       <span class="swatch" style="background:${z.entry ? ZONE_KINDS.entry.color : ZONE_KINDS.room.color}"></span>
       <span class="grow">${esc(z.name)}</span>${z.entry ? '<span class="badge warn" title="Öffentlicher Raum vor der Wohnungstür (Treppenhaus): außer Haus">außer Haus</span>' : ''}
-      ${state.live && !z.entry ? (regionOfRoom(state.live, z.id) ? '<span class="badge">ohne Sensor</span>' : '<span class="badge ok">Sensor</span>') : ''}
-      <span class="meta">${fmt(zoneArea(z), 1)} m²</span></div>`);
+      <span data-derived="roomRow" data-id="${esc(z.id)}" data-entry="${z.entry ? 1 : ''}"></span></div>`);
     clickable(item, () => select({ kind: 'room', id: z.id }));
     roomList.append(item);
   }
@@ -429,7 +466,7 @@ function wallDetail(el, i) {
   el.append(h(`<div class="card">
     <div class="row"><b style="flex:1">${w.kind === 'divider' ? 'Raumgrenze' : 'Wand'}</b><button class="btn danger" id="del">Löschen</button></div>
     <div class="seg" id="kind"><button data-kind="wall" class="${w.kind === 'wall' ? 'active' : ''}">Wand</button><button data-kind="divider" class="${w.kind === 'divider' ? 'active' : ''}">Raumgrenze</button></div>
-    <p class="note">${fmt(dist(w.points[0], w.points[1]))} m · Enden oder die ganze Wand ziehen (rastet in 45°-Schritten und an Wänden ein). Angeschlossene Wände gehen mit. Doppelklick auf die Wand teilt sie, auf ein Ende verbindet es mit der anschließenden Wand.</p>
+    <p class="note"><span data-derived="wallLength" data-index="${i}"></span> · Enden oder die ganze Wand ziehen (rastet in 45°-Schritten und an Wänden ein). Angeschlossene Wände gehen mit. Doppelklick auf die Wand teilt sie, auf ein Ende verbindet es mit der anschließenden Wand.</p>
   </div>`));
   el.querySelector('#del').onclick = deleteSelection;
   for (const b of el.querySelectorAll('#kind button')) b.onclick = () => edit(c => { c.walls[i].kind = b.dataset.kind; });
@@ -449,27 +486,14 @@ function doorDetail(el, id) {
 
 // name and entry flag of a room; its outline comes from the walls
 function roomDetail(el, z) {
-  const region = regionOfRoom(state.live, z.id);
-  const names = Object.fromEntries(state.config.zones.map(x => [x.id, x.name]));
-  const others = (region?.rooms || []).filter(id => id !== z.id).map(id => esc(names[id] || id));
-  const seen = !state.live ? '' : !region ? 'Die Sensoren sehen diesen Raum: Personen darin werden gezählt.'
-    : `Kein Sensor sieht diesen Raum überwiegend.${others.length ? ` Über Türen mit ${others.join(', ')} verbunden: Das Modell weiß nur, dass jemand in dieser Gruppe ist, nicht in welchem Raum.` : ''}${region.open ? ' Von hier kann man das Haus verlassen.' : ' Wer herauskommt, muss vorher hineingegangen sein.'}`;
-  const outside = 'Außer Haus: Wer hier ist, hat die Wohnung verlassen. Keine Personenzahl, nichts an Home Assistant; die Tür hierher ist die Wohnungstür.';
   el.append(h(`<div class="card">
     <label class="field">Raum<input type="text" value="${esc(z.name)}" id="name"></label>
     <label class="check" style="margin-top:8px"><input type="checkbox" id="entry" ${z.entry ? 'checked' : ''}> Außer Haus: öffentlicher Raum vor der Wohnungstür (Treppenhaus). Gehört nicht zur Wohnung; wer hineingeht, hat sie verlassen</label>
-    <p class="note">Fläche ${fmt(zoneArea(z))} m². ${z.entry ? outside : seen}</p>
+    <p class="note" data-derived="roomText" data-id="${esc(z.id)}" data-entry="${z.entry ? 1 : ''}"></p>
     <p class="note">Die Form folgt den Wänden: zum Ändern die Wände verschieben${state.tab === 'plan' ? '' : ' (Tab Grundriss)'}.</p>
   </div>`));
   el.querySelector('#name').onchange = e => panelEdit(c => { c.zones.find(x => x.id === z.id).name = e.target.value; });
   el.querySelector('#entry').onchange = e => edit(c => { c.zones.find(x => x.id === z.id).entry = e.target.checked; });
-}
-
-function zoneArea(z) {
-  const pts = zoneOutline(z, 64);
-  let a = 0;
-  for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; a += x1 * y2 - x2 * y1; }
-  return Math.abs(a) / 2;
 }
 
 function layerEditor(el, view, id) {
@@ -506,24 +530,6 @@ function layerEditor(el, view, id) {
   });
 }
 
-// Exact placement from the vacuum's calibration points: robot (0,0), (1000,0), (0,1000) mm -> map pixels
-function fitFromCalibration(layer, cal) {
-  if (!Array.isArray(cal) || cal.length < 2) return false;
-  const o = cal.find(c => c.vacuum.x === 0 && c.vacuum.y === 0)?.map;
-  const ax = cal.find(c => c.vacuum.x === 1000 && c.vacuum.y === 0)?.map;
-  if (!o || !ax) return false;
-  const du = ax.x - o.x, dv = ax.y - o.y;
-  const k = 1 / Math.hypot(du, dv);
-  const r = Math.atan2(dv, du);  // pixel direction of the robot's +x
-  // world of pixel (0,0): (x, y) = -Rot(r) * (o.x k, -o.y k)
-  const a = o.x * k, b = -o.y * k;
-  layer.scale = +k.toPrecision(6);
-  layer.rotation = +(r * 180 / Math.PI).toFixed(3);
-  layer.x = +(-(a * Math.cos(r) - b * Math.sin(r))).toFixed(4);
-  layer.y = +(-(a * Math.sin(r) + b * Math.cos(r))).toFixed(4);
-  return true;
-}
-
 async function importVacuum(view) {
   let cams;
   try { cams = await api('api/ha/cameras'); } catch (e) { toast(e.message, 5000); return; }
@@ -534,11 +540,11 @@ async function importVacuum(view) {
   try { map = await api('api/ha/map?entity=' + encodeURIComponent(cam.entity_id)); } catch (e) { toast(e.message, 5000); return; }
   const layer = { id: uid('l'), name: cam.name, url: map.image + '?t=' + Date.now(), x: 0, y: 0, scale: 0.0125, rotation: 0,
     opacity: 0.7, visible: true, rooms: map.rooms };
-  loadSize(layer.url, () => {
-    edit(c => {
-      if (!fitFromCalibration(layer, map.calibration_points)) autoFitImage(layer, map.rooms);
-      c.background.layers.push(layer);
-    });
+  loadSize(layer.url, async () => {
+    // exact from the vacuum's calibration points (the core's fit_layer), else by the image's content
+    edit(c => { c.background.layers.push(layer); });
+    const fitted = await applyEdit({ op: 'fit_layer', layer: layer.id, calibration_points: map.calibration_points ?? null }, { quiet: true });
+    if (!fitted) edit(c => { autoFitImage(c.background.layers.find(x => x.id === layer.id), map.rooms); });
     select({ kind: 'layer', id: layer.id });
     view.fit();
     toast('Karte geladen und eingepasst.');
@@ -559,7 +565,7 @@ function sensorsPanel(panel, view) {
     <h3>Abdeckung</h3>
     <label class="check"><input type="checkbox" id="cov" ${state.showCoverage ? 'checked' : ''}> Tote Winkel zeigen</label>
     <div class="legend"><span><span class="swatch" style="background:#d64545"></span>kein Sensor</span><span><span class="swatch" style="background:#f0b429"></span>ein Sensor</span><span><span class="swatch" style="background:#1f9d55"></span>zwei oder mehr</span></div>
-    <div id="cov-stats"></div>
+    <div data-derived="coverage"></div>
   </div>`));
   const list = panel.querySelector('#list');
   for (const id of ids) {
@@ -579,8 +585,13 @@ function sensorsPanel(panel, view) {
   const s = sel && sensorById(sel);
   if (s) sensorDetail(panel.querySelector('#detail'), s);
 
-  panel.querySelector('#cov').onchange = e => { state.showCoverage = e.target.checked; refreshCoverage(view); renderCoverageStats(panel); };
-  renderCoverageStats(panel);
+  panel.querySelector('#cov').onchange = e => {
+    state.showCoverage = e.target.checked;
+    if (!state.showCoverage) state.coverage = null;
+    view.render();
+    updateDerived(panel);
+    if (state.showCoverage) refreshDerived();  // the core builds a world for it: about a second
+  };
 }
 
 function sensorDetail(el, s) {
@@ -670,24 +681,6 @@ async function showSensorMap(info, sensorId) {
   }[sel.layer];
 }
 
-export function refreshCoverage(view) {
-  view.coverage = state.showCoverage ? computeCoverage(state.config) : null;
-  view.render();
-}
-
-function renderCoverageStats(panel) {
-  const el = panel.querySelector('#cov-stats');
-  if (!el) return;
-  const cov = state.showCoverage && computeCoverage(state.config);
-  if (!state.showCoverage) { el.innerHTML = ''; return; }
-  if (!cov) { el.innerHTML = '<p class="note">Dafür braucht es Zonen vom Typ „Raum“.</p>'; return; }
-  el.innerHTML = `<table class="data"><tr><th>Raum</th><th>Fläche</th><th>tot</th><th>nur 1 Sensor</th></tr>${cov.rooms.map(r => `
-    <tr><td>${esc(r.name)}</td><td>${fmt(r.area, 1)} m²</td>
-    <td style="color:${r.blind > 0.05 ? 'var(--bad)' : 'inherit'}">${fmt(r.blind, 2)} m² (${fmt(100 * r.blind / Math.max(r.area, 1e-6), 0)} %)</td>
-    <td>${fmt(100 * r.single / Math.max(r.area, 1e-6), 0)} %</td></tr>`).join('')}</table>
-    <p class="note">Wände blockieren die Sicht. Möbel kennt die Karte nicht.</p>`;
-}
-
 // ------------------------------------------------------------------ zones
 
 // zone kinds that are drawn by hand (rooms come from the walls)
@@ -733,17 +726,11 @@ function zonesPanel(panel, view) {
 }
 
 function zoneDetail(el, z) {
-  const area = (() => {
-    const pts = zoneOutline(z, 64);
-    let a = 0;
-    for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; a += x1 * y2 - x2 * y1; }
-    return Math.abs(a) / 2;
-  })();
   el.append(h(`<div class="card">
     <label class="field">Name<input type="text" value="${esc(z.name)}" id="name"></label>
     <div class="grid2" style="margin-top:8px">
       <label class="field">Typ<select id="kind">${drawableKinds().map(([k, v]) => `<option value="${k}" ${z.kind === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select></label>
-      <label class="field">Fläche<input type="text" value="${fmt(area)} m²" disabled></label>
+      <label class="field">Fläche<span data-derived="area" data-id="${esc(z.id)}"></span></label>
     </div>
     ${z.kind === 'room' || z.kind === 'area' ? `<div data-live="zoneNow" data-id="${esc(z.id)}"></div>` : ''}
     <p class="note">Ecken und Seiten ziehen, die Winkel bleiben dabei erhalten. Nochmal anklicken und ziehen verschiebt die ganze Zone. Bei Polygonen: Doppelklick auf eine Kante fügt einen Punkt ein, auf einen Punkt löscht ihn.</p>
@@ -818,7 +805,7 @@ function calibrationResult(el, r) {
   const label = { ok: 'gut', warn: 'teilweise', bad: 'bleibt' };
   const cls = { ok: 'ok', warn: 'warn', bad: '' };  // "bleibt" is mostly "not enough data yet", no error
   const entries = Object.entries(r.sensors);
-  const need = r.min_hours || 3;
+  const need = r.min_hours;
   const name = id => esc(sensorById(id)?.name || id);
   // what holds for several sensors, said once
   const few = entries.filter(([, s]) => s.few);
@@ -894,11 +881,8 @@ const PARAMS = [
 // what describes the home and the output; the rest are the model's measured numbers
 const HOME_GROUPS = ['Ausgabe'];
 
-// the threshold that follows from a cost, shown next to it
-const DERIVED = {
-  light_cost: k => `Damit: besetzt ab ${Math.round(100 * k / (k + 1))}\u00a0%.`,
-  approach_cost: k => `Damit: „wird betreten“ ab ${Math.round(100 * k / (k + 1))}\u00a0%.`,
-};
+// the threshold that follows from a cost (the core's, of the configuration as edited), shown next to it
+const THRESHOLD_OF = { light_cost: 'occupied', approach_cost: 'entering' };
 
 function roomName(id) {
   return state.config.zones.find(z => z.id === id)?.name || id;
@@ -907,7 +891,7 @@ function roomName(id) {
 // the threshold of "Ziel" per room: empty = the default above
 function targetRooms(p) {
   const el = h(`<div><h3>Schwelle „Ziel“ je Raum</h3><p class="note">Leer: die Schwelle oben. Gemessen: 0,8 halbiert die vergeblichen Lichter gegenüber „wird betreten“, kommt aber seltener früh; 0,5 kommt öfter früh und ist trotzdem seltener vergeblich.</p></div>`);
-  for (const z of roomsWithSensor(state.config, state.live)) {
+  for (const z of roomsWithSensor(state.config, state.derived)) {
     const v = (p.target_thresholds || {})[z.id];
     const row = h(`<div class="param"><label class="field">${esc(z.name)}
       <input type="number" step="0.05" min="0" max="1" placeholder="${p.target_threshold}" value="${v ?? ''}"></label></div>`);
@@ -934,11 +918,8 @@ function settingsPanel(panel) {
     for (const [key, label, unit, desc, step] of items) {
       const el = h(`<div class="param"><label class="field">${label}${unit ? ` (${unit})` : ''}
         <input type="number" step="${step}" value="${p[key]}"></label>${desc ? `<div class="desc">${desc}</div>` : ''}
-        ${DERIVED[key] ? `<div class="desc derived">${DERIVED[key](p[key])}</div>` : ''}</div>`);
-      bindNumber(el.querySelector('input'), state.limits.params?.[key], v => {
-        panelEdit(c => { c.params[key] = v; });
-        if (DERIVED[key]) el.querySelector('.derived').textContent = DERIVED[key](v);
-      });
+        ${THRESHOLD_OF[key] ? `<div class="desc derived" data-derived="${THRESHOLD_OF[key]}Text"></div>` : ''}</div>`);
+      bindNumber(el.querySelector('input'), state.limits.params?.[key], v => panelEdit(c => { c.params[key] = v; }));
       target.append(el);
     }
   }

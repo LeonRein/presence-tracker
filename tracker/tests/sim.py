@@ -17,7 +17,7 @@ import numpy as np
 
 import presence_core
 
-from .model import Config, SensorConfig
+from presence_tracker.model import Config, SensorConfig
 
 CELLS = 16  # the LD2410C's: 9 moving gates, 7 still ones (2-8)
 # the model's numbers (the core's defaults): the LD2410C is simulated as the filter models it

@@ -222,6 +222,75 @@ impl Shape {
     pub fn bounds(&self) -> [f64; 4] {
         bounds_of(&self.outline(32))
     }
+
+    /// m^2 inside the outline (a polygon by the shoelace formula, either orientation).
+    pub fn area(&self) -> f64 {
+        match self {
+            Self::Rect { lo, hi } => (hi[0] - lo[0]) * (hi[1] - lo[1]),
+            Self::Circle { radius, .. } => std::f64::consts::PI * radius * radius,
+            Self::Polygon { corners, .. } => {
+                let ring = corners.iter().zip(corners.iter().cycle().skip(1));
+                ring.map(|(a, b)| a[0] * b[1] - b[0] * a[1]).sum::<f64>().abs() / 2.0
+            }
+        }
+    }
+}
+
+/// rays at even angles of a polygon in sight (`visible`): every 2 degrees
+const RAYS: usize = 180;
+
+/// What is in sight from `o`: per direction the nearest of the first wall hit and `limit(direction)`
+/// (the end of what is looked at: a radius, a field of view), as a polygon around `o`. Rays at RAYS even
+/// angles, beside every wall end within `reach` and at `extra` angles (the corners of what is looked
+/// at); corners in a straight line with their neighbours are left out. `limit` must be finite.
+pub fn visible(o: Point, walls: &[[Point; 2]], reach: f64, limit: impl Fn(Point) -> f64, extra: &[f64]) -> Vec<Point> {
+    let tau = 2.0 * std::f64::consts::PI;
+    let near: Vec<[Point; 2]> = walls
+        .iter()
+        .copied()
+        .filter(|&[a, b]| distance_to_segment(o, a, b) < reach)
+        .collect();
+    let mut angles: Vec<f64> = (0..RAYS).map(|k| tau * k as f64 / RAYS as f64).collect();
+    let ends = near.iter().flatten().map(|p| (p[1] - o[1]).atan2(p[0] - o[0]));
+    for t in ends.chain(extra.iter().copied()) {
+        angles.extend([-1e-4, 0.0, 1e-4].map(|e| (t + e).rem_euclid(tau)));
+    }
+    angles.sort_by(f64::total_cmp);
+    angles.dedup();
+    let ring: Vec<Point> = angles
+        .iter()
+        .map(|&t| {
+            let d = [t.cos(), t.sin()];
+            let mut best = limit(d);
+            for &[a, b] in &near {
+                let e = [b[0] - a[0], b[1] - a[1]];
+                let den = d[0] * e[1] - d[1] * e[0];
+                if den.abs() < 1e-12 {
+                    continue;
+                }
+                let w = [a[0] - o[0], a[1] - o[1]];
+                let hit = (w[0] * e[1] - w[1] * e[0]) / den; // along the ray
+                let u = (w[0] * d[1] - w[1] * d[0]) / den; // along the wall
+                if hit > 0.0 && (0.0..=1.0).contains(&u) && hit < best {
+                    best = hit;
+                }
+            }
+            [o[0] + d[0] * best, o[1] + d[1] * best]
+        })
+        .collect();
+    // points within 2 mm of the one before are one; a corner within 0.1 mm of the line between its neighbours (on
+    // a wall, on a straight edge of what is looked at) adds nothing
+    let mut ring = ring;
+    ring.dedup_by(|q, p| py_hypot(q[0] - p[0], q[1] - p[1]) < 2e-3);
+    let n = ring.len();
+    (0..n)
+        .filter(|&i| {
+            let (p, q, r) = (ring[(i + n - 1) % n], ring[i], ring[(i + 1) % n]);
+            let cross = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+            n < 4 || cross.abs() > 1e-4 * py_hypot(r[0] - p[0], r[1] - p[1])
+        })
+        .map(|i| ring[i])
+        .collect()
 }
 
 fn bounds_of(corners: &[Point]) -> [f64; 4] {

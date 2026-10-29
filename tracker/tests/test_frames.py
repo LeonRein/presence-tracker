@@ -9,7 +9,7 @@ import pytest
 from presence_tracker.frames import Frame, SensorClock
 from presence_tracker.model import Config, SensorConfig, ZoneConfig
 from presence_tracker.filter import Tracker
-from presence_tracker.sim import SimSensor, ld_prior
+from sim import SimSensor, ld_prior
 
 from fixture import fixture
 

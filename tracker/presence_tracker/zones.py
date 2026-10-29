@@ -74,4 +74,5 @@ class ZoneState:
                 "target_walks": round(self.target_walks) if tgt else None,
                 "target_source": self.target_source if tgt else None,
                 "target_weight": _q(self.target_weight, 0.1) if tgt else None,
-                **({} if self.probability is None else {"probability": _p(self.probability)})}
+                **({} if self.probability is None else {"probability": _p(self.probability)}),
+                **({} if self.c_occupied is None else {"c_occupied": round(self.c_occupied, 3)})}

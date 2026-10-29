@@ -4,7 +4,7 @@ How a mixture moves, meets walls and is weighed is tested in the Rust core
 
 
 
-from presence_tracker.sim import Person
+from sim import Person
 
 from test_filter import FLUR_DOOR, flat_config, run
 from test_frames import walk

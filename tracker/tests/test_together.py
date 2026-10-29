@@ -4,7 +4,7 @@ does not become a second person who walks along, and somebody walking in alone i
 seconds."""
 
 from presence_tracker.filter import Tracker
-from presence_tracker.sim import Person, simulate
+from sim import Person, simulate
 from presence_tracker.frames import Frame
 
 from test_existence import in_house, known

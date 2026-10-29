@@ -214,6 +214,49 @@ def check(d, layers: bool = True) -> None:
         raise ValueError(message(e.args[0])) from e
 
 
+# what an edit of the plan editor that the core cannot apply (presence_core.edit) says; None: nothing to say
+# (a shape too small to be meant, a wall split at its end)
+EDIT_SENTENCES = {
+    "no_wall": "Türen sitzen auf einer Wand (keine Raumgrenze).",
+    "none_joined": "An diesem Ende schließt keine Wand an.",
+    "many_joined": "Hier treffen mehrere Wände zusammen.",
+    "no_calibration": "Die Karte hat keine Kalibrierpunkte.",
+    "not_found": "Das gibt es nicht mehr (inzwischen gelöscht?).",
+    "bad_op": "Diese Bearbeitung kennt der Server nicht.",
+    "too_small": None,
+    "too_close": None,
+}
+
+
+class EditRefused(ValueError):
+    """An edit the core cannot apply: args (code, sentence or None)."""
+
+
+def edit(d: dict, op: dict) -> dict:
+    """An edit of the plan editor applied by the core (presence_core.edit: snapping, what moves along, ...) to
+    the configuration d (complete: Config.from_dict(...).to_dict()): {"config", "points", "select"}; the config
+    with its rooms (new ones with an id). EditRefused with the code and its sentence."""
+    try:
+        out = json.loads(presence_core.edit(json.dumps(_plain(d)), json.dumps(op)))
+    except ValueError as e:
+        code = str(e.args[0]) if e.args else "bad_op"
+        raise EditRefused(code, EDIT_SENTENCES.get(code, EDIT_SENTENCES["bad_op"])) from e
+    out["config"] = Config.from_dict(out["config"]).to_dict()
+    return out
+
+
+def derive(d: dict) -> dict:
+    """What the web UI draws of the configuration d (the core's: presence_core.derive): walls with their door
+    openings, the doors' openings, lengths, the zones' areas and labels, the sensors' sight areas, the plan,
+    the thresholds."""
+    return json.loads(presence_core.derive(json.dumps(_plain(d))))
+
+
+def coverage(d: dict) -> dict:
+    """The coverage of the configuration d (the core's, of a world built for it: seconds; in a thread)."""
+    return json.loads(presence_core.World(json.dumps(_plain(d)), "{}").coverage())
+
+
 def limits() -> dict:
     """The limits of the numbers for the web UI (the core's): per group key -> [low, high, low excluded,
     high excluded]."""

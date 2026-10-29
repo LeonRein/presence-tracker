@@ -620,6 +620,7 @@ class App:
         app.router.add_get("/images/{name}", self.h_image)
         app.router.add_get("/api/config", self.h_get_config)
         app.router.add_put("/api/config", self.h_put_config)
+        app.router.add_post("/api/preview", self.h_preview)
         app.router.add_get("/api/live", self.h_live)
         app.router.add_post("/api/background", self.h_upload)
         app.router.add_post("/api/calibration/{action}", self.h_calibration)
@@ -663,9 +664,40 @@ class App:
 
     async def h_get_config(self, request):
         known = sorted(set(self.tracker.runtime) | set(self.config.sensor_by_id))
-        return web.json_response({"config": self.config.to_dict(), "sensors_seen": known,
+        config = self.config.to_dict()
+        return web.json_response({"config": config, "derived": model.derive(config), "sensors_seen": known,
                                   "status": self.sensor_status, "replay": bool(self.replay),
                                   "ha": bool(self.ha_url), "limits": model.limits()})
+
+    async def h_preview(self, request):
+        """A draft of the editor, derived by the core: {"config": the draft, "edit": an operation of the plan
+        editor to apply first (model.edit; None: none), "coverage": also the coverage (a world is built: in a
+        thread)}. Answers {"config": the draft as it would be saved (edit applied, rooms between the walls,
+        defaults), "derived", "coverage", "points", "select"}. Saves nothing and leaves the model alone; 400 with
+        the sentence for a draft the core refuses (and "code" for an edit it cannot apply)."""
+        try:
+            body = await request.json()
+            data = body["config"]
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "Kein gültiger Entwurf (JSON)."}, status=400)
+        try:
+            model.check(data)
+            draft = Config.from_dict(data).to_dict()
+            out = {"points": None, "select": None}
+            if body.get("edit"):
+                out = model.edit(draft, body["edit"])
+                draft = out["config"]
+            model.check(draft)
+            derived = model.derive(draft)
+            cover = await asyncio.to_thread(model.coverage, draft) if body.get("coverage") else None
+        except model.EditRefused as e:
+            return web.json_response({"error": e.args[1], "code": e.args[0]}, status=400)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        except Exception as e:  # noqa: BLE001 - whatever the check let through: refused, not a 500
+            return web.json_response({"error": f"Entwurf unvollständig oder falsch: {e!r}"}, status=400)
+        return web.json_response({"config": draft, "derived": derived, "coverage": cover,
+                                  "points": out["points"], "select": out["select"]})
 
     async def h_put_config(self, request):
         """An edit in the web UI. Values outside the limits (the core's check, model.check) are refused with
@@ -711,7 +743,8 @@ class App:
             return web.json_response({"error": f"In Gebrauch, aber nicht gespeichert: {e}"}, status=500)
         # rooms are derived from the walls here; the editor takes them over
         return web.json_response({"ok": True, "restarted": restarted,
-                                  "rooms": [z.to_dict() for z in config.zones if z.kind == "room"]})
+                                  "rooms": [z.to_dict() for z in config.zones if z.kind == "room"],
+                                  "derived": model.derive(config.to_dict())})
 
     async def h_live(self, request):
         ws = web.WebSocketResponse(heartbeat=30)

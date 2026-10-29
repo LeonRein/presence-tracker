@@ -57,6 +57,16 @@ impl PyWorld {
     fn new(py: Python<'_>, config: &str, model: &str) -> PyResult<Self> {
         Ok(Self(Some(world_of(py, config, model)?)))
     }
+
+    /// The coverage of this world (presence_core::derived::coverage) as JSON.
+    fn coverage(&self) -> PyResult<String> {
+        let world = self
+            .0
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("this world went into a core already"))?;
+        Ok(serde_json::to_string(&presence_core::derived::coverage(world))
+            .expect("the coverage is finite numbers and text"))
+    }
 }
 
 impl PyWorld {
@@ -490,8 +500,28 @@ impl Core {
         self.tracker
             .persons()
             .into_iter()
-            .map(|p| PersonView::of(p, plan))
+            .map(|p| PersonView::of(p, plan, false))
             .collect()
+    }
+
+    /// The people of the display for the live view: with where their trail breaks (Tracker::trail_breaks;
+    /// remembers where they were shown).
+    fn persons_shown(&mut self) -> Vec<PersonView> {
+        let persons = self.tracker.persons();
+        let breaks = self.tracker.trail_breaks(&persons);
+        let plan = &self.tracker.world().plan;
+        persons
+            .into_iter()
+            .zip(breaks)
+            .map(|(p, jumped)| PersonView::of(p, plan, jumped))
+            .collect()
+    }
+
+    /// The people in the observed rooms: (most probable number, moving, still) (Tracker::observed_total).
+    fn observed_total(&mut self, py: Python<'_>) -> (usize, usize, usize) {
+        let tracker = &mut self.tracker;
+        let t = py.detach(|| tracker.observed_total());
+        (t.count, t.moving, t.still)
     }
 
     /// The regions without a sensor as the display shows them (in the order of the plan's places).

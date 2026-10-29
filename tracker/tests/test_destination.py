@@ -9,7 +9,7 @@ import numpy as np
 from presence_tracker import ha
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
-from presence_tracker.sim import Person, simulate
+from sim import Person, simulate
 from presence_tracker.frames import Frame
 
 from test_entering import DOOR, two_rooms

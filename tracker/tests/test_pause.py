@@ -14,7 +14,7 @@ from presence_tracker.filter import Tracker, plan
 from presence_tracker.frames import Frame, SensorClock
 from presence_tracker.model import Config
 from presence_tracker.pause import Pauses
-from presence_tracker.sim import Person, simulate
+from sim import Person, simulate
 
 from test_destination import routine
 from test_entering import two_rooms

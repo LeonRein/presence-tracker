@@ -73,6 +73,10 @@ pub struct PersonView {
     r: f64,
     shown: Option<Shown>,
     room: Option<String>,
+    /// shown as moving (Person::moving)
+    moving: bool,
+    /// the trail on the map breaks before this position (Tracker::trail_breaks; only Core.persons_shown)
+    jumped: bool,
 }
 
 /// Where a person of the display is drawn: position, velocity, spread (m), P(walking).
@@ -86,8 +90,10 @@ pub struct Shown {
 }
 
 impl PersonView {
-    pub(crate) fn of(p: Person, plan: &Plan) -> Self {
+    pub(crate) fn of(p: Person, plan: &Plan, jumped: bool) -> Self {
         Self {
+            moving: p.moving(),
+            jumped,
             id: p.id,
             place: argmax(&p.places),
             places: p.places,
@@ -137,6 +143,13 @@ pub(crate) fn plan_view<'py>(py: Python<'py>, p: &Plan) -> PyResult<Bound<'py, P
         .collect();
     d.set_item("home", home)?;
     Ok(d)
+}
+
+/// What the web UI draws of a configuration (JSON; presence_core::derived::derive), as JSON.
+#[pyfunction]
+pub fn derive(config: &str) -> PyResult<String> {
+    let derived = presence_core::derived::derive(&config_from(config)?);
+    Ok(serde_json::to_string(&derived).expect("the derived view is finite numbers and text"))
 }
 
 /// The plan of a configuration (JSON; plan_view), without building a world.
@@ -222,6 +235,8 @@ pub struct CloudView {
     id: usize,
     gauss: Vec<[f64; 5]>,
     tiles: Vec<(usize, f64)>,
+    /// per Gaussian the polygon it is drawn in (cut at the walls), None: not cut
+    clips: Vec<Option<Vec<Point>>>,
 }
 
 impl CloudView {
@@ -230,6 +245,7 @@ impl CloudView {
             id: c.id,
             gauss: c.gauss,
             tiles: c.tiles,
+            clips: c.clips,
         }
     }
 }

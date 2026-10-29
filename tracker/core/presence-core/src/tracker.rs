@@ -185,7 +185,12 @@ pub struct Tracker {
     clock: Clock,
     learned: Learned,
     pauses: Pauses,
+    /// where the people of the display were shown last (trail_breaks): only the display reads it
+    shown_at: Vec<(usize, Point)>,
 }
+
+/// m: a person shown farther than this from where they were shown before jumped (trail_breaks)
+const TRAIL_JUMP: f64 = 1.0;
 
 impl Tracker {
     /// A tracker without hypotheses, without frames, nothing learned, not started.
@@ -202,6 +207,7 @@ impl Tracker {
             seg_ids: SegIds::default(),
             clock: Clock::default(),
             pauses: Pauses::default(),
+            shown_at: Vec::new(),
         }
     }
 
@@ -1004,6 +1010,48 @@ impl Tracker {
     /// The known people of the most probable hypothesis for the display (Tracker.persons).
     pub fn persons(&self) -> Vec<Person> {
         outputs::persons(&self.filter, &self.world)
+    }
+
+    /// Per person of the display (persons()) whether their trail on the map breaks before where they are now:
+    /// since the last call they jumped more than TRAIL_JUMP or through a wall (a line there would draw a way
+    /// nobody walked). Remembers where they were shown; only the live view calls it.
+    pub fn trail_breaks(&mut self, persons: &[Person]) -> Vec<bool> {
+        let walls = &self.world.plan.walls;
+        let last = std::mem::take(&mut self.shown_at);
+        persons
+            .iter()
+            .map(|p| {
+                let Some(s) = p.shown else { return false };
+                self.shown_at.push((p.id, s.at));
+                last.iter().find(|&&(id, _)| id == p.id).is_some_and(|&(_, before)| {
+                    crate::vmath::py_dist(before, s.at) > TRAIL_JUMP
+                        || !crate::geometry::line_of_sight(before, s.at, walls)
+                })
+            })
+            .collect()
+    }
+
+    /// The people in the observed rooms (MODEL.md 6): their most probable number (of the distribution over the
+    /// whole observed area) and of the people shown in an observed room how many move and how many do not
+    /// (each at most the number).
+    pub fn observed_total(&mut self) -> HouseNumbers {
+        let count = outputs::argmax(self.count_distribution().last().map_or(&[1.0][..], Vec::as_slice));
+        let mut total = HouseNumbers {
+            count,
+            ..HouseNumbers::default()
+        };
+        for p in self.persons() {
+            if p.shown.is_some_and(|s| self.world.plan.room_at(s.at).is_some()) {
+                if p.moving() {
+                    total.moving += 1;
+                } else {
+                    total.still += 1;
+                }
+            }
+        }
+        total.moving = total.moving.min(total.count);
+        total.still = total.still.min(total.count - total.moving);
+        total
     }
 
     /// Where they may be, for the map.

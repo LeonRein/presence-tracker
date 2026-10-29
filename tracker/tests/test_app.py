@@ -13,7 +13,7 @@ from presence_tracker.app import App
 from presence_tracker.filter import Tracker
 from presence_tracker.frames import Frame, SensorClock
 from presence_tracker.model import Config
-from presence_tracker.sim import Person, ld_prior, simulate
+from sim import Person, ld_prior, simulate
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
 

@@ -1,7 +1,11 @@
 // SVG map: projection, pan/zoom, and drawing of the plan, sensors, zones and live data.
 // Everything is drawn in screen pixels; world coordinates are meters with y pointing up.
-import { api, heldBadges, state, sensorColor } from './store.js';
-import { PERSON_COLORS, ZONE_KINDS, dist, doorPlacement, esc, fmt, personColor, rad, segmentsCross, sightSegments, visibilityPolygon, zoneCenter, zoneOutline } from './util.js';
+import { api, derivedNow, heldBadges, state, sensorColor } from './store.js';
+import { PERSON_COLORS, ZONE_KINDS, esc, fmt, personColor, rad, zoneOutline } from './util.js';
+
+// coverage: tiles that no sensor, one, two or more see (the core's count per tile); a room the sensors don't
+// see enough of to be observed is drawn as blind
+const COVERAGE_COLORS = ['rgba(214,69,69,0.59)', 'rgba(240,180,41,0.22)', 'rgba(31,157,85,0.18)'];
 
 // rooms marked as entry (stairwell) look like entry zones
 const zoneStyle = z => (z.kind === 'room' && z.entry ? ZONE_KINDS.entry : ZONE_KINDS[z.kind] || ZONE_KINDS.area);
@@ -14,8 +18,7 @@ export class MapView {
     this.cx = 1; this.cy = 3; this.s = 50; // px per meter
     this.controller = null;
     this.pointers = new Map();
-    this.trails = new Map(); // track id -> [[x, y, t]]
-    this.coverage = null;
+    this.trails = new Map(); // track id -> [[x, y, t, breaks before]]
     // room names above the people, so a person doesn't hide the count of their room
     svg.innerHTML = '<g id="l-static"></g><g id="l-dyn"></g><g id="l-labels"></g><g id="l-overlay"></g><g id="l-scale" class="scale-bar"></g>';
     this.gStatic = svg.querySelector('#l-static');
@@ -171,13 +174,7 @@ export class MapView {
         transform="matrix(${k},0,0,${k},${sx},${sy})"/>`);
     }
 
-    if (state.showCoverage && this.coverage) {
-      const cv = this.coverage;
-      const [sx, sy] = this.P(cv.x0, cv.y1);
-      const k = cv.cell * this.s;
-      out.push(`<image href="${cv.url}" width="${cv.cols}" height="${cv.rows}" style="image-rendering:pixelated;pointer-events:none"
-        transform="matrix(${k},0,0,${k},${sx},${sy})"/>`);
-    }
+    if (state.showCoverage && state.coverage) out.push(this._coverage(state.coverage));
 
     // zones
     const zoneStates = state.live?.zones || {};
@@ -200,8 +197,11 @@ export class MapView {
       }
     }
 
-    // walls with their door openings left out; room dividers dashed; the selected one on top
-    const wallPath = sightSegments(c).map(([a, b]) => `M${this.P(...a).join(',')}L${this.P(...b).join(',')}`).join('');
+    // walls with their door openings left out (the core's; while an edit is under way the walls as drawn);
+    // room dividers dashed; the selected one on top
+    const d = derivedNow();
+    const walls = d ? d.walls : c.walls.filter(w => w.kind !== 'divider').map(w => w.points);
+    const wallPath = walls.map(([a, b]) => `M${this.P(...a).join(',')}L${this.P(...b).join(',')}`).join('');
     out.push(`<path class="wall" d="${wallPath}" pointer-events="none"/>`);
     for (let i = 0; i < c.walls.length; i++) {
       const w = c.walls[i];
@@ -214,17 +214,18 @@ export class MapView {
       if (state.selectable.includes('wall')) out.push(`<polyline class="wall-hit" points="${pts}" data-kind="wall" data-id="${i}"/>`);
     }
 
-    // doors: an opening in the wall with a thin leaf line
+    // doors: an opening in the wall with a thin leaf line (where the core puts it on its wall)
     for (const door of c.doors || []) {
-      const pl = doorPlacement(c.walls, door);
+      const opening = d?.doors[door.id];
       const selected = sel?.kind === 'door' && sel.id === door.id;
-      if (!pl) {
+      if (!opening) {
         const [x, y] = this.P(door.x, door.y);
-        out.push(`<circle cx="${x}" cy="${y}" r="6" fill="var(--bad)" data-kind="door" data-id="${esc(door.id)}" ${pe('door')}><title>Tür ohne Wand</title></circle>`);
+        out.push(d
+          ? `<circle cx="${x}" cy="${y}" r="6" fill="var(--bad)" data-kind="door" data-id="${esc(door.id)}" ${pe('door')}><title>Tür ohne Wand</title></circle>`
+          : `<circle cx="${x}" cy="${y}" r="5" fill="none" stroke="var(--accent)" stroke-width="2" pointer-events="none"/>`);
         continue;
       }
-      const at = t => this.P(pl.a[0] + pl.dir[0] * t, pl.a[1] + pl.dir[1] * t);
-      const [x0, y0] = at(pl.t - door.width / 2), [x1, y1] = at(pl.t + door.width / 2);
+      const [[x0, y0], [x1, y1]] = opening.map(p => this.P(...p));
       const nx = -(y1 - y0), ny = x1 - x0, nl = Math.hypot(nx, ny) || 1, k = 5 / nl;
       out.push(`<g class="door${selected ? ' selected' : ''}" pointer-events="none">
           <line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}"/>
@@ -241,10 +242,12 @@ export class MapView {
     const grouped = new Set(Object.values(state.live?.regions || {}).filter(r => (r.rooms || []).length > 1).flatMap(r => r.rooms));
     const labels = [];
     for (const z of c.zones) {
-      if (z.kind === 'room' || state.tab !== 'live' || this.s > 25) {
+      // where the core puts the name (a zone drawn just now: once it is derived)
+      const at = state.derived?.zones[z.id]?.label;
+      if (at && (z.kind === 'room' || state.tab !== 'live' || this.s > 25)) {
         const kind = zoneStyle(z);
         const zs = zoneStates[z.id];
-        const [x, y] = this.P(...(z.anchor || zoneCenter(z)));
+        const [x, y] = this.P(...at);
         const count = state.tab === 'live' && zs && !grouped.has(z.id) ? ` · ${zs.count}` : '';
         const occ = state.tab === 'live' && zs?.occupied;
         labels.push(`<text class="zone-label${occ ? ' occupied' : ''}" x="${x}" y="${y}" text-anchor="middle" fill="${kind.text}" pointer-events="none">${esc(z.name)}${count}</text>`);
@@ -260,7 +263,12 @@ export class MapView {
       const a0 = rad(s.heading - s.fov / 2), a1 = rad(s.heading + s.fov / 2);
       const r = s.range * s.scale * this.s;
       const showFov = editing || state.showRaw;
-      if (showFov) {
+      // what it sees, cut at the walls (the core's); while an edit is under way its field of view as entered
+      const sight = d?.sensors[s.id];
+      if (showFov && sight) {
+        out.push(`<polygon class="fov" points="${this.pts(sight)}" fill="${color}" fill-opacity="${selected ? 0.12 : 0.04}"
+          stroke="${color}" stroke-opacity="${selected ? 0.9 : 0.35}" pointer-events="none"/>`);
+      } else if (showFov) {
         const [x0, y0] = [x + r * Math.cos(a0), y - r * Math.sin(a0)];
         const [x1, y1] = [x + r * Math.cos(a1), y - r * Math.sin(a1)];
         out.push(`<path class="fov" d="M${x},${y} L${x0},${y0} A${r},${r} 0 0 0 ${x1},${y1} Z" fill="${color}"
@@ -330,22 +338,18 @@ export class MapView {
         }
       }
     }
-    // the uncertainty: only the cloud (cut off at the walls); a circle around the dot would claim
-    // "maybe next door" through the wall
-    const segs = sightSegments(c);
-    out.push(this.clouds(live, segs));
-    // trails, broken where the estimate jumped (more than 1 m between two messages, or through a wall):
-    // a line there would draw a path nobody walked
+    // the uncertainty: only the cloud (cut off at the walls by the core); a circle around the dot would
+    // claim "maybe next door" through the wall
+    out.push(this.clouds(live));
+    // trails, broken where the estimate jumped (the core's: more than 1 m or through a wall since the last
+    // message): a line there would draw a path nobody walked
     const now = live.t;
     for (const tr of live.tracks || []) {
       if (tr.x == null) continue;
       const trail = this.trails.get(tr.id) || [];
       const last = trail[trail.length - 1];
-      if (!last || last[2] < now - 0.05) {
-        const p = [tr.x, tr.y];
-        const jump = last && (dist(last, p) > 1 || segs.some(([a, b]) => segmentsCross(last, p, a, b)));
-        trail.push([tr.x, tr.y, now, !!jump]);
-      }
+      if (tr.jumped && last) last[4] = true;  // breaks after the last point kept
+      if (!last || last[2] < now - 0.05) trail.push([tr.x, tr.y, now, !!last?.[4]]);
       while (trail.length && trail[0][2] < now - 6) trail.shift();
       this.trails.set(tr.id, trail);
     }
@@ -366,7 +370,7 @@ export class MapView {
     for (const tr of live.tracks || []) {
       if (tr.x == null) continue; // behind a door: shown with the room, not as a point
       const [x, y] = this.P(tr.x, tr.y);
-      const moving = !tr.lost && tr.walk > 0.5 && Math.hypot(tr.vx, tr.vy) > 0.15;
+      const moving = tr.moving;
       const color = personColor(tr.id);
       if (moving) {
         const [vx, vy] = this.P(tr.x + tr.vx, tr.y + tr.vy);
@@ -384,7 +388,7 @@ export class MapView {
   // where each person may be (filter._cloud): with a track their Gaussians, drawn as ellipses out to
   // 3 standard deviations with a Gaussian fall-off, cut off at the walls (what is in sight from their
   // mean); without, the tiles they may be in (squares cut by their room), by mass per m^2
-  clouds(live, segs) {
+  clouds(live) {
     const out = [];
     const clouds = live.clouds || [];
     if (live.tiling !== this.tilingId && !this.tilingLoading && clouds.some(cl => cl.tiles.length)) {
@@ -419,17 +423,38 @@ export class MapView {
         }
       }
       cl.gauss.forEach(([w, mx, my, sx, sy], k) => {
-        const R = 3 * Math.max(sx, sy) + 0.05;
+        const poly = cl.clips?.[k];
         const clip = `clip-${cl.id}-${k}`;
-        out.push(`<clipPath id="${clip}"><polygon points="${this.pts(visibilityPolygon([mx, my], segs, R))}"/></clipPath>`);
+        if (poly) out.push(`<clipPath id="${clip}"><polygon points="${this.pts(poly)}"/></clipPath>`);
         const [x, y] = this.P(mx, my);
         out.push(`<ellipse cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="${(3 * sx * this.s).toFixed(1)}" ry="${(3 * sy * this.s).toFixed(1)}"
-          fill="url(#gauss-${PERSON_COLORS.indexOf(color)})" fill-opacity="${(0.15 + 0.55 * w).toFixed(2)}" clip-path="url(#${clip})"/>`);
+          fill="url(#gauss-${PERSON_COLORS.indexOf(color)})" fill-opacity="${(0.15 + 0.55 * w).toFixed(2)}" ${poly ? `clip-path="url(#${clip})"` : ''}/>`);
       });
     }
     return out.join('');
   }
 }
+
+// The coverage (the core's, of a world built for the configuration): per tile its square cut by its room,
+// coloured by how many sensors see it; rooms of the home that are not observed as blind
+MapView.prototype._coverage = function (cv) {
+  const out = [];
+  const zones = new Map(state.config.zones.map(z => [z.id, z]));
+  const rooms = new Set(cv.tiles.map(t => t[1]));
+  out.push(`<defs>${[...rooms].filter(id => zones.has(id)).map(id =>
+    `<clipPath id="cov-${esc(id)}"><polygon points="${this.pts(zoneOutline(zones.get(id)))}"/></clipPath>`).join('')}</defs>`);
+  const size = (cv.size * this.s).toFixed(1);
+  for (const [[x0, y0], room, seen] of cv.tiles) {
+    const [x, y] = this.P(x0, y0 + cv.size);
+    out.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${size}" height="${size}" fill="${COVERAGE_COLORS[Math.min(seen, 2)]}"
+      clip-path="url(#cov-${esc(room)})" pointer-events="none"/>`);
+  }
+  for (const r of cv.rooms) {
+    const z = zones.get(r.id);
+    if (!r.observed && z) out.push(`<polygon points="${this.pts(zoneOutline(z))}" fill="${COVERAGE_COLORS[0]}" pointer-events="none"/>`);
+  }
+  return out.join('');
+};
 
 export function bgToWorld(l, u, v) {
   const r = rad(l.rotation || 0), k = l.scale;

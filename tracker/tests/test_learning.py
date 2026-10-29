@@ -7,7 +7,7 @@ only where nobody is in view and judged without itself; the destination map is o
 import numpy as np
 
 from presence_tracker.filter import Tracker
-from presence_tracker.sim import MODEL, Person, SimSensor, ld_prior, simulate
+from sim import MODEL, Person, SimSensor, ld_prior, simulate
 from presence_tracker.frames import Frame
 
 from test_filter import FLUR_DOOR, flat_config

@@ -7,7 +7,7 @@ odds) is tested in the Rust core (core/presence-core/src/filter/tests.rs, merge.
 
 
 from presence_tracker.filter import Tracker
-from presence_tracker.sim import Person, simulate
+from sim import Person, simulate
 from presence_tracker.frames import Frame
 
 from test_existence import known

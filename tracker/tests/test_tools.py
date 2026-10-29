@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 
-from presence_tracker.sim import Person, simulate
+from sim import Person, simulate
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
 
