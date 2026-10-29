@@ -37,6 +37,7 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "testing")]
     {
         m.add_function(wrap_pyfunction!(core::model_defaults, m)?)?;
+        m.add_function(wrap_pyfunction!(core::forgetting, m)?)?;
         m.add_function(wrap_pyfunction!(core::ld_expected, m)?)?;
         m.add_function(wrap_pyfunction!(core::ld_prior, m)?)?;
         m.add_function(wrap_pyfunction!(testing::build_export, m)?)?;

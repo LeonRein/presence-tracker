@@ -2,6 +2,13 @@
 
 ## Unveröffentlicht
 
+## 0.53.1 (Branch `rust-core`, Abnahme mit fast_eval; nicht live)
+
+- **`presence_core.forgetting` wieder da (nur mit Feature `testing`).** 0.50.0 hatte es als tot gelöscht; `fast_eval`
+  (`compose.py`, Verketten gelernter Zustände) liest damit die Vergessenszeiten von Geister- und Zielkarte aus dem Kern.
+- **Abnahme (Phase 12):** `fast_eval --mode full --stages 2` gegen 0.31.1 (`runs/perf0311_s2`): Wahrheit 0,48 / 3,28
+  wie 0.31.1, leere Nacht und leeres Haus 0; Licht anders als 0.31.1 über 94,2 h: 0,2 min (Schlafzimmer 0,1).
+
 ## 0.53.0 (Branch `rust-core`, der Kern rechnet auf allen Rechnern gleich; nicht live, kein Tag)
 
 Modell unverändert, Zahlen auf Rundungsniveau anders (Entscheidung Leon nach 0.52.0).

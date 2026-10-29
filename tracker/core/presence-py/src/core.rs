@@ -640,6 +640,17 @@ pub fn model_defaults() -> String {
         .to_string()
 }
 
+/// s: how long what the ghost map and the destination map learned lasts (each fades with it; the tools that
+/// compose learned states, fast_eval).
+#[cfg(feature = "testing")]
+#[pyfunction]
+pub fn forgetting() -> (f64, f64) {
+    (
+        presence_core::learn::ghost_map::FORGET,
+        presence_core::learn::destination::FORGET,
+    )
+}
+
 /// The LD2410C's background (16 cells) before anything is learned, with the default model.
 #[cfg(feature = "testing")]
 #[pyfunction]
