@@ -1,7 +1,7 @@
 // Side panel per tab.
-import { api, coverageNow, edit, emit, heldBadges, refreshCoverage, savePref, saveNow, select, sensorById, sensorColor, setTool, state } from './store.js';
+import { api, coverageNow, edit, emit, heldBadges, onWall, refreshCoverage, savePref, saveNow, select, sensorById, sensorColor, setTool, state } from './store.js';
 import { autoFitImage, deleteSelection, fitFromCalibration } from './tools.js';
-import { LAYER_LIMITS, ON_WALL, ZONE_KINDS, bindNumber, dist, distToSegment, esc, fmt, h, personColor, regionOfRoom, roomsWithSensor, toast, uid, zoneArea } from './util.js';
+import { LAYER_LIMITS, ZONE_KINDS, bindNumber, dist, esc, fmt, h, onSegment, personColor, regionOfRoom, roomsWithSensor, toast, uid, zoneArea } from './util.js';
 import { loadSize } from './view.js';
 
 let skipRender = false;
@@ -229,8 +229,9 @@ const LIVE = {
   },
 };
 
-// LD2410C energy per 0.75 m gate: bewegt (move) and ruhig (still), 0-100
+// LD2410C energy per gate (its length the core's: derived.ld2410_gate): bewegt (move) and ruhig (still), 0-100
 function gateBars(ld) {
+  const gate = state.derived?.ld2410_gate;
   if (!ld?.still_gates) return '<p class="note">Keine Energiewerte pro Entfernungsstufe (Firmware mit Engineering Mode nötig).</p>';
   const w = 26, hgt = 60, gap = 4;
   const bars = ld.still_gates.map((sv, i) => {
@@ -238,7 +239,7 @@ function gateBars(ld) {
     const x = i * (w + gap);
     return `<rect x="${x}" y="${hgt - mv * hgt / 100}" width="${w / 2 - 1}" height="${mv * hgt / 100}" fill="var(--moving)"/>
       <rect x="${x + w / 2}" y="${hgt - sv * hgt / 100}" width="${w / 2 - 1}" height="${sv * hgt / 100}" fill="var(--still)"/>
-      <text x="${x + w / 2}" y="${hgt + 12}" font-size="9" text-anchor="middle" fill="var(--muted)">${fmt(i * 0.75, 2)}</text>`;
+      <text x="${x + w / 2}" y="${hgt + 12}" font-size="9" text-anchor="middle" fill="var(--muted)">${gate ? fmt(i * gate, 2) : ''}</text>`;
   }).join('');
   return `<h3>LD2410C-Energie pro Stufe</h3>
     <svg viewBox="0 -2 ${9 * (w + gap)} ${hgt + 16}" width="100%" style="max-width:300px">${bars}</svg>
@@ -278,7 +279,7 @@ const DERIVED_PARTS = {
       ${r.observed ? `<td style="color:${r.blind > 0 ? 'var(--bad)' : 'inherit'}">${fmt(r.blind, 2)} m² (${pct(r.blind_share)})</td>
       <td>${pct(r.single_share)}</td>`
         : `<td colspan="2" style="color:var(--bad)">ohne Sensor: ${pct(r.share)} gesehen</td>`}</tr>`).join('')}</table>
-      <p class="note">Je Kachel (${fmt(cov.size * 100, 0)} cm), wie das Modell sie sieht: Ein Sensor sieht sie, wo seine Sicht einer Person dort mindestens die Hälfte ist. Ein Raum zählt als beobachtet, wenn die Sensoren mindestens ${pct(state.derived?.plan.observed_share ?? 0)} von ihm sehen; sonst ist er für das Modell ein Raum ohne Sensor. Wände blockieren die Sicht, Möbel kennt die Karte nicht.</p>`;
+      <p class="note">Je Kachel (${fmt(cov.size * 100, 0)} cm), wie das Modell sie sieht: Ein Sensor sieht sie, wo seine Sicht einer Person dort mindestens ${pct(cov.sees)} ist. Ein Raum zählt als beobachtet, wenn die Sensoren mindestens ${pct(state.derived?.plan.observed_share ?? 0)} von ihm sehen; sonst ist er für das Modell ein Raum ohne Sensor. Wände blockieren die Sicht, Möbel kennt die Karte nicht.</p>`;
   },
 };
 
@@ -468,7 +469,7 @@ function wallDetail(el, i) {
   for (const b of el.querySelectorAll('#kind button')) {
     b.onclick = () => {
       // doors sit on walls: a room boundary has none
-      const doors = (state.config.doors || []).some(d => distToSegment([d.x, d.y], ...w.points) < ON_WALL);
+      const doors = (state.config.doors || []).some(d => onSegment([d.x, d.y], ...w.points, onWall()));
       if (b.dataset.kind === 'divider' && doors) { toast('Auf dieser Wand sitzt eine Tür. Raumgrenzen haben keine Türen: erst die Tür löschen.', 5000); return; }
       edit(c => { c.walls[i].kind = b.dataset.kind; });
     };
@@ -480,11 +481,11 @@ function doorDetail(el, id) {
   if (!door) return;
   el.append(h(`<div class="card">
     <div class="row"><b style="flex:1">Tür</b><button class="btn danger" id="del">Löschen</button></div>
-    <label class="field">Breite (m)<input type="number" step="0.01" min="0.3" value="${door.width}" id="width"></label>
+    <label class="field">Breite (m)<input type="number" step="0.01" value="${door.width}" id="width"></label>
     <p class="note">Entlang der Wand ziehen verschiebt die Tür, die Griffe an den Enden ändern die Breite. Für die Räume ist die Tür zu, für Radar und Personen offen.</p>
   </div>`));
   el.querySelector('#del').onclick = deleteSelection;
-  bindNumber(el.querySelector('#width'), [0.3, 20, false, false], v => panelEdit(c => { c.doors.find(d => d.id === id).width = v; }));
+  bindNumber(el.querySelector('#width'), state.limits.door?.width, v => panelEdit(c => { c.doors.find(d => d.id === id).width = v; }));
 }
 
 // name and entry flag of a room; its outline comes from the walls
@@ -593,7 +594,7 @@ function sensorsPanel(panel, view) {
     state.showCoverage = e.target.checked;
     view.render();
     updateDerived(panel);
-    if (state.showCoverage) refreshCoverage();  // of the world the model runs in
+    if (state.showCoverage && !coverageNow()) refreshCoverage();  // of the world the model runs in
   };
 }
 
@@ -748,13 +749,14 @@ function zoneDetail(el, z) {
 
 function calibrationPanel(panel, view) {
   const c = state.config;
-  const placed = c.sensors.filter(s => s.placed && s.enabled);
+  const placed = state.derived?.plan?.in_use || [];  // the sensors in use (the core's)
+  const cal = state.live?.calibration;  // how long the app keeps (the shell's), what a proposal needs (the core's)
   const result = state.calibResult;
   panel.append(h(`<div>
     <h2>Kalibrierung</h2>
     <ol class="steps">
       <li>Sensoren genau an ihrer Position einzeichnen, mit Montagehöhe und der x-Richtung, wie sie eingebaut sind. Die Blickrichtung muss nur grob stimmen.</li>
-      <li>Die App sammelt laufend, wo Gehende gemessen werden (die letzten 24 Stunden). Ein Tag normales Leben reicht meist. Vorgeschlagen wird für einen Sensor erst etwas, wenn er in mindestens 3 verschiedenen Stunden Gehende gemessen hat: Ein einzelner Gang zeigt nicht, ob die Lage auch im Alltag passt. Ein Gang allein kreuz und quer durch die Räume und Türen ergänzt den Alltag um Stellen, an die man sonst selten kommt.</li>
+      <li>Die App sammelt laufend, wo Gehende gemessen werden${cal?.keep_h ? ` (die letzten ${fmt(cal.keep_h, 0)} Stunden)` : ''}. Ein Tag normales Leben reicht meist. Vorgeschlagen wird für einen Sensor erst etwas, wenn er in ${cal?.min_hours ? `mindestens ${cal.min_hours}` : 'mehreren'} verschiedenen Stunden Gehende gemessen hat: Ein einzelner Gang zeigt nicht, ob die Lage auch im Alltag passt. Ein Gang allein kreuz und quer durch die Räume und Türen ergänzt den Alltag um Stellen, an die man sonst selten kommt.</li>
       <li>Berechnen, Ergebnis prüfen und übernehmen.</li>
     </ol>
     <p class="note">Die eingezeichneten Positionen und die x-Richtung bleiben. Blickrichtung und Maßstab (wie viel zu kurz oder zu lang ein Sensor misst) folgen für alle Sensoren gemeinsam aus drei Dingen: Was zwei Sensoren gleichzeitig sehen, muss übereinanderliegen. Wer aus dem Blickfeld eines Sensors in das eines anderen geht, geht dazwischen weiter. Und wer geht, ist in einem Raum und geht durch Türen, nicht durch Wände. Übernommen wird nur, was die Messungen sicher bestimmen.</p>
@@ -772,10 +774,10 @@ function calibrationPanel(panel, view) {
   </div>`));
   panel.querySelector('#mirror').onchange = e => { state.calibMirror = e.target.checked; };
   panel.querySelector('#reset').onclick = async () => {
-    const cal = state.live?.calibration;
-    const hours = cal?.since && state.live?.t ? Math.max(0, (state.live.t - cal.since) / 3600) : null;
+    const now = state.live?.calibration;
+    const hours = now?.since && state.live?.t ? Math.max(0, (state.live.t - now.since) / 3600) : null;
     if (!confirm(`Neu sammeln? Das verwirft alle gesammelten Messungen in Bewegung${hours != null ? ` (${fmt(hours, 1)} h)` : ''}. `
-      + 'Für einen Vorschlag braucht es danach wieder Gehende aus mindestens 3 verschiedenen Stunden. Nur nach dem Drehen oder Versetzen eines Sensors nötig.')) return;
+      + `Für einen Vorschlag braucht es danach wieder Gehende aus ${now?.min_hours ? `mindestens ${now.min_hours}` : 'mehreren'} verschiedenen Stunden. Nur nach dem Drehen oder Versetzen eines Sensors nötig.`)) return;
     await api('api/calibration/reset', { method: 'POST' });
     state.calibResult = null;
     toast('Gesammelte Messungen verworfen. Die App sammelt neu.');

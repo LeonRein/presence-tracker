@@ -1,14 +1,18 @@
 """The editor's map (static/js: floorplan.js, util.js), run in Node; skipped without it. The rooms are the closed
 areas between the walls (as the Python editor of 0.43.0 found them: compared on every test and dev
 configuration, 655 cases, when the room finding came back to the web UI in 0.48.0); doors stay on their walls
-while walls move; the background image's layers are checked here, never by the model."""
+while walls move (how near counts as on a wall: the core's); a trail breaks where it would cross a wall outside a
+door; the background image's layers are checked here, never by the model."""
 
 import json
 import pathlib
 import shutil
 import subprocess
 
+import presence_core
 import pytest
+
+from presence_tracker.model import Config
 
 JS = pathlib.Path(__file__).parents[1] / "presence_tracker" / "static" / "js"
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
@@ -24,6 +28,11 @@ def js(expr: str, **values):
               f"console.log(JSON.stringify({expr}));")
     r = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, check=True)
     return json.loads(r.stdout)
+
+
+def on_wall():
+    """m: a door this near a wall is on it (the core's, as the web UI reads it: derived.plan.door_on_wall)."""
+    return json.loads(presence_core.derive(Config.from_dict({"walls": OUTER}).model_json()))["plan"]["door_on_wall"]
 
 
 def wall(*pts, kind="wall"):
@@ -75,13 +84,21 @@ def test_doors_stay_on_their_walls_while_walls_move():
     c = {"walls": [*OUTER, wall((3, 0), (3, 4))], "doors": [{"id": "d", "x": 3.0, "y": 1.0, "width": 0.9},
                                                             {"id": "e", "x": 6.0, "y": 2.0, "width": 0.9}]}
     out = js("""(() => {
-      const placed = util.doorsOnWalls(c);
+      const placed = util.doorsOnWalls(c, onWall);
       c.walls[4].points = [[3.5, 0], [2.5, 4]];   // the middle wall turned
       c.walls[1].points = [[6, 0], [7, 4]];       // and the right one
       util.followDoors(c, placed);
       return c.doors.map(d => { const pl = util.doorWall(c.walls, d); return util.distToSegment([d.x, d.y], pl.a, pl.b); });
-    })()""", c=c)
+    })()""", c=c, onWall=on_wall())
     assert all(d < 1e-3 for d in out)
+
+
+def test_a_trail_breaks_only_through_a_wall():
+    # the middle wall x = 3 with a door of 0.9 m at y = 1; the outer walls
+    c = {"walls": [*OUTER, wall((3, 0), (3, 4))], "doors": [{"id": "d", "x": 3.0, "y": 1.0, "width": 0.9}]}
+    crosses = js("[[[2.5, 1], [3.5, 1.2]], [[2.5, 3], [3.5, 3]], [[1, 1], [2, 3]], [[5.5, 2], [6.5, 2]]]"
+                 ".map(([a, b]) => util.crossesWall(c, a, b, onWall))", c=c, onWall=on_wall())
+    assert crosses == [False, True, False, True]
 
 
 def test_the_layers_of_the_background_image_are_checked_here():

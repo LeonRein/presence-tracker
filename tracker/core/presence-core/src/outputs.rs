@@ -512,13 +512,9 @@ pub struct Cloud {
     /// without (and their part gone through a door): (tile, mass per m^2) of the tiles holding at
     /// least 0.2 %
     pub tiles: Vec<(usize, f64)>,
-    /// per Gaussian where it may be drawn: what is in sight from its mean out to 3 standard deviations
-    /// (derived::cloud_clip; None: no wall that near)
-    pub clips: Vec<Option<Vec<Point>>>,
+    /// per Gaussian the room (id) its mean is in (Plan::room_of; None: in none)
+    pub rooms: Vec<Option<String>>,
 }
-
-/// m added to 3 standard deviations: the reach of a cloud's cut at the walls
-const CLIP_MARGIN: f64 = 0.05;
 
 /// The clouds of the people of the display (persons()).
 pub fn clouds(filter: &Filter, world: &World) -> Vec<Cloud> {
@@ -556,17 +552,15 @@ pub fn clouds(filter: &Filter, world: &World) -> Vec<Cloud> {
                 .filter(|&(_, (&m, _))| m > 0.002)
                 .map(|(c, (m, a))| (c, m / a))
                 .collect();
-            let clips = gauss
+            let rooms = gauss
                 .iter()
-                .map(|&[_, x, y, sx, sy]| {
-                    crate::derived::cloud_clip([x, y], 3.0 * sx.max(sy) + CLIP_MARGIN, &world.plan.walls)
-                })
+                .map(|&[_, x, y, _, _]| world.plan.room_of([x, y]).map(|z| z.id.clone()))
                 .collect();
             Cloud {
                 id,
                 gauss,
                 tiles,
-                clips,
+                rooms,
             }
         })
         .collect()
@@ -1328,6 +1322,8 @@ mod tests {
         assert_eq!(clouds.len(), 1);
         assert_eq!(clouds[0].gauss.len(), 1);
         assert!((clouds[0].gauss[0][0] - 0.75).abs() < 1e-15 && clouds[0].tiles.is_empty());
+        // the walker at (3, 2.5) in the flat's only room: the web UI cuts the Gaussian at its outline
+        assert_eq!(clouds[0].rooms, [Some("wohn".to_string())]);
     }
 
     #[test]

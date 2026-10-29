@@ -1,11 +1,15 @@
 // SVG map: projection, pan/zoom, and drawing of the plan, sensors, zones and live data.
 // Everything is drawn in screen pixels; world coordinates are meters with y pointing up.
-import { api, coverageNow, derivedNow, heldBadges, state, sensorColor } from './store.js';
-import { ON_WALL, PERSON_COLORS, ZONE_KINDS, distToSegment, doorWall, esc, fmt, personColor, rad, zoneCenter, zoneOutline } from './util.js';
+import { api, coverageNow, heldBadges, onWall, state, sensorColor } from './store.js';
+import { PERSON_COLORS, ZONE_KINDS, crossesWall, dist, doorWall, esc, fmt, onSegment, personColor, rad, zoneCenter, zoneOutline } from './util.js';
 
 // coverage: tiles that no sensor, one, two or more see (the core's count per tile); a room the sensors don't
 // see enough of to be observed is drawn as blind
 const COVERAGE_COLORS = ['rgba(214,69,69,0.59)', 'rgba(240,180,41,0.22)', 'rgba(31,157,85,0.18)'];
+
+// m: a trail breaks where the person was shown this much farther than the point before (or through a wall):
+// a line there would draw a way nobody walked
+const TRAIL_JUMP = 1.0;
 
 // rooms marked as entry (stairwell) look like entry zones
 const zoneStyle = z => (z.kind === 'room' && z.entry ? ZONE_KINDS.entry : ZONE_KINDS[z.kind] || ZONE_KINDS.area);
@@ -198,10 +202,10 @@ export class MapView {
       }
     }
 
-    // walls as the radar sees them, their door openings left out (the model's, of the saved configuration;
-    // until an edit is saved the walls as drawn); room dividers dashed; the selected one on top
-    const d = derivedNow();
-    const walls = d ? d.walls : c.walls.filter(w => w.kind !== 'divider').map(w => w.points);
+    // walls as drawn (a door paints its opening over its wall below); room dividers dashed; the selected one
+    // on top
+    const firstWall = out.length;
+    const walls = c.walls.filter(w => w.kind !== 'divider').map(w => w.points);
     const wallPath = walls.map(([a, b]) => `M${this.P(...a).join(',')}L${this.P(...b).join(',')}`).join('');
     out.push(`<path class="wall" d="${wallPath}" pointer-events="none"/>`);
     for (let i = 0; i < c.walls.length; i++) {
@@ -215,11 +219,12 @@ export class MapView {
       if (state.selectable.includes('wall')) out.push(`<polyline class="wall-hit" points="${pts}" data-kind="wall" data-id="${i}"/>`);
     }
 
-    // doors: the door on its wall (the editor keeps it there) with a thin leaf line at each end
+    // doors: the door on its wall (the editor keeps it there): its opening in the wall, with a thin leaf line
+    // at each end
     for (const door of c.doors || []) {
       const pl = doorWall(c.walls, door);
       const selected = sel?.kind === 'door' && sel.id === door.id;
-      if (!pl || distToSegment([door.x, door.y], pl.a, pl.b) >= ON_WALL) {
+      if (!pl || !onSegment([door.x, door.y], pl.a, pl.b, onWall())) {
         const [x, y] = this.P(door.x, door.y);
         out.push(`<circle cx="${x}" cy="${y}" r="6" fill="var(--bad)" data-kind="door" data-id="${esc(door.id)}" ${pe('door')}><title>Tür ohne Wand</title></circle>`);
         continue;
@@ -228,6 +233,7 @@ export class MapView {
       const [x0, y0] = at(pl.t - door.width / 2), [x1, y1] = at(pl.t + door.width / 2);
       const nx = -(y1 - y0), ny = x1 - x0, nl = Math.hypot(nx, ny) || 1, k = 5 / nl;
       out.push(`<g class="door${selected ? ' selected' : ''}" pointer-events="none">
+          <line class="opening" x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}"/>
           <line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}"/>
           <line x1="${x0 - nx * k}" y1="${y0 - ny * k}" x2="${x0 + nx * k}" y2="${y0 + ny * k}"/>
           <line x1="${x1 - nx * k}" y1="${y1 - ny * k}" x2="${x1 + nx * k}" y2="${y1 + ny * k}"/>
@@ -253,21 +259,19 @@ export class MapView {
     }
 
     // sensors
+    const showFov = editing || state.showRaw;
+    // what each sees, per tile as the filter weighs it (the core's sight of the saved configuration, beneath
+    // the walls); until an edit is saved its field of view as entered
+    const world = showFov && coverageNow();
+    if (world) out.splice(firstWall, 0, this._sight(world, sel?.kind === 'sensor' ? sel.id : null));
     for (const s of c.sensors) {
       if (!s.placed) continue;
       const color = sensorColor(s.id);
       const selected = sel?.kind === 'sensor' && sel.id === s.id;
       const [x, y] = this.P(s.x, s.y);
       const a0 = rad(s.heading - s.fov / 2), a1 = rad(s.heading + s.fov / 2);
-      const r = s.range * s.scale * this.s;
-      const showFov = editing || state.showRaw;
-      // what it sees, cut at the walls (the model's, of the saved configuration); until an edit is saved its
-      // field of view as entered
-      const sight = d?.sensors[s.id];
-      if (showFov && sight) {
-        out.push(`<polygon class="fov" points="${this.pts(sight)}" fill="${color}" fill-opacity="${selected ? 0.12 : 0.04}"
-          stroke="${color}" stroke-opacity="${selected ? 0.9 : 0.35}" pointer-events="none"/>`);
-      } else if (showFov) {
+      const r = s.range * this.s;
+      if (showFov && !world) {
         const [x0, y0] = [x + r * Math.cos(a0), y - r * Math.sin(a0)];
         const [x1, y1] = [x + r * Math.cos(a1), y - r * Math.sin(a1)];
         out.push(`<path class="fov" d="M${x},${y} L${x0},${y0} A${r},${r} 0 0 0 ${x1},${y1} Z" fill="${color}"
@@ -337,18 +341,21 @@ export class MapView {
         }
       }
     }
-    // the uncertainty: only the cloud (cut off at the walls by the core); a circle around the dot would
+    // the uncertainty: only the cloud (cut off at the outline of its room); a circle around the dot would
     // claim "maybe next door" through the wall
     out.push(this.clouds(live));
-    // trails, broken where the estimate jumped (the core's: more than 1 m or through a wall since the last
-    // message): a line there would draw a path nobody walked
+    // trails, broken where the shown position jumped (more than TRAIL_JUMP or through a wall since the point
+    // before): a line there would draw a path nobody walked
     const now = live.t;
     for (const tr of live.tracks || []) {
       if (tr.x == null) continue;
       const trail = this.trails.get(tr.id) || [];
       const last = trail[trail.length - 1];
-      if (tr.jumped && last) last[4] = true;  // breaks after the last point kept
-      if (!last || last[2] < now - 0.05) trail.push([tr.x, tr.y, now, !!last?.[4]]);
+      const at = [tr.x, tr.y];
+      if (!last || last[2] < now - 0.05) {
+        const breaks = !!last && (dist(last, at) > TRAIL_JUMP || crossesWall(c, last, at, onWall()));
+        trail.push([tr.x, tr.y, now, breaks]);
+      }
       while (trail.length && trail[0][2] < now - 6) trail.shift();
       this.trails.set(tr.id, trail);
     }
@@ -385,8 +392,8 @@ export class MapView {
   }
 
   // where each person may be (filter._cloud): with a track their Gaussians, drawn as ellipses out to
-  // 3 standard deviations with a Gaussian fall-off, cut off at the walls (what is in sight from their
-  // mean); without, the tiles they may be in (squares cut by their room), by mass per m^2
+  // 3 standard deviations with a Gaussian fall-off, cut at the outline of the room of their mean (the
+  // core's); without, the tiles they may be in (squares cut by their room), by mass per m^2
   clouds(live) {
     const out = [];
     const clouds = live.clouds || [];
@@ -402,10 +409,11 @@ export class MapView {
         `<stop offset="${o}" stop-color="${color}" stop-opacity="${Math.exp(-0.5 * (3 * o) ** 2).toFixed(3)}"/>`).join('');
       out.push(`<defs>${PERSON_COLORS.map((c, n) => `<radialGradient id="gauss-${n}">${stops(c)}</radialGradient>`).join('')}</defs>`);
     }
-    if (tiling && clouds.some(cl => cl.tiles.length)) {
-      const rooms = new Set(tiling.tiles.map(t => t[2]));
+    const rooms = new Set(clouds.flatMap(cl => cl.rooms || []).filter(Boolean));
+    if (tiling && clouds.some(cl => cl.tiles.length)) for (const t of tiling.tiles) rooms.add(t[2]);
+    if (rooms.size) {
       out.push(`<defs>${state.config.zones.filter(z => rooms.has(z.id)).map(z =>
-        `<clipPath id="room-${z.id}"><polygon points="${this.pts(zoneOutline(z))}"/></clipPath>`).join('')}</defs>`);
+        `<clipPath id="room-${esc(z.id)}"><polygon points="${this.pts(zoneOutline(z))}"/></clipPath>`).join('')}</defs>`);
     }
     for (const cl of clouds) {
       const color = personColor(cl.id);
@@ -418,16 +426,14 @@ export class MapView {
           if (!tile) continue;
           const [x, y] = this.P(tile[0], tile[1] + tiling.size);
           out.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${size}" height="${size}" fill="${color}"
-            fill-opacity="${(0.06 + 0.45 * d / top).toFixed(2)}" clip-path="url(#room-${tile[2]})"/>`);
+            fill-opacity="${(0.06 + 0.45 * d / top).toFixed(2)}" clip-path="url(#room-${esc(tile[2])})"/>`);
         }
       }
       cl.gauss.forEach(([w, mx, my, sx, sy], k) => {
-        const poly = cl.clips?.[k];
-        const clip = `clip-${cl.id}-${k}`;
-        if (poly) out.push(`<clipPath id="${clip}"><polygon points="${this.pts(poly)}"/></clipPath>`);
+        const room = cl.rooms?.[k];
         const [x, y] = this.P(mx, my);
         out.push(`<ellipse cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="${(3 * sx * this.s).toFixed(1)}" ry="${(3 * sy * this.s).toFixed(1)}"
-          fill="url(#gauss-${PERSON_COLORS.indexOf(color)})" fill-opacity="${(0.15 + 0.55 * w).toFixed(2)}" ${poly ? `clip-path="url(#${clip})"` : ''}/>`);
+          fill="url(#gauss-${PERSON_COLORS.indexOf(color)})" fill-opacity="${(0.15 + 0.55 * w).toFixed(2)}" ${room ? `clip-path="url(#room-${esc(room)})"` : ''}/>`);
       });
     }
     return out.join('');
@@ -451,6 +457,30 @@ MapView.prototype._coverage = function (cv) {
   for (const r of cv.rooms) {
     const z = zones.get(r.id);
     if (!r.observed && z) out.push(`<polygon points="${this.pts(zoneOutline(z))}" fill="${COVERAGE_COLORS[0]}" pointer-events="none"/>`);
+  }
+  return out.join('');
+};
+
+// What the sensors see (the core's sight of a person per tile, of the world the model runs in): each tile's
+// square, cut by its room, in the sensor's colour as strong as its sight; the selected sensor's stronger, the
+// others faint
+MapView.prototype._sight = function (cv, selected) {
+  const out = [];
+  const zones = new Map(state.config.zones.map(z => [z.id, z]));
+  const rooms = new Set(cv.tiles.map(t => t[1]));
+  out.push(`<defs>${[...rooms].filter(id => zones.has(id)).map(id =>
+    `<clipPath id="sight-${esc(id)}"><polygon points="${this.pts(zoneOutline(zones.get(id)))}"/></clipPath>`).join('')}</defs>`);
+  const size = (cv.size * this.s).toFixed(1);
+  for (const [id, sight] of Object.entries(cv.sight || {})) {
+    const s = state.config.sensors.find(x => x.id === id);
+    if (!s?.placed) continue;
+    const color = sensorColor(id), k = selected === null ? 0.12 : id === selected ? 0.35 : 0.05;
+    cv.tiles.forEach(([[x0, y0], room], t) => {
+      if (!(sight[t] > 0)) return;
+      const [x, y] = this.P(x0, y0 + cv.size);
+      out.push(`<rect class="sight" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${size}" height="${size}" fill="${color}"
+        fill-opacity="${(k * sight[t]).toFixed(3)}" clip-path="url(#sight-${esc(room)})" pointer-events="none"/>`);
+    });
   }
   return out.join('');
 };

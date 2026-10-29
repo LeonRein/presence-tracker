@@ -20,9 +20,10 @@ export const state = {
   holds: {},            // zone id -> {approach, target}: badges held for HOLD_MS after they went off
   calibResult: null,
   limits: {},           // allowed values of the number fields the model reads (the core's, presence_core.config_limits)
-  // what the model makes of the saved configuration (the core's, with every save): the walls as the radar sees
-  // them, the sensors' sight areas, the plan, the thresholds; the coverage (api/coverage) only while it is
-  // shown. derivedVersion: the edit (state.version) that was saved; the map shows them only for that one
+  // the model's quantities of the saved configuration (the core's, with every save): the plan, the thresholds,
+  // the numbers the editor reads (door_on_wall, ld2410_gate); of the world the model runs in (api/coverage,
+  // after every save that changed the model): per tile how many sensors see it and each sensor's sight.
+  // derivedVersion: the edit (state.version) that was saved; the map shows them only for that one
   derived: null,
   coverage: null,
   version: 0,           // counts the edits
@@ -88,16 +89,19 @@ export async function loadConfig() {
   state.derived = data.derived;
   state.derivedVersion = state.version;
   emit('config');
-  if (state.showCoverage) refreshCoverage();
+  refreshCoverage();
 }
+
+// m: a door this close to a wall is on it (the core's plan::DOOR_ON_WALL; util.onSegment)
+export const onWall = () => state.derived.plan.door_on_wall;
 
 // ---- the model of the saved configuration (the core's; it never sees a draft)
 
-// derived of the configuration as it is now (saved), or null while an edit is not saved yet
-export const derivedNow = () => (state.derivedVersion === state.version ? state.derived : null);
+// the coverage and sight of the configuration as it is now (saved), or null while an edit is not saved yet
 export const coverageNow = () => (state.coverageVersion === state.version ? state.coverage : null);
 
-// the coverage of the saved configuration (the core's, of the world the model runs in)
+// the coverage and the sensors' sight per tile of the saved configuration (the core's, of the world the model
+// runs in)
 export async function refreshCoverage() {
   const version = state.derivedVersion;
   try {
@@ -107,7 +111,8 @@ export async function refreshCoverage() {
     state.coverageVersion = version;
     emit('derived');
   } catch (e) {
-    toast('Abdeckung: ' + e.message, 5000);
+    // the map then shows the fields of view as entered; only the coverage asked for says why
+    if (state.showCoverage) toast('Abdeckung: ' + e.message, 5000);
   }
 }
 
@@ -135,7 +140,7 @@ async function save() {
       else if (state.coverageVersion === state.derivedVersion) state.coverageVersion = version;
       state.derivedVersion = version;
       emit('derived');
-      if (r.derived && state.showCoverage) refreshCoverage();
+      if (r.derived) refreshCoverage();
       // the model starts over for most edits (walls, rooms, parameters): say so, it changes the live view
       toast([saveNote, 'Gespeichert', r.restarted ? 'Modell neu gestartet' : ''].filter(Boolean).join(' · '));
       saveNote = '';

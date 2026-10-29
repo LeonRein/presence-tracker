@@ -7,6 +7,7 @@ mod calibration;
 mod config;
 mod core;
 mod frames;
+#[cfg(feature = "testing")]
 mod geometry;
 #[cfg(feature = "testing")]
 mod testing;
@@ -20,7 +21,6 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<frames::PyClock>()?;
     m.add_class::<calibration::PyWalking>()?;
     m.add_class::<frames::PyFrame>()?;
-    m.add_class::<geometry::PyGeometry>()?;
     m.add_function(wrap_pyfunction!(core::model_defaults, m)?)?;
     m.add_function(wrap_pyfunction!(core::ld_expected, m)?)?;
     m.add_function(wrap_pyfunction!(core::forgetting, m)?)?;
@@ -39,6 +39,7 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(testing::build_export, m)?)?;
         m.add_function(wrap_pyfunction!(testing::hidden_at, m)?)?;
         m.add_function(wrap_pyfunction!(testing::panic_for_test, m)?)?;
+        m.add_class::<geometry::PyGeometry>()?;
     }
     // what only the outputs read: a change of them alone builds nothing (Core.set_outputs)
     m.add("OUTPUT_PARAMS", ::presence_core::params::OUTPUT_FIELDS)?; // the crate, not this function

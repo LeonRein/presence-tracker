@@ -670,7 +670,8 @@ class App:
                                   "ha": bool(self.ha_url), "limits": model.limits()})
 
     async def h_coverage(self, request):
-        """The coverage of the saved configuration, of the world the model runs in (the core's)."""
+        """The coverage of the saved configuration and each sensor's sight per tile, of the world the model runs in
+        (the core's)."""
         try:
             return web.json_response(self.tracker.coverage())
         except Exception as e:  # noqa: BLE001 - the model is down (restarting after an error)

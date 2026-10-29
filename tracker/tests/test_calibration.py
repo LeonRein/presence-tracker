@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from presence_tracker.frames import Frame
+from presence_tracker import calibration
 from presence_tracker.calibration import Calibrator, solve
 from presence_tracker.model import Config, SensorConfig, TrackerParams
 from sim import Person, SimSensor, simulate
@@ -25,6 +26,7 @@ def _collect(truth, guess, people, duration, plan=None, hours=MIN_STRETCHES):
             calibrator.on_frame(sid, t + k * STRETCH, Frame.of(frame))
     status = calibrator.status()
     assert status["since"] is not None and all(n > 0 for n in status["frames"].values())
+    assert status["keep_h"] == calibration.KEEP / 3600  # the web UI's text reads it
     return calibrator
 
 

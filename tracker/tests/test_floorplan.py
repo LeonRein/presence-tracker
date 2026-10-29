@@ -10,6 +10,7 @@ import presence_core
 
 from presence_tracker.filter import plan
 from presence_tracker.model import Config
+from sim import geometry
 
 OUTER = [{"points": [a, b], "kind": "wall"} for a, b in [([0, 0], [6, 0]), ([6, 0], [6, 4]), ([6, 4], [0, 4]), ([0, 4], [0, 0])]]
 
@@ -34,15 +35,15 @@ def test_the_server_takes_the_rooms_as_the_editor_made_them():
 
 def test_a_door_opens_its_wall_for_the_radar():
     walls = [*OUTER, wall((3, 0), (3, 4))]
-    geometry = Config.from_dict({"walls": walls, "zones": ROOMS,
-                                 "doors": [{"id": "d", "x": 3, "y": 2, "width": 0.9}]}).geometry()
+    geo = geometry(Config.from_dict({"walls": walls, "zones": ROOMS,
+                                     "doors": [{"id": "d", "x": 3, "y": 2, "width": 0.9}]}))
     # the door is open for the radar, the rest of the wall is not
-    assert geometry.in_sight((2, 2), [(4, 2), (4, 1)]) == [True, False]
+    assert geo.in_sight((2, 2), [(4, 2), (4, 1)]) == [True, False]
 
 
 def test_a_divider_blocks_nothing():
     walls = [*OUTER, wall((3, 0), (3, 4), kind="divider")]
-    assert Config.from_dict({"walls": walls, "zones": ROOMS}).geometry().in_sight((2, 1), [(4, 1)]) == [True]
+    assert geometry(Config.from_dict({"walls": walls, "zones": ROOMS})).in_sight((2, 1), [(4, 1)]) == [True]
 
 
 @pytest.mark.hooks

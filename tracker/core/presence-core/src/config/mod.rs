@@ -5,7 +5,7 @@
 //! makes them so, static/js/floorplan.js; the check refuses a door on no wall). Every field the shell always
 //! writes is required: no defaults here that could hide a renamed field. Before it is read it is checked
 //! (check.rs: the limits of every number, also the ones of the web UI's fields). The sensors' geometry here
-//! is the only one: the shell's calibration and simulation use it too (presence_core.Geometry).
+//! is the only one: the simulation of the tests uses it too (presence_core.Geometry, feature "testing").
 //!
 //! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 

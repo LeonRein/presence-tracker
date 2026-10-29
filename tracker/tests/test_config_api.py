@@ -1,8 +1,8 @@
 """The configuration over HTTP (app.App: GET/PUT /api/config, GET /api/coverage). The map comes finished from the
 web UI's editor (rooms between the walls, doors on walls); the core checks what the model reads and answers with
-what the web UI shows of the model of the saved configuration (derived: the walls as the radar sees them, sight
-areas, plan, thresholds; the coverage of the running world). The background image is the web UI's: an edit of
-it alone is only stored, the core never sees it."""
+the model's quantities of the saved configuration (derived: plan, thresholds, the numbers the editor reads; the
+coverage and each sensor's sight per tile of the running world): no geometry for drawing, the web UI draws. The
+background image is the web UI's: an edit of it alone is only stored, the core never sees it."""
 
 import asyncio
 import json
@@ -57,10 +57,12 @@ def test_the_saved_configuration_comes_with_the_model_of_it(tmp_path):
     # nothing of the model changed: nothing new to show
     assert again == {"ok": True, "restarted": False, "derived": None}
     d = got["derived"]
-    assert set(d) == {"walls", "sensors", "plan", "thresholds"}  # the model's; nothing of the editor
+    assert set(d) == {"plan", "thresholds", "ld2410_gate"}  # the model's numbers; nothing to draw
     assert d["plan"]["observed"] == ["wohn"] and abs(d["thresholds"]["occupied"] - 2 / 3) < 1e-12  # light_cost 2
-    # the balcony door (0.9 m at (6, 2)) cut out of the wall x = 6
-    assert [[6.0, 0.0], [6.0, 1.55]] in d["walls"] and [[6.0, 2.45], [6.0, 5.0]] in d["walls"]
+    assert d["plan"]["door_on_wall"] == 0.01 and d["ld2410_gate"] == 0.75
+    # the people for the map: no trail breaks, no polygons; the rooms of their Gaussians
+    assert all("jumped" not in p for p in live["tracks"]) and all(set(c) == {"id", "gauss", "rooms", "tiles"}
+                                                                   for c in live["clouds"])
 
 
 def test_the_rooms_are_taken_as_the_editor_sent_them(tmp_path):
@@ -79,6 +81,9 @@ def test_the_coverage_is_of_the_running_world(tmp_path):
     wohn = next(x for x in cov["rooms"] if x["id"] == "wohn")
     assert wohn["observed"] and wohn["area"] == 30.0 and wohn["blind"] + wohn["single"] <= 30.0
     assert next(x for x in cov["rooms"] if x["id"] == "balkon")["observed"] is False
+    # each sensor in use: its sight per tile (aligned with the tiles), what the filter weighs with
+    assert cov["sees"] == 0.5 and set(cov["sight"]) == {"a", "b"}
+    assert all(len(v) == len(cov["tiles"]) and max(v) > 0.9 for v in cov["sight"].values())
 
 
 def test_an_edit_of_the_background_image_alone_does_not_touch_the_core(tmp_path, monkeypatch):

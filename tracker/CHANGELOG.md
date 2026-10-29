@@ -2,6 +2,36 @@
 
 ## Unveröffentlicht
 
+## 0.49.0 (Branch `rust-core`, der Kern liefert nur Modellgrößen, die Oberfläche zeichnet; nicht live)
+
+Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.48.0 (presence-replay und `trace.py` über die
+Hülle). Vom Besitzer freigegeben: kein Polygon-Rechnen für die Darstellung im Kern; Sicht und Abdeckung sehen jetzt
+aus wie der Filter sie sieht (Kacheln statt Keilen/Polygonen).
+- **Kern ohne Zeichnen:** `derived.rs` ohne `sight_area` (Sichtfläche als Polygon), `cloud_clip` (Wolkenschnitt) und die
+  Wände „wie das Radar sie sieht“; `geometry::visible` weg. `derived` = Plan (beobachtete Räume, Anteile, Regionen,
+  Sensoren in Gebrauch), Schwellen, die Zahlen, die der Editor liest (`plan.door_on_wall`, `ld2410_gate`).
+  `GET /api/coverage` hat zusätzlich je Sensor in Gebrauch seine Sicht einer Person je Kachel (`sight`, der Wert, mit
+  dem der Filter rechnet) und `sees` (0,5: ab da sieht ein Sensor eine Kachel).
+- **Personen als Daten:** Die Live-Nachricht hat je Gauß-Anteil den Raum seines Mittels (`clouds[].rooms`) statt eines
+  Schnittpolygons (`clips`); `jumped` (Spurbruch) und `Tracker::trail_breaks`/`Core.persons_shown` weg.
+- **Die Oberfläche zeichnet:** Wände wie gezeichnet, jede Tür malt ihre Öffnung darüber; die Sicht jedes Sensors als
+  Kacheln in seiner Farbe, so kräftig wie seine Sicht (der gewählte kräftiger), am Umriss des Raums geschnitten; bis
+  eine Änderung gespeichert ist, sein Blickfeld wie eingegeben (Reichweite ohne Maßstab). Gauß-Wolken am Umriss
+  ihres Raums geschnitten. Die Spur bricht ab, wo der gezeigte Ort mehr als 1 m springt oder die Linie eine Wand
+  außerhalb einer Tür kreuzt (`util.crossesWall`, Entscheidung der Oberfläche). Abdeckung und Sicht holt sie nach
+  jedem Laden und jeder Änderung des Modells.
+- **Keine Zahl des Modells doppelt:** `util.ON_WALL` weg (der Editor liest `derived.plan.door_on_wall`); Länge einer
+  LD2410C-Stufe (0,75) aus `derived.ld2410_gate`; „mindestens die Hälfte“ aus `coverage.sees`; die Breite einer Tür
+  gegen `config_limits` (statt 0,3–20 in JS); die Sensoren in Gebrauch (Kopfzeile, Kalibrierung) aus
+  `derived.plan.in_use` statt `enabled && placed` in JS; die Kalibrierung sagt „mindestens n Stunden“ und „die letzten
+  24 Stunden“ aus dem Status (`min_hours` des Kerns, `keep_h` der Hülle).
+- **`presence_core.Geometry` nur mit dem Feature „testing“** (dient nur der Simulation der Tests); `Config.geometry()`
+  weg, `tests/sim.geometry`. Die Tests jedes Moduls, das simuliert, sind damit „hooks“ (conftest): gegen das
+  Release-Wheel laufen 117 von 259.
+- Gemessen (Wiedergabe 20261010-12, Tempo 5, je 120 s, zwei Personen): Live-Nachricht im Mittel 7404 → 7223 B
+  (Wolken 404 → 241 B, Personen 444 → 410 B); `GET /api/config` 14054 → 9096 B; `GET /api/coverage` 28270 → 53498 B
+  (die Sicht je Sensor und Kachel, nur nach dem Laden und nach Änderungen des Modells). ab.sh 1200 16,5 s (0.31.1 48,1 s).
+
 ## 0.48.0 (Branch `rust-core`, Grenze berichtigt: der Kern ist das Modell, der Editor die Oberfläche; nicht live)
 
 Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.47.0 (presence-replay und `trace.py` über die

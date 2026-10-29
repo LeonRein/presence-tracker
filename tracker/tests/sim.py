@@ -90,19 +90,25 @@ class SimSensor:
     _ld_gain: list | None = None  # per cell: the Ornstein-Uhlenbeck processes of its energy's Gamma factor
 
 
+def geometry(config: Config):
+    """The core's sensor geometry of a configuration (MODEL.md 2, 4.1; presence_core.Geometry, feature
+    "testing"): its sensors' frames and fields of view, the walls that block their sight."""
+    return presence_core.Geometry(config.model_json())
+
+
 def simulate(people: list, sensors: list, duration: float, rate: float = 11.0, seed: int = 1, plan: Config | None = None):
     """Yield (t, sensor_id, frame) in time order, as the firmware sends them (SimSensor.idle). plan: the
     configuration whose walls and doors block the sensors' sight (None: nothing blocks it); what a sensor sees
-    is the core's (Config.geometry), with the simulated sensors as they are configured."""
-    geometry = Config(sensors=[s.config for s in sensors], walls=plan.walls if plan else [],
-                      doors=plan.doors if plan else []).geometry()
+    is the core's (geometry), with the simulated sensors as they are configured."""
+    geo = geometry(Config(sensors=[s.config for s in sensors], walls=plan.walls if plan else [],
+                          doors=plan.doors if plan else []))
     rng = random.Random(seed)
     dt = 1 / rate
     t = 0.0
     while t < duration:
         for k, s in enumerate(sensors):
             ts = t + k * dt / len(sensors)
-            frame = _frame(s, people, ts, dt, rng, geometry)
+            frame = _frame(s, people, ts, dt, rng, geo)
             ld = frame["ld2410"]
             empty = not frame["targets"] and not ld.get("moving") and not ld.get("still")
             if empty and s._sent[1] and ts - s._sent[0] < s.idle:

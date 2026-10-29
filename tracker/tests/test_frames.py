@@ -9,14 +9,14 @@ import pytest
 from presence_tracker.frames import Frame, SensorClock
 from presence_tracker.model import Config, SensorConfig, ZoneConfig
 from presence_tracker.filter import Tracker
-from sim import SimSensor, ld_prior
+from sim import SimSensor, geometry, ld_prior
 
 from fixture import fixture
 
 
 def local(s, x, y) -> tuple:
     """A point of the house in sensor s's frame, as it measures it (the core's geometry)."""
-    return tuple(Config(sensors=[s]).geometry().to_local(s.id, [(x, y)])[0])
+    return tuple(geometry(Config(sensors=[s])).to_local(s.id, [(x, y)])[0])
 
 
 def room_config() -> Config:

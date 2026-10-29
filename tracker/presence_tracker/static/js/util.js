@@ -18,12 +18,12 @@ export function roomsWithSensor(config, derived) {
   return config.zones.filter(z => seen.has(z.id));
 }
 
-// the header's "online/in use Sensoren": every sensor in use (enabled and placed) counts, also one the
-// live message does not have (it has only those heard from since the model started: two boards
-// offline showed as 5/5); online: with recent frames
-export function sensorsOnline(config, live) {
-  const used = (config?.sensors || []).filter(s => s.enabled && s.placed);
-  return { online: used.filter(s => live?.sensors?.[s.id]?.online).length, total: used.length };
+// the header's "online/in use Sensoren": every sensor in use (the core's plan of the saved configuration:
+// derived.plan.in_use) counts, also one the live message does not have (it has only those heard from since
+// the model started: two boards offline showed as 5/5); online: with recent frames
+export function sensorsOnline(derived, live) {
+  const used = derived?.plan?.in_use || [];
+  return { online: used.filter(id => live?.sensors?.[id]?.online).length, total: used.length };
 }
 
 // the group without a sensor a room belongs to (the core's plan: derived.plan.regions), or null
@@ -177,10 +177,6 @@ export function wallPieces(walls, kind = null) {
   return out;
 }
 
-// m: a door this close to a wall is on it. The editor puts every door exactly on a real wall (mm) and keeps
-// it there; the model reads the wall it lies on and refuses a door on none (the core's plan::DOOR_ON_WALL).
-export const ON_WALL = 0.01;
-
 // The real wall a door sits on (the nearest; the editor keeps it on one): {a, b, dir, t, length, wi} (t: the
 // door's centre in m from a), or null without real walls
 export function doorWall(walls, door) {
@@ -198,15 +194,38 @@ export function doorWall(walls, door) {
   return { a, b, dir, t, length, wi: best.wi };
 }
 
+// A door at p lies on the segment a-b: within onWall m of it. The editor puts every door exactly on a real wall
+// (mm) and keeps it there; the model reads the wall it lies on and refuses a door on none: onWall is the core's
+// (derived.plan.door_on_wall, store.onWall)
+export const onSegment = (p, a, b, onWall) => distToSegment(p, a, b) <= onWall;
+
 // Where each door is along its wall, before walls move: [{id, wi, f}] (f: fraction of the way from the
 // wall's first end)
-export function doorsOnWalls(c) {
+export function doorsOnWalls(c, onWall) {
   const out = [];
   for (const door of c.doors || []) {
     const pl = doorWall(c.walls, door);
-    if (pl && distToSegment([door.x, door.y], pl.a, pl.b) < ON_WALL) out.push({ id: door.id, wi: pl.wi, f: pl.t / pl.length });
+    if (pl && onSegment([door.x, door.y], pl.a, pl.b, onWall)) out.push({ id: door.id, wi: pl.wi, f: pl.t / pl.length });
   }
   return out;
+}
+
+// Whether the line a-b crosses a real wall (not through a door on it): a trail drawn there would draw a way
+// through the wall (view.js)
+export function crossesWall(c, a, b, onWall) {
+  const doors = (c.doors || []).map(d => ({ d, pl: doorWall(c.walls, d) }))
+    .filter(({ d, pl }) => pl && onSegment([d.x, d.y], pl.a, pl.b, onWall));
+  for (const [p, q, , wi] of wallPieces(c.walls, 'wall')) {
+    const r = [b[0] - a[0], b[1] - a[1]], e = [q[0] - p[0], q[1] - p[1]];
+    const den = r[0] * e[1] - r[1] * e[0];
+    if (Math.abs(den) < 1e-12) continue;
+    const w = [p[0] - a[0], p[1] - a[1]];
+    const s = (w[0] * e[1] - w[1] * e[0]) / den, u = (w[0] * r[1] - w[1] * r[0]) / den;
+    if (s < 0 || s > 1 || u < 0 || u > 1) continue;
+    const along = u * Math.hypot(e[0], e[1]);
+    if (!doors.some(({ d, pl }) => pl.wi === wi && Math.abs(along - pl.t) <= d.width / 2)) return true;
+  }
+  return false;
 }
 
 // The doors back on their walls after these moved: at the same fraction of the way (doorsOnWalls)

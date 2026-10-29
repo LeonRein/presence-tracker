@@ -3,7 +3,7 @@
 import hashlib
 import pathlib
 
-__version__ = "0.48.0"  # as in config.yaml
+__version__ = "0.49.0"  # as in config.yaml
 
 
 def code_hash() -> str:

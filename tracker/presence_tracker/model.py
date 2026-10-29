@@ -208,8 +208,8 @@ def check(d) -> None:
 
 
 def derive(d: dict) -> dict:
-    """What the web UI shows of the model of the configuration d (the core's: presence_core.derive): the walls
-    as the radar sees them, the sensors' sight areas, the plan, the thresholds."""
+    """The model's quantities of the configuration d the web UI shows (the core's: presence_core.derive): the
+    plan, the thresholds, the numbers the editor reads (door_on_wall, ld2410_gate)."""
     return json.loads(presence_core.derive(json.dumps(_plain(model_part(d)))))
 
 
@@ -239,11 +239,6 @@ class Config:
         """Recompute derived data after an edit. The places of the people model (observed rooms, regions,
         closed rooms) are the core's plan (filter.plan)."""
         self.sensor_by_id = {s.id: s for s in self.sensors}
-
-    def geometry(self) -> presence_core.Geometry:
-        """The core's sensor geometry of this configuration (MODEL.md 2, 4.1; for the simulation and the
-        tests): its sensors' frames and fields of view, the walls that block their sight."""
-        return presence_core.Geometry(self.model_json())
 
     # --- persistence ---
 

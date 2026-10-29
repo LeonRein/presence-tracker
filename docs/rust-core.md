@@ -34,7 +34,7 @@ Tests und Dev-Werkzeuge gehören nicht zum Programm.
 dort (sie geht mit, wenn die Wand sich bewegt, und mit ihr, wenn die Wand gelöscht wird; eine Wand mit Tür wird keine
 Raumgrenze); der Kern liest nur die Wand, auf der ihr Mittelpunkt liegt (`plan::wall_of_door`, `DOOR_ON_WALL` = 1 cm für
 die mm-Rundung), und seine Prüfung weist eine Tür auf keiner Wand ab (bis 0.47.0 suchte er die nächste Wand bis
-25 cm).
+25 cm). Der Editor liest die 1 cm vom Kern (`derived.plan.door_on_wall`, 0.49.0), keine zweite Zahl.
 
 **Rust ist der ganze Filter: alles, was MODEL.md beschreibt.** Er ist ein reiner Kern: keine Ein-/Ausgabe
 (keine Dateien, kein Netz), keine Uhr (jede Zeit kommt als Argument), keine Threads, keine Zufallszahlen.
@@ -56,7 +56,7 @@ die mm-Rundung), und seine Prüfung weist eine Tür auf keiner Wand ab (bis 0.47
 | Gespeicherte Formate lesen und schreiben, **unverändert**: `people_state`, Geisterkarte, LD2410C-Hintergrund, Zielkarte (als Zeichenketten/Dicts; Dateien schreibt Python) | 5.3, 4.2, 4.3, 6 | `to_dict`/`from_dict` der Klassen |
 | Kalibrierung: Messzeilen je Frame, Schätzer (Paare, Übergaben, Grundriss, Maßstäbe; EM, Gauß-Newton, robuste Kovarianz, Jackknife), Vorschlag mit Gründen, Fortschritt (`calibration/`, 0.45.0) | 10 | `calibration.py` |
 | Was die Anzeige ableitet: Raum und wahrscheinlichster Ort einer Person, Regionen (Zahl, P, Aufenthalt), Karte eines Sensors mit Geisterrate, LD2410C-Anzeige mit Haltezeit, „belegt“ und Schwellen je Zone, Heim-Zonen für HA; der Weg einer neuen Konfiguration (`reconfigure.rs`) (0.46.0) | 6 | `filter.py`, `zones.py`, `ha.py`, `geometry.py` |
-| Was die Oberfläche über das Modell der gespeicherten Konfiguration zeigt (`derived.rs`): Wände, wie das Radar sie sieht (ohne Türöffnungen), Sichtfläche je Sensor, Plan mit dem Anteil der 60-%-Regel, Schwellen; Abdeckung je Kachel der laufenden Welt (`Core.coverage`); Wolken an Wänden geschnitten; „bewegt“ und Spurbruch je Person, Gesamtzahl im beobachteten Bereich (0.47.0/0.48.0) | 2, 4.1, 5.3, 6 | `static/js` (util, view, panels, coverage.js) |
+| Die Modellgrößen, die die Oberfläche zeigt (`derived.rs`), nur Daten, keine Geometrie zum Zeichnen (0.49.0): der Plan mit dem Anteil der 60-%-Regel, die Schwellen, die Zahlen, die der Editor liest (Tür auf der Wand, Länge einer LD2410C-Stufe); aus der laufenden Welt je Kachel die Zahl der Sensoren, die sie sehen, und die Sicht jedes Sensors (`Core.coverage`); je Person Mittel und Streuung ihrer Gauß-Anteile mit dem Raum des Mittels, Masse je Kachel, „bewegt“; Gesamtzahl im beobachteten Bereich | 2, 4.1, 5.3, 6 | `static/js` (util, view, panels, coverage.js); die Polygone (Sichtfläche, Wolkenschnitt, Wände mit Türlücken) und der Spurbruch von 0.47.0/0.48.0 sind wieder Zeichnen (JS) |
 
 | Python (Hülle): Modul | was es tut (nach dem Grundsatz oben, Stand 0.48.0) |
 |---|---|
@@ -67,7 +67,7 @@ die mm-Rundung), und seine Prüfung weist eine Tür auf keiner Wand ab (bis 0.47
 | `ha.py`, `zones.py` | Home Assistant: Entitäten der Heim-Zonen des Kerns (`plan()["home"]`), Verfügbarkeit, Rundung und Halten der Ausgabe (wann gesendet wird). |
 | `pause.py` | der Schalter „Lernen pausieren“: Nachrichten lesen, Intervalle halten und speichern; ob eine Zeit pausiert ist, sagt der Kern. |
 | `frames.py`, `sources.py`, `util.py`, `__main__.py` | Daten der Anzeige eines Frames; MQTT und Wiedergabe; atomar schreiben, Log drosseln; Start. |
-| `static/js/*` | die Oberfläche, die Bedienung: der Karteneditor (`tools.js`: Zeichnen mit Einrasten und Hilfslinien, mitgehende Wände und Türen, teilen/verbinden, Zonen, Sensor setzen, Hintergrundbild ausrichten und einpassen; `floorplan.js`: Räume aus Wänden; `util.js`: Tür auf ihrer Wand, Längen, Flächen, Etiketten, Grenzen der Bildebenen), die Darstellung (`view.js`, `panels.js`). Was sie über das Modell zeigt, kommt vom Kern für den gespeicherten Stand (`derived` mit `GET`/`PUT /api/config`, `GET /api/coverage`); bis eine Änderung gespeichert ist, zeigt die Karte die Wände wie gezeichnet und die Sensoren mit ihrem Blickfeld wie eingegeben (0.48.0). |
+| `static/js/*` | die Oberfläche, die Bedienung: der Karteneditor (`tools.js`: Zeichnen mit Einrasten und Hilfslinien, mitgehende Wände und Türen, teilen/verbinden, Zonen, Sensor setzen, Hintergrundbild ausrichten und einpassen; `floorplan.js`: Räume aus Wänden; `util.js`: Tür auf ihrer Wand, Längen, Flächen, Etiketten, Grenzen der Bildebenen), das ganze Zeichnen (`view.js`, `panels.js`: Wände wie gezeichnet mit den Türöffnungen, Sicht und Abdeckung als Kacheln, Wolken am Umriss ihres Raums geschnitten, wo eine Spur abbricht). Die Modellgrößen dazu kommen vom Kern als Daten für den gespeicherten Stand (`derived` mit `GET`/`PUT /api/config`, `GET /api/coverage`, die Live-Nachricht); bis eine Änderung gespeichert ist, zeigt die Karte die Sensoren mit ihrem Blickfeld wie eingegeben (0.48.0, 0.49.0). Keine Zahl des Modells steht in JS: „Tür auf der Wand“ (`derived.plan.door_on_wall`), die Länge einer LD2410C-Stufe (`derived.ld2410_gate`), die Sicht, ab der ein Sensor eine Kachel sieht (`coverage.sees`), die Grenzen der Felder (`config_limits`, auch die Breite einer Tür), die Sensoren in Gebrauch (`derived.plan.in_use`). |
 
 `sim.py` (erzeugt Frames, rechnet) gehört nur zu Tests und Werkzeugen: `tracker/tests/sim.py` (0.47.0).
 
@@ -256,9 +256,10 @@ count_distribution(), place_distribution(), entering(), targets(), occupancy(now
 persons(), clouds(), thresholds(), target_above(room), online(id, now), silent(now), seen_last(), watched()
 Sichten: plan(), tiles_view(), tile_near(p), sensor_map(si), sight(si, pts), observed(), detections(si),
 last_frame(si), hypotheses(), tracks(), hyp_weights(), ghost_rates(si, pts), background(si), check()
-Modul: plan(config), check_config(config), config_limits(), Geometry(config), model_defaults(), forgetting(),
+Modul: plan(config), check_config(config), config_limits(), derive(config), model_defaults(), forgetting(),
 ld_prior(), ld_expected(...), Frame, SensorClock, TrackStage, OUTPUT_PARAMS, WorldChanged, ConfigError
 (ValueError; args[0] ein ConfigProblem: Teil, Name, Feld, Grund, Grenzen, Wert), PanicException
+nur mit dem Feature "testing" (Tests): build_export, hidden_at, panic_for_test, Geometry(config) (0.49.0)
 ```
 
 Die Hülle (`filter.py`) führt jeden Zugriff auf den Kern über einen Schutz (`_Guarded`): eine Panik des Kerns wird
@@ -296,7 +297,8 @@ benannte Typen (`HypView`, `TilesView`, `PersonView`). Der gemessene Blick des L
 Konfiguration, kein Standard des Modells mehr.
 
 **Keine doppelte Logik (0.43.0, 29.10.):** Die Sensorgeometrie (Sensorrahmen, Blickfeld, Sicht durch Türen, Bodenpunkt)
-gibt es nur im Kern; Kalibrierung und Simulation fragen `presence_core.Geometry` (über Punktlisten). Die Konfiguration
+gibt es nur im Kern; die Simulation der Tests fragt `presence_core.Geometry` (über Punktlisten; seit 0.49.0 nur mit
+dem Feature „testing“, die Kalibrierung ist seit 0.45.0 ganz im Kern). Die Konfiguration
 prüft nur der Kern (`config/check.rs`, eine Tabelle der Grenzen, auch der Bildebenen der Oberfläche). Die Zonenzustände
 liefert der Kern fertig (`Core.zone_states`: geordnet, mit Quelle, „Ziel“ und Schwellen, das Haus als `_total`); Hülle
 und `presence-replay` schreiben sie nur. `recalibrate` nimmt eine gebaute `World`; passt sie nicht, baut die Hülle den

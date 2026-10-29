@@ -159,10 +159,10 @@ class Calibrator:
         return self._join(self._parts())
 
     def status(self) -> dict:
-        """Since when, walking measurements per sensor ("frames"), the walking points of each as solve
-        counts them ("points") and its hours with walking data ("hours", a proposal needs "min_hours"),
-        and seconds in which two sensors each had exactly one moving target (recounted every 30 s,
-        here in the caller's thread: the app counts in a thread, status_job)."""
+        """Since when and how many hours are kept ("keep_h"), walking measurements per sensor ("frames"), the
+        walking points of each as solve counts them ("points") and its hours with walking data ("hours", a
+        proposal needs "min_hours"), and seconds in which two sensors each had exactly one moving target
+        (recounted every 30 s, here in the caller's thread: the app counts in a thread, status_job)."""
         if self.status_due():
             self.use_status(self.status_job()())
         return self._status
@@ -184,7 +184,7 @@ class Calibrator:
 
         def count():
             status = json.loads(presence_core.calibration_status(config, _bytes(self._join(parts))))
-            return gen, t, {"since": since, **status}
+            return gen, t, {"since": since, "keep_h": KEEP / 3600, **status}
         return count
 
     def use_status(self, counted: tuple):

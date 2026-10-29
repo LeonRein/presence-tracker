@@ -393,7 +393,8 @@ class Tracker:
 
     def coverage(self) -> dict:
         """The coverage of the running world, that is of the saved configuration (the core's: per tile how
-        many sensors see it, per room of the home its area, the share seen, m^2 blind and seen once)."""
+        many sensors see it, per sensor in use its sight per tile, per room of the home its area, the share
+        seen, m^2 blind and seen once)."""
         return json.loads(self._c.coverage())
 
     def tile_near(self, xy) -> int | None:
@@ -450,19 +451,18 @@ class Tracker:
         out["_house"] = c[-1]
         return out
 
-    def persons(self, live: bool = False) -> list:
+    def persons(self) -> list:
         """The known people of the most probable hypothesis that more probably exist than not
         (Garcia-Fernandez et al. 2018, sec. VI), for the display: those with a track first. Where to
         draw them: with a measuring track the mean of the mixture, without the densest tile of the most
         probable place, and the room there; their most probable place, whether they move (the core's,
-        rounded here). live: for the live view, with "jumped" (their trail on the map breaks: the core
-        remembers where it showed them)."""
+        rounded here)."""
         places = self.places
         out = []
-        for p in self._c.persons_shown() if live else self._c.persons():
+        for p in self._c.persons():
             d = {"id": p.id, "places": {places[i]: round(v, 3) for i, v in enumerate(p.places) if v >= 0.005},
                  "place": places[p.place], "lost": p.lost, "r": round(p.r, 3), "room": p.room,
-                 "moving": p.moving, "jumped": p.jumped}
+                 "moving": p.moving}
             s = p.shown
             if s is None:
                 d.update({"x": None, "y": None, "vx": 0.0, "vy": 0.0, "sigma": 0.0, "walk": 0.0})
@@ -475,11 +475,12 @@ class Tracker:
 
     def _clouds(self) -> list:
         """Where the people of the display may be, for the map: with a track their Gaussians [[weight,
-        x, y, sd x, sd y]] as they are; without (and their part gone through a door), [[tile, mass per
-        m^2]] of the tiles holding at least 0.2 % (anywhere in a tile alike: all the model knows about
-        where an unseen person is; the tiles' squares: /api/tiles)."""
+        x, y, sd x, sd y]] as they are and per Gaussian the room its mean is in (id, None: in none); without
+        (and their part gone through a door), [[tile, mass per m^2]] of the tiles holding at least 0.2 %
+        (anywhere in a tile alike: all the model knows about where an unseen person is; the tiles'
+        squares: /api/tiles). How it is drawn is the web UI's."""
         return [{"id": c.id, "gauss": [[round(v, 3) for v in g] for g in c.gauss],
-                 "clips": c.clips, "tiles": [[i, round(m, 4)] for i, m in c.tiles]}
+                 "rooms": c.rooms, "tiles": [[i, round(m, 4)] for i, m in c.tiles]}
                 for c in self._c.clouds()]
 
     def occupancy(self) -> dict:
@@ -505,7 +506,7 @@ class Tracker:
         """For the web UI: the people of the most probable hypothesis at their most probable place (and the
         room there), their densities as heat maps, the sensors' raw data, the places without a sensor."""
         t = self.now
-        tracks = self.persons(live=True)
+        tracks = self.persons()
         clouds = self._clouds()
         count, moving, still = self._c.observed_total()
         sensors = {}

@@ -2,9 +2,9 @@
 // drawing walls and zones with snapping, what moves along, doors on their walls, placing sensors, aligning
 // images. The rooms between the walls follow every edit (floorplan.js, in store.edit); the model gets the
 // finished map when it is saved.
-import { edit, endMerge, emit, select, sensorById, setTool, state } from './store.js';
+import { edit, endMerge, emit, onWall, select, sensorById, setTool, state } from './store.js';
 import { SNAP } from './floorplan.js';
-import { ON_WALL, ZONE_KINDS, deg, dist, distToSegment, doorWall, doorsOnWalls, followDoors, rad, toast, uid, wallPieces, zoneOutline } from './util.js';
+import { ZONE_KINDS, deg, dist, distToSegment, doorWall, doorsOnWalls, followDoors, onSegment, rad, toast, uid, wallPieces, zoneOutline } from './util.js';
 import { bgToWorld, loadSize } from './view.js';
 
 const SNAP_PX = 10;
@@ -288,7 +288,7 @@ export class SelectTool {
           }));
         }
         // every door stays where it is along its wall, whichever of them moves
-        if (sel.kind === 'wall') d.doors = doorsOnWalls(c);
+        if (sel.kind === 'wall') d.doors = doorsOnWalls(c, onWall());
       }
       this.drag = d;
       return true;
@@ -303,7 +303,7 @@ export class SelectTool {
       const movable = !isFixedRoom({ kind, id });
       if (movable && (already || kind === 'sensor' || kind === 'door')) {
         this.drag = { role: 'body', kind, id, start: world, last: world, merge: uid('drag') };
-        if (kind === 'wall') this.drag.doors = doorsOnWalls(state.config);
+        if (kind === 'wall') this.drag.doors = doorsOnWalls(state.config, onWall());
       }
       return true;
     }
@@ -562,7 +562,7 @@ export class SelectTool {
     const keep = w.points[1 - i], far = c.walls[wi].points[1 - wj];
     // the doors of both stay on the joined wall (not quite in line: the nearest point of it)
     const ends = [w.points, c.walls[wi].points];
-    const ids = new Set((c.doors || []).filter(d => ends.some(([a, b]) => distToSegment([d.x, d.y], a, b) < ON_WALL)).map(d => d.id));
+    const ids = new Set((c.doors || []).filter(d => ends.some(([a, b]) => onSegment([d.x, d.y], a, b, onWall()))).map(d => d.id));
     const len = dist(keep, far) || 1;
     const dir = [(far[0] - keep[0]) / len, (far[1] - keep[1]) / len];
     edit(c => {
@@ -594,7 +594,7 @@ export function selectionText(sel) {
   if (!sel) return '';
   if (sel.kind === 'wall') {
     const w = c.walls[sel.id];
-    const doors = w && (c.doors || []).filter(door => distToSegment([door.x, door.y], ...w.points) < ON_WALL).length;
+    const doors = w && (c.doors || []).filter(door => onSegment([door.x, door.y], ...w.points, onWall())).length;
     return `${w?.kind === 'divider' ? 'Diese Raumgrenze' : 'Diese Wand'}${doors ? ` mit ${doors === 1 ? 'ihrer Tür' : `ihren ${doors} Türen`}` : ''}`;
   }
   if (sel.kind === 'door') return 'Diese Tür';
@@ -613,7 +613,7 @@ export function deleteSelection() {
     else if (sel.kind === 'wall') {
       // its doors go with it: a door is on a wall
       const [a, b] = c.walls[sel.id].points;
-      c.doors = (c.doors || []).filter(door => distToSegment([door.x, door.y], a, b) >= ON_WALL);
+      c.doors = (c.doors || []).filter(door => !onSegment([door.x, door.y], a, b, onWall()));
       c.walls.splice(sel.id, 1);
     } else if (sel.kind === 'door') c.doors = c.doors.filter(d => d.id !== sel.id);
     else if (sel.kind === 'layer') c.background.layers = c.background.layers.filter(l => l.id !== sel.id);

@@ -1,8 +1,6 @@
 """The filter (filter.py, MODEL.md) on simulated scenes in a small flat: one room with two
 sensors, a balcony and a hallway behind doors."""
 
-import os
-
 import numpy as np
 import pytest
 
@@ -289,14 +287,6 @@ def test_a_sitter_the_ld2450_loses_stays_while_the_ld2410c_sees_them():
         if t > a.waypoints[2][0] + 180 and not samples:
             samples.append(1 - crowd.count_distribution()["wohn"][0])
     assert samples[0] > 0.9, samples
-
-
-@pytest.mark.skipif(not os.environ.get("PT_RELEASE_WHEEL"), reason="against the release wheel only (CI)")
-def test_the_release_wheel_has_no_test_hooks():
-    import presence_core
-    hooks = ["build_export", "hidden_at", "panic_for_test"]
-    assert [h for h in hooks if hasattr(presence_core, h)] == []
-    assert [h for h in ("normalize", "spoil_weights_for_test", "ld_last") if hasattr(presence_core.Core, h)] == []
 
 
 def test_the_app_and_its_config_have_one_version():

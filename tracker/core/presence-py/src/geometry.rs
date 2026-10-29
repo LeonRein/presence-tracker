@@ -1,5 +1,5 @@
-//! The sensor geometry of a configuration for the simulation and the tests (MODEL.md 2, 4.1): the core's, so
-//! that they see what the filter sees. Over lists of points.
+//! The sensor geometry of a configuration for the simulation of the tests (MODEL.md 2, 4.1; feature "testing",
+//! tests/sim.py): the core's, so that they see what the filter sees. Over lists of points.
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;

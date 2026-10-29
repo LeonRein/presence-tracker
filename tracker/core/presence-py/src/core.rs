@@ -497,20 +497,7 @@ impl Core {
         self.tracker
             .persons()
             .into_iter()
-            .map(|p| PersonView::of(p, plan, false))
-            .collect()
-    }
-
-    /// The people of the display for the live view: with where their trail breaks (Tracker::trail_breaks;
-    /// remembers where they were shown).
-    fn persons_shown(&mut self) -> Vec<PersonView> {
-        let persons = self.tracker.persons();
-        let breaks = self.tracker.trail_breaks(&persons);
-        let plan = &self.tracker.world().plan;
-        persons
-            .into_iter()
-            .zip(breaks)
-            .map(|(p, jumped)| PersonView::of(p, plan, jumped))
+            .map(|p| PersonView::of(p, plan))
             .collect()
     }
 

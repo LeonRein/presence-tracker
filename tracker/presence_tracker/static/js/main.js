@@ -148,7 +148,7 @@ setInterval(checkStale, 1000);
 
 function updateStatus() {
   const live = state.live;
-  const { online, total: used } = sensorsOnline(state.config, live);
+  const { online, total: used } = sensorsOnline(state.derived, live);
   const total = seenTotal();
   const cpu = live.load?.cpu;
   document.getElementById('status').innerHTML = `

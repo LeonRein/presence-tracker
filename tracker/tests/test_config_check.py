@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import os
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -232,3 +233,12 @@ def test_an_unreadable_configuration_is_a_german_sentence():
         presence_core.check_config("{")
     assert e.value.args[0].reason == "unreadable"
     assert message(e.value.args[0]).startswith("Konfiguration unvollständig oder falsch: ")
+
+
+@pytest.mark.skipif(not os.environ.get("PT_RELEASE_WHEEL"), reason="against the release wheel only (CI)")
+def test_the_release_wheel_has_no_test_hooks():
+    # here, not in a module that simulates: those are all "hooks" (conftest)
+    import presence_core
+    hooks = ["build_export", "hidden_at", "panic_for_test", "Geometry"]
+    assert [h for h in hooks if hasattr(presence_core, h)] == []
+    assert [h for h in ("normalize", "spoil_weights_for_test", "ld_last") if hasattr(presence_core.Core, h)] == []
