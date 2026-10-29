@@ -2,33 +2,33 @@
 
 ## Unveröffentlicht
 
-## 0.52.0 (Branch `rust-core`, CI baut Wheels und Images; nicht live, kein Tag)
+## 0.52.0 (Branch `rust-core`, CI baut Wheels und Images bei einem Tag; nicht live, kein Tag)
 
 Modell unverändert. Phase 11 (docs/rust-core.md 5, Variante B): HA baut das Image nicht mehr selbst, es zieht das
 fertige aus der GitHub Container Registry.
-- **`.github/workflows/ci.yml`:** bei jedem Push und Pull Request `cargo fmt --check`, clippy `-D warnings` ohne und
-  mit allen Features, `cargo test --all-features`, dann über `uv` (Python 3.13) der Kern mit den Hooks,
-  `presence-replay` gebaut, `pytest` mit `CI=1`, zuletzt das Release-Wheel installiert und `PT_RELEASE_WHEEL=1 pytest
-  -m "not hooks"`; `RUSTFLAGS=-C target-cpu=x86-64-v3` ausdrücklich, Cargo-Cache (`Swatinem/rust-cache`). Nur bei
-  einem Tag `v<version>` (muss `version` in `config.yaml` sein): je Architektur ein nativer Runner (amd64
-  `x86-64-v3`, aarch64 generisch) baut das Wheel und das Image, ein Import als Rauchtest, Push nach
-  `ghcr.io/leonrein/{arch}-presence-tracker:<version>`. Einfacher als `home-assistant/builder` oder `buildx` mit QEMU.
-- **`Dockerfile`:** `python:3.13-slim` installiert das Kern-Wheel aus `dist/` (von CI gebaut) und numpy (Kalibrierdaten
-  als npz, Positionen der Frames), aiomqtt, aiohttp; Labels `io.hass.type/arch/version` und
-  `org.opencontainers.image.source`. `.dockerignore`: nur `presence_tracker` und `dist` gehen ins Image. Lokal
-  (podman, amd64) 239 MB.
+- **`.github/workflows/release.yml`, nur bei einem Tag `v<version>`** (Vorgabe Leon: CI-Zeit auf ein Minimum, kein
+  Lauf bei Push oder PR, Tests nur lokal): prüft den Tag gegen `version` in `config.yaml`, baut je Architektur ein
+  Kern-Wheel (amd64 nativ `x86-64-v3`, aarch64 generisch quer mit `maturin --zig`; Cargo-Cache), dann beide Images
+  mit `docker build --platform` ohne Emulation, ein Import im amd64-Image als Rauchtest, Push nach
+  `ghcr.io/leonrein/{arch}-presence-tracker:<version>`. Geschätzt 5–8 min je Release.
+- **`Dockerfile` zweistufig:** die erste Stufe läuft auf der Bau-Maschine und stellt mit `pip install --target
+  --platform manylinux_2_17…2_41_<arch> --only-binary=:all:` das Wheel aus `dist/<arch>` und numpy (Kalibrierdaten als
+  npz, Positionen der Frames), aiomqtt, aiohttp für die Zielarchitektur zusammen; `python:3.13-slim` kopiert sie nur
+  (kein `RUN` in der Zielarchitektur, daher kein QEMU). Labels `io.hass.type/arch/version`,
+  `org.opencontainers.image.source`; `.dockerignore` lässt nur `presence_tracker` und `dist` hinein. Lokal (podman)
+  amd64 226 MB, aarch64 249 MB.
 - **`config.yaml`:** `image: "ghcr.io/leonrein/{arch}-presence-tracker"`. Ein Release: Tag auf den Release-Commit →
   CI pusht beide Images → Pakete einmal öffentlich stellen → erst dann main vorspulen (docs/rust-core.md 5).
 - **Gleitkomma der C-Bibliothek:** Spuren der drei Referenzstunden im Image (Debian glibc 2.41) sind nicht
   byte-gleich mit hermann (CachyOS glibc 2.44): `f64::hypot` ist die `hypot` der C-Bibliothek, und hermanns weicht für
-  13 % der Argumente im letzten Bit ab (Debians 0,6 % neben dem richtig gerundeten Wert); die übrigen Funktionen des
+  13 % der Argumente im letzten Bit vom richtig gerundeten Wert ab (Debians für 0,6 %); die übrigen Funktionen des
   Kerns (`exp`, `log`, `pow`, `atan2`, `expm1`, `log1p`, `sin`, `cos`) sind gleich. 7.10. 3 Uhr gleich bis 1e-16,
   10.10. 12 Uhr bis 4e-5, 8.10. 19 Uhr kippen Hypothesen (bis 0,47, 4 Raumsekunden auf der anderen Seite von 0,5).
   Im Image sind Rust (presence-replay) und Hülle (`trace.py`) untereinander byte-gleich. `test_core_build` prüft die
-  Digests nur unter hermanns `hypot` (sonst übersprungen, wie in CI).
+  Digests nur unter hermanns `hypot` (sonst übersprungen: im Image scheiterten sie).
 - **`test_geometry_change.py` als `hooks` markiert:** es simuliert über `test_robust.run_a_while`, das `conftest` nicht
-  erkennt (nur `sim.simulate` im eigenen Modul); gegen das Release-Wheel scheiterten seine 9 Tests (seit 0.51.0, im
-  ersten CI-Lauf gefunden). Gegen das Release-Wheel 78 Tests grün.
+  erkennt (nur `sim.simulate` im eigenen Modul); gegen das Release-Wheel scheiterten seine 9 Tests (seit 0.51.0).
+  Gegen das Release-Wheel 78 Tests grün.
 
 ## 0.51.1 (Branch `rust-core`, ohne den Umzug des LD2410C-Blicks; nicht live)
 

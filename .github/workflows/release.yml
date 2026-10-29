@@ -1,0 +1,50 @@
+# Only on a tag v<version>: the core's wheels and the images Home Assistant pulls (docs/rust-core.md 5). No tests
+# here: they run on hermann before every commit.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: tracker
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tag is the version in config.yaml
+        run: |
+          version=$(sed -n 's/^version: "\(.*\)"$/\1/p' config.yaml)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, config.yaml $version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tracker/core
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - name: Wheels of the core
+        run: |
+          # amd64 for x86-64-v3 (inge: AVX2 and FMA, no AVX-512), explicitly: .cargo/config.toml holds only below tracker/
+          RUSTFLAGS="-C target-cpu=x86-64-v3" uv run maturin build --release -m core/presence-py/Cargo.toml --out dist/amd64
+          # aarch64 generic, cross-compiled with zig (no emulation)
+          uv run --with ziglang maturin build --release --zig --target aarch64-unknown-linux-gnu \
+            -m core/presence-py/Cargo.toml --out dist/aarch64
+      - name: Images
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for arch in amd64 aarch64; do
+            platform=linux/$(echo $arch | sed 's/aarch64/arm64/')
+            image=ghcr.io/leonrein/$arch-presence-tracker:$VERSION
+            docker build --platform $platform --build-arg BUILD_ARCH=$arch --build-arg BUILD_VERSION=$VERSION -t $image .
+            if [ $arch = amd64 ]; then docker run --rm $image python -c "import presence_core, presence_tracker.app"; fi
+            docker push $image
+          done
