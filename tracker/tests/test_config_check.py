@@ -125,12 +125,24 @@ def test_what_the_model_cannot_run_with_is_refused_with_400(app, tmp_path, chang
 
 def test_a_plan_drawn_in_meters_may_be_scaled_above_1(app):
     """An SVG drawn in meters (one unit a meter): "Ausrichten" gives a scale of about 1.02 m per unit,
-    refused until 0.18 - and with it every later edit, until the image was removed."""
+    refused until 0.18 - and with it every later edit, until the image was removed. The background image is
+    the web UI's (it checks the layers, static/js/util.js layersError): the server stores it as it comes."""
     data = app.config.to_dict()
     data["background"] = {"layers": [{"x": 0, "y": 0, "scale": 1.02, "rotation": 0, "opacity": 0.5}]}
     assert put(app, data)[0] == 200
     data["background"]["layers"][0]["scale"] = 11
-    assert put(app, data)[0] == 400
+    assert put(app, data)[0] == 200 and app.config.background["layers"][0]["scale"] == 11
+
+
+def test_a_door_on_no_wall_is_refused(app):
+    """The editor puts a door exactly on its wall; the model reads that wall and nothing else (one rule:
+    the core's plan.wall_of_door)."""
+    data = app.config.to_dict()
+    data["doors"][0]["x"] += 0.05  # the balcony door on the wall x = 6
+    status, body = put(app, data)
+    assert status == 400 and "keiner Wand" in body["error"]
+    data["doors"][0]["x"] -= 0.0495  # half a millimetre off: mm rounding
+    assert put(app, data)[0] == 200
 
 
 def test_a_configuration_the_model_fails_with_is_refused_and_the_old_one_holds(app, tmp_path, monkeypatch):
@@ -172,14 +184,12 @@ def _sensor(**kw):
 
 # every reason the core gives (ConfigProblem.reason), each with a configuration that has it
 _PROBLEMS = {
-    "not_an_object": [5, {"params": 5}, {"params": {"target_thresholds": 5}}, {"zones": [5]}, {"ld_view": 5},
-                      {"background": {"layers": [5]}}],
+    "not_an_object": [5, {"params": 5}, {"params": {"target_thresholds": 5}}, {"zones": [5]}, {"ld_view": 5}],
     "not_a_list": [{"zones": 5}],
     "empty": [{"params": {"light_cost": None}}],
     "not_a_number": [{"params": {"light_cost": "x"}}],
     "out_of_range": [{"params": {"light_cost": 0}}, {"params": {"target_thresholds": {"wohn": 1}}},
-                     {"sensors": [_sensor(range=50)]}, {"doors": [{"x": 1, "y": 1, "width": 0}]},
-                     {"background": {"layers": [{"opacity": 2}]}}],
+                     {"sensors": [_sensor(range=50)]}, {"doors": [{"x": 1, "y": 1, "width": 0}]}],
     "not_at_least_0": [{"zones": [_area(radius=-1)]}, {"ld_view": {"a<-b": "x"}}],
     "not_a_bool": [{"sensors": [_sensor(mirror=1)]}],
     "no_id": [{"sensors": [{"name": "x"}]}, {"zones": [_area(id=None)]}],
@@ -193,6 +203,7 @@ _PROBLEMS = {
     "polygon_corners": [{"zones": [_area(shape="polygon")]}],
     "no_centre": [{"zones": [_area(shape="circle", points=[])]}],
     "no_position": [{"doors": [{"x": 1}]}],
+    "not_on_wall": [{"walls": [{"points": [[0, 0], [4, 0]], "kind": "divider"}], "doors": [{"x": 1, "y": 0}]}],
     "too_many_sensors": [{"sensors": [_sensor(id=f"s{k}") for k in range(65)]}],
     "too_large": [{"zones": [{"id": "r", "name": "R", "kind": "room", "shape": "polygon",
                               "points": [[0, 0], [200, 0], [200, 200]]}]}],
@@ -204,7 +215,7 @@ _PROBLEMS = {
 def test_every_problem_of_the_core_is_a_german_sentence(reason, config):
     import presence_core
     with pytest.raises(presence_core.ConfigError) as e:
-        presence_core.check_edit(json.dumps(config))
+        presence_core.check_config(json.dumps(config))
     problem = e.value.args[0]
     assert problem.reason == reason
     with pytest.raises(ValueError) as words:

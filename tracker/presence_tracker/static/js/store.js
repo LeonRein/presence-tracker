@@ -1,5 +1,6 @@
 // Application state, server API, auto-save and undo.
-import { debounce, rebase, toast } from './util.js';
+import { syncRooms } from './floorplan.js';
+import { debounce, layersError, rebase, toast } from './util.js';
 
 const listeners = new Set();
 
@@ -18,14 +19,15 @@ export const state = {
   showRaw: loadPref('showRaw', false),  // the raw sensor data on the live map (remembered per browser)
   holds: {},            // zone id -> {approach, target}: badges held for HOLD_MS after they went off
   calibResult: null,
-  limits: {},           // allowed values of the number fields, from the server (the core's, presence_core.config_limits)
-  // what the core derives from the configuration (POST api/preview): walls with door openings, the doors'
-  // openings, lengths, the zones' areas and labels, the sensors' sight areas, the plan, the thresholds;
-  // version: the edit it belongs to (state.version); coverage only while it is shown
+  limits: {},           // allowed values of the number fields the model reads (the core's, presence_core.config_limits)
+  // what the model makes of the saved configuration (the core's, with every save): the walls as the radar sees
+  // them, the sensors' sight areas, the plan, the thresholds; the coverage (api/coverage) only while it is
+  // shown. derivedVersion: the edit (state.version) that was saved; the map shows them only for that one
   derived: null,
   coverage: null,
-  version: 0,           // counts the edits: derived.version < version means the drawing shows raw input
+  version: 0,           // counts the edits
   derivedVersion: -1,
+  coverageVersion: -1,
 };
 
 // small per-browser preferences; storage may be missing or blocked (private mode)
@@ -86,69 +88,26 @@ export async function loadConfig() {
   state.derived = data.derived;
   state.derivedVersion = state.version;
   emit('config');
-  if (state.showCoverage) refreshDerived();
+  if (state.showCoverage) refreshCoverage();
 }
 
-// ---- the core's view of the configuration being edited (POST api/preview: saves nothing)
+// ---- the model of the saved configuration (the core's; it never sees a draft)
 
-// derived of the configuration as it is now, or null while the drawing shows raw input
+// derived of the configuration as it is now (saved), or null while an edit is not saved yet
 export const derivedNow = () => (state.derivedVersion === state.version ? state.derived : null);
+export const coverageNow = () => (state.coverageVersion === state.version ? state.coverage : null);
 
-let previewing = 0;
-async function preview(body) {
-  return api('api/preview', { method: 'POST', body: JSON.stringify({ config: state.config, coverage: state.showCoverage, ...body }) });
-}
-
-// after an edit (debounced): what the core derives from it; dropped if another edit came meanwhile
-const refreshSoon = debounce(() => refreshDerived(), 120);
-export async function refreshDerived() {
-  const version = state.version;
-  const ticket = ++previewing;
+// the coverage of the saved configuration (the core's, of the world the model runs in)
+export async function refreshCoverage() {
+  const version = state.derivedVersion;
   try {
-    const r = await preview({});
-    if (ticket !== previewing || version !== state.version) return;
-    state.derived = r.derived;
-    state.derivedVersion = version;
-    state.coverage = r.coverage;
+    const cov = await api('api/coverage');
+    if (version !== state.derivedVersion) return;  // saved again meanwhile: its own request follows
+    state.coverage = cov;
+    state.coverageVersion = version;
     emit('derived');
   } catch (e) {
-    if (ticket === previewing) toast('Entwurf: ' + e.message, 5000);
-  }
-}
-
-// An operation of the editor (snapping, what moves along, rooms: the core's, presence_core.edit) applied to
-// the configuration as it is now; its result becomes an edit (one undo step, or part of the drag's with
-// merge). tol: the snapping tolerance in m (the view's 10 px). Returns the answer ({points, select}) or null.
-export async function applyEdit(op, { merge = null, quiet = false } = {}) {
-  const version = state.version;
-  const ticket = ++previewing;
-  let r;
-  try {
-    r = await preview({ edit: op });
-  } catch (e) {
-    // a shape too small to be meant, a split at a wall's end: nothing to say
-    if (!quiet && !e.silent) toast(e.message, 4000);
-    return null;
-  }
-  if (version !== state.version) { toast('Nicht übernommen: inzwischen geändert. Bitte noch einmal.'); return null; }
-  edit(c => { for (const k of Object.keys(r.config)) c[k] = r.config[k]; }, { merge, fresh: true });
-  if (ticket === previewing) {
-    state.derived = r.derived;
-    state.derivedVersion = state.version;
-    state.coverage = r.coverage;
-    emit('derived');
-  }
-  return r;
-}
-
-// Where the clicks of a wall or polygon being drawn snap to (the core's snap_path): the points, or null.
-export async function snapPath(points, closed, tol, free) {
-  try {
-    const r = await api('api/preview', { method: 'POST', body: JSON.stringify({ config: state.config, edit: { op: 'snap_path', points, closed, tol, free } }) });
-    return r.points;
-  } catch (e) {
-    if (!e.silent) toast(e.message, 4000);
-    return null;
+    toast('Abdeckung: ' + e.message, 5000);
   }
 }
 
@@ -164,10 +123,19 @@ let saveNote = '';  // what the toast after the next save says first
 async function save() {
   // one request at a time, so that an older answer never overwrites a newer state
   saving = saving.then(async () => {
+    // the background image is the web UI's: its layers are checked here, never by the model
+    const bad = layersError(state.config.background);
+    if (bad) { toast(`Nicht gespeichert: ${bad}`, 8000); return; }
     const body = JSON.stringify(state.config);
+    const version = state.version;
     try {
       const r = await api('api/config', { method: 'PUT', body });
-      mergeRooms(r.rooms);
+      // the model of what was saved (null: the model's part did not change)
+      if (r.derived) state.derived = r.derived;
+      else if (state.coverageVersion === state.derivedVersion) state.coverageVersion = version;
+      state.derivedVersion = version;
+      emit('derived');
+      if (r.derived && state.showCoverage) refreshCoverage();
       // the model starts over for most edits (walls, rooms, parameters): say so, it changes the live view
       toast([saveNote, 'Gespeichert', r.restarted ? 'Modell neu gestartet' : ''].filter(Boolean).join(' · '));
       saveNote = '';
@@ -196,26 +164,9 @@ async function keepEditsOnRefusal(sent) {
   changed();
 }
 
-// The server derives the rooms from the walls. Take over their outlines; names and the entry
-// flag edited meanwhile stay as they are here.
-function mergeRooms(rooms) {
-  const c = state.config;
-  const local = new Map(c.zones.filter(z => z.kind === 'room').map(z => [z.id, z]));
-  const merged = rooms.map(r => {
-    const l = local.get(r.id);
-    return l ? { ...r, name: l.name, entry: !!l.entry } : r;
-  });
-  const before = JSON.stringify(c.zones.filter(z => z.kind === 'room').map(z => [z.id, z.points]));
-  const ids = JSON.stringify(c.zones.filter(z => z.kind === 'room').map(z => z.id));
-  c.zones = [...merged, ...c.zones.filter(z => z.kind !== 'room')];
-  if (JSON.stringify(merged.map(z => [z.id, z.points])) !== before) emit('rooms');
-  // new rooms got their ids on saving: the labels follow
-  if (JSON.stringify(merged.map(z => z.id)) !== ids) { state.version++; refreshSoon(); }
-}
-
 export const TAB_NAMES = { live: 'Live', plan: 'Grundriss', sensors: 'Sensoren', zones: 'Zonen', calibration: 'Kalibrierung', settings: 'Einstellungen' };
 
-export function edit(fn, { merge = null, fresh = false } = {}) {
+export function edit(fn, { merge = null } = {}) {
   const before = JSON.stringify(state.config);
   // consecutive edits with the same merge key (e.g. dragging) form one undo step; each step remembers
   // its tab: undo acts only there, never on something out of sight
@@ -225,16 +176,18 @@ export function edit(fn, { merge = null, fresh = false } = {}) {
   }
   redoStack.length = 0;
   saveNote = '';
+  const walls = JSON.stringify(state.config.walls);
   fn(state.config);
-  changed(fresh);
+  // the rooms are the closed areas between the walls (the editor's: floorplan.js)
+  if (JSON.stringify(state.config.walls) !== walls) state.config.zones = syncRooms(state.config.zones, state.config.walls);
+  changed();
 }
 
-// the configuration changed: save it soon; what the core derives follows (fresh: it came with the change)
-function changed(fresh = false) {
+// the configuration changed: save it soon; what the model makes of it comes with the answer
+function changed() {
   state.version++;
   saveSoon();
   emit('config');
-  if (!fresh) refreshSoon();
 }
 
 export function endMerge() {

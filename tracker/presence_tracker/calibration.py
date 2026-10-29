@@ -64,7 +64,7 @@ def solve(config: Config, data: dict, check_mirror: bool = False) -> dict:
     """New heading and scale for every placed sensor with walking measurements, each with its uncertainty;
     only what is determined is proposed (the core's: presence_core.calibrate). data: {sensor id: rows};
     check_mirror: also fit each sensor mirrored. The reasons why something is not proposed in words."""
-    out = json.loads(presence_core.calibrate(json.dumps(config.to_dict()), _bytes(data), check_mirror))
+    out = json.loads(presence_core.calibrate(config.model_json(), _bytes(data), check_mirror))
     if "error" in out:
         return {"error": "Keine Messungen einer Person in Bewegung."}
     sensors = {}
@@ -180,7 +180,7 @@ class Calibrator:
         0.43.0, every 30 s while a browser is open (MODEL.md 10). Its result goes to use_status, in the
         loop."""
         parts, since, gen, t = self._parts(), self.since, self._gen, time.monotonic()
-        config = json.dumps(self.config.to_dict())
+        config = self.config.model_json()
 
         def count():
             status = json.loads(presence_core.calibration_status(config, _bytes(self._join(parts))))

@@ -1,7 +1,7 @@
 // SVG map: projection, pan/zoom, and drawing of the plan, sensors, zones and live data.
 // Everything is drawn in screen pixels; world coordinates are meters with y pointing up.
-import { api, derivedNow, heldBadges, state, sensorColor } from './store.js';
-import { PERSON_COLORS, ZONE_KINDS, esc, fmt, personColor, rad, zoneOutline } from './util.js';
+import { api, coverageNow, derivedNow, heldBadges, state, sensorColor } from './store.js';
+import { ON_WALL, PERSON_COLORS, ZONE_KINDS, distToSegment, doorWall, esc, fmt, personColor, rad, zoneCenter, zoneOutline } from './util.js';
 
 // coverage: tiles that no sensor, one, two or more see (the core's count per tile); a room the sensors don't
 // see enough of to be observed is drawn as blind
@@ -174,7 +174,8 @@ export class MapView {
         transform="matrix(${k},0,0,${k},${sx},${sy})"/>`);
     }
 
-    if (state.showCoverage && state.coverage) out.push(this._coverage(state.coverage));
+    const coverage = state.showCoverage && coverageNow();
+    if (coverage) out.push(this._coverage(coverage));
 
     // zones
     const zoneStates = state.live?.zones || {};
@@ -197,8 +198,8 @@ export class MapView {
       }
     }
 
-    // walls with their door openings left out (the core's; while an edit is under way the walls as drawn);
-    // room dividers dashed; the selected one on top
+    // walls as the radar sees them, their door openings left out (the model's, of the saved configuration;
+    // until an edit is saved the walls as drawn); room dividers dashed; the selected one on top
     const d = derivedNow();
     const walls = d ? d.walls : c.walls.filter(w => w.kind !== 'divider').map(w => w.points);
     const wallPath = walls.map(([a, b]) => `M${this.P(...a).join(',')}L${this.P(...b).join(',')}`).join('');
@@ -214,18 +215,17 @@ export class MapView {
       if (state.selectable.includes('wall')) out.push(`<polyline class="wall-hit" points="${pts}" data-kind="wall" data-id="${i}"/>`);
     }
 
-    // doors: an opening in the wall with a thin leaf line (where the core puts it on its wall)
+    // doors: the door on its wall (the editor keeps it there) with a thin leaf line at each end
     for (const door of c.doors || []) {
-      const opening = d?.doors[door.id];
+      const pl = doorWall(c.walls, door);
       const selected = sel?.kind === 'door' && sel.id === door.id;
-      if (!opening) {
+      if (!pl || distToSegment([door.x, door.y], pl.a, pl.b) >= ON_WALL) {
         const [x, y] = this.P(door.x, door.y);
-        out.push(d
-          ? `<circle cx="${x}" cy="${y}" r="6" fill="var(--bad)" data-kind="door" data-id="${esc(door.id)}" ${pe('door')}><title>Tür ohne Wand</title></circle>`
-          : `<circle cx="${x}" cy="${y}" r="5" fill="none" stroke="var(--accent)" stroke-width="2" pointer-events="none"/>`);
+        out.push(`<circle cx="${x}" cy="${y}" r="6" fill="var(--bad)" data-kind="door" data-id="${esc(door.id)}" ${pe('door')}><title>Tür ohne Wand</title></circle>`);
         continue;
       }
-      const [[x0, y0], [x1, y1]] = opening.map(p => this.P(...p));
+      const at = t => this.P(pl.a[0] + pl.dir[0] * t, pl.a[1] + pl.dir[1] * t);
+      const [x0, y0] = at(pl.t - door.width / 2), [x1, y1] = at(pl.t + door.width / 2);
       const nx = -(y1 - y0), ny = x1 - x0, nl = Math.hypot(nx, ny) || 1, k = 5 / nl;
       out.push(`<g class="door${selected ? ' selected' : ''}" pointer-events="none">
           <line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}"/>
@@ -242,12 +242,10 @@ export class MapView {
     const grouped = new Set(Object.values(state.live?.regions || {}).filter(r => (r.rooms || []).length > 1).flatMap(r => r.rooms));
     const labels = [];
     for (const z of c.zones) {
-      // where the core puts the name (a zone drawn just now: once it is derived)
-      const at = state.derived?.zones[z.id]?.label;
-      if (at && (z.kind === 'room' || state.tab !== 'live' || this.s > 25)) {
+      if (z.kind === 'room' || state.tab !== 'live' || this.s > 25) {
         const kind = zoneStyle(z);
         const zs = zoneStates[z.id];
-        const [x, y] = this.P(...at);
+        const [x, y] = this.P(...zoneCenter(z));
         const count = state.tab === 'live' && zs && !grouped.has(z.id) ? ` · ${zs.count}` : '';
         const occ = state.tab === 'live' && zs?.occupied;
         labels.push(`<text class="zone-label${occ ? ' occupied' : ''}" x="${x}" y="${y}" text-anchor="middle" fill="${kind.text}" pointer-events="none">${esc(z.name)}${count}</text>`);
@@ -263,7 +261,8 @@ export class MapView {
       const a0 = rad(s.heading - s.fov / 2), a1 = rad(s.heading + s.fov / 2);
       const r = s.range * s.scale * this.s;
       const showFov = editing || state.showRaw;
-      // what it sees, cut at the walls (the core's); while an edit is under way its field of view as entered
+      // what it sees, cut at the walls (the model's, of the saved configuration); until an edit is saved its
+      // field of view as entered
       const sight = d?.sensors[s.id];
       if (showFov && sight) {
         out.push(`<polygon class="fov" points="${this.pts(sight)}" fill="${color}" fill-opacity="${selected ? 0.12 : 0.04}"
@@ -435,7 +434,7 @@ export class MapView {
   }
 }
 
-// The coverage (the core's, of a world built for the configuration): per tile its square cut by its room,
+// The coverage (the core's, of the world the model runs in: the saved configuration): per tile its square cut by its room,
 // coloured by how many sensors see it; rooms of the home that are not observed as blind
 MapView.prototype._coverage = function (cv) {
   const out = [];

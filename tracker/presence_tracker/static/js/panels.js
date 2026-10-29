@@ -1,7 +1,7 @@
 // Side panel per tab.
-import { api, applyEdit, edit, emit, heldBadges, refreshDerived, savePref, saveNow, select, sensorById, sensorColor, setTool, state } from './store.js';
-import { autoFitImage, deleteSelection } from './tools.js';
-import { ZONE_KINDS, bindNumber, esc, fmt, h, personColor, regionOfRoom, roomsWithSensor, toast, uid } from './util.js';
+import { api, coverageNow, edit, emit, heldBadges, refreshCoverage, savePref, saveNow, select, sensorById, sensorColor, setTool, state } from './store.js';
+import { autoFitImage, deleteSelection, fitFromCalibration } from './tools.js';
+import { LAYER_LIMITS, ON_WALL, ZONE_KINDS, bindNumber, dist, distToSegment, esc, fmt, h, personColor, regionOfRoom, roomsWithSensor, toast, uid, zoneArea } from './util.js';
 import { loadSize } from './view.js';
 
 let skipRender = false;
@@ -37,8 +37,8 @@ export function renderPanel(panel, view, what) {
   updateDerived(panel);
 }
 
-// parts of the panel that show what the core derives from the configuration (state.derived, the coverage):
-// replaced when a new derived view comes, without rebuilding the panel under the user's typing
+// parts of the panel that show what the model makes of the saved configuration (the core's: state.derived, the
+// coverage): replaced when a new one comes, without rebuilding the panel under the user's typing
 export function updateDerived(panel) {
   for (const el of panel.querySelectorAll('[data-derived]')) {
     const out = DERIVED_PARTS[el.dataset.derived]?.(el.dataset);
@@ -246,19 +246,15 @@ function gateBars(ld) {
     <span><span class="swatch" style="background:var(--still)"></span>ruhig</span><span>Abstand in m</span></div>`;
 }
 
-// what the panels show of the core's derived view (updateDerived)
+// what the panels show of the model of the saved configuration (updateDerived)
 const DERIVED_PARTS = {
   occupied: () => (state.derived ? pct(state.derived.thresholds.occupied) : '–'),
   occupiedText: () => (state.derived ? `Damit: besetzt ab ${pct(state.derived.thresholds.occupied)}.` : ''),
   enteringText: () => (state.derived ? `Damit: „wird betreten“ ab ${pct(state.derived.thresholds.entering)}.` : ''),
-  wallLength: ds => { const v = state.derived?.lengths[+ds.index]; return v == null ? '' : `${fmt(v)} m`; },
-  area: ds => { const v = state.derived?.zones[ds.id]?.area; return v == null ? '–' : `${fmt(v)} m²`; },
   roomRow: ds => {
     const d = state.derived;
-    if (!d) return '';
-    const seen = ds.entry ? '' : regionOfRoom(d, ds.id) ? '<span class="badge">ohne Sensor</span> ' : '<span class="badge ok">Sensor</span> ';
-    const area = d.zones[ds.id]?.area;
-    return `${seen}<span class="meta">${area == null ? '' : `${fmt(area, 1)} m²`}</span>`;
+    if (!d || ds.entry) return '';
+    return regionOfRoom(d, ds.id) ? '<span class="badge">ohne Sensor</span>' : '<span class="badge ok">Sensor</span>';
   },
   roomText: ds => {
     const d = state.derived;
@@ -270,13 +266,12 @@ const DERIVED_PARTS = {
     const seen = !region ? 'Die Sensoren sehen diesen Raum: Personen darin werden gezählt.'
       : `Kein Sensor sieht diesen Raum überwiegend${share != null ? ` (${pct(share)} gesehen, nötig ${pct(d.plan.observed_share)})` : ''}.${others.length ? ` Über Türen mit ${others.join(', ')} verbunden: Das Modell weiß nur, dass jemand in dieser Gruppe ist, nicht in welchem Raum.` : ''}${region.open ? ' Von hier kann man das Haus verlassen.' : ' Wer herauskommt, muss vorher hineingegangen sein.'}`;
     const outside = 'Außer Haus: Wer hier ist, hat die Wohnung verlassen. Keine Personenzahl, nichts an Home Assistant; die Tür hierher ist die Wohnungstür.';
-    const area = d.zones[ds.id]?.area;
-    return `${area == null ? '' : `Fläche ${fmt(area)} m². `}${ds.entry ? outside : seen}`;
+    return ds.entry ? outside : seen;
   },
   coverage: () => {
     if (!state.showCoverage) return '';
-    const cov = state.coverage;
-    if (!cov) return '<p class="note">Rechnet …</p>';
+    const cov = coverageNow();
+    if (!cov) return '<p class="note">Rechnet … (für den gespeicherten Stand)</p>';
     if (!cov.rooms.length) return '<p class="note">Dafür braucht es Räume.</p>';
     return `<table class="data"><tr><th>Raum</th><th>Fläche</th><th>tot</th><th>nur 1 Sensor</th></tr>${cov.rooms.map(r => `
       <tr><td>${esc(r.name)}</td><td>${fmt(r.area, 1)} m²</td>
@@ -426,7 +421,8 @@ function planPanel(panel, view) {
     const item = h(`<div class="item ${sel?.kind === 'room' && sel.id === z.id ? 'selected' : ''}">
       <span class="swatch" style="background:${z.entry ? ZONE_KINDS.entry.color : ZONE_KINDS.room.color}"></span>
       <span class="grow">${esc(z.name)}</span>${z.entry ? '<span class="badge warn" title="Öffentlicher Raum vor der Wohnungstür (Treppenhaus): außer Haus">außer Haus</span>' : ''}
-      <span data-derived="roomRow" data-id="${esc(z.id)}" data-entry="${z.entry ? 1 : ''}"></span></div>`);
+      <span data-derived="roomRow" data-id="${esc(z.id)}" data-entry="${z.entry ? 1 : ''}"></span>
+      <span class="meta">${fmt(zoneArea(z), 1)} m²</span></div>`);
     clickable(item, () => select({ kind: 'room', id: z.id }));
     roomList.append(item);
   }
@@ -466,10 +462,17 @@ function wallDetail(el, i) {
   el.append(h(`<div class="card">
     <div class="row"><b style="flex:1">${w.kind === 'divider' ? 'Raumgrenze' : 'Wand'}</b><button class="btn danger" id="del">Löschen</button></div>
     <div class="seg" id="kind"><button data-kind="wall" class="${w.kind === 'wall' ? 'active' : ''}">Wand</button><button data-kind="divider" class="${w.kind === 'divider' ? 'active' : ''}">Raumgrenze</button></div>
-    <p class="note"><span data-derived="wallLength" data-index="${i}"></span> · Enden oder die ganze Wand ziehen (rastet in 45°-Schritten und an Wänden ein). Angeschlossene Wände gehen mit. Doppelklick auf die Wand teilt sie, auf ein Ende verbindet es mit der anschließenden Wand.</p>
+    <p class="note">${fmt(dist(w.points[0], w.points[1]))} m · Enden oder die ganze Wand ziehen (rastet in 45°-Schritten und an Wänden ein). Angeschlossene Wände gehen mit. Doppelklick auf die Wand teilt sie, auf ein Ende verbindet es mit der anschließenden Wand.</p>
   </div>`));
   el.querySelector('#del').onclick = deleteSelection;
-  for (const b of el.querySelectorAll('#kind button')) b.onclick = () => edit(c => { c.walls[i].kind = b.dataset.kind; });
+  for (const b of el.querySelectorAll('#kind button')) {
+    b.onclick = () => {
+      // doors sit on walls: a room boundary has none
+      const doors = (state.config.doors || []).some(d => distToSegment([d.x, d.y], ...w.points) < ON_WALL);
+      if (b.dataset.kind === 'divider' && doors) { toast('Auf dieser Wand sitzt eine Tür. Raumgrenzen haben keine Türen: erst die Tür löschen.', 5000); return; }
+      edit(c => { c.walls[i].kind = b.dataset.kind; });
+    };
+  }
 }
 
 function doorDetail(el, id) {
@@ -489,7 +492,7 @@ function roomDetail(el, z) {
   el.append(h(`<div class="card">
     <label class="field">Raum<input type="text" value="${esc(z.name)}" id="name"></label>
     <label class="check" style="margin-top:8px"><input type="checkbox" id="entry" ${z.entry ? 'checked' : ''}> Außer Haus: öffentlicher Raum vor der Wohnungstür (Treppenhaus). Gehört nicht zur Wohnung; wer hineingeht, hat sie verlassen</label>
-    <p class="note" data-derived="roomText" data-id="${esc(z.id)}" data-entry="${z.entry ? 1 : ''}"></p>
+    <p class="note">Fläche ${fmt(zoneArea(z))} m². <span data-derived="roomText" data-id="${esc(z.id)}" data-entry="${z.entry ? 1 : ''}"></span></p>
     <p class="note">Die Form folgt den Wänden: zum Ändern die Wände verschieben${state.tab === 'plan' ? '' : ' (Tab Grundriss)'}.</p>
   </div>`));
   el.querySelector('#name').onchange = e => panelEdit(c => { c.zones.find(x => x.id === z.id).name = e.target.value; });
@@ -518,9 +521,9 @@ function layerEditor(el, view, id) {
   el.querySelector('#opacity').oninput = e => panelEdit(c => { c.background.layers.find(x => x.id === id).opacity = +e.target.value; }, { merge: 'opacity' + id });
   for (const input of el.querySelectorAll('[data-k]')) {
     const k = input.dataset.k;
-    const lim = state.limits.layer?.[k];
+    const lim = LAYER_LIMITS[k];
     // the scale is entered in mm per pixel
-    bindNumber(input, k === 'scale' && lim ? [lim[0] * 1000, lim[1] * 1000, lim[2], lim[3]] : lim, v => edit(c => {
+    bindNumber(input, k === 'scale' ? [lim[0] * 1000, lim[1] * 1000, lim[2], lim[3]] : lim, v => edit(c => {
       c.background.layers.find(x => x.id === id)[k] = k === 'scale' ? v / 1000 : v;
     }));
   }
@@ -540,11 +543,12 @@ async function importVacuum(view) {
   try { map = await api('api/ha/map?entity=' + encodeURIComponent(cam.entity_id)); } catch (e) { toast(e.message, 5000); return; }
   const layer = { id: uid('l'), name: cam.name, url: map.image + '?t=' + Date.now(), x: 0, y: 0, scale: 0.0125, rotation: 0,
     opacity: 0.7, visible: true, rooms: map.rooms };
-  loadSize(layer.url, async () => {
-    // exact from the vacuum's calibration points (the core's fit_layer), else by the image's content
-    edit(c => { c.background.layers.push(layer); });
-    const fitted = await applyEdit({ op: 'fit_layer', layer: layer.id, calibration_points: map.calibration_points ?? null }, { quiet: true });
-    if (!fitted) edit(c => { autoFitImage(c.background.layers.find(x => x.id === layer.id), map.rooms); });
+  loadSize(layer.url, () => {
+    // exact from the vacuum's calibration points, else by the image's content
+    edit(c => {
+      if (!fitFromCalibration(layer, map.calibration_points)) autoFitImage(layer, map.rooms);
+      c.background.layers.push(layer);
+    });
     select({ kind: 'layer', id: layer.id });
     view.fit();
     toast('Karte geladen und eingepasst.');
@@ -587,10 +591,9 @@ function sensorsPanel(panel, view) {
 
   panel.querySelector('#cov').onchange = e => {
     state.showCoverage = e.target.checked;
-    if (!state.showCoverage) state.coverage = null;
     view.render();
     updateDerived(panel);
-    if (state.showCoverage) refreshDerived();  // the core builds a world for it: about a second
+    if (state.showCoverage) refreshCoverage();  // of the world the model runs in
   };
 }
 
@@ -730,7 +733,7 @@ function zoneDetail(el, z) {
     <label class="field">Name<input type="text" value="${esc(z.name)}" id="name"></label>
     <div class="grid2" style="margin-top:8px">
       <label class="field">Typ<select id="kind">${drawableKinds().map(([k, v]) => `<option value="${k}" ${z.kind === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select></label>
-      <label class="field">Fläche<span data-derived="area" data-id="${esc(z.id)}"></span></label>
+      <label class="field">Fläche<input type="text" value="${fmt(zoneArea(z))} m²" disabled></label>
     </div>
     ${z.kind === 'room' || z.kind === 'area' ? `<div data-live="zoneNow" data-id="${esc(z.id)}"></div>` : ''}
     <p class="note">Ecken und Seiten ziehen, die Winkel bleiben dabei erhalten. Nochmal anklicken und ziehen verschiebt die ganze Zone. Bei Polygonen: Doppelklick auf eine Kante fügt einen Punkt ein, auf einen Punkt löscht ihn.</p>

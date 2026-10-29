@@ -11,8 +11,9 @@ use crate::config::{Config, SensorConfig, WallKind, ZoneConfig, ZoneKind};
 use crate::geometry::{Point, Shape, distance_to_segment, line_of_sight};
 use crate::vmath::{py_dist, py_hypot};
 
-/// m: a door belongs to a wall piece this close to its centre
-const DOOR_REACH: f64 = 0.25;
+/// m: a door belongs to the real wall its centre lies on, up to this (the editor puts it exactly on one;
+/// its corners are rounded to mm). One rule: the check refuses a door on no wall (config/check.rs).
+pub const DOOR_ON_WALL: f64 = 0.01;
 /// m: a sensor hangs on a wall, its point lies at the room's outline
 const MOUNT_MARGIN: f64 = 0.3;
 
@@ -229,30 +230,36 @@ fn pieces(config: &Config) -> impl Iterator<Item = ([Point; 2], WallKind)> + '_ 
 }
 
 /// The real walls as lines, their doors not cut out.
-pub fn wall_lines(config: &Config) -> Vec<[Point; 2]> {
+fn wall_lines(config: &Config) -> Vec<[Point; 2]> {
     pieces(config)
         .filter(|&(_, k)| k == WallKind::Wall)
         .map(|(p, _)| p)
         .collect()
 }
 
-/// Per door the real wall piece it is on (an index into wall_lines: the nearest within DOOR_REACH of its
-/// centre) and its opening along it, metres from the piece's first end (door_openings); None: on no wall.
-pub fn door_openings(config: &Config) -> Vec<Option<(usize, f64, f64)>> {
+/// The real wall a door's centre lies on (an index into walls): the nearest within DOOR_ON_WALL; a wall
+/// without length is none.
+pub fn wall_of_door(c: Point, walls: &[[Point; 2]]) -> Option<usize> {
+    let mut best: Option<(f64, usize)> = None;
+    for (i, &[a, b]) in walls.iter().enumerate() {
+        let dist = distance_to_segment(c, a, b);
+        if py_dist(a, b) > 1e-6 && dist <= DOOR_ON_WALL && best.is_none_or(|(d0, _)| dist < d0) {
+            best = Some((dist, i));
+        }
+    }
+    best.map(|(_, i)| i)
+}
+
+/// Per door the real wall piece it is on (an index into wall_lines: wall_of_door) and its opening along it,
+/// metres from the piece's first end (door_openings); None: on no wall (the check refuses that).
+fn door_openings(config: &Config) -> Vec<Option<(usize, f64, f64)>> {
     let walls = wall_lines(config);
     config
         .doors
         .iter()
         .map(|d| {
             let c = [d.x, d.y];
-            let mut best: Option<(f64, usize)> = None;
-            for (i, &[a, b]) in walls.iter().enumerate() {
-                let dist = distance_to_segment(c, a, b);
-                if dist < DOOR_REACH && best.is_none_or(|(d0, _)| dist < d0) {
-                    best = Some((dist, i));
-                }
-            }
-            best.map(|(_, i)| {
+            wall_of_door(c, &walls).map(|i| {
                 let [a, b] = walls[i];
                 let length = py_dist(a, b);
                 let t = ((c[0] - a[0]) * (b[0] - a[0]) + (c[1] - a[1]) * (b[1] - a[1])) / length;
@@ -264,7 +271,7 @@ pub fn door_openings(config: &Config) -> Vec<Option<(usize, f64, f64)>> {
 }
 
 /// The point t metres along the piece from a to b.
-pub fn along([a, b]: [Point; 2], t: f64) -> Point {
+fn along([a, b]: [Point; 2], t: f64) -> Point {
     let length = py_dist(a, b);
     let u = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
     [a[0] + u[0] * t, a[1] + u[1] * t]

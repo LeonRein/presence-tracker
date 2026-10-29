@@ -146,6 +146,124 @@ export function toast(text, ms = 2500) {
 
 export const rad = d => d * Math.PI / 180;
 export const deg = r => r * 180 / Math.PI;
+export const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+
+export function distToSegment(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const l2 = dx * dx + dy * dy;
+  const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2));
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+}
+
+// even-odd rule: the edges crossed by a ray from the point to the right
+export function pointInPolygon([x, y], pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+// ---- the editor's geometry of the map (the model reads the saved map: docs/rust-core.md 1)
+
+// Straight pieces of the walls: [a, b, kind, wallIndex]
+export function wallPieces(walls, kind = null) {
+  const out = [];
+  walls.forEach((w, wi) => {
+    if (kind && w.kind !== kind) return;
+    for (let i = 0; i + 1 < w.points.length; i++) out.push([w.points[i], w.points[i + 1], w.kind, wi]);
+  });
+  return out;
+}
+
+// m: a door this close to a wall is on it. The editor puts every door exactly on a real wall (mm) and keeps
+// it there; the model reads the wall it lies on and refuses a door on none (the core's plan::DOOR_ON_WALL).
+export const ON_WALL = 0.01;
+
+// The real wall a door sits on (the nearest; the editor keeps it on one): {a, b, dir, t, length, wi} (t: the
+// door's centre in m from a), or null without real walls
+export function doorWall(walls, door) {
+  let best = null;
+  for (const [a, b, , wi] of wallPieces(walls, 'wall')) {
+    const length = dist(a, b);
+    if (length < 1e-6) continue;
+    const d = distToSegment([door.x, door.y], a, b);
+    if (!best || d < best.d) best = { d, a, b, wi, length };
+  }
+  if (!best) return null;
+  const { a, b, length } = best;
+  const dir = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+  const t = (door.x - a[0]) * dir[0] + (door.y - a[1]) * dir[1];
+  return { a, b, dir, t, length, wi: best.wi };
+}
+
+// Where each door is along its wall, before walls move: [{id, wi, f}] (f: fraction of the way from the
+// wall's first end)
+export function doorsOnWalls(c) {
+  const out = [];
+  for (const door of c.doors || []) {
+    const pl = doorWall(c.walls, door);
+    if (pl && distToSegment([door.x, door.y], pl.a, pl.b) < ON_WALL) out.push({ id: door.id, wi: pl.wi, f: pl.t / pl.length });
+  }
+  return out;
+}
+
+// The doors back on their walls after these moved: at the same fraction of the way (doorsOnWalls)
+export function followDoors(c, placed) {
+  for (const { id, wi, f } of placed || []) {
+    const door = c.doors.find(x => x.id === id);
+    const w = c.walls[wi]?.points;
+    if (!door || !w) continue;
+    const [a, b] = w;
+    [door.x, door.y] = [a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1])].map(v => +v.toFixed(3));
+  }
+}
+
+// where a zone's name goes: a room's anchor (floorplan.js), else the middle of its bounds
+export function zoneCenter(z) {
+  if (z.kind === 'room' && z.anchor) return z.anchor;
+  if (z.shape === 'circle') return z.center;
+  const pts = zoneOutline(z);
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
+}
+
+// m², of the outline as drawn
+export function zoneArea(z) {
+  if (z.shape === 'circle') return Math.PI * z.radius * z.radius;
+  const pts = zoneOutline(z);
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; a += x1 * y2 - x2 * y1; }
+  return Math.abs(a) / 2;
+}
+
+// The placement of a layer of the background image and its limits (the web UI's alone: the model never reads
+// the image): [low, high, low excluded, high excluded] as numberError takes them. scale in m per pixel: an SVG
+// drawn in metres is about 1.
+export const LAYER_LIMITS = {
+  x: [-1e4, 1e4, false, false],
+  y: [-1e4, 1e4, false, false],
+  scale: [0, 10, true, false],
+  rotation: [-3600, 3600, false, false],
+  opacity: [0, 1, false, false],
+};
+const LAYER_LABELS = { x: 'x des Bildes', y: 'y des Bildes', scale: 'Maßstab des Bildes', rotation: 'Drehung des Bildes', opacity: 'Deckkraft des Bildes' };
+
+// What is wrong with the background image's layers ('' if nothing): the sentence for the user
+export function layersError(background) {
+  const layers = background?.layers ?? [];
+  if (!Array.isArray(layers)) return 'Die Bildebenen sind keine Liste.';
+  for (const l of layers) {
+    if (l === null || typeof l !== 'object' || Array.isArray(l)) return 'Bildebene ist kein Objekt.';
+    for (const [k, lim] of Object.entries(LAYER_LIMITS)) {
+      if (!(k in l)) continue;
+      const err = numberError(l[k], lim);
+      if (err) return `${LAYER_LABELS[k]}: ${err}`;
+    }
+  }
+  return '';
+}
 
 // The outline of a zone as stored, for drawing: a rectangle's four corners, a circle as a polygon
 export function zoneOutline(z, segments = 48) {

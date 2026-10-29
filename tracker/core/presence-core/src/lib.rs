@@ -5,9 +5,7 @@
 pub mod calibration;
 pub mod config;
 pub mod derived;
-pub mod editor;
 pub mod filter;
-pub mod floorplan;
 pub mod formats;
 pub mod frames;
 pub mod geometry;

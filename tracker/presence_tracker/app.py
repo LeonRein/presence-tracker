@@ -120,8 +120,8 @@ class App:
             log.info("tracker.json: the LD2410C's measured view of the other rooms entered (until 0.39 the model's)")
         self.config = Config.load(self.config_path)
         if self.config_path.exists():  # stored, it loads as it is: say loudly if the model may fail with it
-            try:  # (what the model reads; the background image's layers only the web UI)
-                model.check(json.loads(self.config_path.read_text()), layers=False)
+            try:  # (what the model reads; the background image is the web UI's)
+                model.check(json.loads(self.config_path.read_text()))
             except ValueError as e:
                 log.error("tracker.json does not pass the check: %s - the model may fail with it", e)
         self.prefix = prefix
@@ -620,7 +620,7 @@ class App:
         app.router.add_get("/images/{name}", self.h_image)
         app.router.add_get("/api/config", self.h_get_config)
         app.router.add_put("/api/config", self.h_put_config)
-        app.router.add_post("/api/preview", self.h_preview)
+        app.router.add_get("/api/coverage", self.h_coverage)
         app.router.add_get("/api/live", self.h_live)
         app.router.add_post("/api/background", self.h_upload)
         app.router.add_post("/api/calibration/{action}", self.h_calibration)
@@ -669,48 +669,41 @@ class App:
                                   "status": self.sensor_status, "replay": bool(self.replay),
                                   "ha": bool(self.ha_url), "limits": model.limits()})
 
-    async def h_preview(self, request):
-        """A draft of the editor, derived by the core: {"config": the draft, "edit": an operation of the plan
-        editor to apply first (model.edit; None: none), "coverage": also the coverage (a world is built: in a
-        thread)}. Answers {"config": the draft as it would be saved (edit applied, rooms between the walls,
-        defaults), "derived", "coverage", "points", "select"}. Saves nothing and leaves the model alone; 400 with
-        the sentence for a draft the core refuses (and "code" for an edit it cannot apply)."""
+    async def h_coverage(self, request):
+        """The coverage of the saved configuration, of the world the model runs in (the core's)."""
         try:
-            body = await request.json()
-            data = body["config"]
-        except (ValueError, KeyError, TypeError):
-            return web.json_response({"error": "Kein gültiger Entwurf (JSON)."}, status=400)
-        try:
-            model.check(data)
-            draft = Config.from_dict(data).to_dict()
-            out = {"points": None, "select": None}
-            if body.get("edit"):
-                out = model.edit(draft, body["edit"])
-                draft = out["config"]
-            model.check(draft)
-            derived = model.derive(draft)
-            cover = await asyncio.to_thread(model.coverage, draft) if body.get("coverage") else None
-        except model.EditRefused as e:
-            return web.json_response({"error": e.args[1], "code": e.args[0]}, status=400)
-        except ValueError as e:
-            return web.json_response({"error": str(e)}, status=400)
-        except Exception as e:  # noqa: BLE001 - whatever the check let through: refused, not a 500
-            return web.json_response({"error": f"Entwurf unvollständig oder falsch: {e!r}"}, status=400)
-        return web.json_response({"config": draft, "derived": derived, "coverage": cover,
-                                  "points": out["points"], "select": out["select"]})
+            return web.json_response(self.tracker.coverage())
+        except Exception as e:  # noqa: BLE001 - the model is down (restarting after an error)
+            return web.json_response({"error": f"Das Modell läuft gerade nicht: {e!r}"}, status=503)
 
     async def h_put_config(self, request):
         """An edit in the web UI. Values outside the limits (the core's check, model.check) are refused with
         400 and a message: an emptied field must not switch every light on. The new configuration
         holds only once the model runs with it (reconfigure, and the zones' states once, as every tick
         computes them); else the model goes on with the old one (rebuilt: reconfigure may have changed
-        half of it) and the edit is refused with 400 - the web UI then reloads what holds."""
+        half of it) and the edit is refused with 400 - the web UI then reloads what holds. The map comes
+        finished from the web UI's editor (rooms between the walls, doors on their walls). Answers "derived",
+        what the web UI shows of the model of the saved configuration (None: the model's did not change).
+        An edit of the background image alone (the web UI's: it checks the layers) is only stored: the model
+        never reads it."""
         try:
             data = await request.json()
         except ValueError:
             return web.json_response({"error": "Keine gültige Konfiguration (JSON)."}, status=400)
         try:
-            model.check(data)  # as sent, then with the rooms between the new walls and the defaults filled in
+            image = Config.from_dict(data)
+        except Exception:  # noqa: BLE001 - no configuration: the check below says why
+            image = None
+        if image is not None and model.model_part(image.to_dict()) == model.model_part(self.config.to_dict()):
+            self.config.background = image.background
+            try:
+                self.config.save(self.config_path)
+            except OSError as e:
+                log.exception("tracker.json not saved")
+                return web.json_response({"error": f"Nicht gespeichert: {e}"}, status=500)
+            return web.json_response({"ok": True, "restarted": False, "derived": None})
+        try:
+            model.check(data)  # as sent, then with the defaults filled in
             config = Config.from_dict(data)
             model.check(config.to_dict())
         except ValueError as e:
@@ -741,10 +734,7 @@ class App:
         except OSError as e:
             log.exception("tracker.json not saved")
             return web.json_response({"error": f"In Gebrauch, aber nicht gespeichert: {e}"}, status=500)
-        # rooms are derived from the walls here; the editor takes them over
-        return web.json_response({"ok": True, "restarted": restarted,
-                                  "rooms": [z.to_dict() for z in config.zones if z.kind == "room"],
-                                  "derived": model.derive(config.to_dict())})
+        return web.json_response({"ok": True, "restarted": restarted, "derived": model.derive(config.to_dict())})
 
     async def h_live(self, request):
         ws = web.WebSocketResponse(heartbeat=30)

@@ -56,15 +56,14 @@ function updateUndo() {
 }
 
 onChange(what => {
+  if (what === 'hint') { updateHint(); view.renderOverlay(); return; }
   updateUndo();
   if (what === 'tool' || what === 'tab') makeController();
   if (what === 'selection') view.renderOverlay();
   view.render();
   updateHint();
-  // what the core derived from the configuration: the map above, the panel's parts here
+  // the model of the saved configuration (the core's): the map above, the panel's parts here
   if (what === 'derived') { updateDerived(panel); return; }
-  // new room outlines from the server: don't rebuild the panel under the user's typing
-  if (what === 'rooms' && panel.contains(document.activeElement) && document.activeElement.matches('input, select')) return;
   renderPanel(panel, view, what);
 });
 

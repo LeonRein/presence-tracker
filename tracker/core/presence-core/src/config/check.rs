@@ -1,14 +1,15 @@
 //! The check of a configuration (the JSON the shell stores, or what the web UI sends: only what is there is
 //! checked, what is missing the shell fills with its defaults): what the model cannot run with, named by
-//! where it is, what is wrong and the limits it broke (`check`); an edit in the web UI also the placement of
-//! the background image's layers, which only the web UI reads (`check_edit`: a stored configuration with a
-//! layer out of its limits still runs the model). The one place that knows the limits: the web UI reads them
-//! for its fields (config_limits), the shell only words the problems for it.
+//! where it is, what is wrong and the limits it broke (`check`). The one place that knows the limits of what
+//! the model reads: the web UI reads them for its fields (config_limits), the shell only words the problems
+//! for it. The background image is the web UI's alone (operating, not the model): the core never reads it.
 
 use std::collections::BTreeSet;
 use std::fmt;
 
 use serde_json::{Map, Value};
+
+use crate::plan::wall_of_door;
 
 /// What a number may be: from lo to hi, each end in or out.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -111,16 +112,6 @@ pub const SENSOR: [(&str, Limits); 7] = [
 /// A door's width.
 pub const DOOR: [(&str, Limits); 1] = [("width", Limits::above(0.0, 20.0))];
 
-/// The placement of a layer of the background image (the web UI's: the model does not read it, but the
-/// configuration is checked in one place). scale in m per pixel: an SVG drawn in metres is about 1.
-pub const LAYER: [(&str, Limits); 5] = [
-    ("x", Limits::closed(-1e4, 1e4)),
-    ("y", Limits::closed(-1e4, 1e4)),
-    ("scale", Limits::above(0.0, 10.0)),
-    ("rotation", Limits::closed(-3600.0, 3600.0)),
-    ("opacity", Limits::closed(0.0, 1.0)),
-];
-
 const SENSOR_FLAGS: [&str; 3] = ["mirror", "enabled", "placed"];
 const ZONE_KINDS: [&str; 3] = ["room", "area", "entry"];
 const ZONE_SHAPES: [&str; 3] = ["rect", "circle", "polygon"];
@@ -144,8 +135,6 @@ pub enum Part {
     Zone(Option<String>),
     /// the LD2410Cs' measured view: the pair "own<-other" (None: the table)
     LdView(Option<String>),
-    /// a layer of the background image
-    Layer,
 }
 
 /// What is wrong.
@@ -183,6 +172,8 @@ pub enum Problem {
     NoCentre,
     /// a door without a finite position
     NoPosition,
+    /// a door whose centre is on no real wall (plan::DOOR_ON_WALL; the editor puts doors exactly on one)
+    NotOnWall,
     TooManySensors {
         most: usize,
     },
@@ -226,7 +217,6 @@ impl fmt::Display for Part {
             Self::Door => write!(f, "a door"),
             Self::Zone(name) => write!(f, "zone {}", some(name)),
             Self::LdView(pair) => write!(f, "ld_view {}", pair.as_deref().unwrap_or("")),
-            Self::Layer => write!(f, "a background layer"),
         }
     }
 }
@@ -256,6 +246,7 @@ impl fmt::Display for ConfigError {
             Problem::PolygonCorners => write!(f, ": a polygon with fewer than three corners"),
             Problem::NoCentre => write!(f, ": a circle without a centre"),
             Problem::NoPosition => write!(f, ": no finite position"),
+            Problem::NotOnWall => write!(f, ": on no wall"),
             Problem::TooManySensors { most } => write!(f, ": more than {most} sensors"),
             Problem::TooLarge { most } => write!(f, ": the plan's extent, more than {most} cells of 0.1 m"),
             Problem::Unreadable(why) => write!(f, ": not readable ({why})"),
@@ -356,6 +347,7 @@ pub fn check(config: &Value) -> Result<(), ConfigError> {
     }
     let sensors = list(d, "sensors")?;
     check_sensors(sensors)?;
+    let mut real = Vec::new();
     for (k, w) in list(d, "walls")?.iter().enumerate() {
         let part = || Part::Wall(k + 1);
         let pts = w.get("points").and_then(points);
@@ -369,6 +361,9 @@ pub fn check(config: &Value) -> Result<(), ConfigError> {
         if !kind.as_str().is_some_and(|k| WALL_KINDS.contains(&k)) {
             return Err(ConfigError::at(part(), Some("kind"), Problem::UnknownKind(kind)));
         }
+        if kind == "wall" {
+            real.push([pts[0], pts[1]]);
+        }
     }
     for door in list(d, "doors")? {
         let Some(o) = door
@@ -378,6 +373,10 @@ pub fn check(config: &Value) -> Result<(), ConfigError> {
             return Err(ConfigError::at(Part::Door, None, Problem::NoPosition));
         };
         numbers(o, &DOOR, &Part::Door)?;
+        let centre = [o["x"].as_f64().unwrap_or_default(), o["y"].as_f64().unwrap_or_default()];
+        if wall_of_door(centre, &real).is_none() {
+            return Err(ConfigError::at(Part::Door, None, Problem::NotOnWall));
+        }
     }
     let zones = list(d, "zones")?;
     check_zones(zones)?;
@@ -399,23 +398,6 @@ pub fn check(config: &Value) -> Result<(), ConfigError> {
             Some("zones"),
             Problem::TooLarge { most: MAX_CELLS },
         ));
-    }
-    Ok(())
-}
-
-/// Checks an edit in the web UI: what the model reads (`check`), then the background image's layers.
-pub fn check_edit(config: &Value) -> Result<(), ConfigError> {
-    check(config)?;
-    let Some(d) = config.as_object() else {
-        return Ok(()); // check refused it
-    };
-    if let Some(background) = object(d, "background", Part::Layer)? {
-        for layer in list(background, "layers")? {
-            let Some(o) = layer.as_object() else {
-                return Err(ConfigError::at(Part::Layer, None, Problem::NotAnObject));
-            };
-            numbers(o, &LAYER, &Part::Layer)?;
-        }
     }
     Ok(())
 }
@@ -575,11 +557,8 @@ mod tests {
         );
         let range = problem(json!({"sensors": [{"id": "s", "name": "Bad", "range": 50}]}));
         assert_eq!((range.0, range.1), (Part::Sensor(Some("Bad".into())), Some("range")));
-        // the background image's layers only on the way of an edit: the model does not read them
-        let image = json!({"background": {"layers": [{"scale": 11}]}});
-        check(&image).expect("the model runs with it");
-        let layer = check_edit(&image).expect_err("an edit is refused");
-        assert_eq!((layer.part, layer.field), (Part::Layer, Some("scale")));
+        // the background image is not the model's: never read, never checked here
+        check(&json!({"background": {"layers": [{"scale": 11}, "no layer"]}})).expect("the model runs with it");
         assert_eq!(
             problem(json!({"doors": [{"x": 1, "y": 1, "width": 0}]})).1,
             Some("width")
@@ -608,6 +587,19 @@ mod tests {
             Problem::UnknownKind(json!("glass"))
         );
         assert_eq!(refused(json!({"doors": [{"x": 1}]})), Problem::NoPosition);
+        // a door lies on a real wall (mm rounding apart); not beside it, not on a room boundary
+        let wall = |kind: &str| json!({"points": [[0, 0], [4, 0]], "kind": kind});
+        let door = |y: f64| json!([{"id": "d", "x": 1.0, "y": y, "width": 0.9}]);
+        check(&json!({"walls": [wall("wall")], "doors": door(0.0007)})).expect("on the wall");
+        assert_eq!(
+            refused(json!({"walls": [wall("wall")], "doors": door(0.05)})),
+            Problem::NotOnWall
+        );
+        assert_eq!(
+            refused(json!({"walls": [wall("divider")], "doors": door(0.0)})),
+            Problem::NotOnWall
+        );
+        assert_eq!(refused(json!({"doors": door(0.0)})), Problem::NotOnWall);
         let zone = |z: Value| problem(json!({ "zones": [z] }));
         let area = |extra: Value| {
             let mut z = json!({"id": "z", "name": "Z", "kind": "area", "shape": "rect", "points": [[1, 1], [2, 2]]});

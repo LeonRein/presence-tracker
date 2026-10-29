@@ -1,21 +1,18 @@
-//! What the web UI draws of a configuration, derived here and nowhere else (docs/rust-core.md 1): the walls
-//! with their door openings, each door's opening, the walls' lengths, the zones' areas and label points,
-//! each sensor's sight area, the plan (observed rooms with the share the sensors see, regions), the
-//! thresholds that follow from the parameters; and, of a built world, the coverage per tile.
-//!
-//! A draft of the editor (POST /api/preview) and the saved configuration are derived alike, without a
-//! world (fast enough after every release of the mouse); the coverage needs the world's tiles.
+//! What the web UI shows of the model of a saved configuration (docs/rust-core.md 1: the model is the core's,
+//! the editor the web UI's): the walls as the radar sees them (real walls without their door openings), each
+//! sensor's sight area, the plan (observed rooms with the share the sensors see, regions), the thresholds
+//! that follow from the parameters; and, of the running world, the coverage per tile, and where a person's
+//! cloud is cut at the walls. Lengths, areas, labels, where a door sits and the rooms between the walls are
+//! the editor's (static/js): nothing of the editor is here.
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 
 use crate::config::{Config, SIGHT_OFFSET, SensorConfig};
-use crate::floorplan::interior_point;
-use crate::geometry::{Point, Shape, visible};
+use crate::geometry::{Point, visible};
 use crate::params::{OutputParams, Params};
-use crate::plan::{OBSERVED_SHARE, Plan, RoomIdx, ZoneRole, along, door_openings, wall_lines};
-use crate::vmath::py_dist;
+use crate::plan::{OBSERVED_SHARE, Plan, RoomIdx, ZoneRole};
 use crate::world::World;
 use crate::world::tiles::SIZE;
 
@@ -30,14 +27,6 @@ fn mm(v: f64) -> f64 {
 
 fn mm2(p: Point) -> Point {
     [mm(p[0]), mm(p[1])]
-}
-
-#[derive(Debug, Serialize)]
-pub struct ZoneShown {
-    /// where its name goes: a room's anchor (floorplan::interior_point), else the middle of its bounds
-    pub label: Point,
-    /// m^2
-    pub area: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -69,17 +58,11 @@ pub struct Thresholds {
     pub entering: f64,
 }
 
-/// The derived view of a configuration (`derive`).
+/// The model's view of a configuration (`derive`).
 #[derive(Debug, Serialize)]
 pub struct Derived {
     /// what blocks people and the radar: real walls without their door openings
     pub walls: Vec<[Point; 2]>,
-    pub dividers: Vec<[Point; 2]>,
-    /// per door its opening on its wall; None: it is on no wall
-    pub doors: BTreeMap<String, Option<[Point; 2]>>,
-    /// m, per wall of the configuration
-    pub lengths: Vec<f64>,
-    pub zones: BTreeMap<String, ZoneShown>,
     /// per placed sensor what it sees: its field of view out to its range, cut at the walls (the rule of
     /// SensorConfig::sees: sight lines from its sight origin)
     pub sensors: BTreeMap<String, Vec<Point>>,
@@ -90,36 +73,6 @@ pub struct Derived {
 /// The derived view of a configuration.
 pub fn derive(config: &Config) -> Derived {
     let plan = Plan::new(config);
-    let real = wall_lines(config);
-    let doors = config
-        .doors
-        .iter()
-        .zip(door_openings(config))
-        .map(|(d, o)| {
-            (
-                d.id.clone(),
-                o.map(|(i, t0, t1)| [t0, t1].map(|t| mm2(along(real[i], t)))),
-            )
-        })
-        .collect();
-    let zones = config
-        .zones
-        .iter()
-        .map(|z| {
-            let label = match &z.shape {
-                Shape::Polygon { corners, .. } if z.kind.is_room() && !corners.is_empty() => interior_point(corners),
-                shape => {
-                    let [x0, y0, x1, y1] = shape.bounds();
-                    [(x0 + x1) / 2.0, (y0 + y1) / 2.0]
-                }
-            };
-            let shown = ZoneShown {
-                label: mm2(label),
-                area: mm(z.shape.area()),
-            };
-            (z.id.clone(), shown)
-        })
-        .collect();
     let sensors = config
         .sensors
         .iter()
@@ -129,10 +82,6 @@ pub fn derive(config: &Config) -> Derived {
     let outputs = OutputParams::of(&config.params, Params::default().silent_after);
     Derived {
         walls: plan.walls.iter().map(|w| w.map(mm2)).collect(),
-        dividers: plan.dividers.iter().map(|w| w.map(mm2)).collect(),
-        doors,
-        lengths: config.walls.iter().map(|w| mm(py_dist(w.a, w.b))).collect(),
-        zones,
         sensors,
         plan: plan_shown(&plan),
         thresholds: Thresholds {
@@ -340,23 +289,13 @@ mod tests {
     fn a_door_cuts_its_opening_out_of_its_wall() {
         let d = derive(&room());
         // centre 1 m along the wall from (-0.5, 0): 1.5 m, half width 0.4: 1.1 .. 1.9 m, x 0.6 .. 1.4
-        assert_eq!(d.doors["d"], Some([[0.6, 0.0], [1.4, 0.0]]));
         assert!(d.walls.contains(&[[-0.5, 0.0], [0.6, 0.0]]) && d.walls.contains(&[[1.4, 0.0], [4.0, 0.0]]));
         assert_eq!(d.walls.len(), 6);
-        assert_eq!(d.lengths, [4.5, 4.0, 4.5, 4.0, 1.0]);
     }
 
     #[test]
-    fn areas_labels_shares_and_thresholds() {
+    fn shares_and_thresholds() {
         let d = derive(&room());
-        // the rectangle 2 x 3 m, its label in the middle; the circle pi 0.25; the room 4.5 x 4
-        assert_eq!((d.zones["a"].area, d.zones["a"].label), (6.0, [1.0, 1.5]));
-        assert_eq!(d.zones["c"].area, mm(std::f64::consts::PI * 0.25));
-        assert_eq!(d.zones["r"].area, 18.0);
-        assert!(in_polygon(
-            d.zones["r"].label,
-            &[[-0.5, 0.0], [4.0, 0.0], [4.0, 4.0], [-0.5, 4.0]]
-        ));
         // the sensor sees most of the room: observed; light_cost 2: occupied above 2/3, approach_cost 0.05: 1/21
         assert_eq!(d.plan.observed, ["r"]);
         assert!(d.plan.shares["r"] >= OBSERVED_SHARE && d.plan.in_use == ["s"]);

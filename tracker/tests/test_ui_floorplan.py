@@ -1,0 +1,92 @@
+"""The editor's map (static/js: floorplan.js, util.js), run in Node; skipped without it. The rooms are the closed
+areas between the walls (as the Python editor of 0.43.0 found them: compared on every test and dev
+configuration, 655 cases, when the room finding came back to the web UI in 0.48.0); doors stay on their walls
+while walls move; the background image's layers are checked here, never by the model."""
+
+import json
+import pathlib
+import shutil
+import subprocess
+
+import pytest
+
+JS = pathlib.Path(__file__).parents[1] / "presence_tracker" / "static" / "js"
+pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+
+OUTER = [{"points": [a, b], "kind": "wall"} for a, b in [([0, 0], [6, 0]), ([6, 0], [6, 4]), ([6, 4], [0, 4]), ([0, 4], [0, 0])]]
+
+
+def js(expr: str, **values):
+    """The JSON of a JavaScript expression over floorplan.js and util.js, with values as constants."""
+    consts = "".join(f"const {k} = {json.dumps(v)};\n" for k, v in values.items())
+    script = (f"import * as fp from {json.dumps((JS / 'floorplan.js').as_uri())};\n"
+              f"import * as util from {json.dumps((JS / 'util.js').as_uri())};\n{consts}"
+              f"console.log(JSON.stringify({expr}));")
+    r = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, check=True)
+    return json.loads(r.stdout)
+
+
+def wall(*pts, kind="wall"):
+    return {"points": [list(p) for p in pts], "kind": kind}
+
+
+def areas(walls):
+    a = js("fp.faces(walls).map(r => r.reduce((s, p, i) => s + p[0] * r[(i + 1) % r.length][1] - r[(i + 1) % r.length][0] * p[1], 0) / 2)",
+           walls=walls)
+    return sorted(round(x, 3) for x in a)
+
+
+def test_walls_make_rooms():
+    assert areas([*OUTER, wall((3, 0), (3, 4))]) == [12, 12]
+    # a gap merges them, a wall just short of another still closes, a stub changes nothing
+    assert areas([*OUTER, wall((3, 0), (3, 1.5)), wall((3, 2.5), (3, 4))]) == [24]
+    assert len(areas([*OUTER, wall((3, 0.02), (3, 3.98))])) == 2
+    assert areas([*OUTER, wall((1, 1), (2, 1))]) == [24]
+    # crossing walls make four rooms, a diagonal two; a divider closes a room like a wall
+    assert areas([*OUTER, wall((3, 0), (3, 4)), wall((0, 2), (6, 2))]) == [6, 6, 6, 6]
+    assert areas([*OUTER, wall((2, 0), (4, 4))]) == [12, 12]
+    assert areas([*OUTER, wall((3, 0), (3, 4), kind="divider")]) == [12, 12]
+
+
+def test_rooms_keep_names_ids_and_entry_when_walls_move():
+    zones = js("fp.syncRooms([], walls, (() => { let n = 0; return () => `r${n++}`; })())", walls=[*OUTER, wall((3, 0), (3, 4))])
+    assert [z["id"] for z in zones] == ["r0", "r1"] and {z["name"] for z in zones} == {"Raum 1", "Raum 2"}
+    left = next(z for z in zones if z["anchor"][0] < 3)
+    right = next(z for z in zones if z["anchor"][0] > 3)
+    left["name"], right["name"], right["entry"] = "Wohnen", "Treppe", True
+    zones.append({"id": "sofa", "name": "Sofa", "kind": "area", "shape": "rect", "points": [[0.5, 0.5], [1, 1]]})
+    # the same walls: the same zones
+    assert js("fp.syncRooms(zones, walls)", zones=zones, walls=[*OUTER, wall((3, 0), (3, 4))]) == zones
+
+    moved = js("fp.syncRooms(zones, walls)", zones=zones, walls=[*OUTER, wall((3.6, 0), (3.6, 4))])
+    by_name = {z["name"]: z for z in moved}
+    assert set(by_name) == {"Wohnen", "Treppe", "Sofa"} and moved[-1]["id"] == "sofa"
+    assert by_name["Wohnen"]["id"] == left["id"] and by_name["Treppe"]["entry"] is True
+
+    # wall removed: one room left, it keeps one of the names; put back, a new room "Raum 1" with a new id
+    merged = js("fp.syncRooms(zones, walls)", zones=moved, walls=OUTER)
+    assert [z["name"] for z in merged if z["kind"] == "room"] in (["Wohnen"], ["Treppe"])
+    split = js("fp.syncRooms(zones, walls)", zones=merged, walls=[*OUTER, wall((3, 0), (3, 4))])
+    rooms = [z for z in split if z["kind"] == "room"]
+    assert len(rooms) == 2 and any(z["name"] == "Raum 1" and z["id"] not in ("r0", "r1") and z["id"] for z in rooms)
+
+
+def test_doors_stay_on_their_walls_while_walls_move():
+    c = {"walls": [*OUTER, wall((3, 0), (3, 4))], "doors": [{"id": "d", "x": 3.0, "y": 1.0, "width": 0.9},
+                                                            {"id": "e", "x": 6.0, "y": 2.0, "width": 0.9}]}
+    out = js("""(() => {
+      const placed = util.doorsOnWalls(c);
+      c.walls[4].points = [[3.5, 0], [2.5, 4]];   // the middle wall turned
+      c.walls[1].points = [[6, 0], [7, 4]];       // and the right one
+      util.followDoors(c, placed);
+      return c.doors.map(d => { const pl = util.doorWall(c.walls, d); return util.distToSegment([d.x, d.y], pl.a, pl.b); });
+    })()""", c=c)
+    assert all(d < 1e-3 for d in out)
+
+
+def test_the_layers_of_the_background_image_are_checked_here():
+    ok = {"layers": [{"x": 0, "y": 0, "scale": 1.02, "rotation": 0, "opacity": 0.5}]}
+    assert js("util.layersError(bg)", bg=ok) == ""
+    assert "Maßstab des Bildes" in js("util.layersError(bg)", bg={"layers": [{"scale": 11}]})
+    assert "Deckkraft" in js("util.layersError(bg)", bg={"layers": [{"opacity": 2}]})
+    assert js("util.layersError(bg)", bg={"layers": [5]}) == "Bildebene ist kein Objekt."

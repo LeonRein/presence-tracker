@@ -74,12 +74,11 @@ pub fn change(old: &str, new: &str) -> Result<Change, ConfigError> {
     };
     let ((a, plan_a), (b, plan_b)) = (parse(old)?, parse(new)?);
     let (sa, sb) = (list(a.get("sensors")), list(b.get("sensors")));
-    // what the model is built of: all but the sensors, the background image, what only the outputs read
-    // and what the zones are called
+    // what the model is built of: all but the sensors, what only the outputs read and what the zones are
+    // called (the background image is the web UI's: the shell never hands it over)
     let rest = |v: &Value| {
         let mut o = object(v);
         o.remove("sensors");
-        o.remove("background");
         if let Some(Value::Object(params)) = o.get_mut("params") {
             for k in OUTPUT_FIELDS {
                 params.remove(k);

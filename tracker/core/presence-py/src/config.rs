@@ -27,7 +27,7 @@ pub(crate) fn config_error(e: ConfigError) -> PyErr {
 }
 
 /// A problem of a configuration, for the shell to word: part ("config", "params", "threshold", "sensor",
-/// "wall", "door", "zone", "ld_view", "layer"), name (the sensor's or zone's name, else its id; the room
+/// "wall", "door", "zone", "ld_view"), name (the sensor's or zone's name, else its id; the room
 /// of a threshold, the wall's number, the pair of ld_view), field, reason, limits ((low, high, low
 /// excluded, high excluded)) and the value given (or the id twice, the most allowed, why unreadable).
 #[pyclass(module = "presence_core", frozen)]
@@ -46,7 +46,6 @@ impl ConfigProblem {
             Part::Door => "door",
             Part::Zone(_) => "zone",
             Part::LdView(_) => "ld_view",
-            Part::Layer => "layer",
         }
     }
 
@@ -56,7 +55,7 @@ impl ConfigProblem {
             Part::Threshold(room) => Some(room.clone()),
             Part::Sensor(name) | Part::Zone(name) | Part::LdView(name) => name.clone(),
             Part::Wall(k) => Some(k.to_string()),
-            Part::Config | Part::Params | Part::Door | Part::Layer => None,
+            Part::Config | Part::Params | Part::Door => None,
         }
     }
 
@@ -86,6 +85,7 @@ impl ConfigProblem {
             Problem::PolygonCorners => "polygon_corners",
             Problem::NoCentre => "no_centre",
             Problem::NoPosition => "no_position",
+            Problem::NotOnWall => "not_on_wall",
             Problem::TooManySensors { .. } => "too_many_sensors",
             Problem::TooLarge { .. } => "too_large",
             Problem::Unreadable(_) => "unreadable",
@@ -141,15 +141,7 @@ pub fn check_config(json: &str) -> PyResult<()> {
     config::check(&value).map_err(config_error)
 }
 
-/// Checks an edit in the web UI: what the model reads, and the background image's layers (check_config).
-#[pyfunction]
-pub fn check_edit(json: &str) -> PyResult<()> {
-    let value: Value = serde_json::from_str(json).map_err(|e| config_error(ConfigError::unreadable(e)))?;
-    config::check_edit(&value).map_err(config_error)
-}
-
-/// The limits of the configuration's numbers, for the web UI's fields: {"params", "sensor", "door",
-/// "layer"} -> {field: [low, high, low excluded, high excluded]}.
+/// The limits of the numbers the model reads, for the web UI's fields: {"params", "sensor", "door"} -> {field: [low, high, low excluded, high excluded]}.
 #[pyfunction]
 pub fn config_limits(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     let out = PyDict::new(py);
@@ -157,7 +149,6 @@ pub fn config_limits(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
         ("params", &config::PARAMS[..]),
         ("sensor", &config::SENSOR[..]),
         ("door", &config::DOOR[..]),
-        ("layer", &config::LAYER[..]),
     ] {
         let fields = PyDict::new(py);
         for &(key, l) in limits {

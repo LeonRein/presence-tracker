@@ -6,8 +6,6 @@ use pyo3::prelude::*;
 mod calibration;
 mod config;
 mod core;
-mod editor;
-mod floorplan;
 mod frames;
 mod geometry;
 #[cfg(feature = "testing")]
@@ -31,13 +29,9 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(views::derive, m)?)?;
     m.add_function(wrap_pyfunction!(calibration::calibrate, m)?)?;
     m.add_function(wrap_pyfunction!(calibration::calibration_status, m)?)?;
-    m.add_function(wrap_pyfunction!(floorplan::faces, m)?)?;
-    m.add_function(wrap_pyfunction!(floorplan::sync_rooms, m)?)?;
     m.add_function(wrap_pyfunction!(config::check_config, m)?)?;
-    m.add_function(wrap_pyfunction!(config::check_edit, m)?)?;
     m.add_function(wrap_pyfunction!(config::changes, m)?)?;
     m.add_function(wrap_pyfunction!(config::config_limits, m)?)?;
-    m.add_function(wrap_pyfunction!(editor::edit, m)?)?;
     m.add_class::<config::ConfigProblem>()?;
     // the hooks of the shell's tests (feature "testing"; maturin develop --features testing)
     #[cfg(feature = "testing")]

@@ -1,7 +1,8 @@
-//! The configuration as the app stores it (model.Config.to_dict(): sensors, zones, walls, doors, the
-//! LD2410Cs' measured view and the tracker's parameters; the background image is the UI's), read with serde. Lengths in metres,
-//! angles in degrees, in the house frame. The rooms are already the faces between the walls
-//! (floorplan.sync_rooms runs where the plan is edited, in the shell). Every field the shell always
+//! The configuration as the app stores it (model.Config.model_dict(): sensors, zones, walls, doors, the
+//! LD2410Cs' measured view and the tracker's parameters; the background image is the web UI's and never
+//! comes here), read with serde. Lengths in metres, angles in degrees, in the house frame. The map comes
+//! finished: the rooms are the faces between the walls and every door lies on a wall (the web UI's editor
+//! makes them so, static/js/floorplan.js; the check refuses a door on no wall). Every field the shell always
 //! writes is required: no defaults here that could hide a renamed field. Before it is read it is checked
 //! (check.rs: the limits of every number, also the ones of the web UI's fields). The sensors' geometry here
 //! is the only one: the shell's calibration and simulation use it too (presence_core.Geometry).
@@ -16,8 +17,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 pub use check::{
-    ConfigError, DOOR, LAYER, Limits, MAX_CELLS, MAX_RANGE, MAX_SENSORS, PARAMS, Part, Problem, SENSOR,
-    TARGET_THRESHOLD, check, check_edit,
+    ConfigError, DOOR, Limits, MAX_CELLS, MAX_RANGE, MAX_SENSORS, PARAMS, Part, Problem, SENSOR, TARGET_THRESHOLD,
+    check,
 };
 
 use crate::geometry::{Point, Shape, line_of_sight};

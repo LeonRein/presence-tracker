@@ -57,16 +57,6 @@ impl PyWorld {
     fn new(py: Python<'_>, config: &str, model: &str) -> PyResult<Self> {
         Ok(Self(Some(world_of(py, config, model)?)))
     }
-
-    /// The coverage of this world (presence_core::derived::coverage) as JSON.
-    fn coverage(&self) -> PyResult<String> {
-        let world = self
-            .0
-            .as_ref()
-            .ok_or_else(|| PyValueError::new_err("this world went into a core already"))?;
-        Ok(serde_json::to_string(&presence_core::derived::coverage(world))
-            .expect("the coverage is finite numbers and text"))
-    }
 }
 
 impl PyWorld {
@@ -400,6 +390,13 @@ impl Core {
             .iter()
             .map(|(s, i)| (s.0, i.si))
             .collect()
+    }
+
+    /// The coverage of the running world, the saved configuration's (presence_core::derived::coverage), as
+    /// JSON.
+    fn coverage(&self) -> String {
+        serde_json::to_string(&presence_core::derived::coverage(self.tracker.world()))
+            .expect("the coverage is finite numbers and text")
     }
 
     /// The tiles for drawing and reading.

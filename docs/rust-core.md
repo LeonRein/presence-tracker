@@ -13,11 +13,28 @@ laufen nur auf einem Arbeitsbaum von 0.31.1. Die frühere Frage „Gelerntes ble
 
 ## 1. Schnitt
 
-**Grundsatz (Leon, 29.10.): Alles, was aus Konfiguration oder Messwerten einen neuen Wert berechnet – Zahl, Geometrie,
-Entscheidung, Schätzung – ist Rust; Python und JavaScript berechnen nichts Neues: Sie nehmen entgegen (MQTT, HTTP, Maus
-und Tastatur), speichern und laden, senden (Home Assistant, Browser) und zeigen an, und dabei formatieren sie Werte des
-Kerns nur (runden, übersetzen, auswählen, was gezeigt und wann gesendet wird).** Tests und Dev-Werkzeuge gehören nicht
-zum Programm. Ohne Ausnahme; was nicht passt, ist ein Fehler im Aufbau.
+**Grundsatz (Leon, 29.10., berichtigt): eine Regel ohne Ausnahmen, kein Code doppelt.**
+- **Rust (Kern): das Modell** – alles, was MODEL.md beschreibt, aus der *gespeicherten* Konfiguration und den
+  Messwerten, einschließlich dessen, was die Oberfläche über das Modell zeigt (Sicht je Sensor, Abdeckung und tote
+  Winkel, Zonenzustände, Kalibrierschätzung, Prüfung der gespeicherten Konfiguration). Der Kern bekommt die fertige
+  Karte, wenn der Nutzer speichert; einen ungespeicherten Entwurf rechnet er nicht.
+- **JavaScript (Oberfläche): die Bedienung** – der Karteneditor (Zeichnen, Einrasten, Wände teilen und verbinden,
+  mitgehende Wände und Türen, Räume aus Wänden, Türen auf Wände setzen), die Darstellung. Beispiel für „Bedienung,
+  nicht Modell“: **das Hintergrundbild** – Lage, Maßstab, Drehung, Deckkraft, Ausrichten an zwei Punkten, Einpassen;
+  die Oberfläche prüft und begrenzt es selbst, der Kern kennt den Schlüssel `background` nicht (die Hülle reicht ihn
+  nicht weiter, `model.model_part`), eine Änderung nur am Bild fasst den Kern nicht an.
+- **Python: verbinden und ablegen** – MQTT, Home Assistant, HTTP, Dateien; nur formatieren.
+
+Die Frage je Änderung: Ist es das Modell (aus gespeicherter Konfiguration und Daten) → Rust; Bedienen und Bearbeiten
+→ JavaScript; Transport und Speichern → Python. (Die erste Fassung „alles, was rechnet, ist Rust“ holte den Editor in
+den Kern, 0.47.0: unnötige feinteilige API für etwas, das mit dem Filter nichts zu tun hat; 0.48.0 nahm es zurück.)
+Tests und Dev-Werkzeuge gehören nicht zum Programm.
+
+**Die eine Naht zwischen Editor und Modell: Türen.** Der Editor setzt eine Tür genau auf ihre Wand (mm) und hält sie
+dort (sie geht mit, wenn die Wand sich bewegt, und mit ihr, wenn die Wand gelöscht wird; eine Wand mit Tür wird keine
+Raumgrenze); der Kern liest nur die Wand, auf der ihr Mittelpunkt liegt (`plan::wall_of_door`, `DOOR_ON_WALL` = 1 cm für
+die mm-Rundung), und seine Prüfung weist eine Tür auf keiner Wand ab (bis 0.47.0 suchte er die nächste Wand bis
+25 cm).
 
 **Rust ist der ganze Filter: alles, was MODEL.md beschreibt.** Er ist ein reiner Kern: keine Ein-/Ausgabe
 (keine Dateien, kein Netz), keine Uhr (jede Zeit kommt als Argument), keine Threads, keine Zufallszahlen.
@@ -37,21 +54,20 @@ zum Programm. Ohne Ausnahme; was nicht passt, ist ein Fehler im Aufbau.
 | Ausgaben: Zähl- und Ortsverteilungen, Belegt mit der **RoomSeen-Regel** und „stumm“, *wird betreten*, *Ziel*, Personen der Anzeige, Snapshot | 6 | `filter.py`, `roomseen.py` |
 | Pausen als **Eingabe** (Intervalle; was in eine Pause fällt, lernt nichts) | 4.2 | `pause.Pauses.paused` |
 | Gespeicherte Formate lesen und schreiben, **unverändert**: `people_state`, Geisterkarte, LD2410C-Hintergrund, Zielkarte (als Zeichenketten/Dicts; Dateien schreibt Python) | 5.3, 4.2, 4.3, 6 | `to_dict`/`from_dict` der Klassen |
-| Räume aus Wänden für den Editor: Flächen des ebenen Graphen, Einrasten, Anker (`floorplan.rs`, 0.44.0) | 2 | `floorplan.py` |
 | Kalibrierung: Messzeilen je Frame, Schätzer (Paare, Übergaben, Grundriss, Maßstäbe; EM, Gauß-Newton, robuste Kovarianz, Jackknife), Vorschlag mit Gründen, Fortschritt (`calibration/`, 0.45.0) | 10 | `calibration.py` |
 | Was die Anzeige ableitet: Raum und wahrscheinlichster Ort einer Person, Regionen (Zahl, P, Aufenthalt), Karte eines Sensors mit Geisterrate, LD2410C-Anzeige mit Haltezeit, „belegt“ und Schwellen je Zone, Heim-Zonen für HA; der Weg einer neuen Konfiguration (`reconfigure.rs`) (0.46.0) | 6 | `filter.py`, `zones.py`, `ha.py`, `geometry.py` |
-| Was die Oberfläche zeichnet und wie sie bearbeitet (0.47.0): `derived.rs` (Wände mit Öffnungen, Türöffnungen, Längen, Flächen, Etiketten, Sichtfläche je Sensor, Plan mit dem Anteil der 60-%-Regel, Schwellen; Abdeckung je Kachel; Wolken an Wänden geschnitten), `editor.rs` (Einrasten, Mitgehen angeschlossener Wände und Türen, Tür auf die Wand, Wände teilen/verbinden, Zonen, Sensor setzen, Bild ausrichten), „bewegt“ und Spurbruch je Person, Gesamtzahl im beobachteten Bereich | 2, 4.1, 5.3, 6 | `static/js` (util, tools, view, panels, coverage) |
+| Was die Oberfläche über das Modell der gespeicherten Konfiguration zeigt (`derived.rs`): Wände, wie das Radar sie sieht (ohne Türöffnungen), Sichtfläche je Sensor, Plan mit dem Anteil der 60-%-Regel, Schwellen; Abdeckung je Kachel der laufenden Welt (`Core.coverage`); Wolken an Wänden geschnitten; „bewegt“ und Spurbruch je Person, Gesamtzahl im beobachteten Bereich (0.47.0/0.48.0) | 2, 4.1, 5.3, 6 | `static/js` (util, view, panels, coverage.js) |
 
-| Python (Hülle): Modul | was es tut (nach dem Grundsatz oben, Stand 0.46.0) |
+| Python (Hülle): Modul | was es tut (nach dem Grundsatz oben, Stand 0.48.0) |
 |---|---|
-| `app.py` | nimmt entgegen (MQTT-Frames, HTTP der Oberfläche, Bilder), hält den Takt (alle 0,1 s `step` und Zonenzustände), speichert und lädt (tracker.json, Gelerntes, people.json, pause.json, calibration.npz, Fehlerberichte), sendet (Home Assistant über `ha.py`, Browser), Betrieb (Neubeginn nach Fehlern des Modells, Last). Rechnet nichts am Modell. |
+| `app.py` | nimmt entgegen (MQTT-Frames, HTTP der Oberfläche, Bilder), hält den Takt (alle 0,1 s `step` und Zonenzustände), speichert und lädt (tracker.json, Gelerntes, people.json, pause.json, calibration.npz, Fehlerberichte), sendet (Home Assistant über `ha.py`, Browser), Betrieb (Neubeginn nach Fehlern des Modells, Last). Rechnet nichts am Modell; eine Änderung nur am Hintergrundbild legt es ab, ohne den Kern zu fragen. |
 | `filter.py` | die Hülle des Kerns (`presence_core.Core`): reicht Konfiguration, Frames, Zeit und Pausen hinein, wandelt um (JSON, Ortsnamen ↔ Indizes), ruft die Listener, rundet für die Anzeige; welcher Weg eine neue Konfiguration nimmt, entscheidet der Kern (`presence_core.changes`). |
 | `calibration.py` | sammelt die Messzeilen, die der Kern je Frame liefert (`presence_core.Walking`), hält einen Tag, speichert `calibration.npz`, gibt sie dem Kern im Thread (`presence_core.calibrate`, `calibration_status`) und fasst seine Gründe in die Sätze der Oberfläche. |
-| `model.py` | die gespeicherte Konfiguration als Daten mit ihren Standards, Laden und Speichern; die Räume aus den Wänden (`presence_core.sync_rooms`; neue Räume bekommen hier nur ihre ID) und die Prüfung (`presence_core.check_config`/`check_edit`, `config_limits`) sind des Kerns; hier die deutschen Bezeichnungen und Sätze. |
+| `model.py` | die gespeicherte Konfiguration als Daten mit ihren Standards, Laden und Speichern; was davon das Modell liest (`model_part`/`model_json`: alles außer dem Hintergrundbild); die Prüfung (`presence_core.check_config`, `config_limits`) und was die Oberfläche über das Modell zeigt (`presence_core.derive`) sind des Kerns; hier die deutschen Bezeichnungen und Sätze. |
 | `ha.py`, `zones.py` | Home Assistant: Entitäten der Heim-Zonen des Kerns (`plan()["home"]`), Verfügbarkeit, Rundung und Halten der Ausgabe (wann gesendet wird). |
 | `pause.py` | der Schalter „Lernen pausieren“: Nachrichten lesen, Intervalle halten und speichern; ob eine Zeit pausiert ist, sagt der Kern. |
 | `frames.py`, `sources.py`, `util.py`, `__main__.py` | Daten der Anzeige eines Frames; MQTT und Wiedergabe; atomar schreiben, Log drosseln; Start. |
-| `static/js/*` | die Oberfläche: nimmt Maus und Tastatur entgegen, zeigt an und formatiert (Pixel, Rundung, Texte). Beim Ziehen zeigt sie nur die rohe Eingabe; beim Loslassen geht die Bearbeitung an den Kern (`POST /api/preview`, `presence_core.edit`), und alles Gezeichnete (Wände mit Öffnungen, Türöffnungen, Sichtflächen, Etiketten, Flächen, Längen, Plan, Schwellen, Abdeckung) kommt fertig vom Kern (`presence_core.derive`, `World.coverage`; 0.47.0). |
+| `static/js/*` | die Oberfläche, die Bedienung: der Karteneditor (`tools.js`: Zeichnen mit Einrasten und Hilfslinien, mitgehende Wände und Türen, teilen/verbinden, Zonen, Sensor setzen, Hintergrundbild ausrichten und einpassen; `floorplan.js`: Räume aus Wänden; `util.js`: Tür auf ihrer Wand, Längen, Flächen, Etiketten, Grenzen der Bildebenen), die Darstellung (`view.js`, `panels.js`). Was sie über das Modell zeigt, kommt vom Kern für den gespeicherten Stand (`derived` mit `GET`/`PUT /api/config`, `GET /api/coverage`); bis eine Änderung gespeichert ist, zeigt die Karte die Wände wie gezeichnet und die Sensoren mit ihrem Blickfeld wie eingegeben (0.48.0). |
 
 `sim.py` (erzeugt Frames, rechnet) gehört nur zu Tests und Werkzeugen: `tracker/tests/sim.py` (0.47.0).
 

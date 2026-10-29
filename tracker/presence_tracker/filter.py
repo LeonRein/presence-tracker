@@ -75,7 +75,7 @@ def plan(config) -> dict:
     "places" (observed, the regions' ids, outside), "areas", "own_rooms" (per sensor, None: none), "regions"
     (id -> {"name", "rooms", "open", "exits"}), "closed" (the rooms in which the sensors see nobody of the
     home: those of closed regions and the outside rooms)."""
-    return presence_core.plan(json.dumps(config.to_dict()))
+    return presence_core.plan(config.model_json())
 
 
 class _Seen:
@@ -152,7 +152,7 @@ class Tracker:
         """The core's world of the configuration and the model (docs/rust-core.md 1; their JSON, infinite
         numbers of the model as "inf"), built once (presence_core.World)."""
         model = {k: (str(v) if isinstance(v, float) and not math.isfinite(v) else v) for k, v in self.model.items()}
-        return _core(presence_core.World, json.dumps(self.config.to_dict()), json.dumps(model))
+        return _core(presence_core.World, self.config.model_json(), json.dumps(model))
 
     @property
     def loglik(self) -> float:
@@ -222,12 +222,12 @@ class Tracker:
         decides (presence_core.changes). Returns whether it started over."""
         self.reconfigured_from = None
         self._sync_pauses()  # the ends of the changed sensors' tracks learn, or not, as at any time
-        way, changed = presence_core.changes(json.dumps(self.config.to_dict()), json.dumps(config.to_dict()))
+        way, changed = presence_core.changes(self.config.model_json(), config.model_json())
         self.config, self.p = config, config.params
         # what was learned follows (in the core): recalibrated sensors keep their parts, a remounted one
         # starts over; the destination map holds while the rooms and doors are the same
         if way == "outputs":
-            self._c.set_outputs(json.dumps(config.to_dict()))  # only what the outputs read: nothing built
+            self._c.set_outputs(config.model_json())  # only what the outputs read: nothing built
             return False
         world = None
         if way == "sensors":
@@ -390,6 +390,11 @@ class Tracker:
         t = self._tiles
         return {"id": t.fingerprint, "size": t.size, "squares": t.squares,
                 "room": [None if r is None else self.rooms[r] for r in t.rooms], "centers": t.centers}
+
+    def coverage(self) -> dict:
+        """The coverage of the running world, that is of the saved configuration (the core's: per tile how
+        many sensors see it, per room of the home its area, the share seen, m^2 blind and seen once)."""
+        return json.loads(self._c.coverage())
 
     def tile_near(self, xy) -> int | None:
         """The tile of a point, or of the cell in view nearest to it (None: no tiles)."""

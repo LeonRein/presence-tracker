@@ -1,15 +1,133 @@
-// Map interaction: selecting/dragging, drawing walls and zones, placing sensors, aligning images.
-// While the pointer is down only the user's raw input is drawn (the dragged element alone); on release the
-// edit goes to the core (store.applyEdit: snapping, what moves along, rooms) and its answer is the edit.
-import { applyEdit, derivedNow, edit, endMerge, emit, select, sensorById, setTool, snapPath, state } from './store.js';
-import { ZONE_KINDS, deg, rad, toast, uid, zoneOutline } from './util.js';
-import { loadSize } from './view.js';
+// Map interaction, the editor (docs/rust-core.md 1: operating the app, not the model): selecting/dragging,
+// drawing walls and zones with snapping, what moves along, doors on their walls, placing sensors, aligning
+// images. The rooms between the walls follow every edit (floorplan.js, in store.edit); the model gets the
+// finished map when it is saved.
+import { edit, endMerge, emit, select, sensorById, setTool, state } from './store.js';
+import { SNAP } from './floorplan.js';
+import { ON_WALL, ZONE_KINDS, deg, dist, distToSegment, doorWall, doorsOnWalls, followDoors, rad, toast, uid, wallPieces, zoneOutline } from './util.js';
+import { bgToWorld, loadSize } from './view.js';
 
-const SNAP_PX = 10;  // the core snaps within this many pixels (in m: SNAP_PX / view.s)
-const r3 = v => +v.toFixed(3);  // mm, as entered
+const SNAP_PX = 10;
+const LINK_EPS = 0.002; // m, wall ends closer than this are joined and move together
 
-// what the pointer is over, in m (the core's tolerance); doors are put on a wall within twice that
-const tolerance = (view, k = 1) => k * SNAP_PX / view.s;
+// exclude: {zone: id} and/or {pairs: Set of "wall:index"} for the points being moved
+function vertices(exclude = null) {
+  const c = state.config;
+  const out = [];
+  c.walls.forEach((w, i) => w.points.forEach((p, j) => {
+    if (!exclude?.pairs?.has(`${i}:${j}`)) out.push(p);
+  }));
+  for (const z of c.zones) {
+    if (z.shape === 'circle' || z.id === exclude?.zone) continue;
+    out.push(...zoneOutline(z));
+  }
+  return out;
+}
+
+function segments(exclude = null) {
+  const c = state.config;
+  const out = [];
+  c.walls.forEach((w, i) => {
+    for (let j = 0; j + 1 < w.points.length; j++) {
+      if (exclude?.pairs?.has(`${i}:${j}`) || exclude?.pairs?.has(`${i}:${j + 1}`)) continue;
+      out.push([w.points[j], w.points[j + 1]]);
+    }
+  });
+  return out;
+}
+
+const round3 = p => p.map(v => +v.toFixed(3));
+
+function projectOnLine(p, a, dir) {
+  const t = (p[0] - a[0]) * dir[0] + (p[1] - a[1]) * dir[1];
+  return [a[0] + t * dir[0], a[1] + t * dir[1]];
+}
+
+function intersectLines(a, da, b, db) {
+  const den = da[0] * db[1] - da[1] * db[0];
+  if (Math.abs(den) < 1e-9) return null;
+  const t = ((b[0] - a[0]) * db[1] - (b[1] - a[1]) * db[0]) / den;
+  return [a[0] + t * da[0], a[1] + t * da[1]];
+}
+
+// Snap a point while drawing or dragging (hold Shift to disable). Priority:
+//   1. existing corners
+//   2. a 45° direction from a neighbor point where it meets a wall (lines end exactly on walls)
+//   3. 45° directions from the neighbor points (both neighbors: their crossing, i.e. exact corners)
+//   4. a point on an existing wall
+// Sets snap.guides for the overlay.
+export const snapGuides = [];
+function snap(view, p, ev, anchors = [], exclude = null) {
+  snapGuides.length = 0;
+  if (ev?.shiftKey) return round3(p);
+  const tol = SNAP_PX / view.s;
+  let best = null, bestD = tol;
+  for (const v of vertices(exclude)) {
+    const d = dist(v, p);
+    if (d < bestD) { best = v; bestD = d; }
+  }
+  if (best) { snapGuides.push({ type: 'point', p: best }); return [...best]; }
+
+  const rays = [];
+  for (const a of anchors.filter(Boolean)) {
+    if (dist(a, p) < 1e-6) continue;
+    const ang = Math.round(Math.atan2(p[1] - a[1], p[0] - a[0]) / (Math.PI / 4)) * (Math.PI / 4);
+    const dir = [Math.cos(ang), Math.sin(ang)];
+    const q = projectOnLine(p, a, dir);
+    if (dist(q, p) < tol) rays.push({ a, dir, q, d: dist(q, p) });
+  }
+  // a ray that hits a wall near the pointer: take the hit point
+  let hit = null;
+  for (const r of rays) {
+    for (const [a, b] of segments(exclude)) {
+      const len = dist(a, b);
+      if (len < 1e-6) continue;
+      const sd = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+      const x = intersectLines(r.a, r.dir, a, sd);
+      if (!x) continue;
+      const t = (x[0] - a[0]) * sd[0] + (x[1] - a[1]) * sd[1];
+      const d = dist(x, p);
+      if (t >= -1e-6 && t <= len + 1e-6 && d < 1.5 * tol && (!hit || d < hit.d)) hit = { x, d, r };
+    }
+  }
+  if (hit) {
+    snapGuides.push({ type: 'ray', a: hit.r.a, b: hit.x }, { type: 'point', p: hit.x });
+    return round3(hit.x);
+  }
+  if (rays.length >= 2) {
+    const x = intersectLines(rays[0].a, rays[0].dir, rays[1].a, rays[1].dir);
+    if (x && dist(x, p) < 1.5 * tol) {
+      snapGuides.push({ type: 'ray', a: rays[0].a, b: x }, { type: 'ray', a: rays[1].a, b: x });
+      return round3(x);
+    }
+  }
+  if (rays.length) {
+    const r = rays.sort((u, v) => u.d - v.d)[0];
+    snapGuides.push({ type: 'ray', a: r.a, b: r.q });
+    return round3(r.q);
+  }
+  for (const [a, b] of segments(exclude)) {
+    const len = dist(a, b);
+    if (len < 1e-6) continue;
+    const dir = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    const t = (p[0] - a[0]) * dir[0] + (p[1] - a[1]) * dir[1];
+    if (t < 0 || t > len) continue;
+    const q = [a[0] + t * dir[0], a[1] + t * dir[1]];
+    if (dist(q, p) < tol) { snapGuides.push({ type: 'point', p: q }); return round3(q); }
+  }
+  return round3(p);
+}
+
+function guidesOverlay(view) {
+  return snapGuides.map(g => {
+    if (g.type === 'point') {
+      const [x, y] = view.P(...g.p);
+      return `<circle cx="${x}" cy="${y}" r="7" fill="none" stroke="var(--ok)" stroke-width="2"/>`;
+    }
+    const [x1, y1] = view.P(...g.a), [x2, y2] = view.P(...g.b);
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--ok)" stroke-width="1" stroke-dasharray="4 4"/>`;
+  }).join('');
+}
 
 const handle = (view, p, role) => {
   const [x, y] = view.P(...p);
@@ -25,13 +143,50 @@ const edgeGrip = (view, a, b, role) => {
     <rect class="handle edge" x="${mx - 9}" y="${my - 3}" width="18" height="6" rx="3" transform="rotate(${ang} ${mx} ${my})" data-kind="handle" data-role="${role}"/>`;
 };
 
-// the raw input while dragging: the dragged element alone, dashed
-const draftLine = (view, pts, closed = false) =>
-  `<${closed ? 'polygon' : 'polyline'} class="wall-draft" points="${view.pts(pts)}" fill="none"/>`;
+// polyline/polygon helpers: neighbors of vertex i
+function neighbors(pts, i, closed) {
+  const n = pts.length;
+  const prev = i > 0 ? pts[i - 1] : closed ? pts[n - 1] : null;
+  const next = i < n - 1 ? pts[i + 1] : closed ? pts[0] : null;
+  return [prev, next];
+}
+
+// all wall vertices at the same place as `p` (joined wall ends)
+function linkedWallVertices(c, p, skipWall = -1) {
+  const out = [];
+  c.walls.forEach((w, i) => w.points.forEach((q, j) => {
+    if (i !== skipWall && dist(p, q) < LINK_EPS) out.push([i, j]);
+  }));
+  return out;
+}
 
 const isZoneSel = sel => sel?.kind === 'zone' || sel?.kind === 'room';
 // rooms derived from the walls have no geometry of their own
 const isFixedRoom = sel => sel?.kind === 'room';
+
+// closest real wall (no divider) within `tol`: {a, dir, len, t, d}
+function nearestWall(c, p, tol) {
+  let best = null;
+  for (const [a, b] of wallPieces(c.walls, 'wall')) {
+    const len = dist(a, b);
+    if (len < 1e-6) continue;
+    const dir = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    const t = Math.max(0, Math.min(len, (p[0] - a[0]) * dir[0] + (p[1] - a[1]) * dir[1]));
+    const d = dist(p, [a[0] + t * dir[0], a[1] + t * dir[1]]);
+    if (d < tol && (!best || d < best.d)) best = { a, dir, len, t, d };
+  }
+  return best;
+}
+
+const along = (w, t) => round3([w.a[0] + w.dir[0] * t, w.a[1] + w.dir[1] * t]);
+
+// door center at t on wall w, kept so that the whole door stays on the wall
+const clampDoor = (w, t, width) => Math.max(Math.min(width / 2, w.len / 2), Math.min(t, w.len - Math.min(width / 2, w.len / 2)));
+
+// the other ends of the walls joined at a wall end
+function linkedFarEnds(c, links) {
+  return links.map(([wi, wj]) => c.walls[wi].points[1 - wj]);
+}
 
 // ----------------------------------------------------------------- select / drag
 
@@ -58,7 +213,6 @@ export class SelectTool {
     if (!sel) return '';
     const c = state.config;
     const out = [];
-    if (this.drag?.draft) return this.drag.draft(view);
     if (isZoneSel(sel) && !isFixedRoom(sel)) {
       const z = c.zones.find(z => z.id === sel.id);
       if (!z) return '';
@@ -77,9 +231,14 @@ export class SelectTool {
       out.push(edgeGrip(view, w[0], w[1], 'edge-0'));
       w.forEach((p, i) => out.push(handle(view, p, `vertex-${i}`)));
     } else if (sel.kind === 'door') {
-      // its ends where the core put it on its wall
-      const opening = derivedNow()?.doors[sel.id];
-      if (opening) opening.forEach((p, i) => out.push(handle(view, p, `doorend-${i}`)));
+      const door = (c.doors || []).find(d => d.id === sel.id);
+      const pl = door && doorWall(c.walls, door);
+      if (pl) {
+        for (const [sign, role] of [[-1, 'doorend-0'], [1, 'doorend-1']]) {
+          const t = pl.t + sign * door.width / 2;
+          out.push(handle(view, [pl.a[0] + pl.dir[0] * t, pl.a[1] + pl.dir[1] * t], role));
+        }
+      }
     } else if (sel.kind === 'sensor') {
       const s = sensorById(sel.id);
       if (!s?.placed) return '';
@@ -88,6 +247,7 @@ export class SelectTool {
       out.push(`<line x1="${x}" y1="${y}" x2="${hx}" y2="${hy}" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="3 3"/>`);
       out.push(`<circle class="handle rotate" cx="${hx}" cy="${hy}" r="7" data-kind="handle" data-role="rotate"/>`);
     }
+    if (this.drag) out.push(guidesOverlay(view));
     return out.join('');
   }
 
@@ -97,11 +257,40 @@ export class SelectTool {
     return c.zones.find(z => z.id === sel.id)?.points;
   }
 
-  down(world, hit) {
+  down(world, hit, ev) {
     if (hit?.dataset.kind === 'handle') {
       const sel = state.selection;
-      const pts = this._points(state.config, sel);
-      this.drag = { role: hit.dataset.role, start: world, at: world, merge: uid('drag'), orig: pts?.map(p => [...p]) };
+      const d = { role: hit.dataset.role, start: world, merge: uid('drag') };
+      const c = state.config;
+      if (sel.kind === 'wall' || isZoneSel(sel)) {
+        const pts = this._points(c, sel);
+        d.orig = pts ? pts.map(p => [...p]) : null;
+        const [role, idx] = d.role.split('-');
+        // joined wall ends move along
+        if (sel.kind === 'wall' && (role === 'vertex' || role === 'edge')) {
+          const idxs = role === 'vertex' ? [+idx] : [+idx, +idx + 1];
+          d.links = idxs.map(k => {
+            const linked = linkedWallVertices(c, pts[k], sel.id);
+            return { k, linked, far: linkedFarEnds(c, linked) };
+          });
+          d.pairs = new Set(idxs.map(k => `${sel.id}:${k}`));
+          for (const l of d.links) for (const [wi, wj] of l.linked) d.pairs.add(`${wi}:${wj}`);
+          // walls ending on this one (T-junctions) move with it
+          const [a, b] = pts;
+          d.attached = [];
+          c.walls.forEach((w, wi) => w.points.forEach((q, wj) => {
+            if (wi === sel.id || d.pairs.has(`${wi}:${wj}`)) return;
+            const t = ((q[0] - a[0]) * (b[0] - a[0]) + (q[1] - a[1]) * (b[1] - a[1])) / (dist(a, b) ** 2);
+            if (t > 0 && t < 1 && distToSegment(q, a, b) < SNAP) {  // joined to it, as the rooms see it
+              d.attached.push({ wi, wj, far: w.points[1 - wj] });
+              d.pairs.add(`${wi}:${wj}`);
+            }
+          }));
+        }
+        // every door stays where it is along its wall, whichever of them moves
+        if (sel.kind === 'wall') d.doors = doorsOnWalls(c);
+      }
+      this.drag = d;
       return true;
     }
     const kind = hit?.dataset.kind;
@@ -113,7 +302,8 @@ export class SelectTool {
       // rooms made from walls only move with their walls
       const movable = !isFixedRoom({ kind, id });
       if (movable && (already || kind === 'sensor' || kind === 'door')) {
-        this.drag = { role: 'body', kind, id, start: world, last: world, at: world, merge: uid('drag') };
+        this.drag = { role: 'body', kind, id, start: world, last: world, merge: uid('drag') };
+        if (kind === 'wall') this.drag.doors = doorsOnWalls(state.config);
       }
       return true;
     }
@@ -129,28 +319,40 @@ export class SelectTool {
     if (!this.drag) return;
     const d = this.drag;
     const sel = state.selection;
-    d.at = world;
-    d.moved = true;
+    const view = this.view;
     if (d.role === 'body') {
       const dx = world[0] - d.last[0], dy = world[1] - d.last[1];
       d.last = world;
-      if (d.kind === 'door') {
-        // the door follows the pointer; on release the core puts it on the wall
-        d.draft = view => { const [x, y] = view.P(...world); return `<circle cx="${x}" cy="${y}" r="6" fill="none" stroke="var(--accent)" stroke-width="2"/>`; };
-        this.view.renderOverlay();
-        return;
-      }
-      // the element moves by the pointer's way (as entered); a sensor snaps on release
       edit(c => {
         if (d.kind === 'zone' || d.kind === 'room') {
           const z = c.zones.find(z => z.id === d.id);
-          if (z.shape === 'circle') z.center = [z.center[0] + dx, z.center[1] + dy].map(r3);
-          else z.points = z.points.map(([x, y]) => [r3(x + dx), r3(y + dy)]);
+          if (z.shape === 'circle') z.center = [z.center[0] + dx, z.center[1] + dy].map(v => +v.toFixed(3));
+          else z.points = z.points.map(([x, y]) => [+(x + dx).toFixed(3), +(y + dy).toFixed(3)]);
         } else if (d.kind === 'sensor') {
           const s = c.sensors.find(s => s.id === d.id);
-          s.x = r3(world[0]); s.y = r3(world[1]);
+          const p = snap(view, world, ev);
+          s.x = +p[0].toFixed(3); s.y = +p[1].toFixed(3);
         } else if (d.kind === 'wall') {
-          c.walls[d.id].points = c.walls[d.id].points.map(([x, y]) => [r3(x + dx), r3(y + dy)]);
+          c.walls[d.id].points = c.walls[d.id].points.map(([x, y]) => [+(x + dx).toFixed(3), +(y + dy).toFixed(3)]);
+          followDoors(c, d.doors);
+        } else if (d.kind === 'door') {
+          // a door slides along its wall (or jumps to another wall it is dragged onto), always
+          // completely on it
+          const door = c.doors.find(x => x.id === d.id);
+          let w = nearestWall(c, world, 2 * SNAP_PX / view.s);
+          if (!w) {
+            // pointer away from all walls: follow it along the door's own wall
+            const pl = doorWall(c.walls, door);
+            if (pl) {
+              const t = (world[0] - pl.a[0]) * pl.dir[0] + (world[1] - pl.a[1]) * pl.dir[1];
+              w = { a: pl.a, dir: pl.dir, len: pl.length, t: Math.max(0, Math.min(pl.length, t)) };
+            }
+          }
+          if (w) {
+            const t = clampDoor(w, w.t, door.width);
+            [door.x, door.y] = along(w, t);
+            door.width = Math.min(door.width, +w.len.toFixed(3));
+          }
         } else if (d.kind === 'layer') {
           const l = c.background.layers.find(l => l.id === d.id);
           l.x = +(l.x + dx).toFixed(4); l.y = +(l.y + dy).toFixed(4);
@@ -159,7 +361,6 @@ export class SelectTool {
       return;
     }
     if (d.role === 'rotate') {
-      // the heading towards the pointer, in 5° steps (Shift: 0.1°)
       edit(c => {
         const s = c.sensors.find(s => s.id === sel.id);
         let a = deg(Math.atan2(world[1] - s.y, world[0] - s.x));
@@ -168,64 +369,142 @@ export class SelectTool {
       }, { merge: d.merge });
       return;
     }
+    if (d.role.startsWith('doorend')) {
+      edit(c => {
+        const door = c.doors.find(x => x.id === sel.id);
+        // placement at drag start: the door must not hop to another wall while its width changes
+        d.pl ??= doorWall(c.walls, door);
+        const pl = d.pl;
+        if (!pl) return;
+        // the dragged end moves along the wall (not past its ends), the other end stays
+        d.fixed ??= pl.t + (d.role === 'doorend-0' ? 1 : -1) * door.width / 2;
+        const fixed = d.fixed;
+        let t = Math.max(0, Math.min(pl.length, (world[0] - pl.a[0]) * pl.dir[0] + (world[1] - pl.a[1]) * pl.dir[1]));
+        if (!ev.shiftKey) t = fixed + Math.round((t - fixed) * 100) / 100;
+        if (Math.abs(t - fixed) < 0.3) t = fixed + Math.sign(t - fixed || -1) * 0.3;
+        const width = Math.abs(t - fixed);
+        const center = (t + fixed) / 2;
+        door.width = +width.toFixed(3);
+        [door.x, door.y] = round3([pl.a[0] + pl.dir[0] * center, pl.a[1] + pl.dir[1] * center]);
+      }, { merge: d.merge });
+      view.renderOverlay();
+      return;
+    }
     if (d.role === 'radius') {
       edit(c => {
         const z = c.zones.find(z => z.id === sel.id);
-        z.radius = r3(Math.max(0.1, Math.hypot(world[0] - z.center[0], world[1] - z.center[1])));
+        z.radius = +Math.max(0.1, dist(world, z.center)).toFixed(3);
       }, { merge: d.merge });
       return;
     }
-    // the raw input: the dragged point at the pointer, a dragged edge by the pointer's way
     const [role, idx] = d.role.split('-');
     const i = +idx;
-    const dx = world[0] - d.start[0], dy = world[1] - d.start[1];
-    const z = isZoneSel(sel) && state.config.zones.find(z => z.id === sel.id);
-    if (role === 'doorend') {
-      const opening = derivedNow()?.doors[sel.id];
-      if (opening) d.draft = view => draftLine(view, [opening[1 - i], world]);
-    } else if (role === 'corner' || role === 'side') {
-      d.draft = view => {
-        const [[x1, y1], [x2, y2]] = z.points;
-        const p = [[x1, y1], [x2, y2]];
-        if (role === 'corner') { p[i === 0 || i === 3 ? 0 : 1][0] = world[0]; p[i < 2 ? 0 : 1][1] = world[1]; }
-        else if (i === 0) p[0][1] = world[1];
-        else if (i === 1) p[1][0] = world[0];
-        else if (i === 2) p[1][1] = world[1];
-        else p[0][0] = world[0];
-        return draftLine(view, zoneOutline({ shape: 'rect', points: p }), true);
-      };
-    } else if (d.orig) {
-      const pts = d.orig.map(p => [...p]);
-      if (role === 'vertex') pts[i] = world;
-      else for (const k of [i, (i + 1) % pts.length]) pts[k] = [pts[k][0] + dx, pts[k][1] + dy];
-      d.draft = view => draftLine(view, pts, sel.kind !== 'wall');
-    }
-    this.view.renderOverlay();
+    edit(c => {
+      if (role === 'corner' || role === 'side') {
+        this._moveRect(c.zones.find(z => z.id === sel.id), role, i, world, ev);
+        return;
+      }
+      const pts = this._points(c, sel);
+      let moved;
+      if (sel.kind === 'wall') {
+        const exclude = { pairs: d.pairs };
+        if (role === 'vertex') {
+          // 45° from the other end and from the far ends of the walls joined here
+          const anchors = [d.orig[1 - i], ...d.links[0].far];
+          moved = { [i]: snap(view, world, ev, anchors, exclude) };
+        } else {
+          // ends slide along the wall joined there, if exactly one is
+          const prev = d.links[0].far.length === 1 ? d.links[0].far[0] : null;
+          const next = d.links[1].far.length === 1 ? d.links[1].far[0] : null;
+          const line = [prev, d.orig[0], d.orig[1], next].filter(Boolean);
+          const k = prev ? 1 : 0;
+          const m = this._moveEdge(line, k, false, world, d.start, ev, exclude);
+          moved = { 0: m[k], 1: m[k + 1] };
+        }
+      } else {
+        const exclude = { zone: sel.id };
+        moved = role === 'vertex'
+          ? { [i]: snap(view, world, ev, neighbors(d.orig, i, true), exclude) }
+          : this._moveEdge(d.orig, i, true, world, d.start, ev, exclude);
+      }
+      for (const [k, p] of Object.entries(moved)) {
+        pts[k] = p;
+        for (const link of d.links || []) {
+          if (link.k === +k) for (const [wi, wj] of link.linked) c.walls[wi].points[wj] = [...p];
+        }
+      }
+      if (sel.kind === 'wall') {
+        const [a, b] = pts;
+        const dir = [b[0] - a[0], b[1] - a[1]];
+        // T-junction walls keep their direction and end on the moved wall again
+        for (const { wi, wj, far } of d.attached || []) {
+          const own = c.walls[wi].points[wj];
+          const x = intersectLines(far, [own[0] - far[0], own[1] - far[1]], a, dir);
+          if (x) c.walls[wi].points[wj] = round3(x);
+        }
+        followDoors(c, d.doors);
+      }
+    }, { merge: d.merge });
+    view.renderOverlay();
   }
 
-  async up(world, ev) {
-    const d = this.drag;
-    this.drag = null;
-    if (!d) return;
-    const sel = state.selection;
-    const view = this.view;
-    const base = { tol: tolerance(view), free: !!ev?.shiftKey };
-    const [role, idx] = d.role.split('-');
-    const i = +idx;
-    let op = null;
-    if (d.moved) {
-      if (d.role === 'body' && d.kind === 'door') op = { op: 'move_door', door: d.id, to: d.at, tol: tolerance(view, 2) };
-      else if (d.role === 'body' && d.kind === 'sensor') op = { op: 'move_sensor', sensor: d.id, to: d.at, ...base };
-      else if (role === 'doorend') op = { op: 'door_end', door: sel.id, end: i, to: d.at, free: base.free };
-      else if (sel?.kind === 'wall' && role === 'vertex') op = { op: 'wall_end', wall: sel.id, end: i, to: d.at, ...base };
-      else if (sel?.kind === 'wall' && role === 'edge') op = { op: 'wall_edge', wall: sel.id, from: d.start, to: d.at, ...base };
-      else if (role === 'vertex') op = { op: 'zone_point', zone: sel.id, index: i, to: d.at, ...base };
-      else if (role === 'edge') op = { op: 'zone_edge', zone: sel.id, edge: i, from: d.start, to: d.at, ...base };
-      else if (role === 'corner' || role === 'side') op = { op: 'rect', zone: sel.id, role, index: i, to: d.at, ...base };
+  // Shift edge i (vertices i, i+1) parallel to itself; its ends slide along the neighboring edges,
+  // so all angles stay as they are.
+  _moveEdge(orig, i, closed, world, start, ev, exclude) {
+    const n = orig.length;
+    const j = (i + 1) % n;
+    const a = orig[i], b = orig[j];
+    const len = dist(a, b) || 1;
+    const dir = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    const nrm = [-dir[1], dir[0]];
+    let off = (world[0] - start[0]) * nrm[0] + (world[1] - start[1]) * nrm[1];
+    snapGuides.length = 0;
+    if (!ev.shiftKey) {
+      // let the edge line pass exactly through a nearby corner
+      const tol = SNAP_PX / this.view.s;
+      let best = null;
+      for (const v of vertices(exclude)) {
+        const ov = (v[0] - a[0]) * nrm[0] + (v[1] - a[1]) * nrm[1];
+        if (Math.abs(ov - off) < tol && (!best || Math.abs(ov - off) < Math.abs(best.ov - off))) best = { ov, v };
+      }
+      if (best) { off = best.ov; snapGuides.push({ type: 'point', p: best.v }); }
+      else off = Math.round(off * 1000) / 1000;
     }
-    if (op) await applyEdit(op, { merge: d.merge });
-    endMerge();
-    view.renderOverlay();
+    const a2 = [a[0] + off * nrm[0], a[1] + off * nrm[1]];
+    const slide = (k, other) => {
+      // vertex k of the edge slides along the neighbor edge (k -> other), if there is one
+      const p = orig[k];
+      const moved = [p[0] + off * nrm[0], p[1] + off * nrm[1]];
+      if (!other) return moved;
+      const nd = [other[0] - p[0], other[1] - p[1]];
+      const x = intersectLines(a2, dir, p, nd);
+      return x && dist(x, moved) < 10 * Math.max(Math.abs(off), 0.05) ? x : moved;
+    };
+    const prev = closed ? orig[(i - 1 + n) % n] : i > 0 ? orig[i - 1] : null;
+    const next = closed ? orig[(j + 1) % n] : j + 1 < n ? orig[j + 1] : null;
+    return { [i]: round3(slide(i, prev)), [j]: round3(slide(j, next)) };
+  }
+
+  _moveRect(z, role, i, world, ev) {
+    // corners: 0 (x1,y1) 1 (x2,y1) 2 (x2,y2) 3 (x1,y2); sides: 0 y1, 1 x2, 2 y2, 3 x1
+    const p = snap(this.view, world, ev, [], { zone: z.id });
+    const [[x1, y1], [x2, y2]] = z.points;
+    const pts = [[x1, y1], [x2, y2]];
+    if (role === 'corner') {
+      pts[i === 0 || i === 3 ? 0 : 1][0] = p[0];
+      pts[i < 2 ? 0 : 1][1] = p[1];
+    } else if (i === 0) pts[0][1] = p[1];
+    else if (i === 1) pts[1][0] = p[0];
+    else if (i === 2) pts[1][1] = p[1];
+    else pts[0][0] = p[0];
+    z.points = pts;
+  }
+
+  up() {
+    if (this.drag) endMerge();
+    this.drag = null;
+    snapGuides.length = 0;
+    this.view.renderOverlay();
   }
 
   dblclick(world, ev) {
@@ -236,27 +515,66 @@ export class SelectTool {
     const [role, idx] = hit.dataset.role.split('-');
     const i = +idx;
     if (sel.kind === 'wall') {
-      // on the wall splits it in two, on an end joins it with the one wall there
-      if (role === 'edge') applyEdit({ op: 'split_wall', wall: sel.id, at: world }).then(r => r && toast('Wand geteilt'));
-      else {
-        applyEdit({ op: 'join_wall', wall: sel.id, end: i }).then(r => {
-          if (!r) return;
-          if (r.select) select(r.select);
-          toast('Wände verbunden');
-        });
-      }
+      this._splitOrJoin(role, i, world);
       return;
     }
     if (role === 'vertex') {
       // remove the vertex
       edit(c => {
         const pts = this._points(c, sel);
-        if (pts && pts.length > 3) pts.splice(i, 1);
+        if (pts && pts.length > (sel.kind === 'wall' ? 2 : 3)) pts.splice(i, 1);
       });
     } else if (role === 'edge') {
       // insert a vertex on the edge where it was clicked
-      applyEdit({ op: 'insert_point', zone: sel.id, edge: i, at: world });
+      edit(c => {
+        const pts = this._points(c, sel);
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        const len = dist(a, b) || 1;
+        const q = projectOnLine(world, a, [(b[0] - a[0]) / len, (b[1] - a[1]) / len]);
+        pts.splice(i + 1, 0, round3(q));
+      });
     }
+  }
+
+  // double click on a wall: on the wall splits it in two, on an end joins it with the one wall there
+  _splitOrJoin(role, i, world) {
+    const sel = state.selection;
+    const c = state.config;
+    const w = c.walls[sel.id];
+    if (role === 'edge') {
+      const [a, b] = w.points;
+      const len = dist(a, b) || 1;
+      const q = round3(projectOnLine(world, a, [(b[0] - a[0]) / len, (b[1] - a[1]) / len]));
+      if (dist(q, a) < 0.05 || dist(q, b) < 0.05) return;
+      edit(c => {
+        c.walls[sel.id].points = [a, q];
+        c.walls.push({ points: [q, b], kind: w.kind });
+      });
+      toast('Wand geteilt');
+      return;
+    }
+    const linked = linkedWallVertices(c, w.points[i], sel.id);
+    if (linked.length !== 1 || c.walls[linked[0][0]].kind !== w.kind) {
+      toast(linked.length ? 'Hier treffen mehrere Wände zusammen.' : 'An diesem Ende schließt keine Wand an.');
+      return;
+    }
+    const [wi, wj] = linked[0];
+    const keep = w.points[1 - i], far = c.walls[wi].points[1 - wj];
+    // the doors of both stay on the joined wall (not quite in line: the nearest point of it)
+    const ends = [w.points, c.walls[wi].points];
+    const ids = new Set((c.doors || []).filter(d => ends.some(([a, b]) => distToSegment([d.x, d.y], a, b) < ON_WALL)).map(d => d.id));
+    const len = dist(keep, far) || 1;
+    const dir = [(far[0] - keep[0]) / len, (far[1] - keep[1]) / len];
+    edit(c => {
+      c.walls[sel.id].points = [keep, far];
+      c.walls.splice(wi, 1);
+      for (const door of (c.doors || []).filter(d => ids.has(d.id))) {
+        const t = Math.max(0, Math.min(len, (door.x - keep[0]) * dir[0] + (door.y - keep[1]) * dir[1]));
+        [door.x, door.y] = round3([keep[0] + dir[0] * t, keep[1] + dir[1] * t]);
+      }
+    });
+    select({ kind: 'wall', id: wi < sel.id ? sel.id - 1 : sel.id });
+    toast('Wände verbunden');
   }
 
   key(ev) {
@@ -274,7 +592,11 @@ export class SelectTool {
 export function selectionText(sel) {
   const c = state.config;
   if (!sel) return '';
-  if (sel.kind === 'wall') return c.walls[sel.id]?.kind === 'divider' ? 'Diese Raumgrenze' : 'Diese Wand';
+  if (sel.kind === 'wall') {
+    const w = c.walls[sel.id];
+    const doors = w && (c.doors || []).filter(door => distToSegment([door.x, door.y], ...w.points) < ON_WALL).length;
+    return `${w?.kind === 'divider' ? 'Diese Raumgrenze' : 'Diese Wand'}${doors ? ` mit ${doors === 1 ? 'ihrer Tür' : `ihren ${doors} Türen`}` : ''}`;
+  }
   if (sel.kind === 'door') return 'Diese Tür';
   if (sel.kind === 'zone') return `Die Zone „${c.zones.find(z => z.id === sel.id)?.name ?? ''}“`;
   if (sel.kind === 'layer') return `Das Bild „${c.background.layers.find(l => l.id === sel.id)?.name ?? ''}“`;
@@ -288,8 +610,12 @@ export function deleteSelection() {
   if (isFixedRoom(sel)) { toast('Räume entstehen aus den Wänden. Zum Entfernen die Wand löschen.'); return; }
   edit(c => {
     if (sel.kind === 'zone' || sel.kind === 'room') c.zones = c.zones.filter(z => z.id !== sel.id);
-    else if (sel.kind === 'wall') c.walls.splice(sel.id, 1);
-    else if (sel.kind === 'door') c.doors = c.doors.filter(d => d.id !== sel.id);
+    else if (sel.kind === 'wall') {
+      // its doors go with it: a door is on a wall
+      const [a, b] = c.walls[sel.id].points;
+      c.doors = (c.doors || []).filter(door => distToSegment([door.x, door.y], a, b) >= ON_WALL);
+      c.walls.splice(sel.id, 1);
+    } else if (sel.kind === 'door') c.doors = c.doors.filter(d => d.id !== sel.id);
     else if (sel.kind === 'layer') c.background.layers = c.background.layers.filter(l => l.id !== sel.id);
     else if (sel.kind === 'sensor') {
       const s = c.sensors.find(s => s.id === sel.id);
@@ -299,87 +625,76 @@ export function deleteSelection() {
   select(null);
 }
 
-// ------------------------------------------------- drawing a line of points (walls, polygons)
-
-// The clicks of a wall or polygon being drawn: kept raw, each click asks the core where the points snap
-// to (snap_path) and draws them there; finishing sends the raw clicks with the edit.
-class PathTool {
-  constructor(closed) { this.closed = closed; this.points = []; this.snapped = []; this.cursor = null; this.free = false; }
-
-  async _snap() {
-    const points = this.points.slice();
-    if (!points.length) { this.snapped = []; this.view.renderOverlay(); return; }
-    const snapped = await snapPath(points, this.closed, tolerance(this.view), this.free);
-    if (snapped && points.length === this.points.length) { this.snapped = snapped; this.view.renderOverlay(); }
-  }
-
-  down(world, hit, ev) {
-    this.points.push(world);
-    this.free = !!ev?.shiftKey;
-    this._snap();
-    this.view.renderOverlay();
-    return true;
-  }
-
-  move(world) {
-    this.cursor = world;
-    this.view.renderOverlay();
-  }
-
-  dblclick() { this.finish(); }
-
-  // the points as the core snapped them, the newest click raw until its answer is there
-  _shown() {
-    const pts = this.snapped.length ? [...this.snapped] : [];
-    if (this.points.length > pts.length && this.points.length) pts.push(this.points[this.points.length - 1]);
-    return pts;
-  }
-
-  key(ev) {
-    if (ev.key === 'Enter') { this.finish(); return true; }
-    if (ev.key === 'Escape') {
-      if (this.points.length) { this.points = []; this.snapped = []; this.view.renderOverlay(); } else setTool(null);
-      return true;
-    }
-    if (ev.key === 'Backspace' && this.points.length) { this.points.pop(); this._snap(); return true; }
-    return false;
-  }
-}
-
 // ------------------------------------------------------------------- walls
 
-export class WallTool extends PathTool {
-  constructor(kind = 'wall') { super(false); this.kind = kind; }
+export class WallTool {
+  constructor(kind = 'wall') { this.kind = kind; this.points = []; this.cursor = null; }
   hint() {
     const what = this.kind === 'divider' ? 'die Raumgrenze' : 'die Wand';
     return `Klicken setzt Eckpunkte · Doppelklick oder Enter beendet ${what} · Esc bricht ab · Shift: ohne Einrasten`;
   }
 
-  async finish() {
-    const points = this.points;
-    this.points = []; this.snapped = [];
-    // a double click is two clicks at the same place: the core drops the second
-    if (points.length >= 2) await applyEdit({ op: 'add_walls', points, kind: this.kind, tol: tolerance(this.view), free: this.free }, { quiet: true });
+  down(world, hit, ev) {
+    const p = snap(this.view, world, ev, [this.points[this.points.length - 1]]);
+    const last = this.points[this.points.length - 1];
+    if (!last || dist(last, p) > 0.02) this.points.push(p);
+    this.view.renderOverlay();
+    return true;
+  }
+
+  move(world, ev) {
+    this.cursor = snap(this.view, world, ev, [this.points[this.points.length - 1]]);
     this.view.renderOverlay();
   }
 
+  dblclick() { this.finish(); }
+
+  finish() {
+    if (this.points.length >= 2) {
+      // one wall per straight segment; clicks along a straight line don't split it
+      const pts = [this.points[0]];
+      for (let k = 1; k < this.points.length; k++) {
+        const o = pts[pts.length - 1], a = this.points[k], b = this.points[k + 1];
+        const straight = b && Math.abs((a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])) / (dist(o, b) || 1) < 0.005
+          && dist(o, a) + dist(a, b) < dist(o, b) + 0.005;
+        if (!straight) pts.push(a);
+      }
+      const kind = this.kind;
+      edit(c => { for (let k = 0; k + 1 < pts.length; k++) c.walls.push({ points: [pts[k], pts[k + 1]], kind }); });
+    }
+    this.points = [];
+    this.view.renderOverlay();
+  }
+
+  key(ev) {
+    if (ev.key === 'Enter') { this.finish(); return true; }
+    if (ev.key === 'Escape') {
+      if (this.points.length) { this.points = []; this.view.renderOverlay(); } else setTool(null);
+      return true;
+    }
+    if (ev.key === 'Backspace' && this.points.length) { this.points.pop(); this.view.renderOverlay(); return true; }
+    return false;
+  }
+
   overlay(view) {
-    const pts = this._shown();
-    if (this.cursor && pts.length) pts.push(this.cursor);
+    const pts = this.cursor ? [...this.points, this.cursor] : this.points;
     const out = [];
     if (pts.length > 1) out.push(`<polyline class="wall-draft${this.kind === 'divider' ? ' divider' : ''}" points="${view.pts(pts)}"/>`);
     if (this.cursor) {
       const [x, y] = view.P(...this.cursor);
       out.push(`<circle cx="${x}" cy="${y}" r="4" fill="var(--accent)"/>`);
+      const last = this.points[this.points.length - 1];
+      if (last) out.push(`<text x="${x + 10}" y="${y - 10}" class="zone-label" fill="var(--accent)">${dist(last, this.cursor).toFixed(2)} m</text>`);
     }
+    out.push(guidesOverlay(view));
     return out.join('');
   }
 }
 
 // ------------------------------------------------------------------- zones
 
-export class ZoneTool extends PathTool {
-  constructor(shape, kind) { super(true); this.shape = shape; this.kind = kind; this.dragStart = null; }
+export class ZoneTool {
+  constructor(shape, kind) { this.shape = shape; this.kind = kind; this.points = []; this.cursor = null; this.dragStart = null; }
 
   hint() {
     return {
@@ -389,57 +704,80 @@ export class ZoneTool extends PathTool {
     }[this.shape];
   }
 
+  _anchors() {
+    // polygon: 45° to the previous point and, to close it square, to the first point
+    const n = this.points.length;
+    return n ? [this.points[n - 1], n >= 2 ? this.points[0] : null] : [];
+  }
+
   down(world, hit, ev) {
-    if (this.shape === 'polygon') return super.down(world, hit, ev);
-    this.dragStart = world;
+    const p = snap(this.view, world, ev, this._anchors());
+    if (this.shape === 'polygon') {
+      const last = this.points[this.points.length - 1];
+      if (!last || dist(last, p) > 0.02) this.points.push(p);
+    } else {
+      this.dragStart = p;
+    }
     this.view.renderOverlay();
     return true;
   }
 
+  move(world, ev) {
+    this.cursor = this.shape === 'circle' ? world : snap(this.view, world, ev, this._anchors());
+    this.view.renderOverlay();
+  }
+
   up(world, ev) {
     if (!this.dragStart) return;
-    const a = this.dragStart;
+    const a = this.dragStart, b = this.shape === 'circle' ? world : snap(this.view, world, ev);
     this.dragStart = null;
-    const geom = this.shape === 'rect' ? { points: [a, world] }
-      : { center: a, radius: r3(Math.hypot(world[0] - a[0], world[1] - a[1])), points: [] };
-    this.create(geom, ev);
+    if (this.shape === 'rect' && Math.abs(a[0] - b[0]) > 0.1 && Math.abs(a[1] - b[1]) > 0.1) {
+      this.create({ shape: 'rect', points: [a, b] });
+    } else if (this.shape === 'circle' && dist(a, b) > 0.1) {
+      this.create({ shape: 'circle', points: [], center: a, radius: +dist(a, b).toFixed(3) });
+    }
     this.view.renderOverlay();
   }
+
+  dblclick() { this.finish(); }
 
   finish() {
-    if (this.shape === 'polygon' && this.points.length) this.create({ points: this.points }, { shiftKey: this.free });
-    this.points = []; this.snapped = [];
+    if (this.shape === 'polygon' && this.points.length >= 3) this.create({ shape: 'polygon', points: this.points });
+    this.points = [];
     this.view.renderOverlay();
   }
 
-  async create(geom, ev) {
-    const zone = { id: uid('z'), kind: this.kind, shape: this.shape, ...geom };
-    const r = await applyEdit({ op: 'add_zone', zone, tol: tolerance(this.view), free: !!ev?.shiftKey }, { quiet: true });
-    if (!r) return;
+  create(geom) {
+    const kind = this.kind;
+    const count = state.config.zones.filter(z => z.kind === kind).length + 1;
+    const zone = { id: uid('z'), name: `${ZONE_KINDS[kind].label} ${count}`, kind, ...geom };
+    edit(c => c.zones.push(zone));
     setTool(null);
-    if (r.select) select(r.select);
+    select({ kind: 'zone', id: zone.id });
   }
 
   key(ev) {
-    if (ev.key === 'Escape') { this.points = []; this.snapped = []; this.dragStart = null; setTool(null); return true; }
-    return super.key(ev);
+    if (ev.key === 'Enter') { this.finish(); return true; }
+    if (ev.key === 'Escape') { this.points = []; this.dragStart = null; setTool(null); return true; }
+    return false;
   }
 
   overlay(view) {
     const color = ZONE_KINDS[this.kind].color;
     const style = `fill="${color}" fill-opacity="0.15" stroke="${color}" stroke-width="2" stroke-dasharray="5 3"`;
     if (this.dragStart && this.cursor) {
-      if (this.shape === 'rect') return `<polygon points="${view.pts(zoneOutline({ shape: 'rect', points: [this.dragStart, this.cursor] }))}" ${style}/>`;
+      if (this.shape === 'rect') {
+        const z = { shape: 'rect', points: [this.dragStart, this.cursor] };
+        return `<polygon points="${view.pts(zoneOutline(z))}" ${style}/>`;
+      }
       const [x, y] = view.P(...this.dragStart);
-      const r = Math.hypot(this.cursor[0] - this.dragStart[0], this.cursor[1] - this.dragStart[1]);
-      return `<circle cx="${x}" cy="${y}" r="${r * view.s}" ${style}/>`;
+      return `<circle cx="${x}" cy="${y}" r="${dist(this.dragStart, this.cursor) * view.s}" ${style}/>`;
     }
     if (this.shape === 'polygon' && this.points.length) {
-      const pts = this._shown();
-      if (this.cursor) pts.push(this.cursor);
-      return `<polygon points="${view.pts(pts)}" ${style}/>`;
+      const pts = this.cursor ? [...this.points, this.cursor] : this.points;
+      return `<polygon points="${view.pts(pts)}" ${style}/>` + guidesOverlay(view);
     }
-    return '';
+    return guidesOverlay(view);
   }
 }
 
@@ -448,16 +786,19 @@ export class ZoneTool extends PathTool {
 export class DoorTool {
   hint() { return 'Auf eine Wand klicken, um dort eine Tür zu setzen · Esc bricht ab'; }
   move(world) {
-    this.cursor = world;
+    const w = nearestWall(state.config, world, 2 * SNAP_PX / this.view.s);
+    this.cursor = w && along(w, w.t);
     this.view.renderOverlay();
   }
   down(world) {
-    const id = uid('d');
-    applyEdit({ op: 'add_door', id, at: world, tol: tolerance(this.view, 2) }).then(r => {
-      if (!r) return;
-      setTool(null);
-      select({ kind: 'door', id });
-    });
+    const w = nearestWall(state.config, world, 2 * SNAP_PX / this.view.s);
+    if (!w) { toast('Türen sitzen auf einer Wand (keine Raumgrenze).'); return true; }
+    const width = Math.min(0.9, +w.len.toFixed(3));
+    const [x, y] = along(w, clampDoor(w, w.t, width));
+    const door = { id: uid('d'), x, y, width };
+    edit(c => { c.doors ??= []; c.doors.push(door); });
+    setTool(null);
+    select({ kind: 'door', id: door.id });
     return true;
   }
   overlay(view) {
@@ -474,12 +815,18 @@ export class PlaceSensorTool {
   constructor(id) { this.id = id; }
   hint() { return 'Auf die Position des Sensors klicken. Danach die Blickrichtung am Griff drehen.'; }
   down(world, hit, ev) {
-    const name = sensorById(this.id)?.name || this.id.replace(/^presence-/, '');
-    applyEdit({ op: 'place_sensor', sensor: this.id, name, to: world, tol: tolerance(this.view), free: !!ev?.shiftKey }).then(r => {
-      if (!r) return;
-      setTool(null);
-      select({ kind: 'sensor', id: this.id });
+    const p = snap(this.view, world, ev);
+    edit(c => {
+      let s = c.sensors.find(s => s.id === this.id);
+      if (!s) {
+        s = { id: this.id, name: this.id.replace(/^presence-/, ''), x: 0, y: 0, heading: 90, height: 1.5, mirror: false, scale: 1,
+              fov: 120, range: 6, enabled: true, placed: false };
+        c.sensors.push(s);
+      }
+      s.x = +p[0].toFixed(3); s.y = +p[1].toFixed(3); s.placed = true;
     });
+    setTool(null);
+    select({ kind: 'sensor', id: this.id });
     return true;
   }
   key(ev) { if (ev.key === 'Escape') { setTool(null); return true; } return false; }
@@ -488,7 +835,7 @@ export class PlaceSensorTool {
 // --------------------------------------------------- background 2-point alignment
 
 export class AlignTool {
-  // Click a point on the image, then where it belongs; twice. The core scales, rotates and moves the image.
+  // Click a point on the image, then where it belongs; twice. Scales, rotates and moves the image.
   constructor(layerId) { this.layerId = layerId; this.clicks = []; }
   hint() {
     return ['1/4: Ersten Punkt auf dem Bild anklicken (z. B. eine Hausecke)',
@@ -497,15 +844,32 @@ export class AlignTool {
       '4/4: Wohin gehört der zweite Punkt?'][this.clicks.length];
   }
   down(world, hit, ev) {
-    this.clicks.push(world);
+    this.clicks.push(snap(this.view, world, ev));
     if (this.clicks.length === 4) {
-      applyEdit({ op: 'align_layer', layer: this.layerId, clicks: this.clicks, tol: tolerance(this.view), free: !!ev?.shiftKey }).then(r => {
-        setTool(null);
-        if (r) toast('Bild ausgerichtet');
+      const [a, A, b, B] = this.clicks;
+      edit(c => {
+        const l = c.background.layers.find(l => l.id === this.layerId);
+        // image pixel coordinates of a and b under the current placement
+        const toPx = p => {
+          const r = rad(l.rotation || 0), k = l.scale, dx = p[0] - l.x, dy = p[1] - l.y;
+          return [(dx * Math.cos(r) + dy * Math.sin(r)) / k, (dx * Math.sin(r) - dy * Math.cos(r)) / k];
+        };
+        const pa = toPx(a), pb = toPx(b);
+        const k = dist(A, B) / dist(pa, pb);
+        // world angle of the image vector (u, -v) must match the world vector A->B
+        const r = Math.atan2(B[1] - A[1], B[0] - A[0]) - Math.atan2(-(pb[1] - pa[1]), pb[0] - pa[0]);
+        l.scale = +k.toPrecision(6);
+        l.rotation = +deg(r).toFixed(3);
+        const [wx, wy] = bgToWorld({ x: 0, y: 0, scale: l.scale, rotation: l.rotation }, pa[0], pa[1]);
+        l.x = +(A[0] - wx).toFixed(4); l.y = +(A[1] - wy).toFixed(4);
       });
+      setTool(null);
+      toast('Bild ausgerichtet');
       return true;
     }
-    emit('tool');
+    // the next step's hint ('tool' would make a new tool and forget the clicks: the alignment never
+    // happened until 0.48.0)
+    emit('hint');
     return true;
   }
   overlay(view) {
@@ -518,7 +882,6 @@ export class AlignTool {
 }
 
 // Fit a vacuum map image to its room rectangles: the image's non-empty pixels span the rooms.
-// OPEN (Leon): this reads the image's pixels and computes the placement here; see PLAN.md, Sitzung 13.
 export function autoFitImage(layer, rooms) {
   const size = loadSize(layer.url);
   if (!size?.img) return false;
@@ -545,5 +908,23 @@ export function autoFitImage(layer, rooms) {
   layer.rotation = 0;
   layer.x = +(X0 - k * u0).toFixed(4);
   layer.y = +(Y1 + k * v0).toFixed(4);
+  return true;
+}
+
+// Exact placement from the vacuum's calibration points: robot (0,0), (1000,0), (0,1000) mm -> map pixels
+export function fitFromCalibration(layer, cal) {
+  if (!Array.isArray(cal) || cal.length < 2) return false;
+  const o = cal.find(c => c.vacuum.x === 0 && c.vacuum.y === 0)?.map;
+  const ax = cal.find(c => c.vacuum.x === 1000 && c.vacuum.y === 0)?.map;
+  if (!o || !ax) return false;
+  const du = ax.x - o.x, dv = ax.y - o.y;
+  const k = 1 / Math.hypot(du, dv);
+  const r = Math.atan2(dv, du);  // pixel direction of the robot's +x
+  // world of pixel (0,0): (x, y) = -Rot(r) * (o.x k, -o.y k)
+  const a = o.x * k, b = -o.y * k;
+  layer.scale = +k.toPrecision(6);
+  layer.rotation = +(r * 180 / Math.PI).toFixed(3);
+  layer.x = +(-(a * Math.cos(r) - b * Math.sin(r))).toFixed(4);
+  layer.y = +(-(a * Math.sin(r) + b * Math.cos(r))).toFixed(4);
   return true;
 }

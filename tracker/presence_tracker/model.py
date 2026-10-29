@@ -3,10 +3,10 @@
 All lengths in meters, angles in degrees, in the house frame (the axes of the Dobby map).
 """
 
+import copy
 import json
 import math
 import pathlib
-import uuid
 from dataclasses import asdict, dataclass, field, fields
 
 import presence_core
@@ -45,7 +45,7 @@ class ZoneConfig:
     points: list = field(default_factory=list)
     center: list | None = None
     radius: float = 0.0
-    anchor: list | None = None  # rooms from walls: a point inside, identifies the room after edits
+    anchor: list | None = None  # rooms from walls (the editor's, static/js/floorplan.js): a point inside it
     entry: bool = False  # rooms: outside the home, the public space beyond its door (stairwell; MODEL.md 2)
 
     def to_dict(self) -> dict:
@@ -95,9 +95,9 @@ class TrackerParams:
     target_thresholds: dict = field(default_factory=dict)
 
 # The configuration is checked by the core (presence_core.check_config: what the model can't run with, and
-# the limits of every number, which the web UI reads for its fields; check_edit: an edit in the web UI, also
-# the background image's layers). Here only its problems in the words of the web UI: the labels of the
-# numbers, the sentences.
+# the limits of every number it reads, which the web UI reads for its fields). Here only its problems in the
+# words of the web UI: the labels of the numbers, the sentences. The background image is not the model's: the
+# web UI checks its layers, the core never sees them (model_part).
 LABELS = {
     "params": {
         "target_height": "Höhe des Oberkörpers",
@@ -118,8 +118,6 @@ LABELS = {
     "sensor": {"x": "x", "y": "y", "heading": "Blickrichtung", "height": "Montagehöhe", "fov": "Öffnungswinkel",
                "range": "Reichweite", "scale": "Maßstab"},
     "door": {"width": "Breite der Tür"},
-    "layer": {"x": "x des Bildes", "y": "y des Bildes", "scale": "Maßstab des Bildes", "rotation": "Drehung des Bildes",
-              "opacity": "Deckkraft des Bildes"},
 }
 LABELS["threshold"] = LABELS["params"]
 
@@ -145,6 +143,7 @@ _SENTENCES = {
     ("wall", "not_a_segment"): "Wand {name}: braucht genau zwei verschiedene Punkte.",
     ("wall", "unknown_kind"): "Wand {name}: unbekannte Art {raw!r}.",
     ("door", "no_position"): "Tür ohne endliche Position.",
+    ("door", "not_on_wall"): "Eine Tür liegt auf keiner Wand (Türen sitzen auf Wänden, nicht auf Raumgrenzen).",
     ("zone", "not_an_object"): "Zone ist kein Objekt.",
     ("zone", "no_id"): "Zone ohne ID.",
     ("zone", "id_twice"): "Zonen-ID {raw} doppelt.",
@@ -157,7 +156,6 @@ _SENTENCES = {
     ("zone", "not_at_least_0"): "Zone {name}: Radius ist keine Zahl ≥ 0.",
     ("ld_view", "not_an_object"): "Blick des LD2410C ist kein Objekt.",
     ("ld_view", "not_at_least_0"): "Blick des LD2410C {name}: keine Zahl ≥ 0 ({value}).",
-    ("layer", "not_an_object"): "Bildebene ist kein Objekt.",
 }
 _WHERE = {"threshold": "Raum {name}: ", "sensor": "Sensor {name}: "}
 
@@ -191,70 +189,28 @@ def _plain(v):
     return v
 
 
-def sync_rooms(zones: list, walls: list) -> list:
-    """The zones with the rooms between the walls (the core's: presence_core.sync_rooms; a room keeps its id,
-    name and entry flag while its anchor lies in it); a new room gets a fresh id here."""
-    out = json.loads(presence_core.sync_rooms(json.dumps(zones), json.dumps(walls)))
-    for z in out:
-        if z.get("kind") == "room" and z.get("id") is None:
-            z["id"] = "r" + uuid.uuid4().hex[:7]
-    return out
+def model_part(d: dict) -> dict:
+    """What of a configuration the model reads: all but the background image (the web UI's alone); what is no
+    configuration as it is (the core's check says why)."""
+    return {k: v for k, v in d.items() if k != "background"} if isinstance(d, dict) else d
 
 
-def check(d, layers: bool = True) -> None:
+def check(d) -> None:
     """Rejects what the model can't run with (the core's check: values outside their limits, coordinates that
-    are no finite numbers, ids twice, walls that are no segment, zones of an unknown kind or shape or
-    without what their shape needs, ...): ValueError with the sentence for the web UI. Only what is present
-    is checked; what is missing takes its default. (A circle without a center passed until 0.18 and failed
-    every tick after, also after every restart.) layers: also the background image's layers, which only the
-    web UI reads (an edit in the web UI; the model runs without that check)."""
+    are no finite numbers, ids twice, walls that are no segment, a door on no wall, zones of an unknown kind or
+    shape or without what their shape needs, ...): ValueError with the sentence for the web UI. Only what is
+    present is checked; what is missing takes its default. (A circle without a center passed until 0.18 and
+    failed every tick after, also after every restart.)"""
     try:
-        (presence_core.check_edit if layers else presence_core.check_config)(json.dumps(_plain(d)))
+        presence_core.check_config(json.dumps(_plain(model_part(d))))
     except presence_core.ConfigError as e:
         raise ValueError(message(e.args[0])) from e
 
 
-# what an edit of the plan editor that the core cannot apply (presence_core.edit) says; None: nothing to say
-# (a shape too small to be meant, a wall split at its end)
-EDIT_SENTENCES = {
-    "no_wall": "Türen sitzen auf einer Wand (keine Raumgrenze).",
-    "none_joined": "An diesem Ende schließt keine Wand an.",
-    "many_joined": "Hier treffen mehrere Wände zusammen.",
-    "no_calibration": "Die Karte hat keine Kalibrierpunkte.",
-    "not_found": "Das gibt es nicht mehr (inzwischen gelöscht?).",
-    "bad_op": "Diese Bearbeitung kennt der Server nicht.",
-    "too_small": None,
-    "too_close": None,
-}
-
-
-class EditRefused(ValueError):
-    """An edit the core cannot apply: args (code, sentence or None)."""
-
-
-def edit(d: dict, op: dict) -> dict:
-    """An edit of the plan editor applied by the core (presence_core.edit: snapping, what moves along, ...) to
-    the configuration d (complete: Config.from_dict(...).to_dict()): {"config", "points", "select"}; the config
-    with its rooms (new ones with an id). EditRefused with the code and its sentence."""
-    try:
-        out = json.loads(presence_core.edit(json.dumps(_plain(d)), json.dumps(op)))
-    except ValueError as e:
-        code = str(e.args[0]) if e.args else "bad_op"
-        raise EditRefused(code, EDIT_SENTENCES.get(code, EDIT_SENTENCES["bad_op"])) from e
-    out["config"] = Config.from_dict(out["config"]).to_dict()
-    return out
-
-
 def derive(d: dict) -> dict:
-    """What the web UI draws of the configuration d (the core's: presence_core.derive): walls with their door
-    openings, the doors' openings, lengths, the zones' areas and labels, the sensors' sight areas, the plan,
-    the thresholds."""
-    return json.loads(presence_core.derive(json.dumps(_plain(d))))
-
-
-def coverage(d: dict) -> dict:
-    """The coverage of the configuration d (the core's, of a world built for it: seconds; in a thread)."""
-    return json.loads(presence_core.World(json.dumps(_plain(d)), "{}").coverage())
+    """What the web UI shows of the model of the configuration d (the core's: presence_core.derive): the walls
+    as the radar sees them, the sensors' sight areas, the plan, the thresholds."""
+    return json.loads(presence_core.derive(json.dumps(_plain(model_part(d)))))
 
 
 def limits() -> dict:
@@ -287,12 +243,13 @@ class Config:
     def geometry(self) -> presence_core.Geometry:
         """The core's sensor geometry of this configuration (MODEL.md 2, 4.1; for the simulation and the
         tests): its sensors' frames and fields of view, the walls that block their sight."""
-        return presence_core.Geometry(json.dumps(self.to_dict()))
+        return presence_core.Geometry(self.model_json())
 
     # --- persistence ---
 
     def to_dict(self) -> dict:
-        return {
+        """The stored form, a copy (an edit of it does not change this configuration)."""
+        return copy.deepcopy({
             "sensors": [s.to_dict() for s in self.sensors],
             "zones": [z.to_dict() for z in self.zones],
             "walls": self.walls,
@@ -300,23 +257,26 @@ class Config:
             "background": self.background,
             "ld_view": self.ld_view,
             "params": asdict(self.params),
-        }
+        })
+
+    def model_json(self) -> str:
+        """The configuration as the core reads it (JSON): all but the background image."""
+        return json.dumps(model_part(self.to_dict()))
 
     @classmethod
     def from_dict(cls, d: dict) -> "Config":
         """The configuration as stored or sent (what is missing: the defaults); unchecked (check(d) first for
-        an edit in the web UI). A stored configuration loads as it is; the core checks what the model reads
-        when it builds the world (a layer of the background image out of its limits doesn't stop it)."""
+        an edit in the web UI). The map comes finished from the web UI's editor: the rooms between the walls,
+        the doors on their walls. A stored configuration loads as it is; the core checks what the model reads
+        when it builds the world."""
         def pick(dc, data):
             names = {f.name for f in fields(dc)}
             return dc(**{k: v for k, v in data.items() if k in names})
 
         walls = [{"points": [list(p) for p in w["points"]], "kind": w.get("kind", "wall")} for w in d.get("walls", [])]
-        # rooms are the closed areas between the walls
-        zones = sync_rooms(d.get("zones", []), walls)
         return cls(
             sensors=[pick(SensorConfig, s) for s in d.get("sensors", [])],
-            zones=[pick(ZoneConfig, z) for z in zones],
+            zones=[pick(ZoneConfig, z) for z in d.get("zones", [])],
             walls=walls,
             doors=[{"id": str(x.get("id", "")), "x": float(x["x"]), "y": float(x["y"]),
                     "width": float(x.get("width", 0.9))} for x in d.get("doors", [])],

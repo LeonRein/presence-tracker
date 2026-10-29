@@ -2,6 +2,37 @@
 
 ## Unveröffentlicht
 
+## 0.48.0 (Branch `rust-core`, Grenze berichtigt: der Kern ist das Modell, der Editor die Oberfläche; nicht live)
+
+Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.47.0 (presence-replay und `trace.py` über die
+Hülle). Leons berichtigte Regel (docs/rust-core.md 1): Rust ist das Modell aus der *gespeicherten* Konfiguration und
+den Messwerten, samt dem, was die Oberfläche darüber zeigt; JavaScript ist die Bedienung (der Karteneditor, das
+Hintergrundbild, die Darstellung); Python verbindet und legt ab. 0.47.0 hatte den Editor in den Kern geholt:
+- **Editor wieder in JavaScript** (`tools.js` von 0.46.0 als Ausgangspunkt): Einrasten an Ecken, 45°-Strahlen und Wänden
+  mit Hilfslinien und Länge beim Zeichnen und Ziehen, mitgehende Wände und T-Wände, teilen/verbinden, Zonen, Sensor
+  setzen, Bild an zwei Punkten ausrichten, an den Kalibrierpunkten des Saugroboters oder an seinen Räumen einpassen.
+  Neu `floorplan.js`: die Räume aus den Wänden (Flächen des ebenen Graphen, Einrasten 3 cm, `MIN_ROOM_AREA`, Anker,
+  Namen „Raum n“, IDs), nach jeder Änderung der Wände (`store.edit`); auf allen 655 Fällen der Referenz von Python
+  0.43.0 (alle Test- und Dev-Konfigurationen, je ohne Räume und ohne je eine Wand) Flächen, Anker, IDs, Namen, Reihenfolge
+  gleich. Weg aus dem Kern: `editor.rs`, `floorplan.rs`, `presence_core.edit/sync_rooms/faces`; aus der Hülle
+  `POST /api/preview`, `model.edit/sync_rooms/coverage`; `derived` ohne Längen, Flächen, Etiketten, Türöffnungen.
+- **Türen, eine Regel:** Der Editor setzt eine Tür genau auf ihre Wand und hält sie dort (jede Tür geht mit ihrer Wand
+  mit, wenn Wände gezogen werden – bis 0.47.0 nur die auf der gezogenen Wand –, wird mit ihr gelöscht; eine Wand mit
+  Tür wird keine Raumgrenze). Der Kern liest nur die Wand, auf der der Mittelpunkt liegt (`plan::wall_of_door`, 1 cm
+  für die mm-Rundung, statt der nächsten Wand bis 25 cm), und die Prüfung weist eine Tür auf keiner Wand ab („Eine Tür
+  liegt auf keiner Wand“). Alle Dev- und Testkonfigurationen haben ihre Türen ≤ 0,8 mm auf der Wand.
+- **Modell des gespeicherten Stands:** `PUT /api/config` antwortet mit `derived` (Wände, wie das Radar sie sieht,
+  Sichtfläche je Sensor, Plan, Schwellen); `GET /api/coverage` die Abdeckung der laufenden Welt (`Core.coverage`, kein
+  zweiter Weltbau). Bis eine Änderung gespeichert ist (0,5 s), zeigt die Karte Wände wie gezeichnet und Sensoren mit
+  ihrem Blickfeld wie eingegeben, die Abdeckung erst wieder für den gespeicherten Stand.
+- **Hintergrundbild nur Oberfläche:** Der Kern kennt `background` nicht mehr (Grenztabelle `LAYER`, `check_edit`,
+  `Part::Layer`, das Herausnehmen in `reconfigure.rs` weg); die Hülle reicht dem Kern die Konfiguration ohne es
+  (`model.model_part`/`Config.model_json`); die Oberfläche prüft Lage, Maßstab, Drehung, Deckkraft selbst
+  (`util.LAYER_LIMITS`, `layersError`, Sätze dort). Eine Änderung nur am Bild legt die Hülle ab, ohne den Kern zu
+  fragen (Test).
+- **Fehler behoben:** Die 2-Punkt-Ausrichtung vergaß ihre Klicks (jeder Klick machte das Werkzeug neu) – sie richtete
+  nie etwas aus. `Config.to_dict()` gibt eine Kopie (eine Änderung daran änderte die laufende Konfiguration mit).
+
 ## 0.47.0 (Branch `rust-core`, Regel „Rust rechnet, Python verbindet“ Runde 2: die Oberfläche; nicht live)
 
 Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.46.0 (presence-replay und `trace.py` über die
