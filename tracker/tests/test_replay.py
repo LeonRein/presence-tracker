@@ -5,6 +5,7 @@ of the bindings. Needs the program built (cargo build --release -p presence-repl
 import collections
 import dataclasses
 import json
+import os
 import pathlib
 import subprocess
 
@@ -49,8 +50,11 @@ def shell_trace(config, recording: pathlib.Path, limit: float) -> str:
     return "".join(out)
 
 
-@pytest.mark.skipif(not REPLAY.exists(), reason="presence-replay not built (cargo build --release -p presence-replay)")
+# in CI it must have been built: a missing program fails there
+@pytest.mark.skipif(not REPLAY.exists() and not os.environ.get("CI"),
+                    reason="presence-replay not built (cd core && cargo build --release -p presence-replay)")
 def test_the_replay_traces_what_the_shell_does(tmp_path):
+    assert REPLAY.exists(), "presence-replay not built (cd core && cargo build --release -p presence-replay)"
     config = flat_config(entry=True)
     (tmp_path / "config.json").write_text(json.dumps(config.to_dict()))
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3.0, 2.5), (3.1, 2.5), start=2, pauses={2: 40}))

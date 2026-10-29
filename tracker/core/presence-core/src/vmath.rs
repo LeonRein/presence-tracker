@@ -1,9 +1,11 @@
 //! Arithmetic that has to round as numpy does (MODEL.md 10 "Rechenzeit"): the filter is chaotic, a
 //! sum in another order can decide a hypothesis differently, so sums of densities run in numpy's order.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 /// numpy's sum of a contiguous array: its pairwise summation (numpy/_core/src/umath/loops_utils.h.src),
 /// blocks of up to 128 with 8 accumulators, above that the halves (at multiples of 8) summed apart and
-/// added. The same sum bit for bit as `a.sum()` (kernels._pairwise).
+/// added. The same sum bit for bit as `a.sum()`.
 pub fn pairwise_sum(a: &[f64]) -> f64 {
     let n = a.len();
     if n < 8 {
@@ -140,7 +142,7 @@ fn exp_poly(x: f64) -> f64 {
     f64::from_bits(y.to_bits().wrapping_add(kb << 52))
 }
 
-/// log x (kernels.vlog): what is no positive normal number (0, subnormal, negative, inf, NaN) by libm.
+/// log x: what is no positive normal number (0, subnormal, negative, inf, NaN) by libm.
 pub fn vlog1(x: f64) -> f64 {
     if log_normal(x) {
         log_poly(x)
@@ -153,7 +155,7 @@ pub fn vlog1(x: f64) -> f64 {
     }
 }
 
-/// exp x (kernels.vexp): beyond -708..709 (underflow, overflow, inf, NaN) by libm.
+/// exp x: beyond -708..709 (underflow, overflow, inf, NaN) by libm.
 pub fn vexp1(x: f64) -> f64 {
     if exp_normal(x) { exp_poly(x) } else { x.exp() }
 }

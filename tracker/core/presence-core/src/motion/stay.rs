@@ -1,4 +1,6 @@
-//! Standing and getting up over the tiles (MODEL.md 3.1, 4.1; hidden.Hidden.move).
+//! Standing and getting up over the tiles (MODEL.md 3.1, 4.1).
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::params::Shapes;
 
@@ -21,7 +23,7 @@ impl StayStep {
     }
 }
 
-/// One step of the stays in place (kernels.hidden_stays): walkers stop, still people get up, the
+/// One step of the stays in place: walkers stop, still people get up, the
 /// detectability changes now and then within a stay; who stops begins a fresh stay (its kind from
 /// go_w, its detectability from kappa_w). walk (n), still (L x K x n). With a measured amplitude,
 /// keep (K x n) is multiplied by the share of the still mass after the step that is no fresh draw.
@@ -77,5 +79,64 @@ pub fn stays(walk: &mut [f64], still: &mut [f64], keep: Option<&mut [f64]>, step
                 *x = *x * f + shapes.kappa_w[k] * fr;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::params::Params;
+
+    const STOP: f64 = 0.425;
+    const SWITCH: f64 = 0.05;
+    const DT: f64 = 0.7;
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() <= 1e-12 * b.abs().max(1e-300)
+    }
+
+    #[test]
+    fn on_one_tile_a_walker_stops_into_a_fresh_stay_as_worked_out_by_hand() {
+        // MODEL.md 3.1: walking goes on with exp(-mu dt); who stopped begins a stay of kind l with
+        // go_w[l] and detectability k with kappa_w[k]
+        let s = Shapes::new(&Params::default()); // weights that differ by kind and level
+        let step = StayStep::new(STOP, SWITCH, &s, DT);
+        let (mut walk, mut still) = (vec![1.0], vec![0.0; s.kinds() * s.levels()]);
+        stays(&mut walk, &mut still, None, &step, &s);
+        let stopped = 1.0 - (-STOP * DT).exp();
+        assert!(close(walk[0], (-STOP * DT).exp()), "{walk:?}");
+        for l in 0..s.kinds() {
+            for k in 0..s.levels() {
+                let want = s.go_w[l] * s.kappa_w[k] * stopped;
+                assert!(close(still[l * s.levels() + k], want), "{l} {k}: {still:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn on_one_tile_a_still_person_gets_up_by_their_kind_and_redraws_their_detectability() {
+        // MODEL.md 3.1, 5.3: of a stay of kind l at level k, 1 - exp(-go_l dt) gets up; of the rest
+        // q = 1 - exp(-kappa_switch dt) draws its level anew from kappa_w, the kind stays
+        let s = Shapes::new(&Params::default()); // weights that differ by kind and level
+        let step = StayStep::new(STOP, SWITCH, &s, DT);
+        let (l, k) = (1, 0);
+        let mut still = vec![0.0; s.kinds() * s.levels()];
+        still[l * s.levels() + k] = 1.0;
+        let mut walk = vec![0.0];
+        stays(&mut walk, &mut still, None, &step, &s);
+        let (sits, q) = ((-s.go[l] * DT).exp(), 1.0 - (-SWITCH * DT).exp());
+        assert!(close(walk[0], 1.0 - sits), "{walk:?}");
+        for j in 0..s.levels() {
+            let kept = if j == k { sits * (1.0 - q) } else { 0.0 };
+            assert!(
+                close(still[l * s.levels() + j], kept + sits * q * s.kappa_w[j]),
+                "{j}: {still:?}"
+            );
+        }
+        let others = still.iter().enumerate().filter(|(i, _)| i / s.levels() != l);
+        assert!(
+            others.into_iter().all(|(_, &x)| x == 0.0),
+            "the other kinds get nothing"
+        );
     }
 }

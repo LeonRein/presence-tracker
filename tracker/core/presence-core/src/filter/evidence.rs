@@ -1,6 +1,8 @@
-//! What a sensor's frame says (MODEL.md 4.1, 4.2; filter.Tracker._evidence): no ghost track was born
+//! What a sensor's frame says (MODEL.md 4.1, 4.2): no ghost track was born
 //! meanwhile, its tracks were measured, lost, held without being found again or ended, and nothing
 //! was seen before a start. New tracks and lost ones found again branch the hypotheses (branch.rs).
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::filter::Filter;
 use crate::filter::densities::{TileFactors, TileFactorsBuf};
@@ -19,14 +21,13 @@ use crate::sensors::{SensorSet, SensorState};
 use crate::vmath::{logsumexp, pairwise_sum};
 use crate::world::World;
 
-/// The expectation over a component's sigma points of values at them (Tracker._expect).
+/// The expectation over a component's sigma points of values at them.
 pub fn expect(values: &[f64; 5]) -> f64 {
     values.iter().zip(UNIT_W).fold(0.0, |s, (v, w)| s + v * w)
 }
 
 /// P(the sensor has not found its lost target again within u s | the person stayed where it was
-/// held): measured, a log-normal time to finding it again, and a small share never
-/// (Tracker._no_find).
+/// held): measured, a log-normal time to finding it again, and a small share never.
 pub fn no_find(p: &Params, kind: LostKind, u: f64) -> f64 {
     if u <= 0.0 {
         return 1.0;
@@ -68,7 +69,7 @@ impl Filter {
 
     /// Step 2: a measurement of a track that was not lost. It sits at z = x + c + o + w on its
     /// source (a person or a ghost's source): the exact Kalman update per component; a ghost lives
-    /// on (Tracker._measured). Its positions are used every pos_every s.
+    /// on. Its positions are used every pos_every s.
     pub fn measured(&mut self, world: &World, sensors: &[SensorState], seg: SegId, z: Point, t: f64) {
         let info = *self.tracks.get(seg).expect("a live track");
         let lives: Vec<f64> = world.params.ghost_types.iter().map(|&[_, life]| life).collect();
@@ -110,7 +111,7 @@ impl Filter {
     }
 
     /// A lost track, still held: not found again on anybody near where it is held, nor on the ghost
-    /// it may be, nor on a reflection there (MODEL.md 4.1; Tracker._held).
+    /// it may be, nor on a reflection there (MODEL.md 4.1).
     pub fn held(&mut self, world: &World, si: usize, seg: SegId, z: Point, t: f64) {
         let p = &world.params;
         let lost = self.tracks.get(seg).and_then(|i| i.lost).expect("a lost track");
@@ -150,7 +151,7 @@ impl Filter {
         self.tracks.update(seg, |i| i.lost.as_mut().expect("lost").z = z);
     }
 
-    /// The sensor dropped the track (Tracker._end). For a person this follows from not finding it
+    /// The sensor dropped the track. For a person this follows from not finding it
     /// again (counted while it was held); a ghost died: its hazard. A person left without tracks
     /// goes to the people without one. Returns what the ghost map learns from it.
     pub fn end(&mut self, world: &World, seg: SegId, t: f64, data_lost: bool) -> Ended {
@@ -200,7 +201,7 @@ impl Filter {
     }
 
     /// Step 3: the first frame of a sensor (or after lost data). Who has no track of it now was not
-    /// tracked by it - with the stationary share 1 / (1 + rate x life of a track) (Tracker._censor).
+    /// tracked by it - with the stationary share 1 / (1 + rate x life of a track).
     pub fn censor(&mut self, world: &World, si: usize) {
         let (p, kappa) = (&world.params, &world.shapes.kappa);
         let (lw, ls) = (p.track_life[WALK], p.track_life[STILL]);
@@ -238,7 +239,7 @@ impl Filter {
     }
 }
 
-/// Per hypothesis the expected number of walkers in view of sensor si (Tracker._count_walkers).
+/// Per hypothesis the expected number of walkers in view of sensor si.
 pub(super) fn count_walkers(hyps: &[Hyp], objects: &Objects, holders: &Holders, world: &World, si: usize) -> Vec<f64> {
     let n = world.tiles.n;
     let seen: Vec<f64> = world.sights[si]
@@ -271,7 +272,7 @@ pub(super) fn count_walkers(hyps: &[Hyp], objects: &Objects, holders: &Holders, 
 }
 
 /// The ghost's life goes on by dt: per kind of ghost its survival, the hypothesis weighed by the
-/// change of their mixture (Tracker._ghost_life).
+/// change of their mixture.
 fn ghost_life(hy: &mut Hyp, seg: SegId, lives: &[f64], dt: f64) {
     let g = hy.ghosts.get_mut(&seg).expect("a ghost track's life");
     let before = logsumexp(&g.life);
@@ -282,7 +283,7 @@ fn ghost_life(hy: &mut Hyp, seg: SegId, lives: &[f64], dt: f64) {
 }
 
 /// Per kind of ghost, the log factor of its track ending now beyond what the person's alternative
-/// gets (MODEL.md 4.2; Tracker._ghost_end): the source either still there and not found again,
+/// gets (MODEL.md 4.2): the source either still there and not found again,
 /// S_d(u) S(u), or died at some tau < u before being found again, int f_d(tau) S(tau) dtau - the
 /// S(u) of a held track times S_d(u) + int f_d S / S(u). None if it was not held first.
 fn ghost_end(p: &Params, info: &TrackInfo, t: f64) -> Option<Vec<f64>> {
@@ -323,7 +324,7 @@ fn ghost_end(p: &Params, info: &TrackInfo, t: f64) -> Option<Vec<f64>> {
     )
 }
 
-/// How well sensor si could find its target held at z on somebody in each tile (Tracker._kk_tiles):
+/// How well sensor si could find its target held at z on somebody in each tile:
 /// its sight times the kernel of finding it near the spot, averaged over the tile.
 pub fn near_tiles(world: &World, si: usize, z: Point) -> Vec<f64> {
     let (tiles, grid) = (&world.tiles, &world.sights[si].grid);
@@ -339,7 +340,7 @@ pub fn near_tiles(world: &World, si: usize, z: Point) -> Vec<f64> {
     tiles.average(&at)
 }
 
-/// Per component E[sight x kernel] (Tracker._kk_gauss): the kernel exactly, the sight at the sigma
+/// Per component E[sight x kernel]: the kernel exactly, the sight at the sigma
 /// points of the position weighted by it.
 pub fn near_mixture(world: &World, si: usize, mix: &Mixture, z: Point) -> [f64; 2] {
     let (k, pts) = mix.near_sigma(world, z, world.params.find_radius);
@@ -348,7 +349,7 @@ pub fn near_mixture(world: &World, si: usize, mix: &Mixture, z: Point) -> [f64; 
 }
 
 /// The rates of sensor si per component [STILL, WALK] at its sigma points; 0 where the person has
-/// a measuring track of this sensor - one person, one track per sensor (Tracker._gauss_rates).
+/// a measuring track of this sensor - one person, one track per sensor.
 /// `spots`: the sensors' tracks without those to skip (also skipped as measuring tracks here).
 pub fn mixture_rates(
     world: &World,
@@ -369,4 +370,77 @@ pub fn mixture_rates(
     world
         .rates
         .mixture_rates(&world.sights, spots, users, &mix.sigma(world, Bounds::WallsAndDoors))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::filter::tracks::Lost;
+
+    #[test]
+    fn at_the_median_time_half_of_the_targets_ever_found_again_are_found() {
+        // MODEL.md 4.1: log-normal time to finding again, a share `never` not at all
+        let p = Params::default();
+        for kind in [LostKind::Coast, LostKind::Frozen] {
+            let [median, _, never] = p.refind.of(kind);
+            assert_eq!(1.0 - no_find(&p, kind, median), 1.0 - (never + (1.0 - never) * 0.5));
+            assert_eq!(no_find(&p, kind, 0.0), 1.0);
+            assert!((no_find(&p, kind, 1e12 * median) - never).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn a_held_ghost_ending_is_its_life_beyond_u_or_its_death_before_being_found_again() {
+        // MODEL.md 4.2: per kind of ghost (mean life L) ln(e^(-u/L) + int_0^u e^(-tau/L)/L S(tau) dtau
+        // / S(u)), here the integral by Simpson's rule on 4000 steps of ln tau from 1e-12 u (converged
+        // to ~1e-11); the code's trapezoids on 48 points of tau are 4e-3 off at u = 2 s, L = 3 s
+        // (1e-4 with 2000 points): a wrong term would be off by far more
+        let p = Params::default();
+        let u = 2.0;
+        let lost = Lost {
+            kind: LostKind::Coast,
+            t: 10.0,
+            z: [1.0, 1.0],
+            u: 0.0,
+        };
+        let info = TrackInfo {
+            si: 0,
+            t: 10.0,
+            zt: 10.0,
+            gt: None,
+            var: 0.04,
+            z: lost.z,
+            z0: lost.z,
+            born: 5.0,
+            lost: Some(lost),
+            map_odds: 0.0,
+        };
+        let got = ghost_end(&p, &info, lost.t + u).expect("held");
+        let s = |tau: f64| no_find(&p, lost.kind, tau);
+        let (a, b, n) = ((1e-12 * u).ln(), u.ln(), 4000);
+        let h = (b - a) / n as f64;
+        for (&[_, life], g) in p.ghost_types.iter().zip(&got) {
+            let f = |x: f64| {
+                let tau = x.exp();
+                (-tau / life).exp() / life * s(tau) * tau
+            };
+            let simpson: f64 = (0..=n)
+                .map(|i| {
+                    let w = if i == 0 || i == n {
+                        1.0
+                    } else if i % 2 == 1 {
+                        4.0
+                    } else {
+                        2.0
+                    };
+                    w * f(a + i as f64 * h)
+                })
+                .sum::<f64>()
+                * h
+                / 3.0;
+            let want = ((-u / life).exp() + simpson / s(u)).ln();
+            assert!((g - want).abs() < 1e-2, "life {life}: {g} against {want}");
+        }
+        assert_eq!(ghost_end(&p, &TrackInfo { lost: None, ..info }, 20.0), None, "not held");
+    }
 }

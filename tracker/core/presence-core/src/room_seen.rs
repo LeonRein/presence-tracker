@@ -1,4 +1,4 @@
-//! The room's own LD2450 measures somebody in it (MODEL.md 6, "Belegt"; roomseen.py): an output rule
+//! The room's own LD2450 measures somebody in it (MODEL.md 6, "Belegt"): an output rule
 //! beside the filter. A room is occupied if P(somebody there) is above its threshold or the room's own
 //! LD2450 had a measured target inside the room within the last seen_hold s. Measured: what the filter
 //! itself takes as a measurement (not held by the sensor, not behind a wall or outside all rooms, not
@@ -12,6 +12,8 @@
 //!
 //! Only output: nothing here changes the filter. Rooms and sensors by their ids, so that what was seen
 //! goes on over a new plan.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::geometry::Point;
 use crate::plan::{Plan, RoomIdx};
@@ -40,7 +42,7 @@ fn set(times: &mut Vec<(String, f64)>, id: &str, t: f64) {
 }
 
 impl RoomSeen {
-    /// A new plan: only rooms that are a sensor's own keep when they were seen (RoomSeen.use).
+    /// A new plan: only rooms that are a sensor's own keep when they were seen.
     pub fn follow(&mut self, plan: &Plan) {
         let owned = |room: &str| {
             plan.sensors
@@ -58,7 +60,7 @@ impl RoomSeen {
         }
     }
 
-    /// A frame of sensor si (of the plan) at t with these measured targets (RoomSeen.frame).
+    /// A frame of sensor si (of the plan) at t with these measured targets.
     pub fn frame(&mut self, plan: &Plan, si: usize, t: f64, measured: &[Point]) {
         let sensor = &plan.sensors[si];
         let Some(room) = sensor.own_room.filter(|_| sensor.in_use) else {

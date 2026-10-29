@@ -3,6 +3,8 @@
 //! angles in degrees, in the house frame. The rooms are already the faces between the walls
 //! (floorplan.sync_rooms runs where the plan is edited, in the shell). Every field the shell always
 //! writes is required: no defaults here that could hide a renamed field.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use std::collections::BTreeMap;
 
@@ -305,7 +307,7 @@ pub struct TrackerParams {
     pub lateral_sigma_slope: f64,
     /// m: detections farther behind a wall or outside all rooms are reflections
     pub wall_margin: f64,
-    /// s, and the spread of ln(duration): stays in rooms without a sensor (unobserved.Dwell)
+    /// s, and the spread of ln(duration): stays in rooms without a sensor
     pub dwell_median: f64,
     pub dwell_spread: f64,
     /// s: gaps in the LD2410C presence up to this long are bridged (display)
@@ -342,9 +344,13 @@ impl Default for TrackerParams {
     }
 }
 
-/// cells of 0.1 m the raster of the plan may have at most (4 * 10^6: 200 m x 200 m): a typing error such as
-/// x = 1e6 is refused, not tried
-pub const MAX_CELLS: f64 = 4e6;
+/// cells of 0.1 m the raster of the plan may have at most (10^6: 100 m x 100 m): a typing error such as
+/// x = 1e6 is refused, not tried (the configuration is saved: the app would run into it at every start)
+pub const MAX_CELLS: f64 = 1e6;
+/// m: the farthest a sensor may be said to see (the LD2450 sees 6 m; a sensor's sight is built over its range)
+pub const MAX_RANGE: f64 = 10.0;
+/// sensors at most (a set of sensors is a bit set, SensorSet)
+pub const MAX_SENSORS: usize = 64;
 
 impl Config {
     /// The configuration of the JSON of model.Config.to_dict(), checked field by field (Err names the
@@ -371,8 +377,18 @@ impl Config {
                 (format!("sensor {id}: height"), positive(s.height)),
                 (format!("sensor {id}: scale"), positive(s.scale)),
                 (format!("sensor {id}: fov"), positive(s.fov) && s.fov <= 180.0),
-                (format!("sensor {id}: range"), positive(s.range)),
+                (format!("sensor {id}: range"), positive(s.range) && s.range <= MAX_RANGE),
             ]);
+        }
+        checks.push((
+            format!("at most {MAX_SENSORS} sensors"),
+            self.sensors.len() <= MAX_SENSORS,
+        ));
+        if let Some(id) = first_twice(self.sensors.iter().map(|s| &s.id)) {
+            checks.push((format!("sensor {id}: its id twice"), false));
+        }
+        if let Some(id) = first_twice(self.zones.iter().map(|z| &z.id)) {
+            checks.push((format!("zone {id}: its id twice"), false));
         }
         for z in &self.zones {
             checks.push((
@@ -436,9 +452,49 @@ impl Config {
     }
 }
 
+/// The first id that came before.
+fn first_twice<'a>(ids: impl Iterator<Item = &'a String>) -> Option<&'a String> {
+    let mut seen = std::collections::BTreeSet::new();
+    ids.into_iter().find(|id| !seen.insert(*id))
+}
+
 impl ZoneKind {
     /// A room of the home or an outside room.
     pub fn is_room(self) -> bool {
         matches!(self, Self::Room | Self::OutsideRoom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::config_json;
+
+    const ROOM: &str = r#"[{"id": "a", "name": "A", "kind": "room", "shape": "rect", "points": [[0, 0], [3, 3]]}]"#;
+
+    fn refused(json: &str) -> String {
+        Config::from_json(json).expect_err("refused")
+    }
+
+    #[test]
+    fn a_configuration_the_core_cannot_hold_is_refused_by_name() {
+        // 65 sensors: a SensorSet's assert; ids twice: one sensor's frames went to the other
+        let ids: Vec<String> = (0..=MAX_SENSORS).map(|k| format!("s{k}")).collect();
+        let many: Vec<(&str, &str, Point, f64)> = ids.iter().map(|id| (id.as_str(), "", [0.5, 0.5], 0.0)).collect();
+        assert!(refused(&config_json(&many, ROOM, "[]", "[]")).contains("at most 64 sensors"));
+        let twice = [("s", "", [0.5, 0.5], 0.0), ("s", "", [1.5, 0.5], 0.0)];
+        assert!(refused(&config_json(&twice, ROOM, "[]", "[]")).contains("sensor s: its id twice"));
+        let zones = format!(
+            r#"[{}, {{"id": "a", "name": "B", "kind": "area", "shape": "rect", "points": [[0, 0], [1, 1]]}}]"#,
+            &ROOM[1..ROOM.len() - 1]
+        );
+        let one = [("s", "", [0.5, 0.5], 0.0)];
+        assert!(refused(&config_json(&one, &zones, "[]", "[]")).contains("zone a: its id twice"));
+        // sizes that took all memory in the build: a range of 50 m, a plan of 200 m x 200 m
+        let far = config_json(&one, ROOM, "[]", "[]").replace(r#""range": 6.0"#, r#""range": 50.0"#);
+        assert!(refused(&far).contains("sensor s: range"));
+        let wide = ROOM.replace("[3, 3]", "[200, 200]");
+        assert!(refused(&config_json(&one, &wide, "[]", "[]")).contains("the plan's extent"));
+        Config::from_json(&config_json(&one, ROOM, "[]", "[]")).expect("fits");
     }
 }

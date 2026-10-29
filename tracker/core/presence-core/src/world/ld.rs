@@ -1,6 +1,8 @@
-//! What a sensor's LD2410C sees (MODEL.md 4.3; filter.Tracker._ld_geometry, _ld_tiles): where a
+//! What a sensor's LD2410C sees (MODEL.md 4.3, _ld_tiles): where a
 //! point is off its axis and how far, how much of a person there is in its line of sight and in the
 //! measured view of their room; and what a person in each tile it sees puts into its cells.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use super::raster::{Grid, RoomGrid};
 use crate::geometry::Point;
@@ -27,7 +29,7 @@ pub struct LdSight {
     /// how much of a person at a cell is in its line of sight (0..1)
     pub los: Grid,
     /// per observed room the share of the geometric sight it gets from a person there, if measured
-    /// (filter.Tracker._ld_view; in no room: all of it)
+    /// (in no room: all of it)
     pub view: Option<Vec<f64>>,
     pub tiles: LdTiles,
 }
@@ -81,7 +83,7 @@ mod tests {
             r#"[{"id": "tuer", "x": 4.0, "y": 2.0, "width": 0.9}]"#,
         );
         c.ld_view = view.iter().map(|&(k, v)| (k.to_string(), v)).collect();
-        World::build(&c, Params::default(), 30.0).expect("a world")
+        World::build(&c, Params::default()).expect("a world")
     }
 
     #[test]

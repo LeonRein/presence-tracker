@@ -3,6 +3,8 @@
 //! step); the outputs (MODEL.md 6). Each step lends the filter and the one learner it feeds, so they
 //! learn at the places of the Python filter (docs/rust-core.md 2.0); what the shell's listeners hear is
 //! returned as events.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use serde_json::Value;
 
@@ -19,14 +21,14 @@ use crate::learn::ghost_map::GhostMap;
 use crate::learn::pauses::Pauses;
 use crate::learn::{Learned, LearnedError};
 use crate::outputs::{self, Cloud, Distributions, Entering, HouseNumbers, OutputCache, Person, Source, ZoneNumbers};
-use crate::params::{FRAME, IDLE};
+use crate::params::{FRAME, IDLE, OutputParams};
 use crate::plan::Place;
 use crate::room_seen::RoomSeen;
 use crate::sensors::{SensorFrame, SensorSet, SensorState};
 use crate::vmath::py_hypot;
 use crate::world::World;
 
-/// s: known people who almost surely do not exist join the unknown ones this often (filter.RECYCLE_EVERY)
+/// s: known people who almost surely do not exist join the unknown ones this often
 const RECYCLE_EVERY: f64 = 1.0;
 
 /// What the shell's listeners hear (filter.Tracker.listeners): watching and the ends of tracks only
@@ -83,6 +85,15 @@ impl From<NotFinite> for Fault {
     }
 }
 
+impl std::fmt::Display for Fault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Call(e) => e.fmt(f),
+            Self::NotFinite(e) => e.fmt(f),
+        }
+    }
+}
+
 impl From<CallError> for Fault {
     fn from(e: CallError) -> Self {
         Self::Call(e)
@@ -114,7 +125,7 @@ impl Default for Clock {
     }
 }
 
-/// A sensor silent for more than LOST s whose tracks the filter still has (Tracker._end_silent): they
+/// A sensor silent for more than LOST s whose tracks the filter still has: they
 /// end for lost data at its last frame + LOST.
 #[derive(Debug, Clone, PartialEq)]
 struct DataLost {
@@ -187,13 +198,12 @@ impl Tracker {
         }
     }
 
-    /// A world rebuilt on the same tiles (sensors recalibrated, the outputs' numbers changed): what is
-    /// known stays, and what was learned for the sensors that hang where they hung. Err, and nothing
-    /// changed, if the densities would not fit it: another shape of a density, other tiles
-    /// (Tiles::same_as) or another number of sensors.
-    pub fn set_world(&mut self, world: World) -> Result<(), String> {
-        self.fits(&world)?;
-        self.install(world);
+    /// Only what the outputs read changed (MODEL.md 6; reconfigure's first way): nothing is built and
+    /// nothing starts over, the outputs' cache is void. Err, and nothing changed, if they do not fit.
+    pub fn set_outputs(&mut self, outputs: OutputParams) -> Result<(), String> {
+        outputs.validate()?;
+        self.world.outputs = outputs;
+        self.outputs = OutputCache::default();
         Ok(())
     }
 
@@ -251,7 +261,7 @@ impl Tracker {
         self.sensors[si].last_frame()
     }
 
-    /// No live tracks, nothing moved since t, nothing of the LD2410Cs gathered (Tracker._clear).
+    /// No live tracks, nothing moved since t, nothing of the LD2410Cs gathered.
     fn clear(&mut self, t: f64) {
         self.filter.clear(t);
         for s in &mut self.sensors {
@@ -259,7 +269,7 @@ impl Tracker {
         }
     }
 
-    /// What a run keeps besides the people, after the model started over (Tracker._forget).
+    /// What a run keeps besides the people, after the model started over.
     fn forget_run(&mut self) {
         self.clock.recycled = self.clock.now;
         self.clock.gap_from = None;
@@ -349,7 +359,7 @@ impl Tracker {
         if self.clock.start.is_none() {
             self.start_at(t);
         }
-        self.seen.heard_from(id, t); // its room is not silent (output only, roomseen.py)
+        self.seen.heard_from(id, t); // its room is not silent (output only)
         let Some(si) = self.world.plan.sensors.iter().position(|s| s.id == id) else {
             return Ok(Vec::new());
         };
@@ -405,7 +415,11 @@ impl Tracker {
     /// Time goes on to t (Tracker.step, MODEL.md 3): everybody is moved and weighed by the tracks not
     /// started meanwhile together, at most max_step apart; the known people who almost surely do not
     /// exist are given back every RECYCLE_EVERY s; the walks are counted into the destination map.
-    pub fn step(&mut self, t: f64) -> Result<Vec<Event>, NotFinite> {
+    /// Err for a time that is no number (an endless one would cut endless parts).
+    pub fn step(&mut self, t: f64) -> Result<Vec<Event>, Fault> {
+        if !t.is_finite() {
+            return Err(CallError::Time.into());
+        }
         let mut events = Vec::new();
         if self.clock.start.is_none() || !(t > self.clock.now) {
             return Ok(events);
@@ -435,7 +449,7 @@ impl Tracker {
     }
 
     /// Everybody moved to t (in parts no longer than max_step), then the LD2410Cs that gathered long
-    /// enough are weighed, and their backgrounds learn (Tracker._flush). event: what a frame brings
+    /// enough are weighed, and their backgrounds learn. event: what a frame brings
     /// concerns everybody (what is cached per hypothesis is void even if nobody moves).
     fn flush_to(&mut self, t: f64, event: bool) -> Result<(), NotFinite> {
         let moves = t > self.filter.flushed();
@@ -487,7 +501,7 @@ impl Tracker {
     }
 
     /// The sensors without a frame for more than LOST s whose tracks the filter still has
-    /// (Tracker._end_silent): their tracks end at their last frame + LOST, as the next frame would end
+    ///: their tracks end at their last frame + LOST, as the next frame would end
     /// them, without waiting for it; their LD2450 tracks are forgotten (the next frame is a start).
     /// Until 0.18 they lived on while it was silent: a board that died while tracking somebody held
     /// them as a person with a track for hours.
@@ -516,7 +530,7 @@ impl Tracker {
         Ok(())
     }
 
-    /// The sensor dropped a live track (Tracker._end): for a person this follows from not finding it
+    /// The sensor dropped a live track: for a person this follows from not finding it
     /// again; a ghost died. The ghost map learns where ghosts begin, with P(ghost) as judged now but
     /// without what the map said at the birth (MODEL.md 4.2); a track of a paused time teaches nothing.
     fn end(&mut self, si: usize, seg: SegId, t: f64, data_lost: bool, events: &mut Vec<Event>) {
@@ -539,7 +553,7 @@ impl Tracker {
         });
     }
 
-    /// What the frame of sensor si says (Tracker._evidence, MODEL.md 4.1, 4.2), step by step, the
+    /// What the frame of sensor si says (MODEL.md 4.1, 4.2), step by step, the
     /// ghost map learning in between (docs/rust-core.md 2.0): 1. no ghost track was born meanwhile;
     /// 2. its tracks measured, lost, held, ended; 3. nothing seen before (a start): who has no track
     /// now was not tracked; 4. new tracks and lost ones found again branch the hypotheses - the map at
@@ -718,7 +732,7 @@ impl Tracker {
         &self.sensors[si].ld
     }
 
-    /// Sensors changed, the people's world not (Tracker._recalibrated): the people stay as they are;
+    /// Sensors changed, the people's world not: the people stay as they are;
     /// the changed sensors' tracks end as at lost data (the ghost map learns from them), their next
     /// frame is a start, their LD2410C starts over; then the new world.
     pub fn recalibrate(&mut self, changed: SensorSet, world: World) -> Result<Vec<Event>, Fault> {
@@ -814,16 +828,7 @@ impl Tracker {
 
     // ------------------------------------------------------------------ the filter's bookkeeping
 
-    /// Hypotheses that now say the same about every live track are one (MODEL.md 5.6).
-    pub fn merge(&mut self) {
-        self.filter.merge();
-    }
-
-    /// Keep the strongest hypotheses (MODEL.md 5.1).
-    pub fn prune(&mut self) -> Result<(), NotFinite> {
-        self.filter.prune(&self.world.params)
-    }
-
+    #[cfg(any(test, feature = "testing"))]
     pub fn normalize(&mut self, dropped: f64) -> Result<(), NotFinite> {
         self.filter.normalize(dropped)
     }
@@ -919,7 +924,7 @@ impl Tracker {
         outputs::persons(&self.filter, &self.world)
     }
 
-    /// Where they may be, for the map (Tracker._cloud).
+    /// Where they may be, for the map.
     pub fn clouds(&self) -> Vec<Cloud> {
         outputs::clouds(&self.filter, &self.world)
     }
@@ -1149,6 +1154,22 @@ mod frame_tests {
         tr.frame("wohn", 1.4, &with_ld).expect("a frame");
         assert!(tr.ld_sensor(0).stats().time > 0.0 && tr.ld_collect(0).t == 1.4);
         assert!(tr.sensor_frame(0).ld2410.is_none());
+    }
+
+    #[test]
+    fn a_time_that_is_no_number_is_refused_and_changes_nothing() {
+        // an endless step was cut into usize::MAX parts: out of memory
+        let mut tr = started();
+        tr.frame("wohn", 1.0, &one(0.0, 2500.0)).expect("a frame");
+        for t in [f64::INFINITY, f64::NAN] {
+            assert_eq!(tr.step(t), Err(Fault::Call(CallError::Time)));
+            assert_eq!(
+                tr.frame("wohn", t, &one(0.0, 2500.0)),
+                Err(Fault::Call(CallError::Time))
+            );
+        }
+        assert_eq!(tr.now(), 1.0);
+        tr.step(2.0).expect("finite");
     }
 
     #[test]

@@ -28,7 +28,9 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(testing::hidden_at, m)?)?;
         m.add_function(wrap_pyfunction!(testing::panic_for_test, m)?)?;
     }
-    m.add("SILENT_AFTER", ::presence_core::SILENT_AFTER)?; // the crate, not this function
+    // what only the outputs read: a change of them alone builds nothing (Core.set_outputs)
+    m.add("OUTPUT_PARAMS", ::presence_core::params::OUTPUT_FIELDS)?; // the crate, not this function
+    m.add("WorldChanged", m.py().get_type::<core::WorldChanged>())?;
     // a panic of the core is a BaseException in Python: the shell turns it into an Exception
     m.add("PanicException", m.py().get_type::<PanicException>())?;
     Ok(())

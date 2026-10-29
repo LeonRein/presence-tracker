@@ -20,7 +20,8 @@ import presence_core
 def digests(config, model: str, fingerprint: str) -> dict:
     """{key: sha1 of it} of what the core builds of the configuration and model (JSON; since 0.39 "{}", the
     core's defaults; on 0.38.1 the shell's Tracker._model(), the same numbers)."""
-    core = presence_core.build_export(json.dumps(config.to_dict()), model, 30.0)
+    # since 0.42 without the silent limit (a field of the model); 0.38.1 took it as a third argument
+    core = presence_core.build_export(json.dumps(config.to_dict()), model)
 
     def sha(data: bytes) -> str:
         return hashlib.sha1(data).hexdigest()[:16]

@@ -2,6 +2,8 @@
 //! densities over the tiles of the people without one, and what moves, weighs, branches and merges
 //! them. The filter owns the objects; hypotheses hold indices, the holders say who holds what
 //! (docs/rust-core.md 2).
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 pub mod branch;
 pub mod densities;
@@ -64,7 +66,7 @@ pub struct Filter {
     walkers: WalkerCache,
     /// counts the moves of everybody and the events that concern all hypotheses (moved, an event of
     /// a frame, merged, cut, a gap, a new world, a start): what is derived from all of them, the
-    /// outputs, is current while it stays (filter.Tracker._version). Only counts up: what was derived
+    /// outputs, is current while it stays. Only counts up: what was derived
     /// at another epoch never passes for current.
     epoch: u64,
 }
@@ -82,7 +84,7 @@ impl GroupIds {
 }
 
 /// Per sensor the expected number of walkers in its view per hypothesis, as of the last move of
-/// everybody or event (Tracker._walkers): counted when first needed, void when the hypotheses
+/// everybody or event: counted when first needed, void when the hypotheses
 /// change, everybody moves, or an event concerns everybody.
 #[derive(Debug)]
 struct WalkerCache {
@@ -224,7 +226,7 @@ impl Filter {
         self.walkers.clear();
     }
 
-    /// No live tracks (Tracker._clear): from time t; what was derived before is void.
+    /// No live tracks: from time t; what was derived before is void.
     pub fn clear(&mut self, t: f64) {
         self.tracks = Tracks::new(self.tracks.sensors());
         self.flushed = t;

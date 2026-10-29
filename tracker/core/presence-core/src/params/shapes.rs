@@ -1,11 +1,13 @@
-//! The shapes derived from the model (filtermodel.Shapes): the stays as a mixture of exponentials, the
+//! The shapes derived from the model: the stays as a mixture of exponentials, the
 //! detectability and the LD2410C amplitude on grids of their Gamma priors, joined by a Gaussian copula.
 //! Built as filtermodel.py builds them; numpy's sums and BLAS round otherwise in the last bits.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use super::Params;
 use crate::vmath::{lanczos_lgamma, pairwise_sum};
 
-/// How long a stay lasts and how well it is seen (filtermodel.Shapes): every stay draws its rate of
+/// How long a stay lasts and how well it is seen: every stay draws its rate of
 /// getting up go_l with weight go_w_l (L kinds), its detectability kappa_k with kappa_w_k (K
 /// levels), and with it the LD2410C amplitude (A levels; ka_w the joint prior, K x A).
 #[derive(Debug)]
@@ -38,7 +40,7 @@ impl Shapes {
         self.ka_w.len() / self.kappa.len()
     }
 
-    /// The prior of a stay's kind and detectability, L x K (independent a priori; Shapes.stay_prior).
+    /// The prior of a stay's kind and detectability, L x K (independent a priori).
     pub fn stay_prior(&self, ongoing: bool) -> Vec<f64> {
         let go_w = if ongoing { &self.go_w_ongoing } else { &self.go_w };
         go_w.iter()
@@ -48,7 +50,7 @@ impl Shapes {
 }
 
 impl Shapes {
-    /// The shapes of a model (Shapes.__init__).
+    /// The shapes of a model.
     pub fn new(p: &Params) -> Self {
         let (go_w, go) = stay_rates(p.go_share, p.go_time, &p.stay_points);
         // a stay seen at a random moment is longer than a fresh one (renewal theory): its rate of
@@ -79,7 +81,7 @@ impl Shapes {
 }
 
 /// A mixture of exponentials (weights, rates) for the heavy-tailed stays with survival
-/// (scale / (t + scale))^share: Feldmann & Whitt (1998), matched at the points (filtermodel.stay_rates).
+/// (scale / (t + scale))^share: Feldmann & Whitt (1998), matched at the points.
 fn stay_rates(share: f64, scale: f64, points: &[f64]) -> (Vec<f64>, Vec<f64>) {
     let surv = |t: f64| (scale / (t + scale)).powf(share);
     let ratio = 2.0;
@@ -114,7 +116,7 @@ fn searchsorted(a: &[f64], v: f64) -> usize {
 
 /// Gamma(shape, rate shape) (mean 1) on a grid for its posterior: k cells evenly spaced in log x
 /// between the prior's 1e-3 and 1 - 1e-3 quantiles (the outer cells reach to 0 and infinity), each at
-/// its conditional mean with the prior's mass in it (filtermodel.gamma_log_grid). (nodes, weights)
+/// its conditional mean with the prior's mass in it. (nodes, weights)
 fn gamma_log_grid(shape: f64, k: usize) -> (Vec<f64>, Vec<f64>) {
     let tail = 1e-3;
     let x: Vec<f64> = linspace(1e-8f64.ln(), (60.0 / shape + 60.0).ln(), 200_001)
@@ -155,7 +157,7 @@ fn gamma_log_grid(shape: f64, k: usize) -> (Vec<f64>, Vec<f64>) {
 /// The probability of each pair of cells (a-major) of two variables with these masses in their cells,
 /// joined by a Gaussian copula with correlation rho of the normal scores (Nelsen 2006): the bivariate
 /// normal's mass on the rectangles between the cells' quantiles, both marginals made exact by
-/// iterative proportional fitting (filtermodel.copula_cells).
+/// iterative proportional fitting.
 fn copula_cells(wa: &[f64], wb: &[f64], rho: f64) -> Vec<f64> {
     let (na, nb) = (wa.len(), wb.len());
     if rho == 0.0 {

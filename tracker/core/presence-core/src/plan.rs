@@ -1,9 +1,11 @@
 //! The plan as the people model sees it (MODEL.md 2), derived from the configuration, never stored
-//! (model.Config._places, floorplan.sight_segments, roomseen.own_room): the places - the observed
+//! (model.Config._places, floorplan.sight_segments): the places - the observed
 //! area, the regions without a sensor behind doors, outside -, the doors out of the observed area,
 //! the walls the radar does not see through, which room is whose sensor's, and the rule which
 //! detections are reflections. Every zone of the configuration is in one table with its role; what
 //! refers to a zone holds its index.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::config::{Config, SensorConfig, WallKind, ZoneConfig, ZoneKind};
 use crate::geometry::{Point, Shape, distance_to_segment, line_of_sight};
@@ -11,7 +13,7 @@ use crate::vmath::{py_dist, py_hypot};
 
 /// m: a door belongs to a wall piece this close to its centre (floorplan.DOOR_REACH)
 const DOOR_REACH: f64 = 0.25;
-/// m: a sensor hangs on a wall, its point lies at the room's outline (roomseen.MOUNT_MARGIN)
+/// m: a sensor hangs on a wall, its point lies at the room's outline
 const MOUNT_MARGIN: f64 = 0.3;
 
 /// A zone of the plan (an index into Plan::zones).
@@ -27,7 +29,7 @@ pub struct RoomIdx(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegionIdx(pub usize);
 
-/// Where a person is, as the people model has the house (MODEL.md 2; world.World.places).
+/// Where a person is, as the people model has the house (MODEL.md 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Place {
     /// the area the sensors see
@@ -130,7 +132,7 @@ pub struct Portal {
     pub watch: Point,
 }
 
-/// A sensor as the plan knows it: its own room (roomseen.own_room) and whether it is in use.
+/// A sensor as the plan knows it: its own room and whether it is in use.
 #[derive(Debug)]
 pub struct SensorPlan {
     pub id: String,
@@ -150,7 +152,7 @@ const REMOUNT_SHIFT: f64 = 0.5;
 /// degrees: ... or whose heading turned more than this
 const REMOUNT_TURN: f64 = 30.0;
 
-/// How a sensor hangs and how its reports are read (ghostmap.pose_of): what the learned parts of a
+/// How a sensor hangs and how its reports are read: what the learned parts of a
 /// sensor are kept in.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pose {
@@ -294,7 +296,7 @@ fn casefold(s: &str) -> String {
     s.to_lowercase().replace('ß', "ss")
 }
 
-/// The room of a sensor among the observed rooms (roomseen.own_room): named like the room's id, else
+/// The room of a sensor among the observed rooms: named like the room's id, else
 /// like its name, else the one it is mounted in (within MOUNT_MARGIN), if exactly one.
 fn own_room(s: &SensorConfig, rooms: &[&ZoneConfig]) -> Option<RoomIdx> {
     let name = s.name.trim();
@@ -405,7 +407,7 @@ impl Plan {
         }
     }
 
-    /// The names of the places: "observed", the regions' ids, "outside" (world.World.places).
+    /// The names of the places: "observed", the regions' ids, "outside".
     pub fn place_names(&self) -> Vec<&str> {
         std::iter::once("observed")
             .chain(self.regions.iter().map(|r| r.id.as_str()))
@@ -440,12 +442,12 @@ impl Plan {
             .filter(|z| matches!(z.role, ZoneRole::Observed(_) | ZoneRole::InRegion(_) | ZoneRole::Area))
     }
 
-    /// The observed room a point is in: the first whose outline holds it (roomseen.RoomSeen.frame).
+    /// The observed room a point is in: the first whose outline holds it.
     pub fn room_at(&self, p: Point) -> Option<RoomIdx> {
         self.observed().position(|z| z.shape.contains(p, 0.0)).map(RoomIdx)
     }
 
-    /// The place of a point: the first room (of the home or outside) holding it (World.labels).
+    /// The place of a point: the first room (of the home or outside) holding it.
     pub fn place_at(&self, p: Point) -> Option<Place> {
         self.zones
             .iter()
@@ -741,7 +743,7 @@ mod tests {
                 (Place::Region(RegionIdx(1)), [5.5, 4.0])
             ]
         );
-        // the walls a person meets (world.World.crosses_wall): none through the door to the bath, one beside it
+        // the walls a person meets: none through the door to the bath, one beside it
         let walls = crate::geometry::Walls::new(
             plan.walls
                 .iter()

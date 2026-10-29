@@ -12,17 +12,20 @@ import json
 import math
 import os
 import pathlib
+import platform
 
 import numpy as np
 import pytest
 
 import presence_core
-from presence_tracker.filter import SILENT_AFTER, Tracker, plan
+from presence_tracker.filter import Tracker, plan
 from presence_tracker.model import Config
 
 from fixture import FIXTURES, fixture
 from test_existence import _nook_config
 from test_filter import flat_config
+
+pytestmark = pytest.mark.hooks  # build_export, hidden_at
 from test_frames import room_config
 from test_roomseen import open_plan
 
@@ -73,6 +76,8 @@ IDS = [name for name, *_ in CONFIGS]
 
 @pytest.mark.parametrize("name, config, build, reflected", CONFIGS, ids=IDS)
 def test_the_core_builds_the_world_0381_built(name, config, build, reflected):
+    if platform.machine() not in ("x86_64", "AMD64"):  # the digests are bits: of amd64 (x86-64-v3), as built
+        pytest.skip("the digests are of amd64's floating point")
     got = core_build.digests(config, "{}", Tracker(config).tiles()["id"])
     assert sorted(got) == sorted(build)
     assert [k for k in build if got[k] != build[k]] == []  # the parts that differ
@@ -83,7 +88,7 @@ def test_the_core_builds_the_world_0381_built(name, config, build, reflected):
 
 @pytest.mark.parametrize("name, config, build, reflected", CONFIGS, ids=IDS)
 def test_the_plan_view_is_the_cores_build(name, config, build, reflected):
-    core = presence_core.build_export(json.dumps(config.to_dict()), "{}", float(SILENT_AFTER))
+    core = presence_core.build_export(json.dumps(config.to_dict()), "{}")
     view = plan(config)
     assert [tuple(r) for r in core["regions"]] == [(rid, r["name"], r["rooms"], r["exits"])
                                                     for rid, r in view["regions"].items()]

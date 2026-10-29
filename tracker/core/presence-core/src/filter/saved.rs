@@ -3,6 +3,8 @@
 //! zlib, base64 - 6 kB for a person instead of 80 kB as float32 (7.10. 08:06, 9 densities); over all 18 000
 //! masses of a person the rounding stays below 5e-4. What 0.38.1 wrote, the core reads, and the reverse
 //! (the zlib bytes may differ). A state fits only tiles with the same fingerprint (World::fingerprint).
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use half::f16;
 use serde_json::{Map, Value, json};
@@ -12,7 +14,7 @@ use crate::filter::{PeopleState, SavedHyp};
 use crate::formats::{field, number, object, pack, unpack};
 use crate::learn::LearnedError;
 
-/// Shares of a density below this are saved as 0 (hidden.SAVE_CUT).
+/// Shares of a density below this are saved as 0.
 const SAVE_CUT: f64 = 1e-6;
 
 impl PeopleState {
@@ -101,7 +103,7 @@ fn unpack_f16(text: &Value, name: &'static str, n: usize, scale: f64) -> Result<
     }
 }
 
-/// One density as saved (Hidden.to_dict): the masses by their sum (`scale`, 1 if 0), the amplitudes of
+/// One density as saved: the masses by their sum (`scale`, 1 if 0), the amplitudes of
 /// the stays only if a track measured some (their levels as they are).
 fn density_json(d: &DensityData) -> Result<Value, String> {
     let masses = || d.walk.iter().chain(&d.still).chain(&d.region).chain([&d.out]);
@@ -132,7 +134,7 @@ fn density_json(d: &DensityData) -> Result<Value, String> {
     Ok(Value::Object(out))
 }
 
-/// One density of the file (Hidden.from_dict): the masses times `scale`; the amplitudes per level and
+/// One density of the file: the masses times `scale`; the amplitudes per level and
 /// tile normalized over the amplitudes, the prior (g = 1) where nothing is left; r of the unknown ones 1.
 fn read_density(d: &Map<String, Value>, shape: &DensityShape, kind: Kind) -> Result<DensityData, LearnedError> {
     let scale = number(field(d, "scale")?, "scale", 0.0).and_then(|s| {

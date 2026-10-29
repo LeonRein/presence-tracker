@@ -1,7 +1,10 @@
 """The filter (filter.py, MODEL.md) on simulated scenes in a small flat: one room with two
 sensors, a balcony and a hallway behind doors."""
 
+import os
+
 import numpy as np
+import pytest
 
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
@@ -158,6 +161,30 @@ def test_a_recalibrated_sensor_keeps_the_people():
     assert len(dist) > 2 and dist[2] > 0.9, dist
 
 
+def test_reconfigure_builds_nothing_for_the_outputs_and_starts_over_only_in_another_world(monkeypatch):
+    """docs/rust-core.md 4, reconfigure's ways: what only the outputs read is set in the core, no world is
+    built (it was, in full); a configuration the core cannot build is an error, not another world to start
+    over in (every ValueError was); sensors that change which rooms are observed: another world
+    (WorldChanged), the model starts over."""
+    import presence_core
+    config = flat_config(entry=True)
+    tr = Tracker(config, start=0.0, people=["anywhere"])
+    d = config.to_dict()
+    d["params"].update(light_cost=3.0, lead_time=3.0)
+    with monkeypatch.context() as m:
+        m.setattr(tr, "_world", lambda: pytest.fail("a world was built"))
+        assert not tr.reconfigure(Config.from_dict(d))
+    assert tr._c.thresholds()[0] == 3.0 / 4.0
+    bad = {**d, "sensors": [{**s, "range": 50.0} for s in d["sensors"]]}  # beyond what the core holds
+    with pytest.raises(ValueError, match="range"):
+        tr.reconfigure(Config.from_dict(bad))
+    assert tr.reconfigured_from is None  # not taken for another world: nothing restarted
+    assert not issubclass(presence_core.WorldChanged, ValueError)
+    tr.reconfigure(Config.from_dict(d))
+    blind = {**d, "sensors": [{**s, "enabled": False} for s in d["sensors"]]}
+    assert tr.reconfigure(Config.from_dict(blind))  # no sensor sees the tiles: WorldChanged, started over
+
+
 def test_a_short_track_in_an_empty_room_is_a_ghost():
     # nobody home, known: a target shows up mid-room for a second and is gone again
     config = flat_config()
@@ -257,6 +284,14 @@ def test_a_sitter_the_ld2450_loses_stays_while_the_ld2410c_sees_them():
         if t > a.waypoints[2][0] + 180 and not samples:
             samples.append(1 - crowd.count_distribution()["wohn"][0])
     assert samples[0] > 0.9, samples
+
+
+@pytest.mark.skipif(not os.environ.get("PT_RELEASE_WHEEL"), reason="against the release wheel only (CI)")
+def test_the_release_wheel_has_no_test_hooks():
+    import presence_core
+    hooks = ["build_export", "hidden_at", "panic_for_test"]
+    assert [h for h in hooks if hasattr(presence_core, h)] == []
+    assert [h for h in ("normalize", "spoil_weights_for_test", "ld_last") if hasattr(presence_core.Core, h)] == []
 
 
 def test_the_app_and_its_config_have_one_version():

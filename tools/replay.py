@@ -1,7 +1,7 @@
 """Replay recordings through the tracker and print what it shows, for looking into a situation.
 
 usage: python tools/replay.py --config FILE --from "YYYY-MM-DD HH:MM:SS" --to "..." [--show FROM]
-                              [--every S] [--seed N] [--learned FILE] [--people FILE] [--recordings DIR]
+                              [--every S] [--learned FILE] [--people FILE] [--recordings DIR]
                               [--tracker DIR] [--pauses FILE]
        python tools/replay.py --report FILE.jsonl.gz [--from ...] [--to ...] [--show ...] [--every S]
 
@@ -50,7 +50,6 @@ def main():
     ap.add_argument("--to", dest="end")
     ap.add_argument("--show")
     ap.add_argument("--every", type=float, default=1.0)
-    ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--pauses", help="intervals in which learning was paused (tools/vacuum_history.py)")
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(a.tracker))
@@ -76,7 +75,7 @@ def main():
         ap.error("--config, --from and --to (or --report)")
     else:
         config = Config.from_dict(json.load(open(a.config)))
-    crowd = Tracker(config, seed=a.seed)
+    crowd = Tracker(config)
     # Lernen pausieren: in a report the app's intervals, else the recorded switch and --pauses
     crowd.pauses = pause.Pauses(meta.get("pauses")) if a.report else pause.load(a.pauses)
     if a.report:

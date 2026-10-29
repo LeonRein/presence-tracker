@@ -1,5 +1,7 @@
 //! The filter's bookkeeping (test_hypotheses, MODEL.md 5.1, 5.6) and its events, with the
 //! invariants checked after each of them.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use super::branch::{Category, Found, Frame};
 use super::densities::{DensityData, DensityId, Kind};
@@ -272,7 +274,7 @@ fn the_same_events_give_the_same_bits() {
 
 #[test]
 fn saving_the_people_changes_nothing() {
-    // people_state works on copies: reading a stored amplitude settles it (Hidden.amp), mixing in a
+    // people_state works on copies: reading a stored amplitude settles it, mixing in a
     // part gone through a door does too (0.28: the live run went another way after every save)
     let world = testing::flat();
     let mut f = filter(&world, 1).0;
@@ -326,7 +328,7 @@ fn saving_the_people_changes_nothing() {
 #[test]
 fn giving_back_keeps_the_mass() {
     // a known person refuted (r < give_up) joins the unknown ones with r x their density, weighted
-    // by their hypothesis (Tracker._recycle); the others stay
+    // by their hypothesis; the others stay
     let world = testing::flat();
     let mut f = Filter::new(shape(&world), world.sights.len());
     let objects = f.objects_mut();
@@ -413,4 +415,39 @@ fn a_track_whose_ghost_alternative_is_all_but_gone_ends() {
     f.check().expect("ended");
     assert!(f.tracks().is_empty() && f.hyps().iter().all(|h| h.tracks.is_empty()));
     assert!(0.0 <= ended.p_ghost && ended.p_ghost < 1e-300);
+}
+
+#[test]
+fn somebody_who_neither_moves_nor_changes_is_weighed_by_exp_of_minus_their_rate_over_the_move() {
+    // MODEL.md 4.1: who gets no track is weighed by exp(-rate dt), the still at detectability
+    // kappa_k by kappa_k x the tile's rate. Nobody gets up and nobody redraws their level, so a
+    // person standing in one tile meets the same rate in each part of the move: over the move
+    // (3 parts of max_step) their log factor is -kappa_k x rate x its length.
+    let mut world = testing::flat();
+    world.shapes.go = vec![0.0; world.shapes.kinds()];
+    world.params.kappa_switch = 0.0;
+    let s = shape(&world);
+    let (c, k) = (65, 1); // the tile at (3.25, 2.75), the higher detectability
+    let mut still = vec![0.0; s.still_len()];
+    still[s.still_row(0, k)][c] = 1.0;
+    let mut f = Filter::new(s, world.sights.len());
+    let densities = &mut f.objects_mut().densities;
+    let nobody = densities.alloc(Kind::Intensity);
+    let person = densities.insert(DensityData {
+        still,
+        ..anywhere(&world, Kind::Person, 1.0)
+    });
+    f.set_hyps(vec![Hyp::new(0.0, vec![person], nobody)]);
+    f.set_flushed(1.0);
+    let span = 2.5 * world.params.max_step;
+    f.flush(&world, &watching(0.0), 1.0 + span);
+    let rate: f64 = world
+        .sights
+        .iter()
+        .map(|sight| sight.base_tiles()[crate::params::STILL][c])
+        .sum();
+    assert!(rate > 0.0, "both sensors see the tile");
+    let want = -world.shapes.kappa[k] * rate * span;
+    let got = f.hyps()[0].logw;
+    assert!((got - want).abs() <= 1e-12 * want.abs(), "{got} against {want}");
 }

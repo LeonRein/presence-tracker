@@ -2,7 +2,7 @@
 name = "presence-tracker"
 version = "0.1.0"
 description = "Multi-sensor radar presence tracker for Home Assistant"
-requires-python = ">=3.12"
+requires-python = ">=3.13"  # as the core's wheel (abi3-py313) and the image
 dependencies = [
     "numpy>=2.0",
     "aiomqtt>=2.3",
@@ -19,7 +19,7 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
-# the tests need the core with its test hooks:
+# the tests marked "hooks" need the core with its test hooks (tests/conftest.py):
 # uv run maturin develop --uv --release --features testing -m core/presence-py/Cargo.toml
 testpaths = ["tests"]
 pythonpath = [".", "tests"]

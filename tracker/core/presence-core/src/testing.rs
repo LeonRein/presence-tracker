@@ -126,6 +126,11 @@ pub const PARAMS: &str = r#"{"target_height": 1.0, "range_sigma_base": 0.15, "ra
 /// A configuration as the shell writes it (every field): these sensors (id, name, where, heading;
 /// placed), the zones, walls and doors as JSON.
 pub fn config(sensors: &[(&str, &str, Point, f64)], zones: &str, walls: &str, doors: &str) -> Config {
+    Config::from_json(&config_json(sensors, zones, walls, doors)).expect("a test configuration")
+}
+
+/// The JSON of `config`.
+pub fn config_json(sensors: &[(&str, &str, Point, f64)], zones: &str, walls: &str, doors: &str) -> String {
     let sensors = sensors
         .iter()
         .map(|(id, name, [x, y], heading)| {
@@ -136,10 +141,9 @@ pub fn config(sensors: &[(&str, &str, Point, f64)], zones: &str, walls: &str, do
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let json = format!(
+    format!(
         r#"{{"sensors": [{sensors}], "zones": {zones}, "walls": {walls}, "doors": {doors}, "ld_view": {{}}, "params": {PARAMS}}}"#
-    );
-    Config::from_json(&json).expect("a test configuration")
+    )
 }
 
 /// A wall (JSON) from a to b.
@@ -178,7 +182,7 @@ pub fn flat_config() -> Config {
 /// of TILE m nobody walks between, two sensors in the bottom corners that see the whole room. The
 /// room is "wohn", sensor 0 ("wohn") its own; an area "sofa" in its upper left corner (0..2 x 3..5).
 pub fn flat() -> World {
-    World::from_export(flat_export(), &flat_config(), 30.0).expect("the test world fits")
+    World::from_export(flat_export(), &flat_config()).expect("the test world fits")
 }
 
 /// The export of `flat`.

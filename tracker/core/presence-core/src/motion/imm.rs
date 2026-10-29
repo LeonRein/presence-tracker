@@ -8,6 +8,8 @@
 //! discretizations, Saerkkae & Solin 2019 ex. 6.2). With walls and doors also: walls reflect what
 //! moves across them, and the walkers' share that walking takes through a door goes to the part
 //! gone through a door.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use std::f64::consts::PI;
 
@@ -18,7 +20,7 @@ use crate::params::{Params, STILL, Shapes, WALK};
 use crate::vmath::pairwise_sum;
 use crate::world::World;
 
-/// The numbers of one step dt (gauss.step_params).
+/// The numbers of one step dt.
 #[derive(Debug)]
 pub struct ImmStep {
     dt: f64,
@@ -84,7 +86,7 @@ impl Square {
     }
 }
 
-/// F and Q of one step per mode (kernels.motion) for d dimensions per axis: standing, the position
+/// F and Q of one step per mode for d dimensions per axis: standing, the position
 /// diffuses; walking, the OU velocity, exactly discretized; the tracks' wandering offsets o (of these
 /// slots) decay and get their noise.
 fn transition<'a>(d: usize, slots: impl Iterator<Item = &'a Slot>, step: &ImmStep) -> ([Square; 2], [Square; 2]) {
@@ -131,7 +133,7 @@ fn without_velocity(g: &Kalman, v: f64) -> Kalman {
     out
 }
 
-/// The linear prediction F, Q of one mode per axis (kernels.imm_predict).
+/// The linear prediction F, Q of one mode per axis.
 fn linear(g: &Kalman, f: &Square, q: &Square) -> Kalman {
     let d = g.dim();
     let mut out = Kalman::zeros(d);
@@ -233,7 +235,7 @@ pub fn predict(
     mix.logw = [l0, l1];
 }
 
-/// Where a walker's walking component is h s ahead (Tracker._walk_ahead; MODEL.md 6 "wird betreten"):
+/// Where a walker's walking component is h s ahead (MODEL.md 6 "wird betreten"):
 /// the OU velocity of 3.2 over one step h, the walls reflecting the move as in the prediction (door
 /// gaps are no wall). The mean and variance per axis of its position.
 pub fn walk_ahead(world: &World, walking: &Kalman, h: f64) -> (Point, Point) {
@@ -245,7 +247,7 @@ pub fn walk_ahead(world: &World, walking: &Kalman, h: f64) -> (Point, Point) {
     (after.pos(), after.pos_var())
 }
 
-/// Walls reflect the walking component's motion (kernels.wall_moves; MODEL.md 3.2, 5.2): the
+/// Walls reflect the walking component's motion (MODEL.md 3.2, 5.2): the
 /// augmented unscented transform with the 16 cubature points of position, velocity and noise per
 /// axis (Saerkkae & Svensson 2023 alg. 8.16 / 8.11), moved, mirrored at the walls (the velocity
 /// too), matched again; the offsets follow by regression. Where the component already was stays as

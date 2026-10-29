@@ -1,5 +1,7 @@
 //! Where the people are when the filter starts (MODEL.md 5.3): nothing known, known people at given
 //! places (tests and tools), or a saved state (filter.Tracker.reset_people, restore_people).
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::filter::densities::{Densities, DensityData, DensityId, DensityMut, DensityShape, Kind};
 use crate::filter::hyp::Hyp;
@@ -36,9 +38,9 @@ fn standing_anywhere(d: &mut DensityMut, world: &World, share: f64) {
     }
 }
 
-/// Nothing known (Hidden.anywhere): standing in view (a third), behind a door (a third: each region
+/// Nothing known: standing in view (a third), behind a door (a third: each region
 /// alike, the stay seen at a random time), or out (the rest); a person normalized, the unknown ones
-/// expecting `people` (Undetected.anywhere).
+/// expecting `people`.
 fn anywhere(densities: &mut Densities, world: &World, kind: Kind, people: f64) -> DensityId {
     let id = densities.alloc(kind);
     let mut d = densities.get_mut(id);
@@ -67,7 +69,7 @@ fn anywhere(densities: &mut Densities, world: &World, kind: Kind, people: f64) -
     id
 }
 
-/// A known person at a place (Hidden.at_place): in view standing anywhere alike, in a region at the
+/// A known person at a place: in view standing anywhere alike, in a region at the
 /// start of a stay seen at a random time, or out.
 fn at_place(densities: &mut Densities, world: &World, place: Place) -> DensityId {
     let id = densities.alloc(Kind::Person);
@@ -173,7 +175,7 @@ impl Filter {
             .into_iter()
             .map(|d| {
                 let id = self.objects.densities.insert(d);
-                // a person's masses sum to 1 (Hidden.from_dict); the unknown ones are as they were
+                // a person's masses sum to 1; the unknown ones are as they were
                 self.objects.densities.get_mut(id).normalize();
                 id
             })

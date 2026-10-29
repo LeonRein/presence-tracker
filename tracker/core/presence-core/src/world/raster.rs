@@ -1,9 +1,11 @@
-//! The 0.1 m raster of the plan (world.World, MODEL.md 2): values per cell, looked up at points.
+//! The 0.1 m raster of the plan (MODEL.md 2): values per cell, looked up at points.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::geometry::Point;
 use crate::plan::RoomIdx;
 
-/// m: side of a raster cell (world.CELL)
+/// m: side of a raster cell
 pub const CELL: f64 = 0.1;
 
 #[derive(Debug, Clone, Copy)]
@@ -16,7 +18,7 @@ pub struct Raster {
 }
 
 impl Raster {
-    /// The cell of a point, clipped to the raster (world.World.cell_of), as an index into a grid.
+    /// The cell of a point, clipped to the raster, as an index into a grid.
     pub fn cell_of(&self, p: Point) -> usize {
         let clip = |v: f64, n: usize| (v as i64).clamp(0, n as i64 - 1) as usize;
         let i = clip((p[0] - self.x0) / CELL, self.nx);
@@ -24,7 +26,7 @@ impl Raster {
         i * self.ny + j
     }
 
-    /// The centre of cell (i, j) (world.World.zone_mask).
+    /// The centre of cell (i, j).
     pub fn centre(&self, i: usize, j: usize) -> Point {
         [self.x0 + (i as f64 + 0.5) * CELL, self.y0 + (j as f64 + 0.5) * CELL]
     }
@@ -56,7 +58,7 @@ impl Grid {
         &self.values
     }
 
-    /// The value in the cell of a point (kernels.grid_at).
+    /// The value in the cell of a point.
     pub fn at(&self, p: Point) -> f64 {
         self.values[self.raster.cell_of(p)]
     }

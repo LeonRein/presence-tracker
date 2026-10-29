@@ -6,8 +6,12 @@ build-backend = "maturin"
 name = "presence-core"
 description = "The Bayes filter of the presence tracker in Rust (module presence_core)"
 requires-python = ">=3.13"
-dependencies = ["numpy>=2.0"]
+dependencies = []
 dynamic = ["version"]
+
+[project.optional-dependencies]
+# the test hooks (feature "testing") give numpy arrays; the release wheel needs nothing
+testing = ["numpy>=2.0"]
 
 [tool.maturin]
 module-name = "presence_core"

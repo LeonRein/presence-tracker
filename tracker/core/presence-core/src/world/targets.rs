@@ -1,5 +1,7 @@
-//! The zones "wird betreten" is computed for (filter.Tracker._entry_targets): the observed rooms, then
+//! The zones "wird betreten" is computed for: the observed rooms, then
 //! the areas - per zone its cells, and which sample points of the tiles lie in it.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::plan::{Plan, RoomIdx};
 use crate::world::raster::{Raster, RoomGrid};

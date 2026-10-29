@@ -1,5 +1,7 @@
 //! Plane geometry of the plan (MODEL.md 2): walls as segments, moves mirrored at them; the outlines of
 //! the zones.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::vmath::py_hypot;
 
@@ -26,7 +28,7 @@ impl Walls {
         self.segs.is_empty()
     }
 
-    /// Per move p0 -> p1, does it cross a wall (world.World.crosses_wall, kernels.crosses_wall)? Only
+    /// Per move p0 -> p1, does it cross a wall? Only
     /// walls whose box meets the box of all moves are tried.
     pub fn crosses(&self, p0: &[Point], p1: &[Point]) -> Vec<bool> {
         let mut out = vec![false; p0.len()];
@@ -58,7 +60,7 @@ impl Walls {
         out
     }
 
-    /// world.World.reflect (kernels.reflect): each move p0 -> p1 mirrored at the first wall it
+    /// world.World.reflect: each move p0 -> p1 mirrored at the first wall it
     /// crosses, into `out`, with that wall's unit normal in `normal` ([0, 0]: none). Returns whether
     /// any move met a wall. Only walls whose box meets the box of all moves are tried.
     pub fn reflect(&self, p0: &[Point], p1: &[Point], out: &mut [Point], normal: &mut [Point]) -> bool {

@@ -150,7 +150,7 @@ SENSOR_LIMITS = {
     "heading": ("Blickrichtung", -720.0, 720.0, False, False),
     "height": ("Montagehöhe", 0.1, 4.0, False, False),
     "fov": ("Öffnungswinkel", 0.0, 180.0, True, False),
-    "range": ("Reichweite", 0.0, 20.0, True, False),
+    "range": ("Reichweite", 0.0, 10.0, True, False),  # as the core (config.rs MAX_RANGE)
     "scale": ("Maßstab", 0.25, 4.0, False, False),
 }
 DOOR_LIMITS = {"width": ("Breite der Tür", 0.0, 20.0, True, False)}

@@ -1,4 +1,4 @@
-//! Where a walker goes next ("Ziel", MODEL.md 6; destination.py): a map, learned by the app, of where
+//! Where a walker goes next ("Ziel", MODEL.md 6): a map, learned by the app, of where
 //! the walks went from each place, in each direction and at each speed - per cell (CELL m squares split
 //! at the rooms), per velocity cell (SECTORS directions x the speed classes around SPEED_MID) and per
 //! outcome (the room behind the first door the walk goes through, a region, out of the house, or
@@ -7,6 +7,8 @@
 //! not across a wall, normalized so that one walk straight through a cell counts 1 there. Learned from
 //! the model's own walkers (Learner); an output only, it never changes the filter. Counts fade with
 //! FORGET; the map belongs to its floor plan (Geometry fingerprint).
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use std::collections::{BTreeMap, VecDeque};
 use std::f64::consts::PI;
@@ -58,7 +60,7 @@ const NEAR: f64 = 2.5 * BW_POS;
 /// m: asked, the map is averaged over the cells around the place with this spread
 const QUERY: f64 = 0.5 * CELL;
 
-/// The centres of the velocity cells, speed class major (destination.VEL).
+/// The centres of the velocity cells, speed class major.
 static VELOCITIES: LazyLock<[Point; V]> = LazyLock::new(|| {
     std::array::from_fn(|k| {
         let (s, a) = (SPEED_MID[k / SECTORS], 2.0 * PI * (k % SECTORS) as f64 / SECTORS as f64);
@@ -74,15 +76,12 @@ fn vel_interp([vx, vy]: Point) -> ([usize; 4], [f64; 4]) {
     let fa = a - s0;
     let secs = [s0 as usize % SECTORS, (s0 as usize + 1) % SECTORS];
     let last = SPEED_MID.len() - 1;
-    let (ks, fs) = if s <= SPEED_MID[0] {
-        ([0, 0], 0.0)
+    let (ks, fs) = if !(s > SPEED_MID[0]) {
+        ([0, 0], 0.0) // also a speed that is no number
     } else if s >= SPEED_MID[last] {
         ([last, last], 0.0)
     } else {
-        let k = (0..SPEED_MID.len())
-            .filter(|&i| SPEED_MID[i] <= s)
-            .max()
-            .expect("above the first");
+        let k = SPEED_MID.partition_point(|&m| m <= s) - 1; // the last at most s: one is
         ([k, k + 1], (s - SPEED_MID[k]) / (SPEED_MID[k + 1] - SPEED_MID[k]))
     };
     let cells = [
@@ -97,7 +96,7 @@ fn vel_interp([vx, vy]: Point) -> ([usize; 4], [f64; 4]) {
     )
 }
 
-/// The velocity cells with the kernel's weight above 0.02 (destination.vel_weights).
+/// The velocity cells with the kernel's weight above 0.02.
 fn vel_weights(v: Point) -> Vec<(usize, f64)> {
     VELOCITIES
         .iter()
@@ -121,7 +120,7 @@ pub struct DestCell {
     pub room: RoomIdx,
 }
 
-/// The map's cells and outcomes for a floor plan (destination.Geometry), part of the world. Outcomes:
+/// The map's cells and outcomes for a floor plan, part of the world. Outcomes:
 /// the observed rooms, the regions, out of the house, stays.
 #[derive(Debug)]
 pub struct DestGeometry {
@@ -343,7 +342,7 @@ fn neighbours(cells: &[DestCell], space: &[usize], walls: &Walls, c: usize) -> V
 
 // ------------------------------------------------------------------ the map
 
-/// The counts: (cells, velocity cells, outcomes) walks, fading with FORGET (destination.DestinationMap).
+/// The counts: (cells, velocity cells, outcomes) walks, fading with FORGET.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DestMap {
     fingerprint: String,
@@ -413,7 +412,7 @@ impl DestMap {
     }
 
     /// Per outcome the walks counted near a place (its cells with weights summing to 1) for a velocity,
-    /// interpolated between the neighbouring directions and speed classes (DestinationMap.lookup).
+    /// interpolated between the neighbouring directions and speed classes.
     fn lookup(&self, cells: &[usize], cw: &[f64], v: Point) -> Vec<f64> {
         let (vc, vw) = vel_interp(v);
         (0..self.outcomes)
@@ -429,7 +428,7 @@ impl DestMap {
             .collect()
     }
 
-    // ------------------------------------------------------------ the format (DestinationMap.to_dict)
+    // ------------------------------------------------------------ the format
 
     pub fn to_json(&self) -> Value {
         let bytes: Vec<u8> = self.count.iter().flat_map(|c| c.to_le_bytes()).collect();
@@ -437,7 +436,7 @@ impl DestMap {
                "forget": self.forget, "count": formats::pack(&bytes, 6)})
     }
 
-    /// A saved map over this geometry (DestinationMap.from_dict); Err(OtherPlan) if it was learned over
+    /// A saved map over this geometry; Err(OtherPlan) if it was learned over
     /// another one (its sizes are not trusted before that).
     pub fn from_json(v: &Value, geo: &DestGeometry) -> Result<Self, LearnedError> {
         let m = object(v, "dest_map")?;
@@ -580,7 +579,7 @@ impl Destinations {
     }
 }
 
-/// Follows the model's walkers and counts their finished walks into the map (destination.Learner).
+/// Follows the model's walkers and counts their finished walks into the map.
 /// A person is followed by their earliest live track; a walk whose tracks end is taken over by a
 /// walker who appears within LINK_DIST and LINK_TIME. Reads the hypotheses only.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -803,7 +802,7 @@ struct Asked {
     velocity: Point,
 }
 
-/// "Ziel" per observed room (filter.Tracker._target_outputs). The walkers' own motion ("wird betreten",
+/// "Ziel" per observed room. The walkers' own motion ("wird betreten",
 /// p_enter) is the prior, the learned map its data, per walker a Dirichlet posterior with
 /// dest_prior_walks walks of prior weight: P = (1 - lam) q_move + lam q_map with q_move = p_enter on the
 /// scale of the room's threshold c (odds x odds(c) / odds(c_v)), q_map = sum_h w_h (1 - prod_k (1 - P(k
@@ -907,8 +906,8 @@ pub fn targets(filter: &Filter, world: &World, map: &DestMap, entering: &[crate:
 
 /// What the map says for a walker fast enough and in view.
 fn ask(geo: &DestGeometry, map: &DestMap, w: &crate::outputs::Walker) -> Option<Asked> {
-    if py_hypot(w.velocity[0], w.velocity[1]) < MIN_SPEED {
-        return None;
+    if !(py_hypot(w.velocity[0], w.velocity[1]) >= MIN_SPEED) {
+        return None; // also a velocity that is no number
     }
     let (cells, cw) = geo.around(w.at)?;
     let room = geo.cells[cells[0]].room.0;
@@ -961,7 +960,19 @@ mod tests {
             &format!("[{}]", walls.join(", ")),
             doors,
         );
-        World::build(&c, Params::default(), 30.0).expect("a world")
+        World::build(&c, Params::default()).expect("a world")
+    }
+
+    #[test]
+    fn a_velocity_is_read_between_its_speed_classes_and_one_that_is_no_number_does_not_panic() {
+        // between two classes: the lower one and the share of the step to the next
+        let s = 0.5 * (SPEED_MID[0] + SPEED_MID[1]);
+        let (cells, w) = vel_interp([s, 0.0]);
+        assert_eq!(cells, [0, 1 % SECTORS, SECTORS, SECTORS + 1 % SECTORS]);
+        assert!((w[0] - 0.5).abs() < 1e-12 && (w[2] - 0.5).abs() < 1e-12);
+        // NaN went past every class to an expect
+        let (cells, _) = vel_interp([f64::NAN, 0.0]);
+        assert!(cells.iter().all(|&c| c < V));
     }
 
     #[test]
@@ -1082,5 +1093,68 @@ mod tests {
             DestMap::from_json(&bad, &w.destinations),
             Err(LearnedError::Field("walks"))
         );
+    }
+
+    /// A filter of one hypothesis holding one walker at `at` with velocity v (as outputs' tests'
+    /// `walking`), nobody unknown.
+    fn walker(world: &World, at: Point, v: Point) -> Filter {
+        use crate::filter::densities::Kind;
+        use crate::filter::hyp::{GroupId, Hyp};
+        use crate::filter::mixture::{Kalman, Mixture};
+        let mut f = Filter::new(world.density_shape(), world.sights.len());
+        let nobody = f.objects_mut().densities.alloc(Kind::Intensity);
+        let mut modes = [Kalman::zeros(2), Kalman::zeros(2)];
+        for (k, g) in modes.iter_mut().enumerate() {
+            for ax in 0..2 {
+                let (mean, cov) = g.axis_mut(ax);
+                (mean[0], cov[0]) = (at[ax], 0.01);
+                if k == WALK {
+                    (mean[1], cov[3]) = (v[ax], 0.05);
+                }
+            }
+        }
+        let s = &world.shapes;
+        let m = f.objects_mut().mixtures.insert(Mixture {
+            logw: [1e-300f64.ln(), 0.0],
+            modes,
+            stay: s.go_w.clone(),
+            ka: s.ka_w.clone(),
+            slots: Default::default(),
+            phantom: false,
+            a: 0.0,
+            away: None,
+            t: None,
+        });
+        let mut hy = Hyp::new(0.0, Vec::new(), nobody);
+        hy.people.insert(GroupId(1), m);
+        f.set_hyps(vec![hy]);
+        f
+    }
+
+    #[test]
+    fn a_walker_s_target_is_the_map_s_share_weighted_by_its_walks_against_the_prior() {
+        // MODEL.md 6 "Ziel": nobody enters by their own motion (q_move = 0); the map counted 9 walks
+        // from here into b and 1 that stayed, so q_map = 0.9, lam = 10 / (10 + dest_prior_walks = 1)
+        // and P = lam q_map = 9/11 >= 0.8: on. a, the walker's own room, is no target.
+        let w = two_rooms(false);
+        let g = &w.destinations;
+        let mut map = DestMap::new(g);
+        for cell in map.count.chunks_exact_mut(g.outcomes()) {
+            (cell[1], cell[g.stay()]) = (9.0, 1.0);
+        }
+        let f = walker(&w, [1.0, 1.5], [1.0, 0.0]);
+        let got = targets(&f, &w, &map, &[]);
+        let lam = 10.0 / (10.0 + w.params.dest_prior_walks);
+        let (a, b) = (&got[0], &got[1]);
+        assert!((b.map - 0.9).abs() < 1e-12 && (b.walks - 10.0).abs() < 1e-12, "{b:?}");
+        assert!(
+            (b.weight - lam).abs() < 1e-12 && (b.p - lam * 0.9).abs() < 1e-12,
+            "{b:?}"
+        );
+        assert!(b.on && b.p >= w.outputs.target_above("b"));
+        assert_eq!((b.from, b.person), (Some(RoomIdx(0)), Some(1)));
+        let d = b.distance.expect("a way to the door");
+        assert!((d - 2.0).abs() < 0.5 && b.eta == Some(d / 1.0), "{b:?}");
+        assert_eq!((a.p, a.on, a.weight, a.walks), (0.0, false, 0.0, 0.0));
     }
 }

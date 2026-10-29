@@ -24,14 +24,9 @@ class Detection:
     hidden: bool = False  # behind a wall, outside all rooms or at the mount: a reflection
     stale: bool = False  # coasted or frozen: the LD2450 holds a lost target, no measurement
 
-    @classmethod
-    def of(cls, d: dict) -> "Detection":
-        return cls(np.array(d["pos"]), d["local"], d["speed"], d["hidden"], d["stale"])
-
 
 @dataclass
 class SensorRuntime:
-    last_frame: float = -math.inf
     detections: list = field(default_factory=list)
     frames: int = 0
     # LD2410C, for the display: present (with the app's hold time), distance on the floor

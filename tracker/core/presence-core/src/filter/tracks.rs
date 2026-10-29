@@ -1,6 +1,8 @@
 //! The sensors' live tracks as the filter knows them (filter.Tracker.segs, _live_by_sensor): where
 //! each was measured last, whether its sensor holds it lost, and what the rates of new tracks see of
 //! them.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::filter::mixture::SegId;
 use crate::filter::small_map::SmallMap;
@@ -114,7 +116,7 @@ impl Tracks {
             .collect()
     }
 
-    /// Is the track live and not held lost by its sensor (filter.Tracker._measuring)?
+    /// Is the track live and not held lost by its sensor?
     pub fn measuring(&self, seg: SegId) -> bool {
         self.info.get(&seg).is_some_and(|i| i.lost.is_none())
     }

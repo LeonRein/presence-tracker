@@ -358,4 +358,16 @@ uv run --with paho-mqtt --with pyyaml tools/record.py recordings/
 cd tracker && uv run python -m presence_tracker --data devdata --replay ../recordings/*.jsonl
 ```
 
-Die Web-UI läuft dann auf http://localhost:8099. Tests: `cd tracker && uv run pytest`.
+Die Web-UI läuft dann auf http://localhost:8099.
+
+Der Filter ist ein Rust-Kern (`tracker/core`, docs/rust-core.md). Bauen und testen:
+
+```bash
+cd tracker
+uv run maturin develop --uv --release --features testing -m core/presence-py/Cargo.toml  # mit den Hooks der Tests
+(cd core && cargo build --release -p presence-replay)  # die Wiedergabe ohne Python, test_replay braucht sie
+(cd core && cargo test && cargo clippy --all-targets -- -D warnings)
+uv run pytest
+```
+
+Gegen ein Wheel ohne die Hooks (wie im Image): `PT_RELEASE_WHEEL=1 uv run pytest -m "not hooks"`.

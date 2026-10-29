@@ -1,11 +1,13 @@
-//! What a person puts into the cells (ld2410.expected, MODEL.md 4.3): the profile measured 6.10.
+//! What a person puts into the cells (MODEL.md 4.3): the profile measured 6.10.
 //! per mode, times the beam.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use super::{CELLS, MOVING, centre};
 use crate::params::Params;
 
 /// The expected energy a person puts into the 16 cells at `angle` degrees off the axis, `slant` m
-/// and with `sight` (0..1), standing or walking (mode; ld2410.expected_rows): per cell v x A r^-n x
+/// and with `sight` (0..1), standing or walking (mode): per cell v x A r^-n x
 /// (the Gaussian main lobe, and beyond the centre the tail mixed in).
 pub fn expected(p: &Params, mode: usize, angle: f64, slant: f64, sight: f64) -> [f64; CELLS] {
     let [full, none] = p.ld_beam;

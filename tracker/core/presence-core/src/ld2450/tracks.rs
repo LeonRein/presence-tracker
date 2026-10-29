@@ -1,4 +1,4 @@
-//! The LD2450's own tracks (MODEL.md 4.1; sensortracks.py): the sensor is a tracker itself, and what
+//! The LD2450's own tracks (MODEL.md 4.1): the sensor is a tracker itself, and what
 //! it reports is decoded here into its tracks - no inference about the world, only about the format.
 //!
 //! - The three slots are compacted (when slot 1 ends, slot 2 moves up), so a slot number is no track
@@ -11,6 +11,8 @@
 //!   or 35.5 s (frozen). Coasted and frozen frames are no measurement.
 //! - Targets that can't be a person (Detection::hidden) carry no information; a track is born at its
 //!   first visible measured frame.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::filter::mixture::SegId;
 use std::collections::BTreeMap;

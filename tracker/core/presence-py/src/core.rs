@@ -1,7 +1,8 @@
 //! The core behind the Python tracker (docs/rust-core.md 4): the filter, its world and what it learns
 //! are presence_core's; here only the conversion, and the views the shell, its tools and tests read.
 
-use pyo3::exceptions::{PyFloatingPointError, PyValueError};
+use pyo3::create_exception;
+use pyo3::exceptions::{PyException, PyFloatingPointError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -13,13 +14,14 @@ use crate::views::{
 
 use presence_core::config::Config;
 use presence_core::filter::{NotFinite, Start};
+use presence_core::frames::CallError;
 use presence_core::geometry::Point;
 use presence_core::ld2410::CELLS;
 use presence_core::ld2410::background;
 use presence_core::ld2410::profile::expected;
 use presence_core::learn::pauses::{Pause, Pauses};
 use presence_core::learn::{Learned, LearnedError};
-use presence_core::params::{Params, STILL, WALK};
+use presence_core::params::{OutputParams, Params, STILL, WALK};
 use presence_core::plan::Place;
 use presence_core::sensors::SensorSet;
 use presence_core::tracker::{Branched, Event, Fault, Tracker};
@@ -37,9 +39,17 @@ fn params_from(json: &str) -> PyResult<Params> {
 }
 
 /// The world of a configuration and a model (JSON), built without the GIL.
-pub(crate) fn world_of(py: Python<'_>, config: &str, model: &str, silent_after: f64) -> PyResult<World> {
-    py.detach(|| World::build(&config_from(config)?, params_from(model)?, silent_after).map_err(PyValueError::new_err))
+pub(crate) fn world_of(py: Python<'_>, config: &str, model: &str) -> PyResult<World> {
+    py.detach(|| World::build(&config_from(config)?, params_from(model)?).map_err(PyValueError::new_err))
 }
+
+create_exception!(
+    presence_core,
+    WorldChanged,
+    PyException,
+    "The new world of a recalibration has other tiles or sensors: the people do not live in it (the \
+     shell starts the model over)."
+);
 
 fn not_finite(e: NotFinite) -> PyErr {
     PyFloatingPointError::new_err(e.to_string())
@@ -127,18 +137,12 @@ impl Core {
 #[pymethods]
 impl Core {
     /// A tracker in the world of a configuration and model (JSON: the fields that differ from the
-    /// defaults); `silent_after`: s until a room's own sensor counts as gone.
+    /// defaults).
     #[new]
-    fn new(py: Python<'_>, config: &str, model: &str, silent_after: f64) -> PyResult<Self> {
+    fn new(py: Python<'_>, config: &str, model: &str) -> PyResult<Self> {
         Ok(Self {
-            tracker: Tracker::new(world_of(py, config, model, silent_after)?),
+            tracker: Tracker::new(world_of(py, config, model)?),
         })
-    }
-
-    /// What the outputs are cached by: the moves of everybody and the events that concern all.
-    #[getter]
-    fn epoch(&self) -> u64 {
-        self.tracker.filter().epoch()
     }
 
     #[getter]
@@ -192,29 +196,45 @@ impl Core {
         Ok(self.tracker.last_frame(self.sensor(si)?))
     }
 
-    /// Time goes on to t (Tracker::step): the events for the listeners.
+    /// Time goes on to t (Tracker::step): the events for the listeners. ValueError for a time that is no
+    /// number, FloatingPointError if the weights are no numbers.
     fn step<'py>(&mut self, py: Python<'py>, t: f64) -> PyResult<Bound<'py, PyList>> {
         let tracker = &mut self.tracker;
         let events = py.detach(|| tracker.step(t));
-        events_out(py, events.map_err(not_finite)?)
+        events_out(py, events.map_err(fault)?)
     }
 
     /// Sensors changed, the people's world not: their tracks end, then the new world (Tracker::recalibrate).
+    /// WorldChanged, and nothing changed, if the people do not live in it; ValueError if the configuration
+    /// or model is none.
     fn recalibrate<'py>(
         &mut self,
         py: Python<'py>,
         changed: Vec<usize>,
         config: &str,
         model: &str,
-        silent_after: f64,
     ) -> PyResult<Bound<'py, PyList>> {
         let changed = changed
             .into_iter()
             .map(|si| self.sensor(si))
             .collect::<PyResult<SensorSet>>()?;
-        let world = world_of(py, config, model, silent_after)?;
-        let events = self.tracker.recalibrate(changed, world);
-        events_out(py, events.map_err(fault)?)
+        let world = world_of(py, config, model)?;
+        let tracker = &mut self.tracker;
+        let events = py.detach(|| tracker.recalibrate(changed, world)).map_err(|e| match e {
+            Fault::Call(CallError::World) => WorldChanged::new_err(e.to_string()),
+            _ => fault(e),
+        })?;
+        events_out(py, events)
+    }
+
+    /// Only what the outputs read changed (the configuration's OUTPUT_PARAMS): nothing is built, nothing
+    /// starts over (Tracker::set_outputs). ValueError, and nothing changed, if they do not fit.
+    fn set_outputs(&mut self, config: &str) -> PyResult<()> {
+        let config = config_from(config)?;
+        let silent_after = self.tracker.world().params.silent_after;
+        self.tracker
+            .set_outputs(OutputParams::of(&config.params, silent_after))
+            .map_err(PyValueError::new_err)
     }
 
     /// The LD2450 tracks of all sensors start over (their next frames are a start).

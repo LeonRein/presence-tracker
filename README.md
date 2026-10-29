@@ -17,4 +17,4 @@ In Home Assistant unter *Einstellungen → Apps → App Store → ⋮ → Reposi
 https://github.com/LeonRein/presence-tracker
 ```
 
-Danach erscheint **Presence Tracker** im Store. Voraussetzung ist die Mosquitto-App.
+Danach erscheint **Presence Tracker** im Store. Voraussetzung ist die Mosquitto-App. Auf amd64 braucht die App einen Prozessor mit AVX2 (x86-64-v3, etwa ab Intel Haswell 2013 bzw. AMD Excavator 2015): der Kern ist dafür übersetzt.

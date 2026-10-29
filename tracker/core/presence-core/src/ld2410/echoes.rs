@@ -1,8 +1,10 @@
-//! The LD2410C's echo sources (MODEL.md 4.3; ld2410.Echoes): energy that is not a person's. Per
+//! The LD2410C's echo sources (MODEL.md 4.3): energy that is not a person's. Per
 //! sensor off, or one source on - the profile of a standing person on the axis at a slant, times an
 //! amplitude - in one of K stages: it begins at a rate (uniform over the sources), lives an Erlang(K)
 //! time and ends. What tells it from a person is how it begins and ends: a person must come in, and
 //! stays.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use super::CELLS;
 use super::profile::expected;

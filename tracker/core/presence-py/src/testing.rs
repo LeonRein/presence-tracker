@@ -24,13 +24,8 @@ pub fn panic_for_test(message: &str) {
 /// tracker's `_export()` of 0.38.1, with the plan: the aid that checks the build (test_core_build.py,
 /// tests/fixtures/make/core_build.py).
 #[pyfunction]
-pub fn build_export<'py>(
-    py: Python<'py>,
-    config: &str,
-    model: &str,
-    silent_after: f64,
-) -> PyResult<Bound<'py, PyDict>> {
-    let w = world_of(py, config, model, silent_after)?;
+pub fn build_export<'py>(py: Python<'py>, config: &str, model: &str) -> PyResult<Bound<'py, PyDict>> {
+    let w = world_of(py, config, model)?;
     let (t, sh) = (&w.tiles, &w.shapes);
     let flat = |v: &[[f64; 2]]| -> Vec<f64> { v.iter().flatten().copied().collect() };
     let d = PyDict::new(py);

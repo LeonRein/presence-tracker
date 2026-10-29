@@ -1,10 +1,12 @@
-//! A person in view with a measuring track, or the source of a ghost track (gauss.py, MODEL.md 5.2):
+//! A person in view with a measuring track, or the source of a ghost track (MODEL.md 5.2):
 //! a mixture of two Gaussians, one per mode - standing and walking - each a Kalman filter over
 //! position x, velocity v and, per track of theirs, the track's offset on them (constant c,
 //! wandering o), per axis its own covariance. The standing component also holds the probability of
 //! each kind of stay (3.1) and, jointly, of each level of the detectability and the LD2410C
 //! amplitude (4.1, 4.3). A part of the person may have gone through a door into a region without a
 //! sensor: a density over the tiles (densities.rs) with the weight a.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use std::f64::consts::PI;
 
@@ -17,7 +19,7 @@ use crate::params::{Params, STILL, Shapes, WALK};
 use crate::vmath::{logaddexp, max2, nan_max, pairwise_sum};
 use crate::world::World;
 
-/// log(2 pi) (gauss.LOG2PI)
+/// log(2 pi)
 const LOG2PI: f64 = 1.8378770664093453;
 /// state indices per axis: position, velocity; a track's c and o follow at its slot
 const X: usize = 0;
@@ -25,7 +27,7 @@ const V: usize = 1;
 
 /// A position cut to a sensor's sight (Mixture::in_sight): the 5-point Gauss-Hermite rule of N(0, 1)
 /// per axis (numpy's hermegauss(5)), its product grid and weights; a cut keeps at least 5 cm of
-/// spread per axis (or what it had) (gauss.SIGHT_GRID, SIGHT_W, SIGHT_MIN_VAR).
+/// spread per axis (or what it had) (SIGHT_W, SIGHT_MIN_VAR).
 const SIGHT_NODES: [f64; 5] = [
     -2.8569700138728056,
     -1.355626179974266,
@@ -130,7 +132,7 @@ impl Kalman {
     }
 
     /// The Gaussian with two more states per axis, a priori independent of the rest: variances
-    /// v_c and v_o (Gauss.add_track).
+    /// v_c and v_o.
     fn extended(&self, v_c: f64, v_o: f64) -> Self {
         let (d, e) = (self.dim(), self.dim() + 2);
         let mut out = Self::zeros(e);
@@ -198,7 +200,7 @@ pub struct Mixture {
     pub t: Option<f64>,
 }
 
-/// Moment matching of weighted Gaussians per axis (gauss._collapse, kernels._collapse2): their
+/// Moment matching of weighted Gaussians per axis: their
 /// total weight and the Gaussian; (0, the first) if none has weight.
 pub fn collapse(parts: &[(f64, &Kalman)]) -> (f64, Kalman) {
     let tot = parts.iter().fold(0.0, |s, (w, _)| s + w);
@@ -232,7 +234,7 @@ pub fn collapse(parts: &[(f64, &Kalman)]) -> (f64, Kalman) {
 
 /// Sigma points of a component's position (MODEL.md 5.2): the unscented transform of the 2-D
 /// position with n + kappa = 3, the centre with 1/3 and +-sqrt(3) sigma along each axis with 1/6
-/// each (Saerkkae & Svensson 2023, eq. 8.70-8.71; gauss.UNIT).
+/// each (Saerkkae & Svensson 2023, eq. 8.70-8.71).
 pub const SQRT_3: f64 = 1.7320508075688772;
 pub const UNIT: [Point; 5] = [[0.0, 0.0], [SQRT_3, 0.0], [-SQRT_3, 0.0], [0.0, SQRT_3], [0.0, -SQRT_3]];
 pub const UNIT_W: [f64; 5] = [1.0 / 3.0, 1.0 / 6.0, 1.0 / 6.0, 1.0 / 6.0, 1.0 / 6.0];
@@ -270,7 +272,7 @@ fn log_add_or_none(lw: [f64; 2]) -> f64 {
 
 /// The sigma points (UNIT) of N(mean[k], diag var[k]) per mode k, with walls: those of a mode with
 /// a wall within their reach, seen from where the component is (pos[k]), mirrored at the first wall
-/// their move from pos[k] crosses (walls reflect, MODEL.md 3.2; kernels.sigma_points). All moves
+/// their move from pos[k] crosses (walls reflect, MODEL.md 3.2). All moves
 /// of the modes near a wall are mirrored in one call: the walls tried are those near all of them.
 pub fn sigma_points(
     world: &World,
@@ -323,11 +325,11 @@ impl Mixture {
         sigma_points(world, bounds, pos, pos, var)
     }
 
-    /// Weighs the person by no track started on them in dt (kernels.sync_weigh): E[exp(-rate dt)]
+    /// Weighs the person by no track started on them in dt: E[exp(-rate dt)]
     /// over each component's sigma points (rates per mode and point; for the standing one per level
-    /// of detectability kappa), so the levels' probabilities (Gauss.kappa_weigh) and the
+    /// of detectability kappa), so the levels' probabilities and the
     /// components' weights change, and the part gone through a door by exp(d_away)
-    /// (Gauss.reweigh). Returns the log of the factor of the whole person.
+    ///. Returns the log of the factor of the whole person.
     pub fn weigh_no_track(&mut self, rates: &[[f64; 5]; 2], kappa: &[f64], dt: f64, d_away: f64) -> f64 {
         let expect =
             |mode: usize, scale: f64| (0..5).fold(0.0, |e, p| e + UNIT_W[p] * (-scale * rates[mode][p] * dt).exp());
@@ -379,12 +381,12 @@ impl Mixture {
         self.weights()[WALK]
     }
 
-    /// (K,) probability of each level of detectability (Gauss.kw)
+    /// (K,) probability of each level of detectability
     pub fn kw(&self, levels: usize) -> Vec<f64> {
         self.ka.chunks_exact(self.ka.len() / levels).map(pairwise_sum).collect()
     }
 
-    /// (A,) probability of each level of the LD2410C amplitude (Gauss.amw)
+    /// (A,) probability of each level of the LD2410C amplitude
     pub fn amw(&self, levels: usize) -> Vec<f64> {
         let amps = self.ka.len() / levels;
         (0..amps)
@@ -392,7 +394,7 @@ impl Mixture {
             .collect()
     }
 
-    /// A copy as a new object: the model branches (Gauss.copy). Its part gone through a door is
+    /// A copy as a new object: the model branches. Its part gone through a door is
     /// copied too: that part is this mixture's alone.
     pub fn fork(&self, densities: &mut Densities) -> Mixture {
         Mixture {
@@ -410,7 +412,7 @@ impl Mixture {
 
     /// Multiplies the components' weights by exp(dlog) and the part gone through a door by
     /// exp(d_away); returns the log of the factor of the whole person (for the hypotheses) and
-    /// normalizes (Gauss.reweigh).
+    /// normalizes.
     pub fn reweigh(&mut self, dlog: [f64; 2], d_away: f64) -> f64 {
         let lw = [self.logw[0] + dlog[0], self.logw[1] + dlog[1]];
         self.with_away(lw, d_away, |[p0, p1]| logaddexp(p0, p1))
@@ -441,7 +443,7 @@ impl Mixture {
 
     /// A likelihood that depends on the standing component's detectability, f_still per level
     /// (and f_walk for the walking one): updates the levels' probabilities and returns the log
-    /// factor per component, for reweigh (Gauss.kappa_weigh).
+    /// factor per component, for reweigh.
     pub fn kappa_weigh(&mut self, f_still: &[f64], f_walk: f64) -> [f64; 2] {
         let amps = self.ka.len() / f_still.len();
         let s = self.weigh_ka(|i| f_still[i / amps]);
@@ -449,8 +451,7 @@ impl Mixture {
         [ln(s), ln(f_walk)]
     }
 
-    /// A new track on this person: its offset (c, o), a priori independent of the rest
-    /// (Gauss.add_track).
+    /// A new track on this person: its offset (c, o), a priori independent of the rest.
     pub fn add_track(&mut self, seg: SegId, var: f64, const_share: f64) {
         let d = self.dim();
         let (v_c, v_o) = (var * const_share, var * (1.0 - const_share));
@@ -458,8 +459,7 @@ impl Mixture {
         self.slots.insert(seg, Slot { index: d, var });
     }
 
-    /// A track ended, or is no longer this person's: its offset is marginalized out
-    /// (Gauss.drop_track).
+    /// A track ended, or is no longer this person's: its offset is marginalized out.
     pub fn drop_track(&mut self, seg: SegId) {
         let k = self.slots.remove(&seg).expect("a track the person has").index;
         let keep: Vec<usize> = (0..self.dim()).filter(|&i| i != k && i != k + 1).collect();
@@ -473,7 +473,7 @@ impl Mixture {
 
     /// The Kalman update of both components with the track's position z. Measured, the person is in
     /// view: the part gone through a door is dropped and released. Returns the log of the mixture's
-    /// factor, the predictive density of z (Gauss.update).
+    /// factor, the predictive density of z.
     pub fn update(&mut self, densities: &mut Densities, seg: SegId, z: Point, white: f64) -> f64 {
         let k = self.slots.get(&seg).expect("a track the person has").index;
         let d = self.dim();
@@ -515,7 +515,7 @@ impl Mixture {
     }
 
     /// A sensor measured this person: they are in its sight - the radar can't see through walls
-    /// (MODEL.md 4.1; Gauss.in_sight). `at`: where its sight lines start. The position per mode is
+    /// (MODEL.md 4.1). `at`: where its sight lines start. The position per mode is
     /// cut to what the sensor sees: N(mean, diag var) on a grid of Gauss-Hermite points, the points
     /// whose sight line crosses a wall dropped, matched again; the rest of the state follows by its
     /// regression on position. If it sees none of them, they are mirrored at the wall instead. The
@@ -612,7 +612,7 @@ impl Mixture {
     /// component spread over the tiles, standing ones with their kinds of stay and detectability
     /// and the amplitude of the stay where it stands (the end of a track is not the end of the
     /// stay, Swerling III); with the part gone through a door. The velocity and the offsets are
-    /// lost. A new density (Gauss.to_tiles).
+    /// lost. A new density.
     pub fn to_tiles(&self, world: &World, densities: &mut Densities) -> DensityId {
         let (tiles, shapes) = (&world.tiles, &world.shapes);
         let h = densities.alloc(Kind::Person);
@@ -680,7 +680,7 @@ impl Mixture {
 }
 
 /// A Gaussian mixture of a person or a ghost's source with exactly the tracks `segs` (the others
-/// marginalized out), in that order (Gauss._ordered): its modes.
+/// marginalized out), in that order: its modes.
 fn ordered_modes(mix: &Mixture, segs: &[SegId]) -> [Kalman; 2] {
     let mut keep = vec![X, V];
     for seg in segs {
@@ -691,7 +691,7 @@ fn ordered_modes(mix: &Mixture, segs: &[SegId]) -> [Kalman; 2] {
 }
 
 /// sum_i w_i x mixture_i for [(w_i, mixture_i)], weights summing to 1, as a new mixture
-/// (Gauss.mixture): per mode matched to one Gaussian; offsets of tracks that not all of them hold
+///: per mode matched to one Gaussian; offsets of tracks that not all of them hold
 /// are marginalized out; the parts gone through a door mixed (a new density).
 pub fn mix_mixtures(parts: &[(f64, &Mixture)], densities: &mut Densities) -> Mixture {
     let first = parts[0].1;
@@ -809,7 +809,7 @@ fn offsets(track: NewTrack, mx: Point, px: Point, p: &Params) -> [([f64; 3], [f6
 }
 
 /// Both components from the position's posterior per mode, with the new track measured; a walker
-/// without a track goes in any direction (Gauss._make).
+/// without a track goes in any direction.
 fn make(track: NewTrack, m: Moments, stay: Vec<f64>, ka: Vec<f64>, p: &Params, phantom: bool) -> Mixture {
     // per axis: x, v, then the track's c and o
     let idx = [X, 2, 3];
@@ -851,7 +851,7 @@ fn make(track: NewTrack, m: Moments, stay: Vec<f64>, ka: Vec<f64>, p: &Params, p
     }
 }
 
-/// The source of a new ghost track (Gauss.source): anywhere a ghost may be born (evenly), so given
+/// The source of a new ghost track: anywhere a ghost may be born (evenly), so given
 /// the first position x = z - c - o - w; standing or walking alike, a stay seen at a random time.
 pub fn ghost_source(track: NewTrack, p: &Params, shapes: &Shapes) -> Mixture {
     let (z, var) = (track.z, track.var);
@@ -884,7 +884,7 @@ pub fn ghost_source(track: NewTrack, p: &Params, shapes: &Shapes) -> Mixture {
     g
 }
 
-/// A person without a track gets one (MODEL.md 5.4; Gauss.from_tiles): their density times f (the
+/// A person without a track gets one (MODEL.md 5.4): their density times f (the
 /// rate or chance of this track starting / being found on somebody in each tile) times the density
 /// of z, each tile as the Gaussian with its mean and spread, matched per mode to one Gaussian.
 /// Returns the mixture and the log of the mass - this alternative's factor for the hypothesis - or
@@ -1258,7 +1258,7 @@ mod tests {
         // tiles (Swerling III: fixed over a stay), drawn anew only with the detectability or with a new
         // stay; what nothing measured has g = 1, and back on a track the measured amplitude comes along
         use crate::motion::walk::{leap, move_densities};
-        let world = World::build(&testing::flat_config(), Params::default(), 30.0).expect("a world");
+        let world = World::build(&testing::flat_config(), Params::default()).expect("a world");
         let (sh, tiles, s) = (&world.shapes, &world.tiles, world.density_shape());
         let mut densities = Densities::new(s);
         let track = NewTrack {

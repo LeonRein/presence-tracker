@@ -2,6 +2,8 @@
 //! are one, their mixture; the strongest are kept until what is dropped weighs at most hyp_mass,
 //! and no live track loses an alternative; the weights are normalized and their sum is the step's
 //! factor of the evidence (MODEL.md 7).
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::filter::densities::DensityId;
 use crate::filter::hyp::{Hyp, Owner, alike};
@@ -45,7 +47,7 @@ fn permutations(n: usize) -> impl Iterator<Item = Vec<usize>> {
 
 impl Filter {
     /// The hypotheses' weights to sum 1; their sum (and the share dropped just before by the cut)
-    /// is this step's factor of the evidence (Tracker._normalize).
+    /// is this step's factor of the evidence.
     pub fn normalize(&mut self, dropped: f64) -> Result<(), NotFinite> {
         let total = logsumexp(&self.hyps.iter().map(|h| h.logw).collect::<Vec<_>>());
         if total.is_nan() || total == f64::INFINITY {
@@ -72,7 +74,7 @@ impl Filter {
         Ok(())
     }
 
-    /// cut_hyps (Tracker._cut): what is dropped counts in the evidence.
+    /// cut_hyps: what is dropped counts in the evidence.
     pub fn cut(&mut self, p: &Params) -> Result<(), NotFinite> {
         self.void_cache();
         let cut = cut_hyps(&mut self.hyps, p);
@@ -90,7 +92,7 @@ impl Filter {
         }
     }
 
-    /// cut, then the strongest first (Tracker._prune).
+    /// cut, then the strongest first.
     pub fn prune(&mut self, p: &Params) -> Result<(), NotFinite> {
         self.cut(p)?;
         sort_strongest_first(&mut self.hyps);
@@ -98,7 +100,7 @@ impl Filter {
         Ok(())
     }
 
-    /// Hypotheses that now say the same about every live track are one (Tracker._merge).
+    /// Hypotheses that now say the same about every live track are one.
     pub fn merge(&mut self) {
         self.void_cache();
         self.objects.merge_alike(&mut self.hyps);
@@ -147,7 +149,7 @@ fn sort_strongest_first(hyps: &mut [Hyp]) {
 }
 
 /// Keeps the strongest hypotheses until what is dropped weighs at most hyp_mass of the whole, and
-/// at most max_hyps of them (B_Vo2017; Tracker._cut). Each is weighed as it will be after merging,
+/// at most max_hyps of them (B_Vo2017). Each is weighed as it will be after merging,
 /// by the sum of those alike; the kept ones stay in their order. No live track loses an alternative
 /// altogether: of the dropped ones, the strongest that holds an alternative the kept ones lack
 /// stays (MODEL.md 5.1).
@@ -221,7 +223,7 @@ fn cut_hyps(hyps: &mut Vec<Hyp>, p: &Params) -> Result<Cut, NotFinite> {
 
 impl Objects {
     /// Each set of hypotheses that say the same about every live track becomes their mixture, in
-    /// the place of the first of them (MODEL.md 5.6; Tracker._merged). People held by the same
+    /// the place of the first of them (MODEL.md 5.6). People held by the same
     /// object in all of them stay as they are; the others are mixed per person (exact for one, the
     /// multi-Bernoulli approximation for more): the people without a track paired by the least L1
     /// distance, a person missing in some of them mixed with nobody (r = 0).
@@ -332,7 +334,7 @@ impl Objects {
         self.mixtures.insert(mix)
     }
 
-    /// One density stays itself; several are mixed as a new one (Tracker._mix_hidden).
+    /// One density stays itself; several are mixed as a new one.
     pub fn mix_densities(&mut self, parts: &[(f64, DensityId)]) -> DensityId {
         match parts {
             [(_, only)] => *only,
@@ -364,7 +366,7 @@ impl Objects {
     }
 }
 
-/// p with its odds multiplied by e^log_factor, without overflow (filter._odds_shifted): since no
+/// p with its odds multiplied by e^log_factor, without overflow: since no
 /// live track loses an alternative, p can be ~1e-300 and e^x beyond the floating point range.
 pub fn odds_shifted(p: f64, log_factor: f64) -> f64 {
     if !(0.0 < p && p < 1.0) {

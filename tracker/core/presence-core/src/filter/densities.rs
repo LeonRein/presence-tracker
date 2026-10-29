@@ -1,25 +1,27 @@
-//! People without a measuring track (hidden.py, MODEL.md 5.3): their density over the tiles, exact
+//! People without a measuring track (MODEL.md 5.3): their density over the tiles, exact
 //! sums instead of samples. A known person is a Bernoulli (existence r, Garcia-Fernandez et al. 2018
 //! eq. 31); the people nobody knows of are a Poisson intensity in the same arrays, not normalized
-//! (hidden.Undetected, MODEL.md 3.4, 5.5).
+//! (MODEL.md 3.4, 5.5).
 //!
 //! State of one density, as masses (a person's sum to 1):
 //!   walk[c]          walking in tile c
 //!   still[l, k, c]   standing in tile c, stay of kind l, detectability level k
 //!   region[r, a]     behind a door in region r, the stay in age bin a
 //!   out              out of the house
-//!   amp[k, a, c]     the LD2410C amplitude of the stay, if one was measured (hidden.Hidden.amp)
+//!   amp[k, a, c]     the LD2410C amplitude of the stay, if one was measured
 //!
 //! All densities live in one store with a row each (docs/rust-core.md 2.1): walking all of them is
 //! one matrix product over the rows. An index points at its row through a table; when a density is
 //! released, the last row moves into the gap.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use std::ops::Range;
 
 use crate::filter::pool::PoolId;
 use crate::vmath::pairwise_sum;
 
-/// A share of measured amplitude below this everywhere: nothing measured (hidden.MEASURED_CUT).
+/// A share of measured amplitude below this everywhere: nothing measured.
 pub const MEASURED_CUT: f64 = 1e-6;
 
 /// A density's index, valid until it is released.
@@ -46,7 +48,7 @@ pub enum Kind {
 /// The measured amplitudes of the stays, P(level of g | still, detectability, tile) (K x (A + 1) x
 /// n, the last level g = 1: nothing measured), and the share of each still mass that is no fresh draw
 /// since they were last settled (K x n; None: all of it): moving on only mixes them with g = 1,
-/// applied when they are read (hidden.Hidden.amp, _keep). Clone only for a fork.
+/// applied when they are read (_keep). Clone only for a fork.
 #[derive(Debug, Clone)]
 pub struct Amp {
     pub levels: Vec<f64>,
@@ -148,7 +150,7 @@ impl DensityShape {
         at..at + self.tiles
     }
 
-    /// The amplitudes of stays nothing measured: g = 1 everywhere (hidden.amp_prior).
+    /// The amplitudes of stays nothing measured: g = 1 everywhere.
     pub fn amp_prior(&self) -> Vec<f64> {
         let mut out = vec![0.0; self.amp_len()];
         for k in 0..self.levels {
@@ -436,7 +438,7 @@ impl Densities {
         )
     }
 
-    /// A copy of a density as a new one: the model branches (Hidden.copy).
+    /// A copy of a density as a new one: the model branches.
     pub fn fork(&mut self, id: DensityId) -> DensityId {
         let kind = self.get(id).kind;
         let new = self.alloc(kind);
@@ -450,7 +452,7 @@ impl Densities {
     }
 
     /// A person who does not exist (r = 0), out of the house: the partner of a known person in a
-    /// hypothesis that lacks them when hypotheses are merged (Hidden.nobody).
+    /// hypothesis that lacks them when hypotheses are merged.
     pub fn nobody(&mut self) -> DensityId {
         let id = self.alloc(Kind::Person);
         let d = self.get_mut(id);
@@ -458,14 +460,14 @@ impl Densities {
         id
     }
 
-    /// Whether any stay carries a measured amplitude (Hidden.measured); settles it first.
+    /// Whether any stay carries a measured amplitude; settles it first.
     pub fn measured(&mut self, id: DensityId) -> bool {
         self.get_mut(id).settle_amp();
         self.get(id).amp.is_some()
     }
 
     /// The mixture sum_i w_i x Bernoulli_i of [(w_i, density_i)], weights summing to 1, as a new
-    /// density (Hidden.mixture): exists with r = sum_i w_i r_i, then the density sum_i w_i r_i
+    /// density: exists with r = sum_i w_i r_i, then the density sum_i w_i r_i
     /// density_i / r. A part with r_i = 0 (nobody: a hypothesis without this person) adds only to
     /// not existing. The amplitudes mix with the still mass they belong to. The parts are settled,
     /// as reading them in the Python filter did.
@@ -547,7 +549,7 @@ impl Densities {
     }
 
     /// Adds k x r x the density of other (a person, or another intensity: r = 1): a person given up
-    /// on joins the unknown ones (Undetected.add_scaled). Both are settled.
+    /// on joins the unknown ones. Both are settled.
     pub fn add_scaled(&mut self, id: DensityId, other: DensityId, k: f64) {
         let k = k * self.get(other).r;
         let (mine, theirs) = (self.measured(id), self.measured(other));
@@ -604,7 +606,7 @@ fn scaled_amp(s: &DensityShape, k: f64, per_level: &[f64], amp: &[f64]) -> Vec<f
 }
 
 impl DensityRef<'_> {
-    /// The sum of all masses (Hidden.total).
+    /// The sum of all masses.
     pub fn total(&self) -> f64 {
         pairwise_sum(self.walk) + pairwise_sum(self.still) + pairwise_sum(self.region) + self.out
     }
@@ -664,7 +666,7 @@ impl DensityRef<'_> {
 }
 
 impl DensityMut<'_> {
-    /// Applies the mixing of the amplitude that moving on deferred (hidden.Hidden.amp): the share
+    /// Applies the mixing of the amplitude that moving on deferred: the share
     /// of the still mass that is a fresh draw has g = 1. Nothing measured is left if the share
     /// with g = 1 is within MEASURED_CUT of 1 everywhere.
     pub fn settle_amp(&mut self) {
@@ -693,7 +695,7 @@ impl DensityMut<'_> {
     }
 
     /// The amplitudes from sum_i (still mass_i per level) x amp_i (K x (A + 1) x n), divided by the
-    /// still mass now; where there is none, nothing measured (Hidden._set_amp).
+    /// still mass now; where there is none, nothing measured.
     pub fn set_amp(&mut self, num: &[f64]) {
         let s = self.shape;
         let per_level = s.still_per_level(self.still);
@@ -721,7 +723,7 @@ impl DensityMut<'_> {
     }
 
     /// Multiplies walkers by f.walk and still people by f.still for every kind of stay
-    /// (kernels._hidden_weigh), at all tiles or (idx) at these only, by 1 elsewhere
+    ///, at all tiles or (idx) at these only, by 1 elsewhere
     /// (kernels.hidden_weigh_at: the same numbers). As a person (intensity false): normalized,
     /// returns the log of the mass that was left (-inf and nothing normalized if none was). As an
     /// intensity: returns the mass after less the mass before, in view. The sums run in numpy's order.
@@ -764,7 +766,7 @@ impl DensityMut<'_> {
         tot.ln()
     }
 
-    /// A person's masses scaled to sum 1 (hidden.Hidden._normalize); the people nobody knows of
+    /// A person's masses scaled to sum 1; the people nobody knows of
     /// are not normalized (0).
     pub fn normalize(&mut self) -> f64 {
         match self.kind {
@@ -773,7 +775,7 @@ impl DensityMut<'_> {
         }
     }
 
-    /// Multiplies by a likelihood per tile (hidden.Hidden.weigh, Undetected.weigh). Returns the log
+    /// Multiplies by a likelihood per tile. Returns the log
     /// of the factor for the hypotheses holding it: for a person 1 - r + r x (mass that is left),
     /// and r's update (the Bernoulli update, Garcia-Fernandez et al. 2018 eq. 31); for the unknown
     /// ones the Poisson void probability's log (eq. 18-24).
@@ -808,8 +810,7 @@ impl DensityMut<'_> {
         self.bernoulli(q)
     }
 
-    /// The factor for the hypotheses from the log q of the mass that was left, and r's update
-    /// (hidden.Hidden._bernoulli).
+    /// The factor for the hypotheses from the log q of the mass that was left, and r's update.
     fn bernoulli(&mut self, q: f64) -> f64 {
         let r = *self.r;
         if r >= 1.0 {
@@ -831,7 +832,7 @@ impl DensityMut<'_> {
     }
 
     /// The mass in view taken out by factors f per tile, for walkers and still people alike: the
-    /// mass before less after (the expiry of a record, filter.Tracker._expire).
+    /// mass before less after (the expiry of a record).
     pub fn take_in_view(&mut self, f: &[f64]) -> f64 {
         // the mass taken, as for the unknown ones
         -self.weigh_masses(TileFactors::same(f), None, Kind::Intensity)

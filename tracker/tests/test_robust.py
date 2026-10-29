@@ -4,6 +4,7 @@ stops it or freezes its outputs leaves a light that is on burning."""
 
 import asyncio
 import base64
+import functools
 import json
 import math
 import os
@@ -320,6 +321,7 @@ def test_saving_runs_in_a_thread_and_loads_again(tmp_path, monkeypatch):
     assert {k: len(v) for k, v in again.calibrator.data().items()} == {k: len(v) for k, v in app.calibrator.data().items()}
 
 
+@pytest.mark.hooks
 def test_a_nan_is_a_model_failure_never_nobody_there(tmp_path, caplog):
     """A NaN in a weight made every output NaN: "nobody there" without a word (NaN > c is false), and
     the app stopped at the next save or in to_dict. Now the model starts over, with a log line."""
@@ -332,15 +334,17 @@ def test_a_nan_is_a_model_failure_never_nobody_there(tmp_path, caplog):
     assert not app.tick(1000.0 + 20.5)  # no raise
     assert app.tracker is not tracker and "not finite" in caplog.text
     with pytest.raises(FloatingPointError):
-        tracker._call("normalize", 0.0)  # the core normalizing the weights
+        tracker._c.normalize(0.0)  # the core normalizing the weights
     st = ZoneState(probability=math.nan, p_enter=math.nan, eta=math.inf, approaching=True)
     assert not st.finite() and st.to_dict()["probability"] is None  # never raises
 
 
-@pytest.mark.skipif(filter_module.presence_core is None, reason="the Rust core is not built")
-def test_a_panic_of_the_rust_core_is_a_model_failure(tmp_path, monkeypatch, caplog):
+@pytest.mark.hooks
+@pytest.mark.parametrize("where", ["step", "now"])
+def test_a_panic_of_the_rust_core_is_a_model_failure(tmp_path, monkeypatch, caplog, where):
     """PyO3 raises a panic of the Rust core as a BaseException, which the app's handler would let
-    through: the app would stop. The shell raises it as an Exception, the model starts over."""
+    through: the app would stop. The shell raises it as an Exception, the model starts over - in a
+    method and in a getter alike (every access to the core goes through the shell's guard)."""
     core = filter_module.presence_core
     flat_config(entry=True).save(tmp_path / "tracker.json")
     app = App(tmp_path, publish=False)
@@ -348,17 +352,21 @@ def test_a_panic_of_the_rust_core_is_a_model_failure(tmp_path, monkeypatch, capl
     tracker = app.tracker
 
     class Panicking:
-        """The tracker's core, but time going on panics."""
+        """The tracker's core, but time going on (a method) or the model's time (a getter) panics."""
 
         def __init__(self, inner):
             self.inner = inner
 
         def __getattr__(self, name):
+            if name == where == "now":
+                core.panic_for_test("a bug in the core")
             return getattr(self.inner, name)
 
         def step(self, *args):
-            core.panic_for_test("a bug in the core")
-    monkeypatch.setattr(tracker, "_c", Panicking(tracker._c))
+            if where == "step":
+                core.panic_for_test("a bug in the core")
+            return self.inner.step(*args)
+    monkeypatch.setattr(tracker._c, "core", Panicking(tracker._c.core))
     assert not app.tick(1000.0 + 20.5)  # no raise
     assert app.tracker is not tracker and "the Rust core failed: a bug in the core" in caplog.text
     with pytest.raises(filter_module.CoreError):
@@ -419,7 +427,7 @@ def test_a_room_whose_sensors_go_silent_is_unavailable_in_home_assistant(tmp_pat
     sending; after the limit its own availability topic says "offline" (Home Assistant: unavailable),
     the app's stays "online"; with their next frames "online" again. At the connect the room's topic
     goes out before the app says "online"."""
-    monkeypatch.setattr(filter_module, "SILENT_AFTER", 0.5)
+    monkeypatch.setattr(app_module, "Tracker", functools.partial(Tracker, model={"silent_after": 0.5}))
     flat_config(entry=True).save(tmp_path / "tracker.json")
     app = App(tmp_path, publish=True)
     mqtt = FakeMqtt()

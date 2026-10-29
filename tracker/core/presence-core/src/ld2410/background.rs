@@ -1,4 +1,4 @@
-//! The energy each sensor's LD2410C sees without anybody (MODEL.md 4.3; ld2410.Background), per cell,
+//! The energy each sensor's LD2410C sees without anybody (MODEL.md 4.3), per cell,
 //! learned online by EM of the superposition: the background's share of an energy is b / mu
 //! (Richardson 1972, Lucy 1974; Shepp & Vardi 1982), with mu from the people as the filter saw them
 //! before these frames (the energies' own judgement is not learned back, Park et al. 2020), weighed
@@ -6,6 +6,8 @@
 //! level, learned the same way over days from frames after ld_anchor_quiet s with nothing in sight of
 //! the housing's LD2450 (a stationary AR(1) level, Harvey 1989). With it the rate at which echo sources
 //! begin. A part holds while its sensor hangs where it hung (cells are distances from the sensor).
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use serde_json::{Map, Value, json};
 
@@ -62,7 +64,7 @@ struct Part {
     level: Option<Level>,
     anchor: Option<Level>,
     echoes: Option<EchoCount>,
-    /// s of its frames still not learned from (Background.pause)
+    /// s of its frames still not learned from
     held: f64,
 }
 
@@ -79,7 +81,7 @@ impl Part {
     }
 }
 
-/// The background before anything is learned (ld2410.prior; the simulation's too).
+/// The background before anything is learned (the simulation's too).
 pub fn prior(p: &Params) -> Cells {
     let [g0, g1, rest, still] = p.ld_background;
     std::array::from_fn(|c| match c {
@@ -90,7 +92,7 @@ pub fn prior(p: &Params) -> Cells {
     })
 }
 
-/// What a weighing of a sensor's LD2410C hands the background (Tracker._ld_weigh): its learning
+/// What a weighing of a sensor's LD2410C hands the background: its learning
 /// (LdLearn), the background and the echo rate it was weighed with, the cells' Gamma shapes, and how
 /// long the housing's LD2450 has had nothing in sight.
 pub struct Weighed<'a> {
@@ -111,7 +113,7 @@ pub struct Background {
 
 impl Background {
     /// Keep what was learned for the sensors that hang where they hung (recalibrated or not); the ones
-    /// mounted elsewhere and new ones start over (Background.use).
+    /// mounted elsewhere and new ones start over.
     pub fn follow(&mut self, plan: &Plan) {
         self.of = plan
             .sensors
@@ -140,7 +142,7 @@ impl Background {
         &self.parts[self.of[si]]
     }
 
-    /// The background of sensor si's cells (Background.b).
+    /// The background of sensor si's cells.
     pub fn b(&self, si: usize, p: &Params) -> Cells {
         let part = self.part(si);
         match &part.level {
@@ -153,13 +155,13 @@ impl Background {
     }
 
     /// The level the background goes back to while nothing is learned: the sensor's own, learned over
-    /// days, from the measured prior (Background.anchor).
+    /// days, from the measured prior.
     pub fn anchor(&self, si: usize, p: &Params) -> Cells {
         let prior = prior(p);
         self.part(si).anchor.map_or(prior, |a| a.mean(&prior, p.ld_prior_time))
     }
 
-    /// Echo sources begun per s at sensor si: the prior with what was counted (Background.rate).
+    /// Echo sources begun per s at sensor si: the prior with what was counted.
     pub fn rate(&self, si: usize, p: &Params) -> f64 {
         let e = self.part(si).echoes.unwrap_or(EchoCount { began: 0.0, quiet: 0.0 });
         (p.ld_echo_rate * p.ld_echo_prior_time + e.began) / (p.ld_echo_prior_time + e.quiet)
@@ -179,7 +181,7 @@ impl Background {
         }
     }
 
-    /// One step of online EM from a weighing of sensor si (Background.learn, then learn_echoes): the
+    /// One step of online EM from a weighing of sensor si (then learn_echoes): the
     /// background's share b / mu of the energies, of a capped one of what it was, E[e | e >= CAP]
     /// under Gamma(alpha, mu) (Dempster, Laird & Rubin 1977), weighed with P(no echo source on) and the
     /// time nobody was in sight; then the echo sources begun where nobody was in view, judged with the
@@ -218,7 +220,7 @@ impl Background {
         e.quiet += w.learn.nobody * st.time;
     }
 
-    // ------------------------------------------------------------ the format (Background.to_dict)
+    // ------------------------------------------------------------ the format
 
     pub fn to_json(&self) -> Value {
         let (mut poses, mut num, mut den, mut num_a, mut den_a, mut echoes, mut quiet, mut held) = Default::default();
@@ -253,7 +255,7 @@ impl Background {
         out
     }
 
-    /// A saved background (Background.load_dict) for the sensors of the plan (it follows them at once),
+    /// A saved background for the sensors of the plan (it follows them at once),
     /// and the parts not taken: a sensor's part with a value out of range or of another size is dropped
     /// alone, as the Python app did (the others keep what they learned; the caller logs them). A level
     /// needs both halves, the echoes a level. Err only if it is no background at all.
@@ -324,7 +326,7 @@ fn saved_part<'a>(id: &str, pose: &Value, of: impl Fn(usize) -> Option<&'a Value
     })
 }
 
-/// [x, y, heading, height] (ld2410.pose_of).
+/// [x, y, heading, height].
 fn ld_pose(v: &Value) -> Result<Pose, LearnedError> {
     let a = formats::numbers(v, "poses", 4, f64::MIN)?;
     Ok(Pose {
@@ -570,7 +572,7 @@ mod tests {
         assert!(back.part(0).level.is_none() && back.part(0).held == 2.0);
     }
 
-    // ------------------------------------------------------------ test_learning (ld2410.Background)
+    // ------------------------------------------------------------ test_learning
 
     /// The cells' Gamma shapes (ld2410.cell_values(m, *m.ld_shape)).
     fn alpha(p: &Params) -> Cells {

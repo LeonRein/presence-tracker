@@ -1,12 +1,14 @@
-//! How well a sensor sees each cell (filter.Tracker._grid, MODEL.md 4.1), and what follows from it
+//! How well a sensor sees each cell (MODEL.md 4.1), and what follows from it
 //! per tile.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use super::raster::{CELL, Grid};
 use crate::geometry::Point;
 use crate::ld2450::rates::RateModel;
 use crate::world::Tiles;
 
-/// The sensor model's coarse map of a sensor (sensormodel.SensorModel.prior), for the web UI: its sight
+/// The sensor model's coarse map of a sensor, for the web UI: its sight
 /// of a point on square cells of side `cell` over the rooms' box, column by column from `corner`.
 #[derive(Debug, Default)]
 pub struct SensorMap {
@@ -24,9 +26,9 @@ pub struct Sight {
     /// where its sight lines start (SensorConfig.sight_origin)
     pub origin: Point,
     pub grid: Grid,
-    /// how well it sees each tile, 0..1 (tiling.Tiling.seen)
+    /// how well it sees each tile, 0..1
     pub tiles: Vec<f64>,
-    /// m^2: the area it sees (sight above 0.05; filter.Tracker._area)
+    /// m^2: the area it sees (sight above 0.05)
     pub area: f64,
     /// how well it can test a person in each tile, 0..1: its LD2450's sight or its LD2410C's beam,
     /// whichever is better (tiling.Tiling.observed of this sensor alone, MODEL.md 5.5)

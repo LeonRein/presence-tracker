@@ -36,7 +36,7 @@ laufen nur auf einem Arbeitsbaum von 0.31.1. Die frühere Frage „Gelerntes ble
 |---|---|
 | MQTT (`sources.py`), Home Assistant (`ha.py`, `ZoneState`-Rundung und Ausgabe-Halten), Web-Oberfläche (`app.py`, `static/`) | unverändert |
 | Konfiguration bearbeiten, prüfen (`check_config`, Grenzen) und speichern (`model.py` ohne das Abgeleitete, `floorplan.py` ohne die Geometrie des Filters) | gekürzt |
-| Kalibrierung (`calibration.py`, vorerst Python mit numpy) über Funktionen des Kerns: LD2450-Spuren, Wandstücke, Sensor ↔ Welt | angepasst |
+| Kalibrierung (`calibration.py`, vorerst Python mit numpy): die LD2450-Spuren aus dem Kern (`TrackStage`, `Frame`); Wandstücke, Sensor ↔ Welt und Sicht bleiben Python (`floorplan.py`, `model.py`; Leon 29.10.: eine vom Filter unabhängige Geometrie für Simulation und Kalibrierung) | angepasst |
 | Simulation (`sim.py`), Pausen schalten und speichern (`pause.py`), Dateien und Fehlerberichte schreiben | unverändert |
 | `filter.Tracker` als dünne Hülle mit der heutigen API (4) | neu, klein |
 
@@ -155,7 +155,7 @@ Cargo-Workspace `tracker/core/`:
 | Crate | Art | Inhalt |
 |---|---|---|
 | `presence-core` | Bibliothek, **ohne PyO3** | der ganze Filter; mit `cargo test` ohne Python prüfbar |
-| `presence-py` | `cdylib`, Python-Modul `presence_core` | nur die Bindung (PyO3, numpy, `pythonize`) |
+| `presence-py` | `cdylib`, Python-Modul `presence_core` | nur die Bindung (PyO3; numpy nur für die Test-Hooks) |
 | `presence-replay` | Programm | Wiedergabe ohne Python (6) |
 
 Module von `presence-core`, nach MODEL.md:
@@ -169,7 +169,7 @@ Module von `presence-core`, nach MODEL.md:
 | `params.rs` | 3, 4 | `filtermodel.Model`/`Shapes`, Aufenthalt in Bereichen (`Dwell`) |
 | `frames.rs` | 4.1, 4.4 | Nutzlast prüfen, Bildzeit (`SensorClock`), Detektionen |
 | `ld2450/tracks.rs` | 4.1 | Spuren des Sensors (`SensorTracks`) |
-| `ld2450/rates.rs`, `ld2450/ghosts.rs` | 4.1, 4.2 | Erfassungsraten, Nicht-Wiederfinden, Geisterleben und -ende, Start |
+| `ld2450/rates.rs` | 4.1, 4.2 | Erfassungsraten (Nicht-Wiederfinden, Geisterleben und -ende: `filter/`) |
 | `ld2410/{likelihood,echoes,background}.rs` | 4.3 | `Stats`, Profile, Likelihood (auch zensiert), Echoquellen, Hintergrund/Anker/Echorate lernen |
 | `vmath.rs` | 4.3 | `vlog`, `vexp` (fdlibm, vektorisierbar), `lgamma`, `erfc`, `erfinv` |
 | `motion/{stay,walk,imm}.rs` | 3, 5.2 | Aufenthalte, Gehen je Tick, Regionen, Ankünfte, `leap`; Vorhersage der Mischung mit Wänden und Türen (`sync_step`) |
@@ -183,8 +183,9 @@ Module von `presence-core`, nach MODEL.md:
 Kommentare auf Englisch im Stil des Python-Codes (was, MODEL.md-Abschnitt, Literatur), Bezeichner aus MODEL.md.
 
 **Abhängigkeiten:** `serde`, `serde_json`, `faer` (Matrixprodukt, LU für `walk_end`; gegen `matrixmultiply` und eine
-dünne Gehmatrix mit den Dichten als innerer Dimension messen), `libm`, `half` (float16), `base64`, `miniz_oxide`
-(zlib, rein Rust); Bindung: `pyo3`, `numpy`, `pythonize`. Keine System-BLAS, keine Systempakete.
+dünne Gehmatrix mit den Dichten als innerer Dimension messen), `libm`, `half` (float16), `base64`, `flate2` mit dem
+reinen Rust-Backend (zlib), `sha1_smol` (Fingerabdrücke); Bindung: `pyo3` (abi3, Python ≥ 3.13), `numpy` nur mit dem
+Feature `testing`. Keine System-BLAS, keine Systempakete.
 **`faer` ausdrücklich auf einem Thread:** ohne das Feature `rayon` (`default-features = false`), und jeder Aufruf mit
 `Par::Seq` (nicht über eine globale Einstellung). Der Kern startet keine Threads (OpenBLAS kostete mit Threads ein
 Vielfaches an CPU, MODEL.md 10).
@@ -206,23 +207,29 @@ Threads der App nicht bis zu 5 ms warten (MODEL.md 10). Was die App im Thread ko
 `dest_map.snapshot()`: im Loop kopiert, im Thread komprimiert), bleibt so geteilt: `learned_snapshot()` kopiert im
 Loop, das Formatieren (zlib/base64) läuft im Thread ohne den Tracker.
 
-**`presence_core.Tracker`** (Rust):
+**`presence_core.Core`** (Rust, so umgesetzt; die Skizze des Entwurfs hieß `Tracker`): wandelt nur um, die Schritte
+sind die des Kerns (`presence_core::tracker::Tracker`).
 
 ```
-Tracker(config: dict, model: dict | None, start: float | None, people: list | None)
-reconfigure(config) -> bool               people_state() -> dict / restore_people(dict) -> bool
-process_frame(sid, t, frame: Frame)       (Frame: geprüfte Nutzlast, siehe unten)
-step(t)                                   set_pauses(intervals)
-outputs(now) -> dict                      Zonenwerte, Belegt mit Quelle, stumme Räume, Ziel (ungerundet)
-count_distribution(), place_distribution(), entering(), targets(), persons(), snapshot(), hyp_weights()
-learned() -> dict / load_learned(dict)    die drei Abschnitte in den heutigen Formaten
-reset_people(), reset_tracks(), ld_pause(seconds)
-views: plan() (Räume, Orte, Kacheln für /api/tiles), sensor_maps(sid), runtime(), hypotheses(), check()
-events() -> list                          für listeners: frame, watch, track_end, branch (nur wenn welche angemeldet)
+Core(config_json, model_json)               model: die Felder, die vom Standard abweichen (model_defaults())
+frame(sid, t, Frame) / step(t) -> events     ("watch" | "track_end" | "branch", ...), ValueError für t ohne Zahl
+recalibrate(changed, config, model)          WorldChanged, wenn die Personen nicht in die neue Welt passen
+set_outputs(config)                          nur die Ausgabeparameter (OUTPUT_PARAMS): nichts gebaut
+adopt(old)                                   was nach einem Neubau weitergeht
+reset_people(places) / reset_tracks()        people_state() -> JSON / restore_people(JSON) -> None | Grund
+set_pauses(intervals) / hold_background(s)   learned() -> Learned (json() ohne den Tracker, im Thread)
+use_ghost_map / use_ld_background / use_dest_map(JSON)
+count_distribution(), place_distribution(), entering(), targets(), occupancy(now), zone_numbers(now),
+persons(), clouds(), thresholds(), target_above(room), online(id, now), silent(now), seen_last(), watched()
+Sichten: plan(), tiles_view(), tile_near(p), sensor_map(si), sight(si, pts), observed(), detections(si),
+last_frame(si), hypotheses(), tracks(), hyp_weights(), ghost_rates(si, pts), background(si), check()
+Modul: plan(config), model_defaults(), forgetting(), ld_prior(), ld_expected(...), Frame, SensorClock,
+TrackStage, OUTPUT_PARAMS, WorldChanged, PanicException
 ```
 
-Dazu Funktionen für die Kalibrierung: `Ld2450Tracks` (die Spurstufe des Sensors), `wall_pieces`, Sensor ↔ Welt,
-Sichtlinie.
+Die Hülle (`filter.py`) führt jeden Zugriff auf den Kern über einen Schutz (`_Guarded`): eine Panik des Kerns wird
+`CoreError`, auch in einem Getter. Die Hooks der Tests (`build_export`, `hidden_at`, `panic_for_test`,
+`Core.normalize/spoil_weights_for_test/ld_last`) gibt es nur mit dem Feature `testing`.
 
 **Entschieden in Phase 7 (Prüfung 28.10.): kein `process_payload`, sondern ein geprüfter `presence_core.Frame`.**
 Die App braucht den Frame auch für die Uhr und die Kalibrierung; eine Nutzlast wird darum genau einmal geprüft:
@@ -257,8 +264,9 @@ Konfiguration, kein Standard des Modells mehr.
 **`presence_tracker.filter.Tracker`** bleibt die Klasse, die App, Werkzeuge und Tests benutzen, mit derselben
 öffentlichen API: Sie reicht durch, formt `ZoneState`, ruft die `listeners` mit den Ereignissen des Kerns und hält
 die Python-Objekte der Hülle (`config`, `pauses`). Die Konfiguration geht als `config.to_dict()` hinein; das
-Modell als Dict der Felder von `filtermodel.Model`, die vom Standard abweichen (die Werkzeuge, die heute `tracker.m`
-nach dem Bau ändern oder `filter.MAX_STEP`/`GAP_EXACT` patchen, geben das beim Bau an).
+Modell als Dict der Felder von `Params` (`presence_core.model_defaults()`), die vom Standard abweichen; unbekannte
+Felder lehnt der Kern ab, ebenso Zahlen, die kein Modell ergeben (`ModelError` mit den Namen). Auch die Zeit, nach
+der ein stummer Sensor als weg gilt (`silent_after`), ist ein Feld des Modells.
 
 **Was sich für die Benutzer ändert** (Inventur aller Zugriffe von außen, 27.10.):
 
@@ -270,7 +278,7 @@ nach dem Bau ändern oder `filter.MAX_STEP`/`GAP_EXACT` patchen, geben das beim 
 | `persons()[i]["obj"]` (lebendes Objekt) | `replay.py`, `report_eval.py` | Mittel/Kovarianz bzw. Dichte als Arrays |
 | `tracker.hyps` (Anzahl, Gruppen, Gauß-Felder) | `report_eval`, `replay` | `hypotheses()` (lesend) |
 | `config.observed_rooms()`, `closed_rooms`, `zones_of`, Orte | App, HA, Kalibrierung | Abgeleitetes nur aus dem Kern (`plan()`); `model.py` behält Daten, Prüfung, Speichern |
-| `SensorTracks`, `floorplan.wall_pieces`, `SensorConfig.to_world` | Kalibrierung | Funktionen des Kerns |
+| `SensorTracks`, `floorplan.wall_pieces`, `SensorConfig.to_world` | Kalibrierung | `TrackStage` des Kerns; Wandstücke und Sensor ↔ Welt bleiben Python |
 | `GhostMap` offline bauen | `tools/ghostmap.py` | auf 0.31.1 belassen oder später als Modus der Wiedergabe |
 | Pickle des ganzen Trackers | `seg_replay --init pickle` | entfällt (entschieden) |
 | `_ld_weigh` gepatcht, `ld2410.Likelihood/Stats` direkt | `tools/ld2410/*` | auf 0.31.1 belassen (entschieden) |
@@ -285,11 +293,13 @@ nach dem Bau ändern oder `filter.MAX_STEP`/`GAP_EXACT` patchen, geben das beim 
 Fehler: Nicht endliche Gewichte werden in Python ein `FloatingPointError` wie heute (die App beginnt neu).
 
 **`reconfigure` behält seine drei Wege** (`filter.reconfigure`, `_changed_sensors`):
-1. nur Ausgabeparameter (`OUTPUT_PARAMS`: `target_threshold`, `target_thresholds`, `light_cost`, `seen_hold`,
-   `approach_cost`, `lead_time`, `ld2410_hold`) oder Namen von Zonen geändert: **kein Neubau**, nichts beginnt neu,
-   nur die Parameter und der Ausgabe-Cache;
-2. nur Sensoren geändert (gedreht, verschoben, kalibriert, ein/aus): Personen bleiben, deren Spuren enden wie bei
-   Datenverlust, Sicht und Raten neu, Geisterkarte folgt (ein anders montierter beginnt neu);
+1. nur Ausgabeparameter (`OUTPUT_PARAMS` des Kerns: `light_cost`, `seen_hold`, `lead_time`, `approach_cost`,
+   `target_threshold`, `target_thresholds`; dazu `ld2410_hold`, das nur die Anzeige der Hülle liest) geändert:
+   **kein Neubau** (`Core.set_outputs`), nichts beginnt neu, nur die Parameter und der Ausgabe-Cache;
+2. nur Sensoren oder Namen geändert (gedreht, verschoben, kalibriert, ein/aus; die Namen liest der Plan, z. B. den
+   eigenen Raum eines Sensors): Personen bleiben, deren Spuren enden wie bei Datenverlust, die Welt neu gebaut
+   (`Core.recalibrate`), Geisterkarte folgt (ein anders montierter beginnt neu); passen die Personen nicht in die neue
+   Welt, sagt der Kern `WorldChanged` (nur das fängt die Hülle; jeder andere Fehler bleibt ein Fehler);
 3. sonst: Neubau, Personen aus `people_state`, wenn die Kacheln gleich bleiben.
 
 Je Weg ein Test; für 1 zusätzlich: Hypothesen, Gewichte und Spuren sind danach bitgleich wie davor, und der Lauf geht
@@ -385,7 +395,8 @@ berichtet, bevor Phase 3 beginnt.
 1. Reihenfolge wie in 7: Filter von innen nach außen; die Python→Rust-Übergabe der Welt in Phase 3–5 ist dieselbe
    Schnittstelle wie die Prüfhilfe (6).
 2. `tools/ghostmap.py` bleibt auf 0.31.1.
-3. Die Kalibrierung bleibt vorerst Python mit numpy und ruft den Kern für LD2450-Spuren und Geometrie.
+3. Die Kalibrierung bleibt vorerst Python mit numpy und ruft den Kern für die LD2450-Spuren; ihre Geometrie bleibt
+   Python (Leon, 29.10.).
 4. Lernreihenfolge wie heute, mit getrennt geliehenen Lernern (2.0); `faer` auf einem Thread (3); der schnelle Weg
    von `reconfigure` bleibt (4); Test aller Konfigurationen (6); Schwelle −8 % für den Prototyp (7); nur aus dem
    asyncio-Loop (4).

@@ -4,6 +4,8 @@
 //! found again is its owner's again, or the sensor found it on somebody else near the spot, or on
 //! a reflection there - the LD2450 lets a held track glide to the next target. Every alternative is
 //! a hypothesis with its exact weight; the children are then merged and cut (merge.rs).
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::filter::densities::{TileFactors, TileFactorsBuf};
 use crate::filter::evidence::{count_walkers, expect, mixture_rates, near_mixture, near_tiles, no_find};
@@ -261,7 +263,7 @@ impl Filter {
     }
 }
 
-/// What finding a held track again weighs (Tracker._branch, refind).
+/// What finding a held track again weighs (refind).
 fn found_again<'a>(world: &World, frame: &Frame, info: &TrackInfo) -> Chance<'a> {
     let p = &world.params;
     let lost = info.lost.expect("a track found again was lost");
@@ -448,7 +450,7 @@ impl Branching<'_> {
         ch
     }
 
-    /// The source of a new ghost track, one for all children (Gauss.source).
+    /// The source of a new ghost track, one for all children.
     fn source(&mut self) -> MixtureId {
         let (track, world) = (self.track, self.world);
         let mixtures = &mut self.objects.mixtures;

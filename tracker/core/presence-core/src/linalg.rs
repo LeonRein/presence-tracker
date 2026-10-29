@@ -1,5 +1,7 @@
-//! Dense linear algebra of the build (tiling.expm, Tiling.walk_end) with faer on one thread
+//! Dense linear algebra of the build with faer on one thread
 //! (docs/rust-core.md 3). Matrices are row-major `Vec<f64>`, N x N.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use faer::linalg::matmul::matmul;
 use faer::linalg::solvers::Solve;
@@ -19,7 +21,7 @@ fn product(a: &[f64], b: &[f64], n: usize) -> Vec<f64> {
     out
 }
 
-/// The matrix exponential by scaling and squaring of the Taylor series (tiling.expm): scaled to a
+/// The matrix exponential by scaling and squaring of the Taylor series: scaled to a
 /// 1-norm of at most 0.25, 15 terms, squared back. For a rate matrix times a time; Err if its norm is
 /// no finite number (scaling it would never end).
 pub fn expm(a: &[f64], n: usize) -> Result<Vec<f64>, String> {

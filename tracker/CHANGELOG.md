@@ -2,6 +2,42 @@
 
 ## Unveröffentlicht
 
+## 0.42.0 (Branch `rust-core`, Aufräumrunde nach der Gesamtprüfung, REVIEW_final.md „Vor dem Release“; nicht live)
+
+Modell unverändert; anders nur bei ungültigen Eingaben. Spuren der drei Referenzstunden byte-gleich mit 0.41.0
+(presence-replay und `trace.py` über die Hülle); ab.sh 1200 16,6 s (0.31.1 47,4 s); 156 + 2 Rust-, 246 Python-Tests mit
+PT_CONFIGS (1 übersprungen: der Test des Release-Wheels); fmt/clippy sauber.
+
+- **Fehler statt Paniken:** `Tracker::step` mit einem t ohne Zahl (∞, NaN) ist `CallError::Time` (vorher:
+  unendlich viele Teilschritte, Speicher voll); ein Poisson-Mittel NaN zählt niemanden Unbekannten (vorher: Zugriff
+  außerhalb); eine Geschwindigkeit NaN fragt die Zielkarte nicht (vorher: `expect`). Die Konfiguration lehnt mehr als
+  64 Sensoren und doppelte Sensor- oder Zonen-IDs mit Namen ab.
+- **Größenschranken:** Reichweite eines Sensors ≤ 10 m (Kern und `model.SENSOR_LIMITS`), Raster ≤ 10⁶ Zellen
+  (100 × 100 m), höchstens 4000 Kacheln (vor dem Bau der Gehmatrix); die Verbreiterung der Sicht hält je Versatz nur
+  eine Maske (vorher alle: bis ~1,8 GB je Sensor), beide Gitter in einem Durchgang, bitgleich.
+- **Modellparameter:** unbekannte Felder abgelehnt (`deny_unknown_fields`, auch in den Unterstrukturen); `validate`
+  prüft jedes Feld (Divisoren, Zeiten, Anteile, Obergrenzen der Stufen, Längen und Schrägen der Echoquellen) und gibt
+  `ModelError { fields }` zurück. `silent_after` ist ein Feld des Modells (Standard 30 s), kein Argument des Baus.
+- **Hülle:** jeder Zugriff auf den Kern über `_Guarded` (eine Panik wird `CoreError`, auch in einem Getter; vorher
+  nur über `_call`). `reconfigure`: Weg 1 (nur `OUTPUT_PARAMS`) baut nichts (`Core.set_outputs`); `Core.recalibrate`
+  sagt `presence_core.WorldChanged`, nur das gilt als andere Welt (vorher jeder `ValueError`), und rechnet ohne GIL;
+  `OUTPUT_PARAMS` kommt aus dem Kern (+ `ld2410_hold` der Anzeige).
+- **Tot:** `Tracker::set_world/merge/prune`, `CallError::NoSensor`, `Core.epoch`; `Tracker::normalize` nur mit
+  `testing`; in der Hülle `n`, `seed`, `step(targets)`, die `start`-Argumente von `seen.silent/online`, `_version`,
+  `Detection.of`, `SensorRuntime.last_frame` (`tools/replay.py --seed` mit).
+- **Für Phase 11:** Python ≥ 3.13; das Wheel braucht numpy nur mit `testing` (Extra); Tests mit Hooks tragen den
+  Marker `hooks` (`tests/conftest.py`: ohne Hooks ein klarer Fehler; gegen ein Release-Wheel `-m "not hooks"`, mit
+  `PT_RELEASE_WHEEL=1` prüft ein Test, dass es keine Hooks hat); `test_replay` scheitert in CI (`CI` gesetzt), statt
+  sich zu überspringen; die Digests des Baus nur auf x86_64.
+- **Tests:** je neue Prüfung ein Test, der vorher scheitert (t ohne Zahl, NaN-Mittel, NaN-Geschwindigkeit, 65
+  Sensoren, doppelte IDs, Reichweite, Ausdehnung, zu viele Kacheln, unbekanntes Feld, Grenzen und Divisoren des
+  Modells, Panik in einem Getter der Hülle, die drei Wege von `reconfigure`). Dazu Handtests der Bewegung und Gewichtung:
+  Massenerhalt von `move_densities` mit Region und Türen, `stays` auf einer Kachel gegen MODEL.md 3.1, Altern und Ende
+  in `regions`, `flush` bei fester Rate gegen exp(−r·dt), `no_find` am Median, `ghost_end` gegen eine eigene
+  Quadratur, `targets` der Zielkarte von Hand.
+- **Doku:** `docs/rust-core.md` (die API `Core`, Abhängigkeiten, Weg 1, Kalibrierung), `DOCS.md` (Bauen und Testen),
+  README (amd64 braucht AVX2); in den Kommentaren 265 Verweise auf gelöschtes Python entfernt, je Modulkopf ein Satz.
+
 ## 0.41.0 (Branch `rust-core`, Phase 10: die Wiedergabe in Rust; nicht live)
 
 Modell unverändert; Spuren der drei Referenzstunden über die Hülle byte-gleich mit 0.40.1; ab.sh 1200 16,5 s (0.31.1 47,4 s);

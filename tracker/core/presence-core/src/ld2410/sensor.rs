@@ -1,5 +1,7 @@
 //! A sensor's LD2410C while the filter runs (MODEL.md 4.3): when its frames came, what they gathered
 //! since its last weighing, what the people put into its cells lately, its echo sources.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use super::CELLS;
 use super::echoes::Echoes;
@@ -66,7 +68,7 @@ impl LdSensor {
     }
 
     /// The energies of a frame (moving 0..8, still 0..8), gathered until they are weighed
-    /// (Tracker._ld_frame). A frame stands for one frame (`frame` s). Without anything to report the
+    ///. A frame stands for one frame (`frame` s). Without anything to report the
     /// firmware sends only a heartbeat every 5 s, and the first frame after such a silence is there
     /// because something rose: the silence stands for the energies of the frame before it. A gap
     /// longer than IDLE is lost data. All energies 0 are the firmware's "no value", no measurement,

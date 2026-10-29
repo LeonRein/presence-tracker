@@ -2,6 +2,7 @@
 learning, the amplitude of a stay on the tiles and the view of other rooms: the Rust core's tests
 (ld2410/*.rs, filter/mixture.rs, world/ld.rs)."""
 
+import pytest
 
 from presence_tracker.filter import Tracker
 from presence_tracker.sim import Person, simulate
@@ -10,6 +11,7 @@ from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
 
 
+@pytest.mark.hooks
 def test_all_energies_0_are_no_measurement():
     """Somebody sits 1.1 m in front of sensor a, both LD2450 track them; from 30 s a's LD2410C reports
     every energy 0 - the firmware's "no value" (NaN -> 0), never in 1.5 million recorded frames. Weighed,

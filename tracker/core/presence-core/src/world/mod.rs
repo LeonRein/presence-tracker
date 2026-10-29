@@ -1,6 +1,8 @@
 //! The world the filter runs in (MODEL.md 2, 5.3): the plan's raster and walls, the tiles, the
 //! sensors' sight, the model's numbers. Built once, unchanged until the configuration changes; every
 //! step borrows it.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 mod build;
 pub mod ld;
@@ -105,7 +107,7 @@ impl WorldExport {
     /// Whether the export fits together: the model's numbers, the arrays' lengths, the indices in
     /// range, each cell's room one of the rooms of a sensor's view (Err names what does not).
     pub fn check(&self) -> Result<(), String> {
-        self.params.validate()?;
+        self.params.validate().map_err(|e| e.to_string())?;
         let cells = self.raster.nx * self.raster.ny;
         let (t, n) = (&self.tiles, self.tiles.n);
         let below = |idx: &[usize], top: usize| idx.iter().all(|&i| i < top);
@@ -181,12 +183,11 @@ impl WorldExport {
 }
 
 impl World {
-    /// The world of a configuration (world.World, tiling.Tiling, the sensors' sight; MODEL.md 2, 4, 5.3):
-    /// built here from the plan, in this order, nothing changed afterwards. `silent_after`: s without a
-    /// frame until a room's own sensor counts as gone (roomseen.SILENT_AFTER).
-    pub fn build(config: &Config, params: Params, silent_after: f64) -> Result<Self, String> {
-        params.validate()?;
-        let outputs = OutputParams::of(&config.params, silent_after);
+    /// The world of a configuration (the sensors' sight; MODEL.md 2, 4, 5.3):
+    /// built here from the plan, in this order, nothing changed afterwards.
+    pub fn build(config: &Config, params: Params) -> Result<Self, String> {
+        params.validate().map_err(|e| e.to_string())?;
+        let outputs = OutputParams::of(&config.params, params.silent_after);
         outputs.validate()?;
         let plan = Plan::new(config);
         let raster = build::raster_of(&plan);
@@ -235,9 +236,9 @@ impl World {
     #[cfg(test)]
     /// The world of a checked export (the aid that checks the build against Python's, docs/rust-core.md
     /// 6): the plan from the configuration, the rest as Python built it.
-    pub fn from_export(e: WorldExport, config: &Config, silent_after: f64) -> Result<Self, String> {
+    pub fn from_export(e: WorldExport, config: &Config) -> Result<Self, String> {
         e.check()?;
-        let outputs = OutputParams::of(&config.params, silent_after);
+        let outputs = OutputParams::of(&config.params, e.params.silent_after);
         outputs.validate()?;
         let plan = Plan::new(config);
         let observed = plan.rooms.len();
@@ -312,7 +313,7 @@ impl World {
         }
     }
 
-    /// What a density over these tiles depends on (tiling.Tiling.fingerprint): the tiles (where, how big,
+    /// What a density over these tiles depends on: the tiles (where, how big,
     /// which room), the places behind the doors and the kinds of stay and detectability. A saved state
     /// (Tracker::saved_people) fits only tiles with the same fingerprint.
     pub fn fingerprint(&self) -> String {
@@ -341,7 +342,7 @@ impl World {
         out
     }
 
-    /// No wall within r of the point (world.World.clear).
+    /// No wall within r of the point.
     pub fn clear(&self, p: Point, r: f64) -> bool {
         self.wall_dist.at(p) > r
     }
@@ -349,7 +350,7 @@ impl World {
     /// The share of N(mean, diag var) at each sample point of the tiles (summing to 1), the points
     /// behind a wall seen from the mean given nothing - those with a density above 1e-3 of the peak
     /// (nobody walks through a wall, the Gaussian itself does not know them); None if the Gaussian
-    /// has nothing in view (tiling.Tiling.gauss_points).
+    /// has nothing in view.
     pub fn gauss_points(&self, mean: Point, var: Point) -> Option<Vec<f64>> {
         let tiles = &self.tiles;
         let cell = POINT * POINT / 12.0;
@@ -379,7 +380,7 @@ impl World {
         (s > 0.0).then(|| d.iter().map(|x| x / s).collect())
     }
 
-    /// The share of N(mean, diag var) in each tile (tiling.Tiling.gauss_mass): by the sample points,
+    /// The share of N(mean, diag var) in each tile: by the sample points,
     /// or all of it in the nearest tile if it has nothing in view.
     pub fn gauss_mass(&self, mean: Point, var: Point) -> Vec<f64> {
         let tiles = &self.tiles;
@@ -403,6 +404,34 @@ impl World {
 #[cfg(test)]
 mod tests {
     use crate::testing;
+
+    #[test]
+    fn a_plan_with_more_tiles_than_the_core_holds_is_refused_before_it_is_built() {
+        // a hall of 30 x 30 m in view: ~5600 tiles, a walking matrix of 250 MB and its exponential
+        let ids: Vec<String> = (0..12).map(|k| format!("s{k}")).collect();
+        let sensors: Vec<(&str, &str, crate::geometry::Point, f64)> = ids
+            .iter()
+            .enumerate()
+            .map(|(k, id)| {
+                (
+                    id.as_str(),
+                    "",
+                    [5.0 + 10.0 * (k % 3) as f64, 0.05 + 7.5 * (k / 3) as f64],
+                    90.0,
+                )
+            })
+            .collect();
+        let hall = r#"[{"id": "h", "name": "H", "kind": "room", "shape": "rect", "points": [[0, 0], [30, 30]]}]"#;
+        let json = testing::config_json(&sensors, hall, "[]", "[]").replace(r#""range": 6.0"#, r#""range": 10.0"#);
+        let config = crate::config::Config::from_json(&json).expect("a configuration");
+        assert_eq!(
+            crate::plan::Plan::new(&config).observed().count(),
+            1,
+            "the hall is in view"
+        );
+        let err = super::World::build(&config, crate::params::Params::default()).expect_err("too large");
+        assert!(err.contains("more than 4000"), "{err}");
+    }
 
     #[test]
     fn an_export_that_does_not_fit_together_is_refused() {

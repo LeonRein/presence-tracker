@@ -1,5 +1,7 @@
 //! The rates at which a sensor starts a track on somebody (MODEL.md 4.1): rho P_D(r) times its
-//! sight, less next to the targets it tracks (filter.Tracker._rates, kernels.sensor_rates).
+//! sight, less next to the targets it tracks.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use std::f64::consts::{LN_2, PI};
 
@@ -20,7 +22,7 @@ pub struct TrackSpot {
 pub struct RateModel {
     /// rho and r50 per mode [STILL, WALK]
     acquire: [[f64; 2]; 2],
-    /// the SNR at which a Swerling I target is detected half the time (filtermodel.S50)
+    /// the SNR at which a Swerling I target is detected half the time
     s50: f64,
     /// m: two people this far apart are resolved half of the time (range, cross)
     res: [f64; 2],
@@ -93,7 +95,7 @@ impl RateModel {
         self.base(sight, p, mode) * self.mask(sight, p, tracks)
     }
 
-    /// The rates at which the sensors `users` start a track on a person (kernels.gauss_rates), summed
+    /// The rates at which the sensors `users` start a track on a person, summed
     /// over them in the order of their indices: the still people's at the standing component's sigma
     /// points, the walkers' at the walking one's.
     pub fn mixture_rates(

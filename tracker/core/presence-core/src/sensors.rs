@@ -1,6 +1,8 @@
 //! What the filter knows of each sensor while it runs (MODEL.md 4.4): whether its frames count, its
 //! LD2450's own tracks (they keep the time of its last frame: the one place for it) and its last
 //! frame, its LD2410C.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::frames::{Detection, Ld2410};
 use crate::ld2410::sensor::LdSensor;
@@ -100,7 +102,7 @@ impl FromIterator<usize> for SensorSet {
     }
 }
 
-/// The sensors watching at t: active, their last frame at most IDLE ago (filter.Tracker._live).
+/// The sensors watching at t: active, their last frame at most IDLE ago.
 pub fn live(sensors: &[SensorState], t: f64) -> SensorSet {
     sensors
         .iter()

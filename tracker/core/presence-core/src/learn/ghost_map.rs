@@ -1,10 +1,12 @@
-//! Where each sensor starts ghost tracks (MODEL.md 4.2; ghostmap.py): per sensor and cell of its own
+//! Where each sensor starts ghost tracks (MODEL.md 4.2): per sensor and cell of its own
 //! frame a Poisson rate with a Gamma prior (Luber, Tipaldi & Arras 2011, eq. 6.8-6.13), learned online
 //! by EM (Kantas et al. 2015): each track that ends counts at the cell where it began with the filter's
 //! P(ghost) - judged without what the map said at the birth (Park et al. 2020, eq. 37-41) - against
 //! the time the sensor watched. Counts fade with FORGET. A sensor's part is in its own frame (on the
 //! floor, x to its right, y forward, its scale taken out): it follows a recalibrated sensor; only one
 //! mounted elsewhere starts its part over.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use serde_json::{Map, Value, json};
 
@@ -30,7 +32,7 @@ const SPREAD: f64 = 0.3;
 pub const FORGET: f64 = 14.0 * 86400.0;
 /// s between two fadings
 const DECAY_EVERY: f64 = 60.0;
-/// sight above this counts as watched (filter.Tracker._ghost_rate_total)
+/// sight above this counts as watched
 const WATCHED: f64 = 0.05;
 
 /// The expected number of ghost births per cell (NX x NY, row-major) and the same spread with SPREAD.
@@ -93,7 +95,7 @@ struct Part {
     time: f64,
     /// none before its first counted birth
     counts: Option<Counts>,
-    /// the rate anywhere it sees, while nothing changed (filter.Tracker._ghost_total)
+    /// the rate anywhere it sees, while nothing changed
     total: Option<f64>,
 }
 
@@ -108,7 +110,7 @@ impl Part {
         }
     }
 
-    /// The cell of a house point in the sensor's frame (ghostmap._local_cell, SensorConfig.to_local).
+    /// The cell of a house point in the sensor's frame (SensorConfig.to_local).
     fn cell(&self, [px, py]: Point) -> usize {
         let p = &self.pose;
         let h = p.heading.to_radians();
@@ -133,7 +135,7 @@ pub struct GhostMap {
 }
 
 impl GhostMap {
-    /// The map of the prior (GhostMap.from_prior): the model's rate of ghost tracks everywhere, in each
+    /// The map of the prior: the model's rate of ghost tracks everywhere, in each
     /// cell with the weight of ghost_prior_ghosts ghosts.
     pub fn from_prior(p: &Params) -> Self {
         let prior_rate = p.ghost_types.iter().map(|&[rate, _]| rate).sum::<f64>();
@@ -156,7 +158,7 @@ impl GhostMap {
         self.prior_rate
     }
 
-    /// Follow the sensors of the plan (GhostMap.use): a recalibrated one keeps its part (in its own
+    /// Follow the sensors of the plan: a recalibrated one keeps its part (in its own
     /// frame it moves with the new pose), one mounted elsewhere or new starts from the prior, the part
     /// of one no longer there goes.
     pub fn follow(&mut self, plan: &Plan) {
@@ -175,7 +177,7 @@ impl GhostMap {
             .collect();
     }
 
-    /// Posterior mean rate of ghost births per m^2 and s at a point for sensor si (GhostMap.rate); a
+    /// Posterior mean rate of ghost births per m^2 and s at a point for sensor si; a
     /// cell of its frame covers (CELL scale)^2 of the floor.
     pub fn rate(&self, si: usize, at: Point) -> f64 {
         let part = &self.parts[si];
@@ -184,7 +186,7 @@ impl GhostMap {
         (k0 + n) / (k0 / self.prior_rate + (CELL * part.pose.scale).powi(2) * part.time)
     }
 
-    /// The rate anywhere sensor si sees (per s; filter.Tracker._ghost_rate_total), kept until the map
+    /// The rate anywhere sensor si sees (per s), kept until the map
     /// changes.
     pub fn total(&mut self, si: usize, sight: &Sight) -> f64 {
         if let Some(t) = self.parts[si].total {
@@ -239,7 +241,7 @@ impl GhostMap {
         part.total = None;
     }
 
-    // ------------------------------------------------------------ the format (GhostMap.to_dict)
+    // ------------------------------------------------------------ the format
 
     pub fn to_json(&self) -> Value {
         let mut time = Map::new();
@@ -262,7 +264,7 @@ impl GhostMap {
                "time": time, "poses": poses, "count": count})
     }
 
-    /// A saved map (GhostMap.from_dict) for the sensors of the plan (it follows them at once).
+    /// A saved map for the sensors of the plan (it follows them at once).
     pub fn from_json(v: &Value, plan: &Plan) -> Result<Self, LearnedError> {
         let m = object(v, "ghost_map")?;
         let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs());

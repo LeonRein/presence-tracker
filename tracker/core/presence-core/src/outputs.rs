@@ -3,6 +3,8 @@
 //! LD2450), "wird betreten", and the people of the most probable hypothesis for the display. They only
 //! read the filter. The sums run in numpy's order (vmath), the numbers are those of the Python filter;
 //! nothing is rounded for the display here (the shell does).
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::filter::Filter;
 use crate::filter::densities::{DensityRef, DensityShape};
@@ -19,14 +21,14 @@ use crate::vmath::{log_factorials, pairwise_sum};
 use crate::world::World;
 
 /// "wird betreten": a person walking with less probability can raise no zone's p_enter by more than
-/// this; not moved on (filter.ENTER_MIN_WALK)
+/// this; not moved on
 pub const ENTER_MIN_WALK: f64 = 0.02;
 
 /// Distributions of the number of people, one per column of what was counted: [P(0), P(1), ...],
 /// all as long as the longest.
 pub type Distributions = Vec<Vec<f64>>;
 
-/// The outputs computed once per state of everybody (filter.Tracker._cached): current while the
+/// The outputs computed once per state of everybody: current while the
 /// filter's epoch stays - it only counts up, so what was computed at another epoch never passes for
 /// current.
 #[derive(Debug, Default)]
@@ -93,7 +95,7 @@ impl OutputCache {
 // ------------------------------------------------------------------ per object
 
 /// Expected number per tile in view of a density: r x (walking + standing over all kinds and levels,
-/// summed in numpy's order) (hidden.Hidden.in_view).
+/// summed in numpy's order).
 fn density_in_view(d: &DensityRef, shape: DensityShape) -> Vec<f64> {
     let n = shape.tiles;
     if n == 0 {
@@ -108,7 +110,7 @@ fn density_in_view(d: &DensityRef, shape: DensityShape) -> Vec<f64> {
     d.walk.iter().zip(&stays).map(|(&w, &s)| d.r * (w + s)).collect()
 }
 
-/// Per tile the probability of a mixture's Gaussians, mixed over the modes (gauss.Gauss.tile_mass).
+/// Per tile the probability of a mixture's Gaussians, mixed over the modes.
 fn tile_mass(world: &World, mix: &Mixture) -> Vec<f64> {
     let mut out = vec![0.0; world.tiles.n];
     for (mode, &w) in mix.modes.iter().zip(&mix.weights()) {
@@ -121,7 +123,7 @@ fn tile_mass(world: &World, mix: &Mixture) -> Vec<f64> {
     out
 }
 
-/// Expected number per tile in view of an object (Tracker._in_view): a mixture its Gaussians' tiles
+/// Expected number per tile in view of an object: a mixture its Gaussians' tiles
 /// and its part gone through a door.
 pub(crate) fn in_view(world: &World, objects: &Objects, obj: Obj) -> Vec<f64> {
     let densities = objects.densities();
@@ -144,7 +146,7 @@ pub(crate) fn in_view(world: &World, objects: &Objects, obj: Obj) -> Vec<f64> {
     }
 }
 
-/// P(the person is in each observed room), and in view at all (the last) (Tracker._room_probs).
+/// P(the person is in each observed room), and in view at all (the last).
 fn room_probs(world: &World, mass: &[f64]) -> Vec<f64> {
     let rooms = world.plan.rooms.len();
     let mut out = vec![0.0; rooms + 1];
@@ -157,8 +159,7 @@ fn room_probs(world: &World, mass: &[f64]) -> Vec<f64> {
     out
 }
 
-/// Probability per place of a density (observed, regions..., outside); 1 - r: nowhere
-/// (hidden.Hidden.places).
+/// Probability per place of a density (observed, regions..., outside); 1 - r: nowhere.
 fn density_places(d: &DensityRef, shape: DensityShape) -> Vec<f64> {
     let mut out = Vec::with_capacity(shape.regions + 2);
     out.push(d.r * (pairwise_sum(d.walk) + pairwise_sum(d.still)));
@@ -171,7 +172,7 @@ fn density_places(d: &DensityRef, shape: DensityShape) -> Vec<f64> {
     out
 }
 
-/// Probability per place of an object (Tracker._place_probs, Hidden.places): a mixture is in view but for its part
+/// Probability per place of an object: a mixture is in view but for its part
 /// gone through a door.
 pub(crate) fn places_of(objects: &Objects, obj: Obj) -> Vec<f64> {
     let densities = objects.densities();
@@ -196,7 +197,7 @@ pub(crate) fn places_of(objects: &Objects, obj: Obj) -> Vec<f64> {
 
 /// The number of people per column: one Bernoulli per known person (`known`, a row of probabilities
 /// each), plus a Poisson number of unknown ones (`means`), cut where the rest is below 1e-9
-/// (kernels.poisson_binomial; `log_k` holds log k! far enough). A column's entries beyond its cut 0.
+/// (`log_k` holds log k! far enough). A column's entries beyond its cut 0.
 fn poisson_binomial(known: &[&[f64]], means: &[f64], log_k: &[f64]) -> Distributions {
     let people = known.len();
     let mut dist: Distributions = means
@@ -230,7 +231,8 @@ fn poisson_binomial(known: &[&[f64]], means: &[f64], log_k: &[f64]) -> Distribut
         .zip(means)
         .map(|(d, &mean)| {
             let mut out = vec![0.0; people + width];
-            if mean <= 0.0 {
+            if !(mean > 0.0) {
+                // nobody unknown; also a mean that is no number, whose cut log_k need not reach
                 out[..=people].copy_from_slice(&d);
                 return out;
             }
@@ -256,7 +258,7 @@ fn poisson_cut(mean: f64) -> usize {
 
 /// The distributions of the number of people per column of per_object - for a known person the
 /// probabilities, for the unknown ones the expected numbers - mixed over the hypotheses
-/// (Tracker._counts). Each object once, in the order of the holders.
+///. Each object once, in the order of the holders.
 fn counts(filter: &Filter, per_object: impl Fn(Obj) -> Vec<f64>) -> Distributions {
     let holders = filter.holders();
     let mut values: Vec<Vec<f64>> = vec![Vec::new(); holders.len()];
@@ -382,7 +384,7 @@ fn shown_people(filter: &Filter) -> Vec<(usize, Obj)> {
         .collect()
 }
 
-/// A known person for the display (Tracker._display), not rounded.
+/// A known person for the display, not rounded.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Person {
     pub id: usize,
@@ -478,7 +480,7 @@ fn mean_of(mix: &Mixture) -> Shown {
     }
 }
 
-/// Where a person of the display may be, for the map (Tracker._cloud), not rounded.
+/// Where a person of the display may be, for the map, not rounded.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cloud {
     pub id: usize,
@@ -553,7 +555,7 @@ struct Rise {
 }
 
 /// Per zone of plan.targets (the observed rooms, then the areas) "wird betreten" for the look-ahead h
-/// (s; Tracker._entering, MODEL.md 6). Per person with a track (not a ghost's source) only
+/// (s, MODEL.md 6). Per person with a track (not a ghost's source) only
 /// their walking component moves on (standing people sway by centimetres; getting up goes anywhere):
 /// where it is h/2 and h s ahead - unless the walk ends first (rate speed / walk length, 3.2): then
 /// where it stopped, the time of stopping on the nodes 0, h/2, h -, against where it is now. Their
@@ -668,7 +670,7 @@ fn maximum(a: f64, b: f64) -> f64 {
 }
 
 /// How far a walker at `at` walks along their velocity until they are in zone z (its cells), if no
-/// wall is in the way and within 5 m, in steps of 5 cm (Tracker._ray_distance).
+/// wall is in the way and within 5 m, in steps of 5 cm.
 fn ray_distance(world: &World, z: usize, at: Point, velocity: Point) -> Option<f64> {
     const REACH: f64 = 5.0;
     const STEP: f64 = 0.05;
@@ -944,6 +946,14 @@ mod tests {
     }
 
     #[test]
+    fn a_mean_that_is_no_number_counts_nobody_unknown() {
+        // it was cut at 10^4 people, beyond log_k: out of bounds
+        let got = poisson_binomial(&[&[0.5, 0.5]], &[f64::NAN, 1.5], &log_factorials(64));
+        assert_eq!(got[0][..2], [0.5, 0.5]);
+        assert!(got[0][2..].iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
     fn a_person_at_a_place_is_counted_there() {
         let mut tr = Tracker::new(testing::flat());
         tr.reset_people(Some(&[Start::Place(Place::Observed), Start::Place(Place::Outside)]))
@@ -1182,18 +1192,22 @@ mod tests {
     }
 
     #[test]
-    fn a_new_world_voids_the_cache_and_other_tiles_are_refused() {
+    fn new_outputs_void_the_cache_and_other_tiles_are_refused() {
         let mut tr = walking([1.0, 2.2], [0.0, 1.0]);
         assert!(tr.entering()[1].p > 0.3);
         // the same tiles, no look-ahead: "wird betreten" anew from the new world
         let mut config = testing::flat_config();
         config.params.lead_time = 0.0;
-        let world = World::from_export(testing::flat_export(), &config, 30.0).expect("a world");
-        tr.set_world(world).expect("the same tiles");
+        tr.set_outputs(crate::params::OutputParams::of(&config.params, 30.0))
+            .expect("outputs");
         assert_eq!(tr.entering()[1].p, 0.0);
         // other tiles (the core's own build of the flat room: 0.4 m squares): refused, nothing changed
-        let other = World::build(&testing::flat_config(), crate::params::Params::default(), 30.0).expect("a world");
-        assert!(tr.set_world(other).is_err());
+        let other = World::build(&testing::flat_config(), crate::params::Params::default()).expect("a world");
+        let refused = tr.recalibrate(crate::sensors::SensorSet::default(), other);
+        assert_eq!(
+            refused,
+            Err(crate::tracker::Fault::Call(crate::frames::CallError::World))
+        );
         assert_eq!(tr.world().tiles.n, testing::flat_export().tiles.n);
     }
 

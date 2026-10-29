@@ -1,7 +1,9 @@
-//! The motion of the people without a track over the tiles (MODEL.md 3.1-3.4, 5.3; hidden.Hidden.move):
+//! The motion of the people without a track over the tiles (MODEL.md 3.1-3.4, 5.3):
 //! the stays, walking between the tiles in ticks, the stays in the regions without a sensor, coming
 //! home and newcomers. Walking all densities on the same tiles is one matrix product per tick: it
 //! reads the matrix of walking once for all of them.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use faer::linalg::matmul::matmul;
 use faer::{Accum, MatMut, MatRef, Par};
@@ -11,7 +13,7 @@ use crate::filter::densities::{Densities, DensityId, DensityMut, Kind};
 use crate::params::Params;
 use crate::world::{Tiles, World};
 
-/// Moves each density by its own step dt (Hidden.move_all): the stays, then the walkers in ticks of
+/// Moves each density by its own step dt: the stays, then the walkers in ticks of
 /// the tiles' tick (each density keeps the time since its last tick), those with the same number
 /// of ticks together; then the regions and the newcomers.
 pub fn move_densities(world: &World, densities: &mut Densities, movers: &[(DensityId, f64)]) {
@@ -199,7 +201,7 @@ fn walk_ticks(tiles: &Tiles, densities: &mut Densities, ids: &[DensityId], ticks
     }
 }
 
-/// The stays in the regions without a sensor (kernels.hidden_regions): a stay ends by its hazard and
+/// The stays in the regions without a sensor: a stay ends by its hazard and
 /// who comes out leaves through one of the region's doors alike - walking into view at a door, or
 /// out of the house through one of its ways out (none at all: the stay goes on); coming home by
 /// every way in alike; the stays age.
@@ -262,5 +264,113 @@ fn arrive(tiles: &Tiles, p: &Params, d: &mut DensityMut, dt: f64) {
         for &c in &tiles.entries {
             d.walk[c] += come;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::filter::densities::DensityShape;
+    use crate::testing::{config, wall};
+
+    /// Two rooms of 3 x 3 m side by side: "a" with a sensor, "b" behind a wall with a door at (3, 1.5)
+    /// and nobody seeing it (a closed region), and a door from "a" out of the house at (0, 1.5).
+    fn with_a_region() -> World {
+        let walls = [
+            wall([0.0, 0.0], [6.0, 0.0]),
+            wall([6.0, 0.0], [6.0, 3.0]),
+            wall([6.0, 3.0], [0.0, 3.0]),
+            wall([0.0, 3.0], [0.0, 0.0]),
+            wall([3.0, 0.0], [3.0, 3.0]),
+        ];
+        let c = config(
+            &[("sa", "a", [0.05, 0.05], 45.0)],
+            r#"[{"id": "a", "name": "A", "kind": "room", "shape": "rect", "points": [[0, 0], [3, 3]]},
+                {"id": "b", "name": "B", "kind": "room", "shape": "rect", "points": [[3, 0], [6, 3]]}]"#,
+            &format!("[{}]", walls.join(", ")),
+            r#"[{"id": "d", "x": 3.0, "y": 1.5, "width": 0.9}, {"id": "out", "x": 0.0, "y": 1.5, "width": 0.9}]"#,
+        );
+        World::build(&c, Params::default()).expect("a world")
+    }
+
+    fn total(d: &DensityMut) -> f64 {
+        d.walk.iter().chain(d.still.iter()).chain(d.region.iter()).sum::<f64>() + *d.out
+    }
+
+    #[test]
+    fn a_person_walking_through_the_doors_into_the_region_and_out_keeps_their_mass() {
+        // MODEL.md 3.1-3.3: stays, walking, the region and out of the house only move a person's mass
+        let world = with_a_region();
+        let t = &world.tiles;
+        assert_eq!(
+            (t.regions, t.exits.clone(), t.region_doors[0].is_empty()),
+            (1, vec![0], false)
+        );
+        assert!(!t.entries.is_empty(), "the door out of the house");
+        let s: DensityShape = world.density_shape();
+        let mut densities = Densities::new(s);
+        let id = densities.alloc(Kind::Person);
+        {
+            let d = densities.get_mut(id);
+            d.walk.fill(0.4 / s.tiles as f64);
+            d.still.fill(0.4 / s.still_len() as f64);
+            d.region[0] = 0.1;
+            *d.out = 0.1;
+        }
+        for _ in 0..50 {
+            move_densities(&world, &mut densities, &[(id, 0.2)]);
+        }
+        let d = densities.get_mut(id);
+        assert!(
+            d.region[0] < 0.1 && d.region[1..].iter().sum::<f64>() > 0.0,
+            "the stay aged"
+        );
+        assert!(*d.out != 0.1, "somebody went out or came home");
+        // the tick's matrix itself loses up to ~2e-12 per tile and tick (expm, entries below 1e-12
+        // cut): the move may lose no more than that over its 100 ticks
+        let (n, outs) = (t.n, t.regions + 1);
+        let defect = (0..n)
+            .map(|c| {
+                (t.walk_t[c * n..][..n]
+                    .iter()
+                    .chain(&t.into_t[c * outs..][..outs])
+                    .sum::<f64>()
+                    - 1.0)
+                    .abs()
+            })
+            .fold(0.0, f64::max);
+        assert!(defect < 1e-11, "{defect}");
+        assert!(
+            (total(&d) - 1.0).abs() <= 100.0 * defect + 1e-14,
+            "{} ({defect})",
+            total(&d)
+        );
+    }
+
+    #[test]
+    fn a_fresh_stay_in_a_region_ends_by_its_hazard_and_ages_by_its_bin_width() {
+        // MODEL.md 3.3: of mass 1 at age 0, 1 - exp(-rate_0 dt) comes out through the region's doors
+        // (it is closed: none out of the house); the rest moves on to age 1 with 1 - exp(-dt / width_0)
+        let world = with_a_region();
+        let (t, p) = (&world.tiles, &world.params);
+        // the hazard of the log-normal stay over the first bin (median 120 s, spread 1.5)
+        let survival = |x: f64| 0.5 * libm::erfc((x.ln() - 120f64.ln()) / (1.5 * 2f64.sqrt()));
+        let (rate, width) = (t.region_rates[0], t.widths[0]);
+        assert!((rate - -survival(width).ln() / width).abs() < 1e-12 * rate, "{rate}");
+        let mut densities = Densities::new(world.density_shape());
+        let id = densities.alloc(Kind::Person);
+        let mut d = densities.get_mut(id);
+        d.region[0] = 1.0;
+        let dt = 1.5;
+        regions(t, p, &mut d, dt);
+        let (stays, older) = ((-rate * dt).exp(), 1.0 - (-dt / width).exp());
+        assert!((d.region[0] - stays * (1.0 - older)).abs() < 1e-15, "{}", d.region[0]);
+        assert!((d.region[1] - stays * older).abs() < 1e-15, "{}", d.region[1]);
+        assert!(d.region[2..].iter().all(|&v| v == 0.0) && *d.out == 0.0);
+        let doors = &t.region_doors[0];
+        for &c in doors {
+            assert!((d.walk[c] - (1.0 - stays) / doors.len() as f64).abs() < 1e-15);
+        }
+        assert_eq!(d.walk.iter().filter(|&&w| w > 0.0).count(), doors.len());
     }
 }

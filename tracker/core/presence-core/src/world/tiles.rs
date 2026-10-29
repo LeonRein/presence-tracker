@@ -1,5 +1,7 @@
-//! The observed area as square tiles (tiling.Tiling, MODEL.md 5.3): where a person without a track
+//! The observed area as square tiles (MODEL.md 5.3): where a person without a track
 //! can be, and how walkers move between the tiles, into the regions without a sensor and out.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use std::sync::OnceLock;
 
@@ -12,7 +14,7 @@ use crate::vmath::{max2, pairwise_sum};
 use crate::world::raster::{CELL, Raster, RoomGrid};
 
 /// A tile next to a door into a region or out of the house: as its small Gaussian (centre, spread
-/// per axis, area) with its rates of walking through each door (tiling.Tiling.near_doors).
+/// per axis, area) with its rates of walking through each door.
 #[derive(Debug)]
 #[cfg_attr(test, derive(serde::Deserialize))]
 pub struct DoorTile {
@@ -23,7 +25,7 @@ pub struct DoorTile {
     pub rates: Vec<f64>,
 }
 
-/// m: the sample points of the rates are this far apart (tiling.POINT)
+/// m: the sample points of the rates are this far apart
 pub const POINT: f64 = 0.2;
 
 #[derive(Debug)]
@@ -35,7 +37,7 @@ pub struct Tiles {
     pub centers: Vec<Point>,
     pub var: Vec<Point>,
     pub area: Vec<f64>,
-    /// per 0.1 m cell in view its tile and centre (tiling.Tiling.fine, fine_xy)
+    /// per 0.1 m cell in view its tile and centre (fine_xy)
     pub fine: Vec<usize>,
     pub fine_xy: Vec<Point>,
     /// regions without a sensor (R)
@@ -44,9 +46,9 @@ pub struct Tiles {
     pub ages: usize,
     /// s: walking moves the masses in steps of this length
     pub tick: f64,
-    /// one tick of walking from tile to tile, n x n as [from][to] (tiling.T_walk_t)
+    /// one tick of walking from tile to tile, n x n as [from][to]
     pub walk_t: Vec<f64>,
-    /// one tick of walking from a tile into each region and out, n x (R + 1) (tiling.T_in_t)
+    /// one tick of walking from a tile into each region and out, n x (R + 1)
     pub into_t: Vec<f64>,
     pub door_tiles: Vec<DoorTile>,
     /// per region the tiles where somebody coming out of it appears
@@ -63,13 +65,13 @@ pub struct Tiles {
     pub points: Vec<Point>,
     pub point_tile: Vec<usize>,
     pub point_count: Vec<f64>,
-    /// per tile its observed room (tiling.Tiling.room; None: in none)
+    /// per tile its observed room (None: in none)
     #[cfg_attr(test, serde(default))]
     pub room: Vec<Option<RoomIdx>>,
     /// per tile the lower left corner of its square of SIZE m, which its room cuts (for the display)
     #[cfg_attr(test, serde(default))]
     pub squares: Vec<Point>,
-    /// R x A: per region the age distribution of a stay seen at a random time (Tiling.region_start)
+    /// R x A: per region the age distribution of a stay seen at a random time
     #[cfg_attr(test, serde(default))]
     pub region_start: Vec<f64>,
     /// the generator of walking (n + R + 1)^2, [to][from], for walk_end
@@ -81,11 +83,13 @@ pub struct Tiles {
     pub walk_end: OnceLock<Vec<f64>>,
 }
 
-/// m: side of a tile (tiling.SIZE)
+/// m: side of a tile
 pub const SIZE: f64 = 0.4;
-/// s: walking moves the tiles' masses in steps of this length (tiling.TICK)
+/// tiles at most (the live house has ~700; 4000 are 640 m^2 in view): the walking matrix is dense
+pub const MAX_TILES: usize = 4000;
+/// s: walking moves the tiles' masses in steps of this length
 pub const TICK: f64 = 0.1;
-/// s: the starts of the age bins of a stay in a region (hidden.AGE_EDGES): 0, 2 s ... 36 h; each bin
+/// s: the starts of the age bins of a stay in a region: 0, 2 s ... 36 h; each bin
 /// reaches to the next start, the last to twice its own
 pub const AGE_EDGES: [f64; 18] = [
     0.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0, 8192.0, 16384.0, 32768.0,
@@ -138,7 +142,7 @@ struct RegionStays {
     start: Vec<f64>,
 }
 
-/// The tile of the cell nearest to p (Tiling.cell_near), None without cells.
+/// The tile of the cell nearest to p, None without cells.
 fn nearest_tile(centres: &[Point], tile: &[usize], p: Point) -> Option<usize> {
     let mut best: Option<(f64, usize)> = None;
     for (&[x, y], &t) in centres.iter().zip(tile) {
@@ -320,7 +324,7 @@ fn door_rates(cells: &Cells, layout: &Layout, m: &Moments, floor: &Floor, d: f64
     rate
 }
 
-/// The generator of walking, (n + R + 1)^2 as [to][from] (tiles, regions, outside; Tiling.Q): between
+/// The generator of walking, (n + R + 1)^2 as [to][from] (tiles, regions, outside): between
 /// tiles D L / (A d) by finite volumes (L the border, A the area, d the centres' distance), through the
 /// doors at their rates; its diagonal what leaves each tile.
 fn generator(m: &Moments, border: &[f64], door_rate: &[Vec<f64>], d: f64, regions: usize) -> Vec<f64> {
@@ -368,7 +372,7 @@ fn walk_tick(q: &[f64], n: usize, regions: usize) -> Result<(Vec<f64>, Vec<f64>)
 
 impl RegionStays {
     /// Share of the visits to a region without a sensor that last longer than dt: log-normal with the
-    /// configuration's median and spread (unobserved.Dwell.survival, MODEL.md 3.3).
+    /// configuration's median and spread (MODEL.md 3.3).
     fn survival(p: &TrackerParams, dt: f64) -> f64 {
         if dt <= 0.0 {
             return 1.0;
@@ -416,7 +420,7 @@ fn walk_end_of(q: &[f64], n: usize, regions: usize, mu: f64) -> Vec<f64> {
 }
 
 impl Tiles {
-    /// The tiles of the observed area (tiling.Tiling): squares of SIZE cut at the rooms' borders, their
+    /// The tiles of the observed area: squares of SIZE cut at the rooms' borders, their
     /// sample points, and walking between them as the diffusion limit of the walking model (MODEL.md 3.2,
     /// finite volumes), into the regions across doors and out of the house; one tick of it by the
     /// matrix exponential. Err if the walking model has no finite generator.
@@ -432,6 +436,13 @@ impl Tiles {
         let regions = plan.regions.len();
         let cells = cells_in_view(raster, labels);
         let layout = layout(&cells, raster, rooms);
+        if layout.keys.len() > MAX_TILES {
+            // the walking matrix is n x n and its exponential O(n^3): refused before it takes all memory
+            return Err(format!(
+                "{} tiles, more than {MAX_TILES}: the plan is too large",
+                layout.keys.len()
+            ));
+        }
         let m = moments(&cells, &layout);
         let samples = samples(&cells, &layout, &m.centers);
         let d = diffusion(params);
@@ -497,7 +508,7 @@ impl Tiles {
     }
 
     /// Where a walk that begins in a tile ends - stopped in a tile, gone into a region or out - whatever
-    /// its length, (n + R + 1) x n (Tiling.walk_end): mu (mu I - Q)^-1, its first n columns, shares
+    /// its length, (n + R + 1) x n: mu (mu I - Q)^-1, its first n columns, shares
     /// below 1e-12 as 0. Solved when first needed (for the leaps of a long gap), then kept.
     pub fn walk_end(&self, params: &Params) -> &[f64] {
         self.walk_end
@@ -527,12 +538,12 @@ impl Tiles {
         self.exits.iter().sum::<usize>() + self.entries.len()
     }
 
-    /// The tile of a point, or the nearest one (tiling.Tiling.cell_near); None without tiles.
+    /// The tile of a point, or the nearest one; None without tiles.
     pub fn cell_near(&self, p: Point) -> Option<usize> {
         nearest_tile(&self.fine_xy, &self.fine, p)
     }
 
-    /// Per tile the mean of a function given at the sample points (tiling.Tiling.average): summed in
+    /// Per tile the mean of a function given at the sample points: summed in
     /// the order of the points, as numpy's bincount.
     pub fn average(&self, at_points: &[f64]) -> Vec<f64> {
         let mut out = vec![0.0; self.n];
@@ -573,7 +584,7 @@ mod tests {
             "[]",
             "[]",
         );
-        let world = World::build(&config, Params::default(), 30.0).expect("a world");
+        let world = World::build(&config, Params::default()).expect("a world");
         let t = &world.tiles;
         assert_eq!((t.n, t.regions, t.area.clone()), (2, 0, vec![16.0 * CELL * CELL; 2]));
         for (c, want) in t.centers.iter().zip([[0.2, 0.2], [0.6, 0.2]]) {

@@ -1,6 +1,8 @@
-//! The numbers of the model (filtermodel.Model, MODEL.md) and the shapes derived from them
-//! (filtermodel.Shapes). Measured ones and assumptions are explained in filtermodel.py; here only
+//! The numbers of the model (MODEL.md) and the shapes derived from them
+//!. Measured ones and assumptions are explained in filtermodel.py; here only
 //! what the core reads. A model is given as the fields that differ from these defaults.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -27,19 +29,19 @@ fn real<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
     }
 }
 
-/// s: the LD2450's frame period (measured; filtermodel.FRAME)
+/// s: the LD2450's frame period (measured)
 pub const FRAME: f64 = 0.089;
-/// s: frames further apart were lost on the way (the idle heartbeat is 5 s, filtermodel.IDLE)
+/// s: frames further apart were lost on the way (the idle heartbeat is 5 s)
 pub const IDLE: f64 = 6.0;
-/// False alarm probability per detection cell of a CFAR radar (filtermodel.P_FA)
+/// False alarm probability per detection cell of a CFAR radar
 pub const P_FA: f64 = 1e-6;
 
-/// Index of the standing and the walking component (filtermodel.STILL, WALK).
+/// Index of the standing and the walking component (WALK).
 pub const STILL: usize = 0;
 pub const WALK: usize = 1;
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Params {
     // 3.1 standing
     #[serde(deserialize_with = "real")]
@@ -121,10 +123,10 @@ pub struct Params {
     pub max_hyps: usize,
     #[serde(deserialize_with = "real")]
     pub hyp_mass: f64,
-    /// a known person who exists with less probability joins the unknown ones (filter.GIVE_UP)
+    /// a known person who exists with less probability joins the unknown ones
     #[serde(deserialize_with = "real")]
     pub give_up: f64,
-    /// s: motion is cut into parts no longer than this (filter.MAX_STEP)
+    /// s: motion is cut into parts no longer than this
     #[serde(deserialize_with = "real")]
     pub max_step: f64,
     // 4.3 the LD2410C: per mode [STILL, WALK] the profile of the moving and the still cells, the
@@ -152,7 +154,7 @@ pub struct Params {
     pub ld_echo_stages: usize,
     pub ld_echo_ranges: Slants,
     pub ld_echo_amps: Vec<f64>,
-    /// a tile holding less of a person standing is weighed at its mean amplitude (filter.LD_TILE_MASS)
+    /// a tile holding less of a person standing is weighed at its mean amplitude
     #[serde(deserialize_with = "real")]
     pub ld_tile_mass: f64,
     /// the background before anything is learned: moving gates 0, 1, the other moving gates, the still
@@ -176,15 +178,18 @@ pub struct Params {
     #[serde(deserialize_with = "real")]
     pub dest_prior_walks: f64,
     /// s: the end of a gap in the data is moved as always, what lies before in leaps of `leap` s,
-    /// at most `max_leaps` of them (filter.GAP_EXACT, LEAP, MAX_LEAPS)
+    /// at most `max_leaps` of them (LEAP, MAX_LEAPS)
     #[serde(deserialize_with = "real")]
     pub gap_exact: f64,
     #[serde(deserialize_with = "real")]
     pub leap: f64,
     pub max_leaps: usize,
+    /// s without any frame: a room's own sensor is gone, the room silent (MODEL.md 6 "Belegt")
+    #[serde(deserialize_with = "real")]
+    pub silent_after: f64,
 }
 
-/// How a lost target is held (sensortracks.py): coasting on, or frozen where it was lost.
+/// How a lost target is held: coasting on, or frozen where it was lost.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LostKind {
@@ -193,8 +198,9 @@ pub enum LostKind {
 }
 
 /// Per kind of loss the time to finding the target again: median s, log-normal spread, the share
-/// never found (filtermodel.Model.refind).
+/// never found.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Refind {
     pub coast: [f64; 3],
     pub frozen: [f64; 3],
@@ -292,6 +298,7 @@ impl Default for Params {
             gap_exact: 120.0,
             leap: 15.0,
             max_leaps: 2000,
+            silent_after: crate::room_seen::SILENT_AFTER,
         }
     }
 }
@@ -304,84 +311,132 @@ impl Params {
     }
 
     /// Whether the numbers make a model: what divides, counts or is a probability in range (a step
-    /// of 0 in the echo sources' slants would make endless sources, an ld_memory of 0 NaN).
-    pub fn validate(&self) -> Result<(), String> {
-        let positive = [
-            ("ld_every", self.ld_every),
-            ("ld_frame", self.ld_frame),
-            ("ld_memory", self.ld_memory),
-            ("ld_echo_life", self.ld_echo_life),
-            ("max_step", self.max_step),
-            ("speed", self.speed),
-            ("walk_length", self.walk_length),
-            ("turn_rate", self.turn_rate),
-            ("go_share", self.go_share),
-            ("go_time", self.go_time),
-            ("kappa_shape", self.kappa_shape),
-            ("ld_amp_shape", self.ld_amp_shape),
-            ("ld_shape", self.ld_shape[0].min(self.ld_shape[1])),
-            ("ld_tau", self.ld_tau[0].min(self.ld_tau[1])),
-            ("ld_gain", self.ld_gain[0].min(self.ld_gain[1])),
-            ("ld_burst.shape", self.ld_burst.shape),
-            ("ld_burst.gain", self.ld_burst.gain),
-            ("ld_echo_ranges.from", self.ld_echo_ranges.from),
-            ("ld_echo_ranges.step", self.ld_echo_ranges.step),
-            ("ghost_prior_ghosts", self.ghost_prior_ghosts),
-            ("ld_prior_time", self.ld_prior_time),
-            ("ld_forget", self.ld_forget),
-            ("ld_anchor_forget", self.ld_anchor_forget),
-            ("ld_echo_rate", self.ld_echo_rate),
-            ("ld_echo_prior_time", self.ld_echo_prior_time),
-            ("dest_prior_walks", self.dest_prior_walks),
-        ];
+    /// of 0 in the echo sources' slants would make endless sources, an ld_memory of 0 NaN), and what
+    /// is counted or held per element far below what takes all memory (a typing error is refused,
+    /// not tried: 1e308 as the last slant made endless sources).
+    pub fn validate(&self) -> Result<(), ModelError> {
+        let positive = |x: f64| x > 0.0 && x.is_finite();
+        let at_least_0 = |x: f64| x >= 0.0 && x.is_finite();
+        let share = |x: f64| (0.0..1.0).contains(&x);
+        // a time that may be endless (unseen_life in the tests: nothing expires)
+        let time = |x: f64| x > 0.0;
+        let up_to = |n: usize, lo: usize, hi: usize| (lo..=hi).contains(&n);
         let profiles = self.ld_moving.iter().chain(&self.ld_still);
-        let checks = positive
-            .iter()
-            .map(|&(name, x)| (name, x > 0.0 && x.is_finite()))
-            .chain([
-                (
-                    "ld_burst.weight",
-                    self.ld_burst.weight > 0.0 && self.ld_burst.weight < 1.0,
-                ),
-                ("ld_beam", self.ld_beam[0] < self.ld_beam[1]),
-                ("ld_echo_ranges.to", self.ld_echo_ranges.to >= self.ld_echo_ranges.from),
-                ("ld_echo_stages", self.ld_echo_stages >= 1),
-                (
-                    "ld_echo_amps",
-                    !self.ld_echo_amps.is_empty() && self.ld_echo_amps.iter().all(|&a| a > 0.0),
-                ),
-                ("ld_tile_mass", self.ld_tile_mass >= 0.0),
-                (
-                    "ld_background",
-                    self.ld_background.iter().all(|&b| b > 0.0 && b.is_finite()),
-                ),
-                ("ld_anchor_quiet", self.ld_anchor_quiet >= 0.0),
-                ("ghost_types", self.ghost_types.iter().map(|t| t[0]).sum::<f64>() > 0.0),
-                (
-                    "start_unknown",
-                    self.start_unknown >= 0.0 && self.start_unknown.is_finite(),
-                ),
-                ("give_up", (0.0..=1.0).contains(&self.give_up)),
-                (
-                    "stay_points",
-                    self.stay_points.len() >= 2 && self.stay_points.iter().all(|&t| t > 0.0 && t.is_finite()),
-                ),
-                ("kappa_levels", self.kappa_levels >= 2),
-                ("ld_amp_levels", self.ld_amp_levels >= 2),
-                ("kappa_amp_corr", self.kappa_amp_corr.abs() < 1.0),
-                ("max_hyps", self.max_hyps >= 1),
-                (
-                    "ld_moving, ld_still",
-                    profiles
-                        .clone()
-                        .all(|q| q.sigma > 0.0 && q.ell > 0.0 && (0.0..=1.0).contains(&q.tail)),
-                ),
-            ]);
-        let bad: Vec<&str> = checks.filter(|&(_, ok)| !ok).map(|(name, _)| name).collect();
-        if bad.is_empty() {
+        let refind = [self.refind.coast, self.refind.frozen];
+        let slants = (self.ld_echo_ranges.to - self.ld_echo_ranges.from) / self.ld_echo_ranges.step;
+        let checks = [
+            ("still_noise", positive(self.still_noise)),
+            ("go_share", positive(self.go_share)),
+            ("go_time", positive(self.go_time)),
+            (
+                "stay_points",
+                up_to(self.stay_points.len(), 2, 16) && self.stay_points.iter().all(|&t| positive(t)),
+            ),
+            ("kappa_shape", positive(self.kappa_shape)),
+            ("kappa_levels", up_to(self.kappa_levels, 2, 64)),
+            ("ld_amp_shape", positive(self.ld_amp_shape)),
+            ("ld_amp_levels", up_to(self.ld_amp_levels, 2, 64)),
+            ("kappa_amp_corr", self.kappa_amp_corr.abs() < 1.0),
+            ("kappa_switch", at_least_0(self.kappa_switch)),
+            ("speed", positive(self.speed)),
+            ("speed_spread", at_least_0(self.speed_spread)),
+            ("turn_rate", positive(self.turn_rate)),
+            ("walk_length", positive(self.walk_length)),
+            ("arrive_rate", at_least_0(self.arrive_rate)),
+            ("guest_rate", at_least_0(self.guest_rate)),
+            ("forget_rate", at_least_0(self.forget_rate)),
+            ("acquire", self.acquire.iter().flatten().all(|&x| positive(x))),
+            ("find_radius", positive(self.find_radius)),
+            ("res_range", positive(self.res_range)),
+            ("res_cross", positive(self.res_cross)),
+            ("const_share", (0.0..=1.0).contains(&self.const_share)),
+            ("tau", positive(self.tau)),
+            ("white", positive(self.white)),
+            ("pos_every", positive(self.pos_every)),
+            ("find_clutter", at_least_0(self.find_clutter)),
+            ("track_life", self.track_life.iter().all(|&t| time(t))),
+            (
+                "refind",
+                refind
+                    .iter()
+                    .all(|&[median, spread, never]| positive(median) && positive(spread) && share(never)),
+            ),
+            ("ghost_echo", at_least_0(self.ghost_echo)),
+            (
+                "ghost_types",
+                up_to(self.ghost_types.len(), 1, 16)
+                    && self
+                        .ghost_types
+                        .iter()
+                        .all(|&[rate, life]| at_least_0(rate) && positive(life))
+                    && self.ghost_types.iter().map(|t| t[0]).sum::<f64>() > 0.0,
+            ),
+            ("ghost_prior_ghosts", positive(self.ghost_prior_ghosts)),
+            ("start_unknown", at_least_0(self.start_unknown)),
+            ("unseen_life", time(self.unseen_life)),
+            ("max_hyps", up_to(self.max_hyps, 1, 1000)),
+            ("hyp_mass", share(self.hyp_mass)),
+            ("give_up", (0.0..=1.0).contains(&self.give_up)),
+            ("max_step", positive(self.max_step)),
+            (
+                "ld_moving, ld_still",
+                profiles.clone().all(|q| {
+                    at_least_0(q.a)
+                        && q.n.is_finite()
+                        && q.delta.is_finite()
+                        && positive(q.sigma)
+                        && positive(q.ell)
+                        && (0.0..=1.0).contains(&q.tail)
+                }),
+            ),
+            (
+                "ld_beam",
+                self.ld_beam[0] < self.ld_beam[1] && self.ld_beam.iter().all(|&a| a.is_finite()),
+            ),
+            ("ld_shape", self.ld_shape.iter().all(|&x| positive(x))),
+            ("ld_tau", self.ld_tau.iter().all(|&x| positive(x))),
+            ("ld_gain", self.ld_gain.iter().all(|&x| positive(x))),
+            (
+                "ld_burst",
+                positive(self.ld_burst.shape)
+                    && positive(self.ld_burst.gain)
+                    && self.ld_burst.weight > 0.0
+                    && share(self.ld_burst.weight),
+            ),
+            ("ld_every", positive(self.ld_every)),
+            ("ld_frame", positive(self.ld_frame)),
+            ("ld_memory", positive(self.ld_memory)),
+            ("ld_echo_life", positive(self.ld_echo_life)),
+            ("ld_echo_stages", up_to(self.ld_echo_stages, 1, 16)),
+            (
+                "ld_echo_ranges",
+                positive(self.ld_echo_ranges.from)
+                    && positive(self.ld_echo_ranges.step)
+                    && (0.0..=1000.0).contains(&slants),
+            ),
+            (
+                "ld_echo_amps",
+                up_to(self.ld_echo_amps.len(), 1, 16) && self.ld_echo_amps.iter().all(|&a| positive(a)),
+            ),
+            ("ld_tile_mass", at_least_0(self.ld_tile_mass)),
+            ("ld_background", self.ld_background.iter().all(|&b| positive(b))),
+            ("ld_prior_time", positive(self.ld_prior_time)),
+            ("ld_forget", positive(self.ld_forget)),
+            ("ld_anchor_forget", positive(self.ld_anchor_forget)),
+            ("ld_anchor_quiet", at_least_0(self.ld_anchor_quiet)),
+            ("ld_echo_rate", positive(self.ld_echo_rate)),
+            ("ld_echo_prior_time", positive(self.ld_echo_prior_time)),
+            ("dest_prior_walks", positive(self.dest_prior_walks)),
+            ("gap_exact", at_least_0(self.gap_exact)),
+            ("leap", positive(self.leap)),
+            ("max_leaps", up_to(self.max_leaps, 1, 100_000)),
+            ("silent_after", at_least_0(self.silent_after)),
+        ];
+        let fields: Vec<&'static str> = checks.iter().filter(|&&(_, ok)| !ok).map(|&(name, _)| name).collect();
+        if fields.is_empty() {
             Ok(())
         } else {
-            Err(format!("the model's numbers do not fit: {}", bad.join(", ")))
+            Err(ModelError { fields })
         }
     }
 
@@ -396,7 +451,21 @@ impl Params {
     }
 }
 
-/// What only the outputs read (MODEL.md 6; filter.OUTPUT_PARAMS, roomseen.SILENT_AFTER): a change of
+/// Numbers of a model that do not make one, by the names of their fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelError {
+    pub fields: Vec<&'static str>,
+}
+
+impl std::fmt::Display for ModelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the model's numbers do not fit: {}", self.fields.join(", "))
+    }
+}
+
+impl std::error::Error for ModelError {}
+
+/// What only the outputs read (MODEL.md 6): a change of
 /// them restarts nothing, but it is a new world (the outputs' cache is void).
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutputParams {
@@ -414,6 +483,17 @@ pub struct OutputParams {
     pub target_threshold: f64,
     pub target_thresholds: std::collections::BTreeMap<String, f64>,
 }
+
+/// The fields of the configuration's parameters that only the outputs read (OutputParams::of): a change
+/// of them alone builds nothing (Tracker::set_outputs).
+pub const OUTPUT_FIELDS: [&str; 6] = [
+    "light_cost",
+    "seen_hold",
+    "lead_time",
+    "approach_cost",
+    "target_threshold",
+    "target_thresholds",
+];
 
 impl OutputParams {
     pub fn of(p: &crate::config::TrackerParams, silent_after: f64) -> Self {
@@ -472,6 +552,7 @@ impl OutputParams {
 /// times the main lobe, a Gaussian of width sigma centred delta behind the person, and beyond the
 /// centre the tail mixed in by `tail`, falling off over ell (m). Read as the model's list.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Profile {
     pub a: f64,
     pub n: f64,
@@ -496,6 +577,7 @@ impl Profile {
 
 /// The bursts of the LD2410C's common gain: 1/u ~ Gamma(shape, rate shape x gain) with this weight.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Burst {
     pub shape: f64,
     pub gain: f64,
@@ -504,6 +586,7 @@ pub struct Burst {
 
 /// The slants (m) of the echo sources: from, to (with it), step.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Slants {
     pub from: f64,
     pub to: f64,
@@ -523,9 +606,52 @@ mod tests {
             (r#"{"speed": "nan"}"#, "speed"),
         ] {
             let err = Params::from_json(json).expect("parsed").validate().expect_err(name);
-            assert!(err.contains(name), "{err}");
+            assert!(err.fields.contains(&name), "{err}");
         }
         Params::default().validate().expect("the defaults fit");
+    }
+
+    #[test]
+    fn a_field_the_model_does_not_have_is_refused() {
+        // a typing error ran silently with the default
+        let err = Params::from_json(r#"{"ld_memroy": 3.0}"#).expect_err("unknown");
+        assert!(err.to_string().contains("unknown field `ld_memroy`"), "{err}");
+        assert!(Params::from_json(r#"{"ld_burst": {"shape": 4.0, "gain": 2.5, "weight": 0.02, "x": 1}}"#).is_err());
+    }
+
+    #[test]
+    fn what_would_take_all_memory_or_divide_by_zero_is_refused_by_name() {
+        for (json, name) in [
+            // endless echo sources (echoes.rs) from one number
+            (r#"{"ld_echo_ranges": [0.75, 1e308, 0.5]}"#, "ld_echo_ranges"),
+            (r#"{"kappa_levels": 100000}"#, "kappa_levels"),
+            (r#"{"ld_amp_levels": 100000}"#, "ld_amp_levels"),
+            (r#"{"max_hyps": 100000}"#, "max_hyps"),
+            (r#"{"ld_echo_stages": 100000}"#, "ld_echo_stages"),
+            (
+                r#"{"stay_points": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]}"#,
+                "stay_points",
+            ),
+            (r#"{"find_radius": 0}"#, "find_radius"),
+            (r#"{"res_cross": 0}"#, "res_cross"),
+            (r#"{"tau": 0}"#, "tau"),
+            (r#"{"pos_every": 0}"#, "pos_every"),
+            (r#"{"white": "nan"}"#, "white"),
+            (r#"{"leap": 0}"#, "leap"),
+            (r#"{"gap_exact": -1}"#, "gap_exact"),
+            (r#"{"ghost_types": [[1e-5, 0]]}"#, "ghost_types"),
+            (
+                r#"{"refind": {"coast": [0.13, 0, 0.03], "frozen": [0.2, 2.0, 0.02]}}"#,
+                "refind",
+            ),
+            (r#"{"acquire": [[0.034, 0], [0.51, 4.55]]}"#, "acquire"),
+            (r#"{"track_life": [0, 30]}"#, "track_life"),
+            (r#"{"still_noise": 0}"#, "still_noise"),
+            (r#"{"silent_after": -1}"#, "silent_after"),
+        ] {
+            let err = Params::from_json(json).expect(json).validate().expect_err(json);
+            assert_eq!(err.fields, [name], "{json}");
+        }
     }
 
     #[test]
@@ -541,11 +667,8 @@ mod tests {
     fn numbers_that_make_no_model_are_refused() {
         assert!(Params::default().validate().is_ok());
         let p = Params::from_json(r#"{"ld_echo_ranges": [0.75, 6.5, 0.0], "ld_memory": 0.0}"#).expect("read");
-        let err = p.validate().expect_err("no model");
-        assert!(
-            err.contains("ld_memory") && err.contains("ld_echo_ranges.step"),
-            "{err}"
-        );
+        let err = p.validate().expect_err("no model").to_string();
+        assert!(err.contains("ld_memory") && err.contains("ld_echo_ranges"), "{err}");
         assert!(
             Params::from_json(r#"{"ld_frame": "nan"}"#)
                 .expect("read")

@@ -20,7 +20,6 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 use std::{env, fs, io::Write};
 
-use presence_core::SILENT_AFTER;
 use presence_core::config::Config;
 use presence_core::frames::{Frame, SensorClock};
 use presence_core::outputs::{Decision, Source};
@@ -96,7 +95,7 @@ fn messages(path: &str) -> Result<Vec<Message>, String> {
 fn tracker(config: &str) -> Result<Tracker, String> {
     let text = fs::read_to_string(config).map_err(|e| format!("{config}: {e}"))?;
     let config = Config::from_json(&text).map_err(|e| format!("{config}: {e}"))?;
-    let mut tracker = Tracker::new(World::build(&config, Params::default(), SILENT_AFTER)?);
+    let mut tracker = Tracker::new(World::build(&config, Params::default())?);
     tracker.reset_people(None)?; // nothing known about the people (the shell's Tracker() starts so)
     Ok(tracker)
 }

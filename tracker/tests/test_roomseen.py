@@ -2,28 +2,30 @@
 somebody in it (the core's room_seen.rs); only an output."""
 
 import asyncio
+import functools
 import json
+import sys
 
+import presence_core
 import pytest
 
 from presence_tracker import ha
 from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
-from presence_tracker import filter as filter_module
 from presence_tracker.frames import Frame
 
-LOST = 6.0  # the timing tests below run with a short silence limit (the app's: filter.SILENT_AFTER)
+LOST = 6.0  # the timing tests below run with a short silence limit (the app's: the model's silent_after)
 
 
 @pytest.fixture(autouse=True)
 def short_silence(monkeypatch):
-    monkeypatch.setattr(filter_module, "SILENT_AFTER", LOST)
+    monkeypatch.setattr(sys.modules[__name__], "Tracker", functools.partial(Tracker, model={"silent_after": LOST}))
 
 
 def test_the_silence_limit_outlasts_the_wlan_gaps(monkeypatch):
     """The app's limit (30 s): a board's 6-20 s WLAN gap leaves its room available, a board gone not."""
     monkeypatch.undo()
-    assert filter_module.SILENT_AFTER == 30.0
+    assert json.loads(presence_core.model_defaults())["silent_after"] == 30.0
     tr = Tracker(open_plan())
     k = feed_both(tr, 0.0, 10.0)
     k = feed_both(tr, 10.0, 30.0, wohn=False, k0=k)
@@ -223,7 +225,7 @@ def test_a_room_whose_own_sensor_went_silent_is_unavailable():
     k = feed_both(tr, 9.9 + LOST - 0.05, 30.0, wohn=False, k0=k)
     a = available(tr, 30.0)
     assert not a["wohn"] and a["ess"] and a["_total"]
-    assert tr.seen.silent(30.0, 0.0) == {"wohn"}
+    assert tr.seen.silent(30.0) == {"wohn"}
     # the state itself is computed as always (only Home Assistant is told "unavailable")
     st = tr.zone_states()["wohn"]
     assert "available" not in st.to_dict() and st.probability is not None
@@ -233,7 +235,7 @@ def test_a_room_whose_own_sensor_went_silent_is_unavailable():
 
 
 def test_the_web_ui_calls_a_sensor_offline_exactly_when_home_assistant_does():
-    """One definition (filter.SILENT_AFTER, counted from the model's start for a sensor that sent
+    """One definition (the model's silent_after, counted from the model's start for a sensor that sent
     nothing): until 0.28 the live view said "offline" after 15 s (and right after "Neu beginnen" for
     every sensor), Home Assistant after 30 s - the header said 1/2 while the room was still there."""
     tr = Tracker(open_plan())
@@ -241,8 +243,7 @@ def test_the_web_ui_calls_a_sensor_offline_exactly_when_home_assistant_does():
     k = feed_both(tr, 10.0, 9.9 + LOST - 0.05, wohn=False, k0=k)
     tr.step(9.9 + LOST - 0.05)
     assert tr.snapshot()["sensors"]["presence-wohn"]["online"] and available(tr, tr.now)["wohn"]
-    for rt in tr.runtime.values():  # as after "Neu beginnen" (app.h_reset_tracks)
-        rt.last_frame = float("-inf")
+    tr.reset_tracks()  # as after "Neu beginnen" (app.h_reset_tracks): no sensor has a last frame
     assert all(s["online"] for s in tr.snapshot()["sensors"].values())
     feed_both(tr, 9.9 + LOST - 0.05, 30.0, wohn=False, k0=k)
     tr.step(30.0)
@@ -255,7 +256,7 @@ def test_at_the_start_a_sensor_counts_as_silent_only_after_the_limit():
     model started counts from that start: no room flaps to unavailable while the boards come in."""
     tr = Tracker(open_plan())  # as in the app: started by the first frame
     assert tr.start is None and all(st.available for st in tr.zone_states().values())
-    assert tr.seen.silent(1e9, None) == set()
+    assert tr.seen.silent(1e9) == set()
     t0 = 1000.0
     k = feed_both(tr, t0, t0 + 3.0, wohn=False)  # only ess sends at first
     assert tr.start == t0
@@ -272,7 +273,7 @@ def test_a_room_without_an_own_sensor_in_use_stays_as_it_is():
     feed_both(tr, 0.0, 1.0, wohn=False, ess=False)
     a = available(tr, 100.0)  # nothing from anybody for 100 s
     assert a["wohn"] and not a["ess"]
-    assert tr.seen.silent(100.0, 0.0) == {"ess"}
+    assert tr.seen.silent(100.0) == {"ess"}
     # not placed: the same
     d["sensors"][0]["enabled"], d["sensors"][0]["placed"] = True, False
     tr.reconfigure(Config.from_dict(d))

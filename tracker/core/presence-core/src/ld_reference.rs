@@ -155,7 +155,7 @@ fn start(fx: &Value) -> Tracker {
     export.tiles.room = vec![None; export.tiles.n];
     export.tiles.region_start = vec![0.0; export.tiles.regions * export.tiles.ages];
     let config = crate::testing::config_of_sensors(export.sensors.len());
-    let mut tracker = Tracker::new(World::from_export(export, &config, 30.0).expect("a world"));
+    let mut tracker = Tracker::new(World::from_export(export, &config).expect("a world"));
     let st = &fx["start"];
     for t in st["tracks"].as_array().expect("tracks") {
         let pt = |v: &Value| -> [f64; 2] { fs(v).try_into().expect("a point") };

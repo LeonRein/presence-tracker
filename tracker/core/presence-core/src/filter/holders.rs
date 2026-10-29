@@ -1,8 +1,10 @@
-//! Which hypotheses hold each object (docs/rust-core.md 2.2; filter.Tracker._objects): built anew
+//! Which hypotheses hold each object (docs/rust-core.md 2.2): built anew
 //! whenever the hypotheses change, as compressed rows - the objects in the order of their first
 //! appearance over the hypotheses (per hypothesis its people with tracks, the known ones without,
 //! the unknown ones, then the sources of its ghost tracks), each with the hypotheses holding it, as
 //! often as they hold it. The order sets the order in which sums over the objects run.
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::filter::densities::DensityId;
 use crate::filter::hyp::Hyp;

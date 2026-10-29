@@ -82,6 +82,7 @@ def test_rooms_keep_names_when_walls_move():
     assert len(names) == 2 and "Raum 1" in names and set(names) & {"Wohnen", "Treppe"}
 
 
+@pytest.mark.hooks
 def test_entry_rooms_are_outside():
     # an entry room (the stairwell) is public space beyond the flat's door: no room of the home and
     # no region without a sensor; the door into it is a door to the outside (MODEL.md 2)
@@ -96,7 +97,7 @@ def test_entry_rooms_are_outside():
     assert not p["regions"] and p["closed"] == [rooms[1].id]
     assert p["observed"] == [rooms[0].id] and [z.id for z in c.home_zones("room")] == [rooms[0].id]
     # the one way out of the observed area leads outside (places: observed, outside)
-    core = presence_core.build_export(json.dumps(c.to_dict()), "{}", 30.0)
+    core = presence_core.build_export(json.dumps(c.to_dict()), "{}")
     assert [q[0] for q in core["portals"]] == [p["places"].index("outside")]
     # what a sensor sees in there is nobody of the home
     assert presence_core.hidden_at(json.dumps(c.to_dict()), 0, [(3.5, 2.0), (2.5, 2.0)], [(1.0, 0.0)] * 2, 0.4) == [True, False]

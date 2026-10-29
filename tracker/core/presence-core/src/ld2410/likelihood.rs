@@ -1,8 +1,10 @@
-//! The energies' likelihood (MODEL.md 4.3; ld2410.Stats, Likelihood, kernels.ld_rows, ld_ratio):
+//! The energies' likelihood (MODEL.md 4.3, Likelihood, ld_ratio):
 //! per cell Gamma(alpha, mean mu), an energy at 100 censored; the frames are correlated, so their
 //! log-likelihoods count with dt / tau (composite likelihood, Varin, Reid & Firth 2011); per kind of
 //! cell (moving, still) the block's common gain u is integrated out: 1/u ~ Gamma(k, rate k) mixed with
 //! bursts (conjugate). The form is that of track-before-detect (Salmond & Birch 2001).
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use super::{CAP, CELLS, MOVING, cell_values};
 use crate::params::Params;
@@ -46,7 +48,7 @@ pub fn log_gammaq(a: f64, x: f64) -> f64 {
 }
 
 /// log P(energy >= CAP) for Gamma(alpha, mean mu) on a uniform grid of log mu, interpolated as
-/// numpy's interp (ld2410.log_censored, kernels._censored_at).
+/// numpy's interp.
 #[derive(Debug)]
 struct Censored {
     grid: Vec<f64>,
@@ -125,7 +127,7 @@ struct CellKind {
     gain: [Gain; 2],
 }
 
-/// The numbers of the energies' likelihood (ld2410.Likelihood).
+/// The numbers of the energies' likelihood.
 #[derive(Debug)]
 pub struct Likelihood {
     pub alpha: [f64; CELLS],
@@ -160,7 +162,7 @@ impl Likelihood {
 }
 
 /// The frames of one sensor since the last weighing, as the sufficient statistics of the Gamma
-/// likelihood per cell (ld2410.Stats): time (s) of uncensored frames, time x energy, time x log
+/// likelihood per cell: time (s) of uncensored frames, time x energy, time x log
 /// energy, time of censored ones (each frame for the time it stands for); and the time in which the
 /// LD2450 in the same housing had a target in sight.
 #[derive(Debug, Clone, Default)]
@@ -188,7 +190,7 @@ struct Looked {
     gain: [Posterior; 2],
 }
 
-/// What the likelihood takes from the frames, once for all the means asked about (Stats._prepared).
+/// What the likelihood takes from the frames, once for all the means asked about.
 #[derive(Debug)]
 pub struct Prepared<'a> {
     lik: &'a Likelihood,
@@ -319,7 +321,7 @@ impl Prepared<'_> {
         }
     }
 
-    /// The tempered log-likelihood of the frames given the means mu (16) (Stats.loglik).
+    /// The tempered log-likelihood of the frames given the means mu (16).
     pub fn loglik(&self, stats: &Stats, mu: &[f64; CELLS]) -> f64 {
         let lik = self.lik;
         let terms: Vec<f64> = (0..CELLS)
@@ -336,7 +338,7 @@ impl Prepared<'_> {
         pairwise_sum(&terms) + scratch.out[0]
     }
 
-    /// Masses m (k) putting S (k x 16) on top of the means mu0 (kernels.ld_ratio): the log
+    /// Masses m (k) putting S (k x 16) on top of the means mu0: the log
     /// likelihood ratio per point against mu0 (capped; a point without mass gets -cap, not computed),
     /// the log of the normalizer - the factor of the whole person, or for the unknown ones
     /// (intensity) log((1 + int lambda L) / (1 + Lambda)): at most one of them in view - and what
@@ -571,7 +573,7 @@ mod tests {
         st
     }
 
-    /// log L(mu1) - log L(mu0) (Stats.log_ratio).
+    /// log L(mu1) - log L(mu0).
     fn log_ratio(lik: &Likelihood, st: &Stats, mu1: &[f64; CELLS], mu0: &[f64; CELLS]) -> f64 {
         let prep = st.prepare(lik);
         prep.loglik(st, mu1) - prep.loglik(st, mu0)

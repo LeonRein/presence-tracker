@@ -1,6 +1,8 @@
 //! Time goes on (MODEL.md 3, 5): everybody is moved and weighed by the tracks not started meanwhile,
-//! in parts at most max_step long (filter.Tracker._flush_parts, _sync_part); known people who almost
+//! in parts at most max_step long (_sync_part); known people who almost
 //! surely do not exist join the unknown ones (_recycle); a gap in the data is moved over (_predict_gap).
+//!
+//! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use std::borrow::Cow;
 
@@ -40,7 +42,7 @@ impl TileRateSums {
     }
 }
 
-/// The sensors' rates per tile given their live tracks (filter.Tracker._tile_rates), each computed
+/// The sensors' rates per tile given their live tracks, each computed
 /// once per move of everybody: the tracks stay as they are meanwhile.
 pub struct TileRates<'a> {
     world: &'a World,
@@ -58,7 +60,7 @@ impl<'a> TileRates<'a> {
         }
     }
 
-    /// The rates (1/s) per tile of a sensor [STILL, WALK] (filter.Tracker._tile_rates).
+    /// The rates (1/s) per tile of a sensor [STILL, WALK].
     pub fn get(&mut self, si: usize) -> &[Vec<f64>; 2] {
         let (world, spots) = (self.world, self.spots);
         self.rates[si].get_or_insert_with(|| {
@@ -74,7 +76,7 @@ impl<'a> TileRates<'a> {
         })
     }
 
-    /// The summed rates per tile of the live sensors (filter.Tracker._watching); None if no sensor
+    /// The summed rates per tile of the live sensors; None if no sensor
     /// watches or there are no tiles.
     fn summed(&mut self, live: SensorSet) -> Option<TileRateSums> {
         let n = self.world.tiles.n;
@@ -181,7 +183,7 @@ fn sync_part(
 }
 
 /// The record of a known person without a track lasts only as far as a measurement could test it
-/// (filter.Tracker._expire, MODEL.md 5.5): the share of them no live sensor can see expires at
+/// (MODEL.md 5.5): the share of them no live sensor can see expires at
 /// 1 / unseen_life - in a tile by 1 - how well the live sensors see it (`fade` per tile: exp(-dt /
 /// unseen_life x that)), in the regions and out of the house whole - so r falls by r x that share.
 fn expire(world: &World, d: &mut DensityMut, dt: f64, fade: &[f64]) {
@@ -215,7 +217,7 @@ fn fade(world: &World, observed: &[f64], dt: f64) -> Vec<f64> {
         .collect()
 }
 
-/// Moves everybody from t0 (the last move of everybody) to t (filter.Tracker._flush_parts): the
+/// Moves everybody from t0 (the last move of everybody) to t: the
 /// densities in parts of the move, each mixture in parts from its own time, round by round - the
 /// parts gone through a door of the mixtures move with the densities (one move_densities per
 /// round). The densities are weighed by no track started (the people nobody knows of by its
@@ -338,6 +340,7 @@ impl Filter {
     /// parts no longer than max_step; the log factors go to the hypotheses holding each object,
     /// round by round.
     pub fn flush(&mut self, world: &World, sensors: &[SensorState], t: f64) {
+        debug_assert!(t.is_finite(), "a time that is a number (Tracker::step checks it)");
         if t <= self.flushed {
             return;
         }
@@ -376,6 +379,7 @@ impl Filter {
     /// measurement of the person follows and drops it), weighed by no track started on the person
     /// meanwhile (filter.Tracker._sync with drop_away). Returns the log factor of each part weighed.
     pub(super) fn sync(&mut self, world: &World, sensors: &[SensorState], id: MixtureId, t: f64) -> Vec<f64> {
+        debug_assert!(t.is_finite(), "a time that is a number");
         let objects = &mut self.objects;
         let mix = objects.mixtures.get_mut(id);
         let t0 = mix.t.unwrap_or(self.flushed);
@@ -478,7 +482,7 @@ impl Filter {
         true
     }
 
-    /// Everybody moves on over a gap in the data (MODEL.md 4.4, 5.3; Tracker._predict_gap): its last
+    /// Everybody moves on over a gap in the data (MODEL.md 4.4, 5.3): its last
     /// gap_exact s as always, what lies before in leaps of `leap` s, at most max_leaps. The sensors
     /// `placed` were there, only the app was not watching: what they could have tested lasts.
     /// After a restart only densities are held.
