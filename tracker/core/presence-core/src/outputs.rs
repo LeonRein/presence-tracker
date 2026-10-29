@@ -355,7 +355,7 @@ pub fn occupancy(counts: &Distributions, seen: &[bool], above: f64) -> Vec<Optio
 // ------------------------------------------------------------------ the display
 
 /// numpy's argmax: the first largest, or the first NaN.
-pub(crate) fn argmax(values: &[f64]) -> usize {
+pub fn argmax(values: &[f64]) -> usize {
     let mut best = 0;
     for (i, &v) in values.iter().enumerate() {
         if v.is_nan() {
@@ -874,6 +874,28 @@ pub fn zone_numbers(world: &World, x: &ZoneInputs) -> (Vec<ZoneNumbers>, HouseNu
 /// The id of the house as a whole among the zones' states (Home Assistant's "_total").
 pub const HOUSE: &str = "_total";
 
+/// "Ziel" counts as decided by the learned map where its weight against the motion is at least this.
+const TARGET_MAP: f64 = 0.5;
+
+/// A region without a sensor as the display shows it: the most probable number of people in it and
+/// P(somebody there).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RegionShown {
+    pub count: usize,
+    pub p_any: f64,
+}
+
+/// Per region (the places between observed and outside) from the distribution per place.
+pub fn regions_shown(places: &Distributions, regions: usize) -> Vec<RegionShown> {
+    places[1..=regions]
+        .iter()
+        .map(|d| RegionShown {
+            count: argmax(d),
+            p_any: 1.0 - d[0],
+        })
+        .collect()
+}
+
 /// A zone's state as the outputs hand it on (Home Assistant, the display; the shell's zones.ZoneState, field
 /// for field): its numbers, the decision and what made it, "wird betreten" and "Ziel" with their thresholds.
 #[derive(Debug, Clone, PartialEq)]
@@ -906,6 +928,13 @@ pub struct ZoneState {
     pub decided: Decision,
     /// false: its own sensors all went silent (Home Assistant gets it as unavailable)
     pub available: bool,
+    /// occupied: as decided, without a decision (areas, the house) somebody counted there
+    pub occupied: bool,
+    /// the threshold of the decision (of probability), where one is made
+    pub c_occupied: Option<f64>,
+    /// "Ziel": which part decided, the learned map ("karte", its weight at least 1/2) or the motion
+    /// ("bewegung")
+    pub target_source: Option<&'static str>,
 }
 
 impl ZoneState {
@@ -934,6 +963,9 @@ impl ZoneState {
             probability: None,
             decided: Decision::None,
             available: true,
+            occupied: count > 0,
+            c_occupied: None,
+            target_source: None,
         }
     }
 }
@@ -952,6 +984,9 @@ pub fn zone_states(world: &World, numbers: &[ZoneNumbers], house: &HouseNumbers,
             let (z, n) = (home[k], &numbers[k]);
             let mut st = ZoneState::of(&z.id, n.count, n.moving, n.still);
             (st.probability, st.decided, st.available) = (n.probability, n.decided, n.available);
+            if let Some(occupied) = n.decided.occupied() {
+                (st.occupied, st.c_occupied) = (occupied, Some(o.occupied_above()));
+            }
             if let Some(e) = &n.entering {
                 (st.p_enter, st.distance, st.eta, st.person) = (Some(e.p), e.distance, e.eta, e.person);
                 (st.approaching, st.c_enter) = (n.approaching, Some(o.entering_above()));
@@ -960,6 +995,7 @@ pub fn zone_states(world: &World, numbers: &[ZoneNumbers], house: &HouseNumbers,
                 let t = &targets[r];
                 (st.target, st.p_target, st.c_target) = (t.on, Some(t.p), Some(o.target_above(&z.id)));
                 (st.target_weight, st.target_walks) = (t.weight, t.walks);
+                st.target_source = Some(if t.weight >= TARGET_MAP { "karte" } else { "bewegung" });
                 st.target_from = t.from.map(|f| plan.room(f).id.clone());
                 (st.target_distance, st.target_eta, st.target_person) = (t.distance, t.eta, t.person);
             }

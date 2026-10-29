@@ -16,6 +16,45 @@ pub struct SensorState {
     pub ld: LdSensor,
     pub tracks: Ld2450Tracks,
     pub frame: SensorFrame,
+    pub ld_shown: LdShown,
+}
+
+/// The LD2410C as the display shows it: present (moving or still, gaps up to ld2410_hold bridged) and
+/// the distance on the floor of its last presence.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LdShown {
+    pub present: bool,
+    /// m on the floor
+    pub distance: f64,
+    /// the time of its last presence
+    last: f64,
+}
+
+impl Default for LdShown {
+    fn default() -> Self {
+        Self {
+            present: false,
+            distance: 0.0,
+            last: f64::NEG_INFINITY,
+        }
+    }
+}
+
+impl LdShown {
+    /// A frame at t with this LD2410C part (None: none); its distance of a slant (m) on the floor.
+    pub fn frame(&mut self, t: f64, ld: Option<&Ld2410>, hold: f64, on_floor: impl Fn(f64) -> f64) {
+        let present = ld.is_some_and(|ld| ld.moving || ld.still);
+        if let (true, Some(ld)) = (present, ld) {
+            self.last = t;
+            // its still target's distance, else its moving one's (mm; 0: none)
+            let mm = [ld.still_distance, ld.moving_distance]
+                .into_iter()
+                .find(|&d| d != 0.0)
+                .unwrap_or(0.0);
+            self.distance = on_floor(mm / 1000.0);
+        }
+        self.present = present || t - self.last <= hold;
+    }
 }
 
 impl SensorState {
@@ -26,6 +65,7 @@ impl SensorState {
             ld: LdSensor::new(p),
             tracks: Ld2450Tracks::default(),
             frame: SensorFrame::default(),
+            ld_shown: LdShown::default(),
         }
     }
 

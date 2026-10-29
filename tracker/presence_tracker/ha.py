@@ -179,14 +179,14 @@ class Discovery:
                           and (topic not in self.wanted or r not in self.referenced))
         return True
 
-    async def sync(self, zones: list, watched=()):
-        """The wanted discovery configs for the zones; watched: the rooms with an own sensor in use
-        (Tracker.seen.watched), their entities get the room's own availability too."""
+    async def sync(self, home: list, watched=()):
+        """The wanted discovery configs for the zones of the home (the core's plan: [id, name, is a room] of
+        its rooms and areas; an entry room, the stairwell, is outside and gets none) and the house; watched:
+        the rooms with an own sensor in use (Tracker.seen.watched), their entities get the room's own
+        availability too."""
         watched = set(watched)
         wanted = {}
-        # the rooms and areas of the home; an entry room (the stairwell) is outside, it gets none
-        items = [(z.id, z.name, z.kind == "room") for z in zones if z.kind in ("room", "area") and not (z.kind == "room" and z.entry)]
-        items += [("_total", "Haus", False)]
+        items = [(zone_id, name, room) for zone_id, name, room in home] + [("_total", "Haus", False)]
         for zone_id, name, room in items:
             zid = "total" if zone_id == "_total" else slug(zone_id)
             for component, suffix, cfg in _entities(zone_id, name, room, own=room and zone_id in watched):

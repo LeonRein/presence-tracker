@@ -10,7 +10,7 @@ import presence_core
 import pytest
 
 from presence_tracker import ha
-from presence_tracker.filter import Tracker
+from presence_tracker.filter import Tracker, plan
 from presence_tracker.model import Config, check
 from presence_tracker.frames import Frame
 
@@ -112,7 +112,7 @@ def test_another_rooms_sensor_seeing_into_the_room_does_not_count():
     # the sensor of ess measures somebody 4.5 m ahead: in wohn (no wall between the rooms)
     feed(tr, "presence-ess", 0.0, 20.0, 4500)
     det = tr.runtime["presence-ess"].detections[0]
-    assert next(z for z in config.zones if z.id == "wohn").contains(*det.pos) and not det.hidden and not det.stale
+    assert tr.room_at([det.pos]) == ["wohn"] and not det.hidden and not det.stale
     st = tr.zone_states()
     assert not st["wohn"].occupied and not st["ess"].occupied
     assert tr.seen.last == {}
@@ -148,7 +148,7 @@ def test_home_assistant_gets_the_flip_at_once_and_quelle_as_attribute():
     async def publish(topic, payload, retain):
         sent.append((topic, payload))
     d = ha.Discovery(publish)
-    asyncio.run(d.sync(config.zones))
+    asyncio.run(d.sync(plan(config)["home"]))
     occ = next(p for t, p in sent if t.endswith("presence_tracker_wohn_occupancy/config"))
     assert "quelle" in occ and "value_json.source" in occ
     feed(tr, "presence-wohn", 0.0, 20.0, 2500)
@@ -301,7 +301,7 @@ def test_home_assistant_gets_a_silent_room_unavailable_through_its_own_topic():
     async def publish(topic, payload, retain):
         sent.append((topic, payload, retain))
     disc = ha.Discovery(publish)
-    asyncio.run(disc.sync(config.zones, {"wohn"}))
+    asyncio.run(disc.sync(plan(config)["home"], {"wohn"}))
     configs = {t: json.loads(p) for t, p, _ in sent}
 
     def cfg(comp, zone, suffix):
@@ -354,13 +354,13 @@ def test_a_rooms_availability_topic_is_cleared_when_it_has_none_any_more():
     async def publish(topic, payload, retain):
         sent.append((topic, payload, retain))
     disc = ha.Discovery(publish)
-    asyncio.run(disc.sync(config.zones, {"wohn", "ess"}))
+    asyncio.run(disc.sync(plan(config)["home"], {"wohn", "ess"}))
     feed_both(tr, 0.0, 1.0)
     asyncio.run(disc.states(tr.zone_states(), t=1.0))
     assert ("presence-tracker/zone/ess/availability", "online", True) in sent
     # while running: ess's sensor switched off (or ess deleted) -> its availability topic goes
     sent.clear()
-    asyncio.run(disc.sync(config.zones, {"wohn"}))
+    asyncio.run(disc.sync(plan(config)["home"], {"wohn"}))
     asyncio.run(disc.states(tr.zone_states(), t=1.0))
     assert ("presence-tracker/zone/ess/availability", "", True) in sent
     assert not any(t.endswith("/wohn/availability") and p == "" for t, p, _ in sent)

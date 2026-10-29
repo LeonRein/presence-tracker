@@ -457,6 +457,14 @@ impl Plan {
             .map(|(_, z)| z)
     }
 
+    /// The room (of the home or outside) a point is in: the first whose outline holds it.
+    pub fn room_of(&self, p: Point) -> Option<&Zone> {
+        self.zones
+            .iter()
+            .filter(|z| z.is_room())
+            .find(|z| z.shape.contains(p, 0.0))
+    }
+
     /// The observed room a point is in: the first whose outline holds it.
     pub fn room_at(&self, p: Point) -> Option<RoomIdx> {
         self.observed().position(|z| z.shape.contains(p, 0.0)).map(RoomIdx)

@@ -21,14 +21,16 @@ use crate::learn::ghost_map::GhostMap;
 use crate::learn::pauses::Pauses;
 use crate::learn::{Learned, LearnedError};
 use crate::outputs::{
-    self, Cloud, Distributions, Entering, HouseNumbers, OutputCache, Person, Source, ZoneNumbers, ZoneState,
+    self, Cloud, Distributions, Entering, HouseNumbers, OutputCache, Person, RegionShown, Source, ZoneNumbers,
+    ZoneState,
 };
 use crate::params::{FRAME, IDLE, OutputParams};
 use crate::plan::Place;
 use crate::room_seen::RoomSeen;
-use crate::sensors::{SensorFrame, SensorSet, SensorState};
+use crate::sensors::{LdShown, SensorFrame, SensorSet, SensorState};
 use crate::vmath::py_hypot;
 use crate::world::World;
+use crate::world::sight::SensorMap;
 
 /// s: known people who almost surely do not exist join the unknown ones this often
 const RECYCLE_EVERY: f64 = 1.0;
@@ -72,6 +74,9 @@ pub struct Child {
     pub logw: f64,
     pub category: Category,
 }
+
+/// The web UI's map of a sensor shows the ghost map's rate where the sensor's sight is above this.
+const SEES_ON_MAP: f32 = 0.05;
 
 /// Why a frame or a step was not taken: a call that makes no sense, or weights that are no numbers
 /// (the app starts the model over).
@@ -278,6 +283,7 @@ impl Tracker {
             let was = old.world.plan.sensors.iter().position(|o| o.id == plan.id);
             if let Some(k) = was {
                 s.ld.collect = old.sensors[k].ld.collect;
+                s.ld_shown = old.sensors[k].ld_shown;
             }
         }
     }
@@ -403,6 +409,12 @@ impl Tracker {
             events.extend(self.step(t)?);
         }
         self.read(si, t, frame);
+        let (mount, target_height) = (&self.world.mounts[si], self.world.reading.target_height);
+        self.sensors[si]
+            .ld_shown
+            .frame(t, frame.ld2410.as_ref(), self.world.outputs.ld2410_hold, |slant| {
+                mount.on_floor([0.0, slant], target_height)[1]
+            });
         if !self.sensors[si].active {
             return Ok(events);
         }
@@ -857,6 +869,43 @@ impl Tracker {
     pub fn ghost_rates(&self, si: usize, points: &[Point]) -> (Vec<f64>, f64) {
         let g = &self.learned.ghosts;
         (points.iter().map(|&p| g.rate(si, p)).collect(), g.watched(si))
+    }
+
+    /// What one sensor sees for the web UI: its coarse sight map (MODEL.md 4.1), per cell (column by
+    /// column) the ghost map's rate of ghost tracks per m^2 and hour where it sees (sight above
+    /// SEES_ON_MAP), and the hours it watched.
+    pub fn sensor_map(&self, si: usize) -> (&SensorMap, Vec<Option<f64>>, f64) {
+        let m = &self.world.sights[si].map;
+        let points: Vec<Point> = (0..m.cols * m.rows)
+            .map(|k| {
+                let (i, j) = ((k / m.rows) as f64, (k % m.rows) as f64);
+                [m.corner[0] + (i + 0.5) * m.cell, m.corner[1] + (j + 0.5) * m.cell]
+            })
+            .collect();
+        let (rates, watched) = self.ghost_rates(si, &points);
+        let ghosts = rates
+            .iter()
+            .zip(&m.prior)
+            .map(|(&r, &p)| (p > SEES_ON_MAP).then_some(r * 3600.0))
+            .collect();
+        (m, ghosts, watched / 3600.0)
+    }
+
+    /// The LD2410C of sensor si as the display shows it.
+    pub fn ld_shown(&self, si: usize) -> LdShown {
+        self.sensors[si].ld_shown
+    }
+
+    /// Whether learning is paused at any time of [t0, t1].
+    pub fn paused(&self, t0: f64, t1: f64) -> bool {
+        self.pauses.paused(t0, t1)
+    }
+
+    /// Per region without a sensor its most probable number of people and P(somebody there); once per
+    /// epoch.
+    pub fn regions_shown(&mut self) -> Vec<RegionShown> {
+        let regions = self.world.plan.regions.len();
+        outputs::regions_shown(self.place_distribution(), regions)
     }
 
     // ------------------------------------------------------------------ the filter's bookkeeping

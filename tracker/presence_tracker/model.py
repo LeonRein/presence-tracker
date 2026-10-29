@@ -11,7 +11,6 @@ from dataclasses import asdict, dataclass, field, fields
 
 import presence_core
 
-from .geometry import Shape
 from .util import atomic_write
 
 
@@ -37,6 +36,8 @@ class SensorConfig:
 
 @dataclass
 class ZoneConfig:
+    """A zone as stored: its outline is data (the core reads it: which room a point is in, the rooms of the
+    home, MODEL.md 2)."""
     id: str
     name: str
     kind: str = "area"  # room | area | entry
@@ -46,12 +47,6 @@ class ZoneConfig:
     radius: float = 0.0
     anchor: list | None = None  # rooms from walls: a point inside, identifies the room after edits
     entry: bool = False  # rooms: outside the home, the public space beyond its door (stairwell; MODEL.md 2)
-
-    def __post_init__(self):
-        self.geometry = Shape(self.shape, self.points, self.center, self.radius)
-
-    def contains(self, x: float, y: float, margin: float = 0.0) -> bool:
-        return self.geometry.contains(x, y, margin)
 
     def to_dict(self) -> dict:
         d = {k.name: getattr(self, k.name) for k in fields(self)}
@@ -247,17 +242,9 @@ class Config:
         self.sensor_by_id = {s.id: s for s in self.sensors}
 
     def geometry(self) -> presence_core.Geometry:
-        """The core's sensor geometry of this configuration (MODEL.md 2, 4.1; for the calibration and the
-        simulation): its sensors' frames and fields of view, the walls that block their sight."""
+        """The core's sensor geometry of this configuration (MODEL.md 2, 4.1; for the simulation and the
+        tests): its sensors' frames and fields of view, the walls that block their sight."""
         return presence_core.Geometry(json.dumps(self.to_dict()))
-
-    def zones_of(self, kind: str) -> list:
-        return [z for z in self.zones if z.kind == kind]
-
-    def home_zones(self, *kinds) -> list:
-        """The zones of these kinds that belong to the home: not the outside rooms (the stairwell,
-        MODEL.md 2), which get no count, no state and no entity."""
-        return [z for z in self.zones if z.kind in kinds and not (z.kind == "room" and z.entry)]
 
     # --- persistence ---
 

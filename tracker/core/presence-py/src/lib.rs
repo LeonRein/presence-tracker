@@ -33,6 +33,7 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(floorplan::sync_rooms, m)?)?;
     m.add_function(wrap_pyfunction!(config::check_config, m)?)?;
     m.add_function(wrap_pyfunction!(config::check_edit, m)?)?;
+    m.add_function(wrap_pyfunction!(config::changes, m)?)?;
     m.add_function(wrap_pyfunction!(config::config_limits, m)?)?;
     m.add_class::<config::ConfigProblem>()?;
     // the hooks of the shell's tests (feature "testing"; maturin develop --features testing)

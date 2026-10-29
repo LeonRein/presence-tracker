@@ -50,7 +50,7 @@ def run(config, people, duration, start_places, every=0.5, check=False, **kw):
         if check:
             crowd.check()
         if t >= next_sample:
-            samples.append((t, crowd.place_distribution(), crowd.present_count()))
+            samples.append((t, crowd.place_distribution(), int(np.argmax(crowd.count_distribution()["_observed"]))))
             next_sample = t + every
     return crowd, samples
 

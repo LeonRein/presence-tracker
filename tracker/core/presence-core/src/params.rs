@@ -482,11 +482,20 @@ pub struct OutputParams {
     /// "Ziel": on above this, per room id its own if it has one (MODEL.md 6)
     pub target_threshold: f64,
     pub target_thresholds: std::collections::BTreeMap<String, f64>,
+    /// s: the display's LD2410C presence bridges gaps this long
+    pub ld2410_hold: f64,
+    /// s: how long people stay in a region without a sensor, the median and the 90 % quantile of the
+    /// log-normal (MODEL.md 3.3; the display)
+    pub dwell: [f64; 2],
 }
+
+/// Φ⁻¹(0.9), the 90 % point of the standard normal distribution.
+const Z_90: f64 = 1.2815515655446004;
 
 /// The fields of the configuration's parameters that only the outputs read (OutputParams::of): a change
 /// of them alone builds nothing (Tracker::set_outputs).
-pub const OUTPUT_FIELDS: [&str; 6] = [
+pub const OUTPUT_FIELDS: [&str; 7] = [
+    "ld2410_hold",
     "light_cost",
     "seen_hold",
     "lead_time",
@@ -505,6 +514,8 @@ impl OutputParams {
             silent_after,
             target_threshold: p.target_threshold,
             target_thresholds: p.target_thresholds.clone(), // the world's own copy of the configuration's
+            ld2410_hold: p.ld2410_hold,
+            dwell: [p.dwell_median, p.dwell_median * (p.dwell_spread * Z_90).exp()],
         }
     }
 
@@ -516,6 +527,7 @@ impl OutputParams {
             self.lead_time,
             self.approach_cost,
             self.silent_after,
+            self.ld2410_hold,
         ]
         .iter()
         .all(|&x| ok(x))

@@ -68,25 +68,10 @@ class Pauses:
         return True
 
     def add(self, start: float, end: float | None):
-        """An interval known beforehand (tools: the vacuum's history, before the switch existed),
-        merged with the other known ones; the switch's are kept apart."""
-        merged = []
-        for s, e in sorted(self.known + [[float(start), None if end is None else float(end)]],
-                           key=lambda iv: iv[0]):
-            if merged and (merged[-1][1] is None or s <= merged[-1][1]):
-                if merged[-1][1] is not None:
-                    merged[-1][1] = None if e is None else max(merged[-1][1], e)
-            else:
-                merged.append([s, e])
-        self.known = merged
+        """An interval known beforehand (tools: the vacuum's history, before the switch existed); the
+        switch's are kept apart. Overlapping ones may stay so: the core pauses in any of them."""
+        self.known.append([float(start), None if end is None else float(end)])
         self.changes += 1
-
-    def paused(self, t0: float, t1: float | None = None) -> bool:
-        """Is any time of [t0, t1] (t1 None: the moment t0) in a pause?"""
-        if not self.intervals and not self.known:
-            return False
-        t1 = t0 if t1 is None else t1
-        return any(s <= t1 and (e is None or t0 < e) for s, e in self.intervals + self.known)
 
     def between(self, t0: float, t1: float = math.inf) -> list:
         """The intervals that reach into [t0, t1], as [[start, end or None], ...]."""

@@ -50,14 +50,24 @@ def configs():
     return [(name, config, digests[0][name], digests[1][name]) for name, config in out]
 
 
+def _outline(z) -> list:
+    """A room's corners (a circle by 32 of them), for the bounds of the grid (as model.Shape had them until
+    0.46: the digests are of that grid)."""
+    if z.shape == "circle":
+        return [(z.center[0] + z.radius * math.cos(2 * math.pi * i / 32), z.center[1] + z.radius * math.sin(2 * math.pi * i / 32))
+                for i in range(32)]
+    return [tuple(p) for p in z.points]
+
+
 def reflections(config) -> dict:
     """Per sensor a sha1 of the rule of reflections (presence_core.hidden_at) on a grid of points 0.37 m
     apart around the rooms, each looked at from the sensor."""
-    rooms = config.zones_of("room")
+    rooms = [z for z in config.zones if z.kind == "room"]
     if not rooms or not config.sensors:
         return {}
-    x0, y0 = min(z.geometry.bounds()[0] for z in rooms) - 1, min(z.geometry.bounds()[1] for z in rooms) - 1
-    x1, y1 = max(z.geometry.bounds()[2] for z in rooms) + 1, max(z.geometry.bounds()[3] for z in rooms) + 1
+    xs = [x for z in rooms for x, _ in _outline(z)]
+    ys = [y for z in rooms for _, y in _outline(z)]
+    x0, y0, x1, y1 = min(xs) - 1, min(ys) - 1, max(xs) + 1, max(ys) + 1
     points = [(x, y) for x in np.arange(x0, x1, 0.37) for y in np.arange(y0, y1, 0.37)]
     out = {}
     for si, s in enumerate(config.sensors):
@@ -83,7 +93,8 @@ def test_the_core_builds_the_world_0381_built(name, config, build, reflected):
     assert [k for k in build if got[k] != build[k]] == []  # the parts that differ
     assert reflections(config) == reflected
     # the zones of the outputs are the home's, each by its own name (an outside room among them shifts nothing)
-    assert set(Tracker(config).zone_states()) - {"_total"} == {z.id for z in config.home_zones("room", "area")}
+    home = [z.id for z in config.zones if z.kind == "area" or z.kind == "room" and not z.entry]
+    assert set(Tracker(config).zone_states()) - {"_total"} == set(home) == {z[0] for z in plan(config)["home"]}
 
 
 @pytest.mark.parametrize("name, config, build, reflected", CONFIGS, ids=IDS)
@@ -96,6 +107,6 @@ def test_the_plan_view_is_the_cores_build(name, config, build, reflected):
     assert view["observed"] == core["observed_rooms"] and view["own_rooms"] == core["own_rooms"]
     assert len(view["closed"]) == core["closed_rooms"]
     assert view["places"] == ["observed", *view["regions"], "outside"]
-    assert view["areas"] == [z.id for z in config.zones_of("area")]
+    assert view["areas"] == [z.id for z in config.zones if z.kind == "area"]
     tr = Tracker(config)
     assert tr.plan == view and tr.rooms == view["observed"] and tr.places == view["places"]

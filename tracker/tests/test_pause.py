@@ -10,7 +10,7 @@ import json
 
 from presence_tracker import ha, pause
 from presence_tracker.app import App
-from presence_tracker.filter import Tracker
+from presence_tracker.filter import Tracker, plan
 from presence_tracker.frames import Frame, SensorClock
 from presence_tracker.model import Config
 from presence_tracker.pause import Pauses
@@ -24,25 +24,27 @@ from test_frames import sim_sensors, walk
 
 def test_the_intervals():
     p = Pauses()
-    assert not p.on and not p.paused(5.0)
+    tr = Tracker(flat_config(), start=0.0)
+    tr.pauses = p  # whether a time is paused, the core says (Tracker.paused)
+    assert not p.on and not tr.paused(5.0)
     assert p.set(True, 10.0) and not p.set(True, 11.0) and p.on and p.since == 10.0
-    assert p.paused(10.0) and p.paused(1e9) and not p.paused(9.9) and p.paused(5.0, 10.0)
+    assert tr.paused(10.0) and tr.paused(1e9) and not tr.paused(9.9)
     assert p.set(False, 20.0) and not p.on
-    assert p.paused(19.9) and not p.paused(20.0) and p.paused(0.0, 30.0) and not p.paused(20.0, 30.0)
+    assert tr.paused(19.9) and not tr.paused(20.0)
     p.set(True, 40.0)
     p.set(False, 50.0)
     assert p.between(25.0, 35.0) == [] and p.between(15.0) == [[10.0, 20.0], [40.0, 50.0]]
     p.prune(30.0)
     assert p.intervals == [[40.0, 50.0]]
     assert Pauses.from_dict(json.loads(json.dumps(p.to_dict()))).intervals == p.intervals
-    # known beforehand (the tools: the vacuum's history), kept apart from the switch's
+    # known beforehand (the tools: the vacuum's history), kept apart from the switch's; overlapping ones stay
     p.add(55.0, 60.0)
     p.add(0.0, 5.0)
     p.add(4.0, 6.0)
-    assert p.known == [[0.0, 6.0], [55.0, 60.0]] and p.intervals == [[40.0, 50.0]]
-    assert p.paused(57.0) and p.paused(5.5) and not p.paused(52.0) and not p.on
+    assert p.known == [[55.0, 60.0], [0.0, 5.0], [4.0, 6.0]] and p.intervals == [[40.0, 50.0]]
+    assert tr.paused(57.0) and tr.paused(5.5) and not tr.paused(52.0) and not p.on
     p.set(True, 70.0)  # the switch after them
-    assert p.on and p.paused(80.0) and p.between(0.0, 60.0) == [[0.0, 6.0], [40.0, 50.0], [55.0, 60.0]]
+    assert p.on and tr.paused(80.0) and p.between(0.0, 60.0) == [[0.0, 5.0], [4.0, 6.0], [40.0, 50.0], [55.0, 60.0]]
     assert [pause.parse(x) for x in (b"ON", "off", True, "1", b"maybe")] == [True, False, True, True, None]
 
 
@@ -135,7 +137,7 @@ def test_the_switch_in_home_assistant():
 
     async def publish(topic, payload, retain=False):
         sent.append((topic, payload, retain))
-    asyncio.run(ha.Discovery(publish).sync(flat_config().zones))
+    asyncio.run(ha.Discovery(publish).sync(plan(flat_config())["home"]))
     cfg = [json.loads(p) for t, p, _ in sent if t.startswith("homeassistant/switch/")]
     assert len(cfg) == 1 and cfg[0]["name"] == "Lernen pausieren"
     assert cfg[0]["command_topic"] == pause.COMMAND and cfg[0]["state_topic"] == pause.STATE

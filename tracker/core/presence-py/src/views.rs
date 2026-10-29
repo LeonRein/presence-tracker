@@ -8,7 +8,7 @@ use crate::config::config_from;
 use presence_core::filter;
 use presence_core::frames::Detection;
 use presence_core::geometry::Point;
-use presence_core::outputs::{Cloud, Person, Source, ZoneState};
+use presence_core::outputs::{Cloud, Person, RegionShown, Source, ZoneState, argmax};
 use presence_core::plan::{Plan, RoomIdx, ZoneIdx};
 use presence_core::world::World;
 use presence_core::world::sight::SensorMap;
@@ -62,15 +62,17 @@ impl TilesView {
     }
 }
 
-/// A person of the display: id, P per place, lost, how probably they exist, where to draw them (None:
-/// nowhere in view).
+/// A person of the display: id, P per place, the most probable place (its index), lost, how probably they
+/// exist, where to draw them (None: nowhere in view) and the room (id) there.
 #[pyclass(module = "presence_core", frozen, get_all)]
 pub struct PersonView {
     id: usize,
     places: Vec<f64>,
+    place: usize,
     lost: bool,
     r: f64,
     shown: Option<Shown>,
+    room: Option<String>,
 }
 
 /// Where a person of the display is drawn: position, velocity, spread (m), P(walking).
@@ -84,10 +86,12 @@ pub struct Shown {
 }
 
 impl PersonView {
-    pub(crate) fn of(p: Person) -> Self {
+    pub(crate) fn of(p: Person, plan: &Plan) -> Self {
         Self {
             id: p.id,
+            place: argmax(&p.places),
             places: p.places,
+            room: p.shown.and_then(|s| plan.room_of(s.at)).map(|z| z.id.clone()),
             lost: p.lost,
             r: p.r,
             shown: p.shown.map(|s| Shown {
@@ -100,10 +104,10 @@ impl PersonView {
     }
 }
 
-/// The plan of the people model (MODEL.md 2) for the shell, the calibration and the tools: the observed
-/// rooms, the places (observed, the regions, outside), the areas, per sensor its own room (None: none),
-/// the regions without a sensor by id ({name, rooms, open, exits}), the closed rooms (in which the
-/// sensors see nobody of the home).
+/// The plan of the people model (MODEL.md 2) for the shell and the tools: the observed rooms, the places
+/// (observed, the regions, outside), the areas, per sensor its own room (None: none), the regions without a
+/// sensor by id ({name, rooms, open, exits}), the closed rooms (in which the sensors see nobody of the
+/// home), the zones of the home that Home Assistant gets ([id, name, is a room], its rooms and areas).
 pub(crate) fn plan_view<'py>(py: Python<'py>, p: &Plan) -> PyResult<Bound<'py, PyDict>> {
     let ids = |zones: &[ZoneIdx]| -> Vec<&str> { zones.iter().map(|z| p.zones[z.0].id.as_str()).collect() };
     let regions = PyDict::new(py);
@@ -127,6 +131,11 @@ pub(crate) fn plan_view<'py>(py: Python<'py>, p: &Plan) -> PyResult<Bound<'py, P
     d.set_item("own_rooms", own)?;
     d.set_item("regions", regions)?;
     d.set_item("closed", ids(&p.closed))?;
+    let home: Vec<(&str, &str, bool)> = p
+        .home()
+        .map(|z| (z.id.as_str(), z.name.as_str(), z.is_room()))
+        .collect();
+    d.set_item("home", home)?;
     Ok(d)
 }
 
@@ -160,7 +169,8 @@ impl DetectionView {
 }
 
 /// A sensor's coarse sight map for the web UI: the lower left corner, the cell side, columns, rows, the
-/// sight per cell column by column.
+/// sight per cell column by column, the ghost map's rate there (ghost tracks per m^2 and hour; None where
+/// the sensor does not see) and the hours it watched.
 #[pyclass(module = "presence_core", frozen, get_all)]
 pub struct SensorMapView {
     corner: Point,
@@ -168,16 +178,39 @@ pub struct SensorMapView {
     cols: usize,
     rows: usize,
     prior: Vec<f32>,
+    ghosts: Vec<Option<f64>>,
+    watched_h: f64,
 }
 
 impl SensorMapView {
-    pub(crate) fn of(m: &SensorMap) -> Self {
+    pub(crate) fn of(m: &SensorMap, ghosts: Vec<Option<f64>>, watched_h: f64) -> Self {
         Self {
             corner: m.corner,
             cell: m.cell,
             cols: m.cols,
             rows: m.rows,
             prior: m.prior.clone(), // the view's own copy, for Python
+            ghosts,
+            watched_h,
+        }
+    }
+}
+
+/// A region without a sensor as the display shows it: its id, the most probable number of people in it,
+/// P(somebody there).
+#[pyclass(module = "presence_core", frozen, get_all)]
+pub struct RegionView {
+    id: String,
+    count: usize,
+    p_any: f64,
+}
+
+impl RegionView {
+    pub(crate) fn of(id: &str, r: RegionShown) -> Self {
+        Self {
+            id: id.to_owned(),
+            count: r.count,
+            p_any: r.p_any,
         }
     }
 }
@@ -228,6 +261,9 @@ pub struct ZoneStateView {
     decided: Option<bool>,
     source: Option<&'static str>,
     available: bool,
+    occupied: bool,
+    c_occupied: Option<f64>,
+    target_source: Option<&'static str>,
 }
 
 impl ZoneStateView {
@@ -256,6 +292,9 @@ impl ZoneStateView {
             decided: z.decided.occupied(),
             source: z.decided.source().map(Source::name),
             available: z.available,
+            occupied: z.occupied,
+            c_occupied: z.c_occupied,
+            target_source: z.target_source,
         }
     }
 }

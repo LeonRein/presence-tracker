@@ -167,3 +167,16 @@ pub fn config_limits(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     }
     Ok(out)
 }
+
+/// Which way a new configuration takes while the model runs (presence_core::reconfigure, both JSON):
+/// ("outputs", []) only what the outputs read, ("sensors", [ids]) only these sensors (none: names), ("world",
+/// []) anything else. ConfigError if one cannot be read.
+#[pyfunction]
+pub fn changes(old: &str, new: &str) -> PyResult<(&'static str, Vec<String>)> {
+    use presence_core::reconfigure::{Change, change};
+    Ok(match change(old, new).map_err(config_error)? {
+        Change::Outputs => ("outputs", Vec::new()),
+        Change::Sensors(ids) => ("sensors", ids),
+        Change::World => ("world", Vec::new()),
+    })
+}

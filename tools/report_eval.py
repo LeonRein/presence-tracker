@@ -101,8 +101,7 @@ def main():
     c = config.params.light_cost / (config.params.light_cost + 1.0)
     the_plan = plan(config)
     rooms = the_plan["observed"]
-    zones = [z for z in config.zones_of("room") if z.id in rooms]
-    outside = {z.id for z in config.zones_of("room") if z.entry}  # entry rooms: counts there are not scored
+    outside = {z.id for z in config.zones if z.kind == "room" and z.entry}  # entry rooms: counts there are not scored
     seen = {}  # room -> last time an LD2450 measured somebody there (for windows that excuse walks)
 
     tracker = None
@@ -157,7 +156,7 @@ def main():
             rt = tracker.runtime.get(sid)
             for d in (rt.detections if rt is not None else []):
                 if not d.hidden and not d.stale:
-                    z = next((z.id for z in zones if z.contains(float(d.pos[0]), float(d.pos[1]))), None)
+                    z = tracker.room_at([d.pos])[0]  # the observed room it is in (the core's)
                     if z is not None:
                         seen[z] = m["t"]
             if tt >= next_step:
@@ -196,7 +195,7 @@ def main():
     for t0, t1, r in windows:
         ss = samples.get(r["name"], [])
         print(f"{r['name']}: {r['text'][:110]}")
-        if pauses.paused(t0, t1):
+        if tracker is not None and tracker.paused(t0, t1):  # the core's pauses (tracker.pauses)
             print("   Lernen pausiert (Hintergrundaktivität): nicht bewertet")
             continue
         if not ss:

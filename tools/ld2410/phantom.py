@@ -47,7 +47,6 @@ def main():
     t0, t1 = (time.mktime(time.strptime(v if " " in v else f"{a.day} {v}", "%Y-%m-%d %H:%M")) for v in (a.t_from, a.t_to))
     tracker = Tracker(config)
     tracker.pauses = pause.load(a.pauses)
-    rooms = [z for z in config.zones_of("room") if z.id in tracker.rooms]
     c = config.params.light_cost / (config.params.light_cost + 1.0)
     seen = collections.defaultdict(list)  # room -> times of LD2450 targets in it
 
@@ -57,9 +56,9 @@ def main():
             for d in dets:
                 if d.hidden:
                     continue
-                z = next((z for z in rooms if z.contains(*d.pos)), None)
+                z = tracker.room_at([d.pos])[0]  # the observed room it is in (the core's)
                 if z is not None:
-                    seen[z.id].append(t)
+                    seen[z].append(t)
 
     tracker.listeners.append(listen)
     clocks = collections.defaultdict(SensorClock)

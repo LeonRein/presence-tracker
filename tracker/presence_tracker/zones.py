@@ -41,14 +41,13 @@ class ZoneState:
     # False: the room's own sensors all went silent (the core's room_seen.rs), Home Assistant gets "unavailable"
     # (ha.py); not in to_dict, the state goes out as always
     available: bool = True
+    occupied: bool = False  # as decided; without a decision (areas, the house) somebody counted there
+    c_occupied: float | None = None  # the decision's threshold of probability, where one is made
+    target_source: str | None = None  # "Ziel": "karte" (the learned map decided) or "bewegung" (the motion)
 
     def finite(self) -> bool:
         """Its probabilities are numbers (a NaN shows as "nobody there": NaN > c is false)."""
         return all(p is None or math.isfinite(p) for p in (self.probability, self.p_enter, self.p_target))
-
-    @property
-    def occupied(self) -> bool:
-        return self.decided if self.decided is not None else self.count > 0
 
     def to_dict(self) -> dict:
         # coarse, so that Home Assistant records a new row only now and then (every change of an
@@ -73,6 +72,6 @@ class ZoneState:
                 "target_eta": _q(self.target_eta, 0.5) if tgt else None,
                 "target_person": self.target_person if tgt else None,
                 "target_walks": round(self.target_walks) if tgt else None,
-                "target_source": (("karte" if self.target_weight >= 0.5 else "bewegung") if tgt else None),
+                "target_source": self.target_source if tgt else None,
                 "target_weight": _q(self.target_weight, 0.1) if tgt else None,
                 **({} if self.probability is None else {"probability": _p(self.probability)})}

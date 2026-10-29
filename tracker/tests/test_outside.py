@@ -5,7 +5,7 @@ import asyncio
 import json
 
 from presence_tracker import ha
-from presence_tracker.filter import Tracker
+from presence_tracker.filter import Tracker, plan
 from presence_tracker.sim import Person, simulate
 from presence_tracker.frames import Frame
 
@@ -60,7 +60,7 @@ def test_nobody_is_shown_or_published_in_the_stairwell():
         sent.append((topic, payload, retain))
 
     disc = ha.Discovery(publish)
-    asyncio.run(disc.sync(config.zones))
+    asyncio.run(disc.sync(plan(config)["home"]))
     assert sent and not any("flur" in t for t, _, _ in sent)
     assert any("presence_tracker_wohn_count" in t for t, _, _ in sent)
     # the broker still holds the stairwell's entities from a run before (a room then): they are

@@ -89,14 +89,14 @@ def test_entry_rooms_are_outside():
     # no region without a sensor; the door into it is a door to the outside (MODEL.md 2)
     c = Config.from_dict({"walls": [*OUTER, wall((3, 0), (3, 4))], "doors": [{"id": "d", "x": 3.0, "y": 2.0}],
                           "sensors": [{"id": "s", "x": 0.05, "y": 0.05, "heading": 45, "placed": True}]})
-    rooms = sorted(c.zones_of("room"), key=lambda z: z.geometry.bounds()[0])
+    rooms = sorted((z for z in c.zones if z.kind == "room"), key=lambda z: min(x for x, _ in z.points))
     assert len(rooms) == 2 and not any(z.entry for z in rooms) and set(plan(c)["regions"]) == {rooms[1].id}
     d = c.to_dict()
     next(z for z in d["zones"] if z["id"] == rooms[1].id)["entry"] = True
     c = Config.from_dict(d)
     p = plan(c)
     assert not p["regions"] and p["closed"] == [rooms[1].id]
-    assert p["observed"] == [rooms[0].id] and [z.id for z in c.home_zones("room")] == [rooms[0].id]
+    assert p["observed"] == [rooms[0].id] and [z[0] for z in p["home"] if z[2]] == [rooms[0].id]
     # the one way out of the observed area leads outside (places: observed, outside)
     core = presence_core.build_export(json.dumps(c.to_dict()), "{}")
     assert [q[0] for q in core["portals"]] == [p["places"].index("outside")]

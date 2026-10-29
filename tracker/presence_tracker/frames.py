@@ -2,7 +2,6 @@
 into a Frame, the frame time from the uptime, the detections and the sensor's own tracks); here what the
 web UI shows of a sensor's last frame."""
 
-import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -27,12 +26,9 @@ class Detection:
 
 @dataclass
 class SensorRuntime:
+    """What the web UI shows of a sensor's last frame (its LD2410C's presence and distance are the core's)."""
     detections: list = field(default_factory=list)
     frames: int = 0
-    # LD2410C, for the display: present (with the app's hold time), distance on the floor
-    ld_present: bool = False
-    ld_distance: float = 0.0
-    ld_last_present: float = -math.inf
-    move_gates: list | None = None  # energy per 0.75 m gate (engineering mode)
+    move_gates: list | None = None  # LD2410C energy per 0.75 m gate (engineering mode), as sent
     still_gates: list | None = None
 

@@ -277,6 +277,9 @@ impl PyJson for ZoneOut<'_> {
             .field("decided", &s.decided.occupied())
             .field("source", &source)
             .field("available", &s.available)
+            .field("occupied", &s.occupied)
+            .field("c_occupied", &s.c_occupied)
+            .field("target_source", &s.target_source)
             .end();
     }
 }

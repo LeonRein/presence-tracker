@@ -8,7 +8,9 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::config::config_from;
 use crate::frames::PyFrame;
-use crate::views::{CloudView, DetectionView, HypView, PersonView, SensorMapView, TilesView, ZoneStateView, plan_view};
+use crate::views::{
+    CloudView, DetectionView, HypView, PersonView, RegionView, SensorMapView, TilesView, ZoneStateView, plan_view,
+};
 
 use presence_core::filter::{NotFinite, Start};
 use presence_core::geometry::Point;
@@ -304,11 +306,26 @@ impl Core {
         self.tracker.hold_background(seconds);
     }
 
-    /// How far on the floor a target `slant` m along sensor si's beam is (straight ahead; the display's
-    /// LD2410C distance; Mount::on_floor).
-    fn floor_distance(&self, si: usize, slant: f64) -> PyResult<f64> {
-        let w = self.tracker.world();
-        Ok(w.mounts[self.sensor(si)?].on_floor([0.0, slant], w.reading.target_height)[1])
+    /// The LD2410C of sensor si as the display shows it: present (gaps up to ld2410_hold bridged) and the
+    /// distance (m on the floor) of its last presence.
+    fn ld_shown(&self, si: usize) -> PyResult<(bool, f64)> {
+        let shown = self.tracker.ld_shown(self.sensor(si)?);
+        Ok((shown.present, shown.distance))
+    }
+
+    /// Whether learning is paused at any time of [t0, t1] (t1 None: the moment t0; the pauses as last set).
+    #[pyo3(signature = (t0, t1=None))]
+    fn paused(&self, t0: f64, t1: Option<f64>) -> bool {
+        self.tracker.paused(t0, t1.unwrap_or(t0))
+    }
+
+    /// Per point the observed room it is in (id; None: in none).
+    fn room_at(&self, points: Vec<Point>) -> Vec<Option<String>> {
+        let plan = &self.tracker.world().plan;
+        points
+            .iter()
+            .map(|&p| plan.room_at(p).map(|k| plan.room(k).id.clone()))
+            .collect()
     }
 
     /// The ghost map's rate (per m^2 and s) of sensor si at the points, and s it watched.
@@ -387,7 +404,8 @@ impl Core {
 
     /// The coarse sight map of sensor si for the web UI.
     fn sensor_map(&self, si: usize) -> PyResult<SensorMapView> {
-        Ok(SensorMapView::of(&self.tracker.world().sights[self.sensor(si)?].map))
+        let (map, ghosts, watched_h) = self.tracker.sensor_map(self.sensor(si)?);
+        Ok(SensorMapView::of(map, ghosts, watched_h))
     }
 
     /// How well sensor si sees a person at the points, 0..1 (MODEL.md 4.1).
@@ -468,7 +486,30 @@ impl Core {
 
     /// The people of the display.
     fn persons(&self) -> Vec<PersonView> {
-        self.tracker.persons().into_iter().map(PersonView::of).collect()
+        let plan = &self.tracker.world().plan;
+        self.tracker
+            .persons()
+            .into_iter()
+            .map(|p| PersonView::of(p, plan))
+            .collect()
+    }
+
+    /// The regions without a sensor as the display shows them (in the order of the plan's places).
+    fn regions(&mut self, py: Python<'_>) -> Vec<RegionView> {
+        let tracker = &mut self.tracker;
+        let shown = py.detach(|| tracker.regions_shown());
+        let plan = &self.tracker.world().plan;
+        plan.regions
+            .iter()
+            .zip(shown)
+            .map(|(r, s)| RegionView::of(&r.id, s))
+            .collect()
+    }
+
+    /// How long people stay in a region without a sensor: the median and the 90 % quantile (s).
+    #[getter]
+    fn dwell(&self) -> [f64; 2] {
+        self.tracker.world().outputs.dwell
     }
 
     /// Where they may be.

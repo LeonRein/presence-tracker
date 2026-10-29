@@ -17,6 +17,7 @@ pub(crate) mod motion;
 pub mod outputs;
 pub mod params;
 pub mod plan;
+pub mod reconfigure;
 pub(crate) mod room_seen;
 pub use room_seen::SILENT_AFTER;
 pub mod sensors;

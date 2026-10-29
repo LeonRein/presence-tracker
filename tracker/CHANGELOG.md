@@ -2,6 +2,36 @@
 
 ## Unveröffentlicht
 
+## 0.46.0 (Branch `rust-core`, Regel „Rust rechnet, Python verbindet“ Teil 3: die übrigen Ableitungen; nicht live)
+
+Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.43.0, nachdem die drei neuen Felder der
+Zonenzustände herausgenommen sind (presence-replay und `trace.py` über die Hülle untereinander byte-gleich, mit ihnen);
+die neuen Felder in allen 79 785 Zonenzuständen der Spuren wie die alten Python-Regeln. ab.sh 1200 16,4 s. 169 + 2
+Rust-, 289 Python-Tests mit PT_CONFIGS (253 ohne), fmt/clippy sauber. Die App im Wiedergabemodus: Kalibrier-Status
+und -Lösung, eine verschobene Wand über `PUT /api/config` (Räume zurück und gespeichert), Live-Sicht, Sensorkarte.
+
+- **Zonenzustand vom Kern vollständig:** `occupied` (entschieden, ohne Entscheidung „jemand gezählt“; vorher eine
+  Eigenschaft in `zones.ZoneState`), `c_occupied` (die Schwelle der Entscheidung, für die Oberfläche in Runde 2) und
+  `target_source` („karte“ ab Gewicht 1/2, sonst „bewegung“; vorher in `to_dict`).
+- **Anzeige aus dem Kern:** je Person der Raum an ihrem Punkt (`Plan::room_of`; vorher Pythons `Shape.contains` auf
+  den auf mm gerundeten Koordinaten) und der wahrscheinlichste Ort (für die Fehlerberichte); je Region die
+  wahrscheinlichste Zahl, P(jemand) und der Aufenthalt (Median, 90-%-Quantil mit Φ⁻¹(0,9) als Konstante;
+  `Core.regions()`, `Core.dwell`); die Karte eines Sensors samt Raster und Geisterrate je Zelle und Stunde, wo er sieht
+  (`SensorMapView.ghosts`, `watched_h`); die LD2410C-Anzeige (anwesend mit Haltezeit, Entfernung auf dem Boden;
+  `Core.ld_shown`, `ld2410_hold` gehört jetzt zu `OUTPUT_PARAMS` des Kerns).
+- **Heim-Zonen für Home Assistant** aus dem Kern (`plan()["home"]`: Räume und Bereiche des Heims);
+  `ha.Discovery.sync(home, watched)`.
+- **Weg einer neuen Konfiguration im Kern** (`reconfigure.rs`, `presence_core.changes(old, new)`: nur Ausgaben, nur
+  Sensoren, oder neue Welt; Zahlen wie Pythons `==`, 1 = 1.0); `filter._changed_sensors`, `_names_of`,
+  `OUTPUT_PARAMS` der Hülle sind weg.
+- **„Lernen pausiert?“** für die Kalibrierdaten (und `report_eval` für seine Fenster) fragt der Kern
+  (`Tracker.paused(t0, t1)`); `Pauses.paused` ist weg,
+  `Pauses.add` mischt nicht mehr (der Kern pausiert in jedem Intervall).
+- Gelöscht: `geometry.py` (`Shape`, `point_in_polygon`, `distance_to_segment`), `ZoneConfig.contains/geometry`,
+  `Config.zones_of/home_zones`, `Tracker.present_count`, `Core.floor_distance`, `SensorRuntime.ld_*`. Werkzeuge
+  (`report_eval`, `ld2410/phantom`) fragen `Tracker.room_at`.
+- Doku: `rust-core.md` 1 mit der Tabelle „was jedes Python-Modul tut“.
+
 ## 0.45.0 (Branch `rust-core`, Regel „Rust rechnet, Python verbindet“ Teil 2: die Kalibrierung im Kern; nicht live)
 
 Modell unverändert; Spuren der drei Referenzstunden byte-gleich mit 0.43.0.

@@ -37,14 +37,20 @@ zum Programm. Ohne Ausnahme; was nicht passt, ist ein Fehler im Aufbau.
 | Ausgaben: Zähl- und Ortsverteilungen, Belegt mit der **RoomSeen-Regel** und „stumm“, *wird betreten*, *Ziel*, Personen der Anzeige, Snapshot | 6 | `filter.py`, `roomseen.py` |
 | Pausen als **Eingabe** (Intervalle; was in eine Pause fällt, lernt nichts) | 4.2 | `pause.Pauses.paused` |
 | Gespeicherte Formate lesen und schreiben, **unverändert**: `people_state`, Geisterkarte, LD2410C-Hintergrund, Zielkarte (als Zeichenketten/Dicts; Dateien schreibt Python) | 5.3, 4.2, 4.3, 6 | `to_dict`/`from_dict` der Klassen |
+| Räume aus Wänden für den Editor: Flächen des ebenen Graphen, Einrasten, Anker (`floorplan.rs`, 0.44.0) | 2 | `floorplan.py` |
+| Kalibrierung: Messzeilen je Frame, Schätzer (Paare, Übergaben, Grundriss, Maßstäbe; EM, Gauß-Newton, robuste Kovarianz, Jackknife), Vorschlag mit Gründen, Fortschritt (`calibration/`, 0.45.0) | 10 | `calibration.py` |
+| Was die Anzeige ableitet: Raum und wahrscheinlichster Ort einer Person, Regionen (Zahl, P, Aufenthalt), Karte eines Sensors mit Geisterrate, LD2410C-Anzeige mit Haltezeit, „belegt“ und Schwellen je Zone, Heim-Zonen für HA; der Weg einer neuen Konfiguration (`reconfigure.rs`) (0.46.0) | 6 | `filter.py`, `zones.py`, `ha.py`, `geometry.py` |
 
-| Python (Hülle) | |
+| Python (Hülle): Modul | was es tut (nach dem Grundsatz oben, Stand 0.46.0) |
 |---|---|
-| MQTT (`sources.py`), Home Assistant (`ha.py`, `ZoneState`-Rundung und Ausgabe-Halten), Web-Oberfläche (`app.py`, `static/`) | unverändert |
-| Konfiguration bearbeiten und speichern (`model.py` ohne das Abgeleitete; die Räume aus den Wänden rechnet der Kern, `presence_core.sync_rooms`, 0.44.0); geprüft wird sie im Kern (`presence_core.check_config`, beim Bearbeiten `check_edit` mit den Bildebenen; die Grenzen aller Zahlen, `config_limits()` für die Eingabefelder), die Hülle übersetzt nur dessen `ConfigError` in die deutschen Sätze der Oberfläche (0.43.0) | gekürzt |
-| Kalibrierung (`calibration.py`): die Messzeilen jedes Frames vom Kern (`presence_core.Walking`) sammeln, einen Tag halten und speichern (`calibration.npz`), dem Kern im Thread geben (`presence_core.calibrate`, `calibration_status`: der Schätzer seit 0.45.0 im Kern, `presence-core/src/calibration/`), seine Gründe in Worte fassen | gekürzt |
-| Simulation (`sim.py`, mit der Sensorgeometrie des Kerns seit 0.43.0), Pausen schalten und speichern (`pause.py`), Dateien und Fehlerberichte schreiben | unverändert |
-| `filter.Tracker` als dünne Hülle mit der heutigen API (4) | neu, klein |
+| `app.py` | nimmt entgegen (MQTT-Frames, HTTP der Oberfläche, Bilder), hält den Takt (alle 0,1 s `step` und Zonenzustände), speichert und lädt (tracker.json, Gelerntes, people.json, pause.json, calibration.npz, Fehlerberichte), sendet (Home Assistant über `ha.py`, Browser), Betrieb (Neubeginn nach Fehlern des Modells, Last). Rechnet nichts am Modell. |
+| `filter.py` | die Hülle des Kerns (`presence_core.Core`): reicht Konfiguration, Frames, Zeit und Pausen hinein, wandelt um (JSON, Ortsnamen ↔ Indizes), ruft die Listener, rundet für die Anzeige; welcher Weg eine neue Konfiguration nimmt, entscheidet der Kern (`presence_core.changes`). |
+| `calibration.py` | sammelt die Messzeilen, die der Kern je Frame liefert (`presence_core.Walking`), hält einen Tag, speichert `calibration.npz`, gibt sie dem Kern im Thread (`presence_core.calibrate`, `calibration_status`) und fasst seine Gründe in die Sätze der Oberfläche. |
+| `model.py` | die gespeicherte Konfiguration als Daten mit ihren Standards, Laden und Speichern; die Räume aus den Wänden (`presence_core.sync_rooms`; neue Räume bekommen hier nur ihre ID) und die Prüfung (`presence_core.check_config`/`check_edit`, `config_limits`) sind des Kerns; hier die deutschen Bezeichnungen und Sätze. |
+| `ha.py`, `zones.py` | Home Assistant: Entitäten der Heim-Zonen des Kerns (`plan()["home"]`), Verfügbarkeit, Rundung und Halten der Ausgabe (wann gesendet wird). |
+| `pause.py` | der Schalter „Lernen pausieren“: Nachrichten lesen, Intervalle halten und speichern; ob eine Zeit pausiert ist, sagt der Kern. |
+| `frames.py`, `sources.py`, `util.py`, `__main__.py` | Daten der Anzeige eines Frames; MQTT und Wiedergabe; atomar schreiben, Log drosseln; Start. |
+| `sim.py` | erzeugt Frames für Tests und Werkzeuge (kein Teil des Programms: die App importiert es nicht). |
 
 Was dabei aus Python verschwindet: `kernels.py`, `gauss.py`, `hidden.py`, `filter.py` (bis auf die Hülle),
 `tiling.py`, `world.py`, `sensormodel.py`, `sensortracks.py`, `frames.detections`, `ghostmap.py`, `destination.py`,

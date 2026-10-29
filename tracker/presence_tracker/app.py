@@ -313,7 +313,7 @@ class App:
             self.calibrator.reset()
             t = self.clocks[sensor_id](recv, frame)
         try:
-            self.calibrator.on_frame(sensor_id, t, frame, learn=not self.pauses.paused(t))
+            self.calibrator.on_frame(sensor_id, t, frame, learn=not self.tracker.paused(t))
         except Exception:  # noqa: BLE001 - the calibration's data, not the model: logged only
             self.throttled(("calibration", sensor_id), logging.ERROR, "calibration: frame of %s not taken",
                            sensor_id, exc_info=True)
@@ -371,7 +371,7 @@ class App:
             # states of a run that ended without its last will, and Home Assistant would show them as now
             await self._set_available(False)
             self.discovery.published.clear()
-            await self.discovery.sync(self.config.zones, self.tracker.seen.watched())
+            await self.discovery.sync(self.tracker.plan["home"], self.tracker.seen.watched())
             # what the broker retains of earlier runs: entities no longer wanted are removed (ha.py)
             try:
                 await client.subscribe(ha.DISCOVERY)
@@ -543,10 +543,8 @@ class App:
         there), occupied], the people [id, most probable place, its probability, x, y, lost]."""
         zones = {z: [st.count, None if st.probability is None else round(st.probability, 3), st.occupied]
                  for z, st in self.zone_states.items() if not z.startswith("_")}
-        persons = []
-        for d in self.tracker.persons():
-            place, p = max(d["places"].items(), key=lambda kv: kv[1])
-            persons.append([d["id"], place, p, d["x"], d["y"], d["lost"]])
+        persons = [[d["id"], d["place"], d["places"].get(d["place"], 0.0), d["x"], d["y"], d["lost"]]
+                   for d in self.tracker.persons()]
         return {"zones": zones, "persons": persons}
 
     def live_message(self) -> str:
@@ -705,7 +703,7 @@ class App:
             self._config_changed()
         self.calibrator.config = config
         if self.client is not None:
-            await self.discovery.sync(config.zones, self.tracker.seen.watched())
+            await self.discovery.sync(self.tracker.plan["home"], self.tracker.seen.watched())
         try:
             config.save(self.config_path)
         except OSError as e:
@@ -713,7 +711,7 @@ class App:
             return web.json_response({"error": f"In Gebrauch, aber nicht gespeichert: {e}"}, status=500)
         # rooms are derived from the walls here; the editor takes them over
         return web.json_response({"ok": True, "restarted": restarted,
-                                  "rooms": [z.to_dict() for z in config.zones_of("room")]})
+                                  "rooms": [z.to_dict() for z in config.zones if z.kind == "room"]})
 
     async def h_live(self, request):
         ws = web.WebSocketResponse(heartbeat=30)

@@ -9,7 +9,8 @@ from presence_tracker.zones import ZoneState
 
 
 def payload(**kw):
-    return ZoneState(**kw).to_dict()
+    """A zone's state as the core gives it: without a decision occupied where somebody is counted."""
+    return ZoneState(**{"occupied": kw.get("count", 0) > 0, **kw}).to_dict()
 
 
 def test_states_pass_attributes_are_held():
@@ -52,7 +53,7 @@ def test_the_states_are_never_held():
     for k in range(3000):
         count = rnd.choice((0, 0, 1, 2))
         moving = rnd.randint(0, count)
-        st = ZoneState(count=count, moving=moving, still=count - moving, probability=rnd.random(),
+        st = ZoneState(count=count, occupied=count > 0, moving=moving, still=count - moving, probability=rnd.random(),
                        approaching=rnd.random() < 0.2, p_enter=rnd.random() * 0.3, c_enter=0.048,
                        eta=rnd.random() * 3, distance=rnd.random() * 3, person=rnd.choice((None, 1, 2)),
                        target=rnd.random() < 0.2, p_target=rnd.random(), c_target=0.8, target_weight=rnd.random(),
