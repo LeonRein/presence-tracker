@@ -23,7 +23,7 @@ pub struct SensorMap {
 #[derive(Debug)]
 pub struct Sight {
     pub at: Point,
-    /// where its sight lines start (SensorConfig.sight_origin)
+    /// where its sight lines start (SensorConfig::sight_origin)
     pub origin: Point,
     pub grid: Grid,
     /// how well it sees each tile, 0..1

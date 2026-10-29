@@ -2,6 +2,40 @@
 
 ## Unveröffentlicht
 
+## 0.43.0 (Branch `rust-core`, keine doppelte Logik zwischen Python und Rust; nicht live)
+
+Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.42.0 (presence-replay und `trace.py` über die
+Hülle); ab.sh 1200 16,5 s (0.31.1 47,3 s); 162 + 2 Rust-, 246 Python-Tests mit PT_CONFIGS (210 ohne; je 1 übersprungen: der
+Test des Release-Wheels); fmt/clippy sauber.
+
+- **Sensorgeometrie nur im Kern:** `presence_core.Geometry(config)` (über Punktlisten): `to_local`, `in_fov`,
+  `sight_origin`, `sees`, `in_sight`, `free` (in einem nicht geschlossenen Raum und in Sicht), `crossings` (Schritte
+  über Wandlinien und Wände), `on_floor` (Rohmeter → Bodenpunkt ohne Maßstab; im Kern `Mount::on_floor`, `to_world`
+  rechnet bitgleich wie bisher). Gelöscht: `SensorConfig.to_local/in_fov/sight_origin/sees`, `SIGHT_OFFSET`,
+  `Config.wall_segments`, `floorplan.wall_pieces/door_openings/sight_segments`, `geometry.segments_intersect/
+  line_of_sight`, `calibration.ground/_in_polygon/_sight/_crossing`. Kalibrierung und Simulation fragen den Kern
+  (`sim.simulate(..., plan=config)` statt `walls=config.wall_segments`); die Entfernung des LD2410C in der Anzeige
+  rechnet der Kern (`Core.floor_distance`; unter der Höhendifferenz jetzt 0,1 m statt 0). Vorher verglichen
+  (`rust-port/cmpgeometry.py`, alte Python-Fassung eingefroren): auf Punktgittern aller Dev- und Testkonfigurationen
+  gleich (Bodenpunkt bis 1e-15 relativ: numpys gegen CPythons hypot); nur numpys komplexe Kreuzprodukte von
+  `_crossing` rundeten auf langen Feldern an Schritten durch Wandenden anders als einzeln (27–29 von 41 000).
+- **Konfiguration nur im Kern geprüft:** `config/check.rs` mit der einen Grenztabelle (Parameter, Sensor, Tür,
+  Bildebene) und der Prüfung des JSON (nur was da ist); `Config::from_json` prüft erst, die getypte `Config::check`
+  ist weg. Fehler strukturiert: `ConfigError { part, field, problem }`, in Python `presence_core.ConfigError`
+  (ValueError) mit einem `ConfigProblem` (Teil, Name, Feld, Grund, Grenzen, Wert); `presence_core.check_config`,
+  `presence_core.config_limits()` (die Oberfläche liest daraus ihre Eingabefelder). Die Grenzen sind die der
+  Oberfläche (enger als die bisherigen des Kerns, etwa `lead_time` > 0, Höhe ≥ 0,1 m; alle Dev-Konfigurationen
+  bestehen sie). Die Hülle hat nur noch die deutschen Bezeichnungen und Sätze (`model.LABELS`, `model.message`,
+  `model.check`, `model.limits`); `check_config`, `*_LIMITS`, `limits_dict`, `Config.from_dict(check=)` sind weg.
+  `PUT /api/config` prüft das Gesendete und das Normalisierte (Räume aus den Wänden).
+- **Zonenzustände aus dem Kern:** `outputs::ZoneState` und `Tracker::zone_states(now)` (Räume des Heims, dann die
+  übrigen Zonen, zuletzt das Haus `_total`; mit „wird betreten“, „Ziel“, Schwellen, Entscheidung und Quelle,
+  `Source::name`). Die Hülle kopiert Feld für Feld in `zones.ZoneState`, presence-replay schreibt sie nur (sein
+  `Layout` der Zonen ist weg). `Core.zone_numbers`, `ZoneView`, `HouseView` entfallen.
+- **Kein zweiter Weltbau:** `presence_core.World(config, model)`; `Core(world)` und `Core.recalibrate(changed, world)`
+  nehmen sie. Passen die Personen nicht (`Tracker::fits`), bleibt die Welt ganz und die Hülle baut den neuen Kern
+  damit (Weg 3 baute sie zweimal).
+
 ## 0.42.0 (Branch `rust-core`, Aufräumrunde nach der Gesamtprüfung, REVIEW_final.md „Vor dem Release“; nicht live)
 
 Modell unverändert; anders nur bei ungültigen Eingaben. Spuren der drei Referenzstunden byte-gleich mit 0.41.0

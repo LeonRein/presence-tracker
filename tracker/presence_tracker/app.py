@@ -22,7 +22,8 @@ from aiohttp import web
 from . import __version__, code_hash, ha
 from . import calibration, pause
 from .calibration import Calibrator
-from .model import Config, check_config, limits_dict
+from . import model
+from .model import Config
 from .filter import Tracker
 from .pause import Pauses
 from .sources import Clock, ReplayClock, mqtt_source, replay_source
@@ -120,7 +121,7 @@ class App:
         self.config = Config.load(self.config_path)
         if self.config_path.exists():  # stored, it loads as it is: say loudly if the model may fail with it
             try:
-                check_config(json.loads(self.config_path.read_text()))
+                model.check(json.loads(self.config_path.read_text()))
             except ValueError as e:
                 log.error("tracker.json does not pass the check: %s - the model may fail with it", e)
         self.prefix = prefix
@@ -666,10 +667,10 @@ class App:
         known = sorted(set(self.tracker.runtime) | set(self.config.sensor_by_id))
         return web.json_response({"config": self.config.to_dict(), "sensors_seen": known,
                                   "status": self.sensor_status, "replay": bool(self.replay),
-                                  "ha": bool(self.ha_url), "limits": limits_dict()})
+                                  "ha": bool(self.ha_url), "limits": model.limits()})
 
     async def h_put_config(self, request):
-        """An edit in the web UI. Values outside the limits (model.check_config) are refused with
+        """An edit in the web UI. Values outside the limits (the core's check, model.check) are refused with
         400 and a message: an emptied field must not switch every light on. The new configuration
         holds only once the model runs with it (reconfigure, and the zones' states once, as every tick
         computes them); else the model goes on with the old one (rebuilt: reconfigure may have changed
@@ -679,7 +680,9 @@ class App:
         except ValueError:
             return web.json_response({"error": "Keine gültige Konfiguration (JSON)."}, status=400)
         try:
-            config = Config.from_dict(data, check=True)
+            model.check(data)  # as sent, then with the rooms between the new walls and the defaults filled in
+            config = Config.from_dict(data)
+            model.check(config.to_dict())
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
         except Exception as e:  # noqa: BLE001 - whatever the check let through: refused, not a 500

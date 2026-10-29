@@ -18,6 +18,7 @@ the Rust core (presence_core, docs/rust-core.md). This is its shell: it hands th
 frames, time and pauses, calls the listeners with the core's events and forms the outputs.
 """
 
+import dataclasses
 import json
 import logging
 import math
@@ -27,6 +28,7 @@ import numpy as np
 
 from .frames import Detection, SensorRuntime
 from .pause import Pauses
+from .zones import ZoneState
 
 import presence_core
 
@@ -65,6 +67,8 @@ class _Guarded:
 
 
 __all__ = ["Tracker", "plan"]
+
+_ZONE_FIELDS = [f.name for f in dataclasses.fields(ZoneState)]
 
 
 def plan(config) -> dict:
@@ -130,9 +134,11 @@ class Tracker:
 
     # --------------------------------------------------------------- setup
 
-    def _build(self):
+    def _build(self, world=None):
+        """A new core in a new world (built of the configuration and model; or this one, presence_core.World,
+        if it was built already)."""
         old = self._c
-        self._c = _Guarded(_core(presence_core.Core, *self._world()))
+        self._c = _Guarded(_core(presence_core.Core, world if world is not None else self._new_world()))
         self._names()
         if old is not None:  # what the rooms' own LD2450s saw, the ids of new tracks, the time and evidence,
             self._c.adopt(old.core)  # what was learned and the pauses, what the LD2410Cs gathered go on
@@ -147,11 +153,11 @@ class Tracker:
         self._entry_ids = self.rooms + self.plan["areas"]
         self._tiles = self._c.tiles_view()
 
-    def _world(self) -> tuple:
-        """What the core builds its world of (docs/rust-core.md 1): the configuration and the model as
-        JSON (infinite numbers as "inf")."""
+    def _new_world(self):
+        """The core's world of the configuration and the model (docs/rust-core.md 1; their JSON, infinite
+        numbers of the model as "inf"), built once (presence_core.World)."""
         model = {k: (str(v) if isinstance(v, float) and not math.isfinite(v) else v) for k, v in self.model.items()}
-        return json.dumps(self.config.to_dict()), json.dumps(model)
+        return _core(presence_core.World, json.dumps(self.config.to_dict()), json.dumps(model))
 
     @property
     def loglik(self) -> float:
@@ -228,17 +234,19 @@ class Tracker:
         if changed == [] and self._names_of(old) == self._names_of(config):
             self._c.set_outputs(json.dumps(config.to_dict()))  # only what the outputs read: nothing built
             return False
+        world = None
         if changed is not None:
+            world = self._new_world()
             try:  # the people stay if they live in the new world too (the core checks first, then changes)
-                self._tell(self._c.recalibrate([self.sidx[sid] for sid in changed], *self._world()))
+                self._tell(self._c.recalibrate([self.sidx[sid] for sid in changed], world))
                 self._names()
                 return False
-            except presence_core.WorldChanged:  # the sensors changed which rooms are observed
-                changed = None
+            except presence_core.WorldChanged:  # the sensors changed which rooms are observed: the world is
+                pass                            # whole, the model starts over in it
         state = self.people_state()
         # if what follows fails half-way (new tiles, old people), the app saves this (app.h_put_config)
         self.reconfigured_from = state
-        self._build()  # its sensors' tracks start anew: their next frames are a start
+        self._build(world)  # its sensors' tracks start anew: their next frames are a start
         if not self.restore_people(state):
             self.reset_people()
         return True
@@ -442,17 +450,16 @@ class Tracker:
     # -------------------------------------------------------------- LD2410C
 
     def _ld_runtime(self, s, rt, t, ld):
-        """LD2410C state for the display (presence with the app's own hold time)."""
-        p = self.p
+        """LD2410C state for the display (presence with the app's own hold time; its distance on the floor,
+        the core's)."""
         rt.move_gates = ld.get("move_gates")
         rt.still_gates = ld.get("still_gates")
         present = bool(ld.get("moving") or ld.get("still"))
         if present:
             rt.ld_last_present = t
             slant = (ld.get("still_distance") or ld.get("moving_distance") or 0) / 1000
-            dh = s.height - p.target_height
-            rt.ld_distance = math.sqrt(max(slant * slant - dh * dh, 0.0))
-        rt.ld_present = present or t - rt.ld_last_present <= p.ld2410_hold
+            rt.ld_distance = self._c.floor_distance(self.sidx[s.id], slant)
+        rt.ld_present = present or t - rt.ld_last_present <= self.p.ld2410_hold
 
     # -------------------------------------------------------------- outputs (MODEL.md 6; in the core)
 
@@ -538,41 +545,15 @@ class Tracker:
         return {z: (s is not None, s) for z, s in zip(self.rooms, sources)}
 
     def zone_states(self) -> dict:
-        """Per zone: the most probable number of people (observed rooms: from all hypotheses),
-        moving / still from the most probable hypothesis' people, "about to be entered" from all
-        (entering()). Occupied, where the probability is known: P(somebody there) above the
-        threshold that minimizes the expected cost of the light; about to be entered likewise,
-        with the cost of a light switched on in vain against that of entering in the dark
-        (MODEL.md 6). An observed room is also occupied while its own LD2450 measures somebody in it
-        (occupancy()); its count is then at least 1, and the house's too. A room whose own sensors in
-        use all went silent (Tracker.seen.silent) is not available: no data, Home Assistant gets
-        "unavailable" instead of its state (ha.py); the state itself is computed as always. The numbers
-        are the core's (zone_numbers); here they become ZoneStates, with "Ziel"."""
-        from .zones import ZoneState
-        zones, house = self._c.zone_numbers(self.now)
-        c_enter = self._c.thresholds()[1]
-        states = {}
-        for z in zones:
-            st = ZoneState(count=z.count, moving=z.moving, still=z.still, probability=z.probability,
-                           available=z.available, decided=z.decided, source=z.source)
-            e = z.entering
-            if e is not None:
-                st.p_enter, st.distance, st.eta, st.person = e.p, e.distance, e.eta, e.person
-                st.approaching, st.c_enter = z.approaching, c_enter
-            states[z.id] = st
-        # the rooms first, then the areas (as Home Assistant and the display have them)
-        kind = {z.id: z.kind for z in self.config.zones}
-        states = {z: states[z] for z in sorted(states, key=lambda z: kind[z] != "room")}
-        for zid, e in self.targets().items():
-            st = states.get(zid)
-            if st is None:
-                continue
-            st.target = e["on"]
-            st.c_target = self.threshold(zid)
-            st.p_target, st.target_weight, st.target_walks = e["p"], e["weight"], e["walks"]
-            st.target_from, st.target_distance, st.target_eta, st.target_person = e["from"], e["distance"], e["eta"], e["person"]
-        states["_total"] = ZoneState(count=house.count, moving=house.moving, still=house.still)
-        return states
+        """Per zone its state (MODEL.md 6; the core's, ZoneState field for field): the most probable number of
+        people (observed rooms: from all hypotheses), moving / still from the most probable hypothesis'
+        people, "about to be entered" and "Ziel" with their thresholds. Occupied, where the probability is
+        known: P(somebody there) above the threshold that minimizes the expected cost of the light, or the
+        observed room's own LD2450 measured somebody in it (its count then at least 1, and the house's too).
+        A room whose own sensors in use all went silent is not available: Home Assistant gets
+        "unavailable" instead of its state (ha.py). The rooms of the home first, then its other zones (as
+        Home Assistant and the display have them), last the house ("_total")."""
+        return {z.id: ZoneState(**{f: getattr(z, f) for f in _ZONE_FIELDS}) for z in self._c.zone_states(self.now)}
 
     def snapshot(self) -> dict:
         """For the web UI: the people of the most probable hypothesis at their most probable place,

@@ -32,7 +32,7 @@ def test_the_people_survive_a_restart():
     # their tracks start anew (a start, MODEL.md 4.1) and are theirs again, nobody is a ghost
     config = flat_config(entry=True)
     people = sitting_two(config, 300)
-    frames = list(simulate(people, sim_sensors(config), 250, walls=config.wall_segments))
+    frames = list(simulate(people, sim_sensors(config), 250, plan=config))
     crowd = Tracker(config, start=0.0, people=["outside"])
     for t, sid, frame in frames:
         if t >= 100:
@@ -118,7 +118,7 @@ def test_nothing_known_invents_nobody_in_view():
     c = config.params.light_cost / (config.params.light_cost + 1.0)
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.6, 1.0), start=150, pauses={2: 200}))
     occupied = []
-    for t, sid, frame in simulate([a], sim_sensors(config, ghost_rate=4), 300, walls=config.wall_segments):
+    for t, sid, frame in simulate([a], sim_sensors(config, ghost_rate=4), 300, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         occupied.append((t, 1 - crowd.count_distribution()["wohn"][0]))
     # a ghost of up to a second may be somebody stepping out of the hallway and back for a moment
@@ -142,7 +142,7 @@ def test_nothing_known_finds_who_sits_in_view_at_the_start():
     crowd = Tracker(config)
     a = Person([(0.0, 4.5, 1.0), (300.0, 4.55, 1.0)])
     occupied = []
-    for t, sid, frame in simulate([a], sim_sensors(config), 200, walls=config.wall_segments):
+    for t, sid, frame in simulate([a], sim_sensors(config), 200, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         occupied.append((t, 1 - crowd.count_distribution()["wohn"][0]))
     assert min(p for t, p in occupied if t > 60) > 0.9, [(round(t), round(p, 2)) for t, p in occupied[::50]]

@@ -8,7 +8,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from presence_tracker.app import App
-from presence_tracker.model import PARAM_LIMITS, Config, check_config
+from presence_tracker.model import LABELS, Config, check
 from test_filter import flat_config
 
 
@@ -38,7 +38,7 @@ def test_out_of_range_params_are_refused(app, tmp_path, key, value):
     data["params"][key] = value
     status, body = put(app, data)
     assert status == 400
-    assert PARAM_LIMITS[key][0] in body["error"]
+    assert LABELS["params"][key] in body["error"]
     assert (tmp_path / "tracker.json").read_text() == before
     assert getattr(app.config.params, key) == getattr(Config().params, key)
 
@@ -79,7 +79,7 @@ def test_the_stored_config_loads_as_it_is():
     d = flat_config().to_dict()
     d["params"]["light_cost"] = 0
     with pytest.raises(ValueError):
-        check_config(d)
+        check(d)
     assert Config.from_dict(d).params.light_cost == 0  # without check: as stored
 
 

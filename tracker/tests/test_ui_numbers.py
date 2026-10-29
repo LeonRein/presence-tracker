@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from presence_tracker.model import limits_dict
+from presence_tracker.model import limits
 
 UTIL = pathlib.Path(__file__).parents[1] / "presence_tracker" / "static" / "js" / "util.js"
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
@@ -31,7 +31,7 @@ console.log(JSON.stringify({ errors: out, applied, min: input.min ?? null, max: 
 
 
 def test_empty_or_out_of_range_keeps_the_previous_value():
-    lim = limits_dict()["params"]["light_cost"]  # (0, 1000]
+    lim = limits()["params"]["light_cost"]  # (0, 1000]
     script = SCRIPT % {"util": json.dumps(UTIL.as_uri()), "lim": json.dumps(lim)}
     r = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, check=True)
     out = json.loads(r.stdout)

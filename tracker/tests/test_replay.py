@@ -62,7 +62,7 @@ def test_the_replay_traces_what_the_shell_does(tmp_path):
     recording = tmp_path / "rec.jsonl"
     with open(recording, "w") as f:
         f.write(json.dumps({"t": 0.0, "topic": "presence/pause", "payload": "off"}) + "\n")  # not a frame
-        for t, sid, frame in simulate([a, b], sim_sensors(config), 90.0, walls=config.wall_segments):
+        for t, sid, frame in simulate([a, b], sim_sensors(config), 90.0, plan=config):
             f.write(json.dumps({"t": 1e9 + t, "topic": f"presence/{sid}/frame", "payload": frame}) + "\n")
     subprocess.run([str(REPLAY), "trace", str(tmp_path / "config.json"), str(recording), "80", str(tmp_path / "rs.jsonl")],
                    check=True, timeout=120)

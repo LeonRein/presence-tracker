@@ -35,9 +35,9 @@ laufen nur auf einem Arbeitsbaum von 0.31.1. Die frühere Frage „Gelerntes ble
 | Python (Hülle) | |
 |---|---|
 | MQTT (`sources.py`), Home Assistant (`ha.py`, `ZoneState`-Rundung und Ausgabe-Halten), Web-Oberfläche (`app.py`, `static/`) | unverändert |
-| Konfiguration bearbeiten, prüfen (`check_config`, Grenzen) und speichern (`model.py` ohne das Abgeleitete, `floorplan.py` ohne die Geometrie des Filters) | gekürzt |
-| Kalibrierung (`calibration.py`, vorerst Python mit numpy): die LD2450-Spuren aus dem Kern (`TrackStage`, `Frame`); Wandstücke, Sensor ↔ Welt und Sicht bleiben Python (`floorplan.py`, `model.py`; Leon 29.10.: eine vom Filter unabhängige Geometrie für Simulation und Kalibrierung) | angepasst |
-| Simulation (`sim.py`), Pausen schalten und speichern (`pause.py`), Dateien und Fehlerberichte schreiben | unverändert |
+| Konfiguration bearbeiten und speichern (`model.py` ohne das Abgeleitete, `floorplan.py`: Räume aus Wänden im Editor); geprüft wird sie im Kern (`presence_core.check_config`, die Grenzen aller Zahlen, `config_limits()` für die Eingabefelder), die Hülle übersetzt nur dessen `ConfigError` in die deutschen Sätze der Oberfläche (0.43.0) | gekürzt |
+| Kalibrierung (`calibration.py`, vorerst Python mit numpy, der Schätzer): die LD2450-Spuren aus dem Kern (`TrackStage`, `Frame`), die Sensorgeometrie auch (`presence_core.Geometry`: Bodenpunkt, Sicht, freie Fläche, Schritte durch Wände; 0.43.0) | angepasst |
+| Simulation (`sim.py`, mit der Sensorgeometrie des Kerns seit 0.43.0), Pausen schalten und speichern (`pause.py`), Dateien und Fehlerberichte schreiben | unverändert |
 | `filter.Tracker` als dünne Hülle mit der heutigen API (4) | neu, klein |
 
 Was dabei aus Python verschwindet: `kernels.py`, `gauss.py`, `hidden.py`, `filter.py` (bis auf die Hülle),
@@ -162,7 +162,7 @@ Module von `presence-core`, nach MODEL.md:
 
 | Modul | MODEL.md | übernimmt |
 |---|---|---|
-| `config.rs` | – | serde-Typen der Konfiguration (das JSON von `Config.to_dict()`), Modellparameter mit Vorgaben und Überschreibungen |
+| `config/` (`mod.rs`, `check.rs`) | – | serde-Typen der Konfiguration (das JSON von `Config.to_dict()`), ihre Prüfung mit der einen Grenztabelle (auch der Eingabefelder der Oberfläche), die Sensorgeometrie (`SensorConfig`, `Mount`) |
 | `plan.rs`, `geometry.rs` | 2 | Orte, beobachtete Räume, Bereiche, Wandstücke, Sichtstücke, Formen (Rechteck/Kreis/Polygon), Schnitt von Strecken, Spiegeln |
 | `world/raster.rs`, `world/sight.rs` | 2, 4.1, 4.3 | Raster, Sicht je Sensor (`SensorModel.pd`), `_spread_sight`, LD2410C-Sicht und Blick in andere Räume (`ld_view`) |
 | `world/tiles.rs`, `linalg.rs` | 5.3 | Kacheln, Gehmatrix (`expm`), `walk_end`, `observed`, `gauss_points`, `near_doors` |
@@ -211,20 +211,23 @@ Loop, das Formatieren (zlib/base64) läuft im Thread ohne den Tracker.
 sind die des Kerns (`presence_core::tracker::Tracker`).
 
 ```
-Core(config_json, model_json)               model: die Felder, die vom Standard abweichen (model_defaults())
+World(config_json, model_json)              einmal gebaut (ohne GIL); model: die Felder, die vom Standard abweichen
+Core(world)                                  die Welt geht in den Kern
 frame(sid, t, Frame) / step(t) -> events     ("watch" | "track_end" | "branch", ...), ValueError für t ohne Zahl
-recalibrate(changed, config, model)          WorldChanged, wenn die Personen nicht in die neue Welt passen
+recalibrate(changed, world)                  WorldChanged, wenn die Personen nicht in die neue Welt passen: die
+                                             Welt bleibt dann ganz, die Hülle baut den neuen Kern damit
 set_outputs(config)                          nur die Ausgabeparameter (OUTPUT_PARAMS): nichts gebaut
 adopt(old)                                   was nach einem Neubau weitergeht
 reset_people(places) / reset_tracks()        people_state() -> JSON / restore_people(JSON) -> None | Grund
 set_pauses(intervals) / hold_background(s)   learned() -> Learned (json() ohne den Tracker, im Thread)
 use_ghost_map / use_ld_background / use_dest_map(JSON)
-count_distribution(), place_distribution(), entering(), targets(), occupancy(now), zone_numbers(now),
+count_distribution(), place_distribution(), entering(), targets(), occupancy(now), zone_states(now),
 persons(), clouds(), thresholds(), target_above(room), online(id, now), silent(now), seen_last(), watched()
 Sichten: plan(), tiles_view(), tile_near(p), sensor_map(si), sight(si, pts), observed(), detections(si),
 last_frame(si), hypotheses(), tracks(), hyp_weights(), ghost_rates(si, pts), background(si), check()
-Modul: plan(config), model_defaults(), forgetting(), ld_prior(), ld_expected(...), Frame, SensorClock,
-TrackStage, OUTPUT_PARAMS, WorldChanged, PanicException
+Modul: plan(config), check_config(config), config_limits(), Geometry(config), model_defaults(), forgetting(),
+ld_prior(), ld_expected(...), Frame, SensorClock, TrackStage, OUTPUT_PARAMS, WorldChanged, ConfigError
+(ValueError; args[0] ein ConfigProblem: Teil, Name, Feld, Grund, Grenzen, Wert), PanicException
 ```
 
 Die Hülle (`filter.py`) führt jeden Zugriff auf den Kern über einen Schutz (`_Guarded`): eine Panik des Kerns wird
@@ -261,8 +264,16 @@ Räume liest jeder aus dem Plan des Kerns (`presence_core.plan(config)`, `Tracke
 benannte Typen (`HypView`, `TilesView`, `PersonView`). Der gemessene Blick des LD2410C (`ld_view`) ist eine Angabe der
 Konfiguration, kein Standard des Modells mehr.
 
+**Keine doppelte Logik (0.43.0, 29.10.):** Die Sensorgeometrie (Sensorrahmen, Blickfeld, Sicht durch Türen, Bodenpunkt)
+gibt es nur im Kern; Kalibrierung und Simulation fragen `presence_core.Geometry` (über Punktlisten). Die Konfiguration
+prüft nur der Kern (`config/check.rs`, eine Tabelle der Grenzen, auch der Bildebenen der Oberfläche). Die Zonenzustände
+liefert der Kern fertig (`Core.zone_states`: geordnet, mit Quelle, „Ziel“ und Schwellen, das Haus als `_total`); Hülle
+und `presence-replay` schreiben sie nur. `recalibrate` nimmt eine gebaute `World`; passt sie nicht, baut die Hülle den
+neuen Kern mit ihr (eine Welt je Neubau). Was an Logik in Python bleibt, steht in der Übergabe von Sitzung 11
+(`rust-port/PLAN.md`).
+
 **`presence_tracker.filter.Tracker`** bleibt die Klasse, die App, Werkzeuge und Tests benutzen, mit derselben
-öffentlichen API: Sie reicht durch, formt `ZoneState`, ruft die `listeners` mit den Ereignissen des Kerns und hält
+öffentlichen API: Sie reicht durch, kopiert die `ZoneState`s des Kerns, ruft die `listeners` mit den Ereignissen des Kerns und hält
 die Python-Objekte der Hülle (`config`, `pauses`). Die Konfiguration geht als `config.to_dict()` hinein; das
 Modell als Dict der Felder von `Params` (`presence_core.model_defaults()`), die vom Standard abweichen; unbekannte
 Felder lehnt der Kern ab, ebenso Zahlen, die kein Modell ergeben (`ModelError` mit den Namen). Auch die Zeit, nach
@@ -278,7 +289,7 @@ der ein stummer Sensor als weg gilt (`silent_after`), ist ein Feld des Modells.
 | `persons()[i]["obj"]` (lebendes Objekt) | `replay.py`, `report_eval.py` | Mittel/Kovarianz bzw. Dichte als Arrays |
 | `tracker.hyps` (Anzahl, Gruppen, Gauß-Felder) | `report_eval`, `replay` | `hypotheses()` (lesend) |
 | `config.observed_rooms()`, `closed_rooms`, `zones_of`, Orte | App, HA, Kalibrierung | Abgeleitetes nur aus dem Kern (`plan()`); `model.py` behält Daten, Prüfung, Speichern |
-| `SensorTracks`, `floorplan.wall_pieces`, `SensorConfig.to_world` | Kalibrierung | `TrackStage` des Kerns; Wandstücke und Sensor ↔ Welt bleiben Python |
+| `SensorTracks`, `floorplan.wall_pieces`, `SensorConfig.to_world` | Kalibrierung | `TrackStage` des Kerns; Wandstücke, Sicht und Bodenpunkt aus `presence_core.Geometry` (0.43.0) |
 | `GhostMap` offline bauen | `tools/ghostmap.py` | auf 0.31.1 belassen oder später als Modus der Wiedergabe |
 | Pickle des ganzen Trackers | `seg_replay --init pickle` | entfällt (entschieden) |
 | `_ld_weigh` gepatcht, `ld2410.Likelihood/Stats` direkt | `tools/ld2410/*` | auf 0.31.1 belassen (entschieden) |
@@ -299,7 +310,8 @@ Fehler: Nicht endliche Gewichte werden in Python ein `FloatingPointError` wie he
 2. nur Sensoren oder Namen geändert (gedreht, verschoben, kalibriert, ein/aus; die Namen liest der Plan, z. B. den
    eigenen Raum eines Sensors): Personen bleiben, deren Spuren enden wie bei Datenverlust, die Welt neu gebaut
    (`Core.recalibrate`), Geisterkarte folgt (ein anders montierter beginnt neu); passen die Personen nicht in die neue
-   Welt, sagt der Kern `WorldChanged` (nur das fängt die Hülle; jeder andere Fehler bleibt ein Fehler);
+   Welt, sagt der Kern `WorldChanged` (nur das fängt die Hülle; jeder andere Fehler bleibt ein Fehler), und Weg 3
+   nimmt die schon gebaute Welt;
 3. sonst: Neubau, Personen aus `people_state`, wenn die Kacheln gleich bleiben.
 
 Je Weg ein Test; für 1 zusätzlich: Hypothesen, Gewichte und Spuren sind danach bitgleich wie davor, und der Lauf geht
@@ -396,7 +408,7 @@ berichtet, bevor Phase 3 beginnt.
    Schnittstelle wie die Prüfhilfe (6).
 2. `tools/ghostmap.py` bleibt auf 0.31.1.
 3. Die Kalibrierung bleibt vorerst Python mit numpy und ruft den Kern für die LD2450-Spuren; ihre Geometrie bleibt
-   Python (Leon, 29.10.).
+   Python (Leon, 29.10.; überholt mit 0.43.0: die Geometrie ist die des Kerns, der Schätzer bleibt Python).
 4. Lernreihenfolge wie heute, mit getrennt geliehenen Lernern (2.0); `faer` auf einem Thread (3); der schnelle Weg
    von `reconfigure` bleibt (4); Test aller Konfigurationen (6); Schwelle −8 % für den Prototyp (7); nur aus dem
    asyncio-Loop (4).

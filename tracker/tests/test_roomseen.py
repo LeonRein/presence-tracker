@@ -11,7 +11,7 @@ import pytest
 
 from presence_tracker import ha
 from presence_tracker.filter import Tracker
-from presence_tracker.model import Config
+from presence_tracker.model import Config, check
 from presence_tracker.frames import Frame
 
 LOST = 6.0  # the timing tests below run with a short silence limit (the app's: the model's silent_after)
@@ -172,10 +172,10 @@ def test_seen_hold_has_limits(value, ok):
     d = open_plan().to_dict()
     d["params"]["seen_hold"] = value
     if ok:
-        assert Config.from_dict(d, check=True).params.seen_hold == value
+        check(d)
     else:
         with pytest.raises(ValueError, match="Haltezeit eigener LD2450"):
-            Config.from_dict(d, check=True)
+            check(d)
 
 
 def test_changing_seen_hold_restarts_nothing():

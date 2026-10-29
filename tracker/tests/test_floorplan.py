@@ -5,8 +5,7 @@ import pytest
 import presence_core
 
 from presence_tracker.filter import plan
-from presence_tracker.floorplan import faces, sight_segments, sync_rooms
-from presence_tracker.geometry import line_of_sight
+from presence_tracker.floorplan import faces, sync_rooms
 from presence_tracker.model import Config
 
 OUTER = [{"points": [a, b], "kind": "wall"} for a, b in [([0, 0], [6, 0]), ([6, 0], [6, 4]), ([6, 4], [0, 4]), ([0, 4], [0, 0])]]
@@ -24,10 +23,9 @@ def test_two_rooms_with_a_door():
     walls = [*OUTER, wall((3, 0), (3, 4))]
     rooms = faces(walls)
     assert sorted(round(area(r), 3) for r in rooms) == [12, 12]
-    segs = sight_segments(walls, [{"id": "d", "x": 3, "y": 2, "width": 0.9}])
+    geometry = Config.from_dict({"walls": walls, "doors": [{"id": "d", "x": 3, "y": 2, "width": 0.9}]}).geometry()
     # the door is open for the radar, the rest of the wall is not
-    assert line_of_sight((2, 2), (4, 2), segs)
-    assert not line_of_sight((2, 1), (4, 1), segs)
+    assert geometry.in_sight((2, 2), [(4, 2), (4, 1)]) == [True, False]
 
 
 def test_gap_merges_rooms():
@@ -38,7 +36,7 @@ def test_gap_merges_rooms():
 def test_divider_splits_rooms_but_blocks_nothing():
     walls = [*OUTER, wall((3, 0), (3, 4), kind="divider")]
     assert sorted(round(area(r), 3) for r in faces(walls)) == [12, 12]
-    assert line_of_sight((2, 1), (4, 1), sight_segments(walls, []))
+    assert Config.from_dict({"walls": walls}).geometry().in_sight((2, 1), [(4, 1)]) == [True]
 
 
 def test_wall_ends_just_short_of_another_wall_still_close_the_room():

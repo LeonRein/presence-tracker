@@ -128,7 +128,7 @@ pub fn segments_cross(p1: Point, p2: Point, q1: Point, q2: Point) -> bool {
     orient(q1, q2, p1) * orient(q1, q2, p2) < 0.0 && orient(p1, p2, q1) * orient(p1, p2, q2) < 0.0
 }
 
-/// Nothing of these segments between a and b (geometry.line_of_sight).
+/// Nothing of these segments between a and b.
 pub fn line_of_sight(a: Point, b: Point, segments: &[[Point; 2]]) -> bool {
     !segments.iter().any(|&[s, e]| segments_cross(a, b, s, e))
 }

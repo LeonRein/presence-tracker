@@ -324,6 +324,17 @@ pub enum Source {
     Both,
 }
 
+impl Source {
+    /// Its name in the outputs (Home Assistant's attribute "source").
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Filter => "filter",
+            Self::Ld2450 => "ld2450",
+            Self::Both => "beide",
+        }
+    }
+}
+
 /// Per observed room whether it is occupied and by what (Tracker.occupancy): P(somebody there) above
 /// c = light_cost / (light_cost + 1), the threshold with the least expected cost of the light (a second
 /// of light without anybody costs light_cost seconds dark), or its own LD2450 measured somebody in it
@@ -723,6 +734,23 @@ impl Decision {
     fn of(source: Option<Source>) -> Self {
         source.map_or(Self::Free, Self::Occupied)
     }
+
+    /// Occupied, free, or None where no decision is made.
+    pub fn occupied(self) -> Option<bool> {
+        match self {
+            Self::None => None,
+            Self::Free => Some(false),
+            Self::Occupied(_) => Some(true),
+        }
+    }
+
+    /// What decided it occupied.
+    pub fn source(self) -> Option<Source> {
+        match self {
+            Self::Occupied(s) => Some(s),
+            Self::None | Self::Free => None,
+        }
+    }
 }
 
 /// The house as a whole: the people in it, and of those in view walking or not.
@@ -843,6 +871,105 @@ pub fn zone_numbers(world: &World, x: &ZoneInputs) -> (Vec<ZoneNumbers>, HouseNu
     total.moving = total.moving.min(total.count);
     total.still = total.still.min(total.count - total.moving);
     (zones, total)
+}
+
+/// The id of the house as a whole among the zones' states (Home Assistant's "_total").
+pub const HOUSE: &str = "_total";
+
+/// A zone's state as the outputs hand it on (Home Assistant, the display; the shell's zones.ZoneState, field
+/// for field): its numbers, the decision and what made it, "wird betreten" and "Ziel" with their thresholds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZoneState {
+    pub id: String,
+    pub count: usize,
+    pub moving: usize,
+    pub still: usize,
+    /// "wird betreten" (observed rooms and areas): p_enter above c_enter; for the one who most probably
+    /// enters, when, how far, who
+    pub approaching: bool,
+    pub p_enter: Option<f64>,
+    pub eta: Option<f64>,
+    pub distance: Option<f64>,
+    pub person: Option<usize>,
+    pub c_enter: Option<f64>,
+    /// "Ziel" (observed rooms): p_target at least c_target; the learned map's weight against the motion,
+    /// the walks behind it; the walker who most probably goes here, their room, how far, when, who
+    pub target: bool,
+    pub p_target: Option<f64>,
+    pub c_target: Option<f64>,
+    pub target_weight: f64,
+    pub target_walks: f64,
+    pub target_from: Option<String>,
+    pub target_distance: Option<f64>,
+    pub target_eta: Option<f64>,
+    pub target_person: Option<usize>,
+    /// P(somebody there), where the filter knows it
+    pub probability: Option<f64>,
+    pub decided: Decision,
+    /// false: its own sensors all went silent (Home Assistant gets it as unavailable)
+    pub available: bool,
+}
+
+impl ZoneState {
+    /// A zone's state of nothing but these numbers.
+    fn of(id: &str, count: usize, moving: usize, still: usize) -> Self {
+        Self {
+            id: id.to_owned(),
+            count,
+            moving,
+            still,
+            approaching: false,
+            p_enter: None,
+            eta: None,
+            distance: None,
+            person: None,
+            c_enter: None,
+            target: false,
+            p_target: None,
+            c_target: None,
+            target_weight: 0.0,
+            target_walks: 0.0,
+            target_from: None,
+            target_distance: None,
+            target_eta: None,
+            target_person: None,
+            probability: None,
+            decided: Decision::None,
+            available: true,
+        }
+    }
+}
+
+/// The zones' states (Tracker.zone_states) from their numbers and "Ziel" per observed room: the zones of the
+/// home, its rooms first and then the other zones (each in the configuration's order: as Home Assistant and
+/// the display have them), and last the house (HOUSE).
+pub fn zone_states(world: &World, numbers: &[ZoneNumbers], house: &HouseNumbers, targets: &[Target]) -> Vec<ZoneState> {
+    let (plan, o) = (&world.plan, &world.outputs);
+    let home: Vec<&Zone> = plan.home().collect();
+    let mut order: Vec<usize> = (0..home.len()).collect();
+    order.sort_by_key(|&k| !home[k].is_room()); // stable
+    let mut states: Vec<ZoneState> = order
+        .into_iter()
+        .map(|k| {
+            let (z, n) = (home[k], &numbers[k]);
+            let mut st = ZoneState::of(&z.id, n.count, n.moving, n.still);
+            (st.probability, st.decided, st.available) = (n.probability, n.decided, n.available);
+            if let Some(e) = &n.entering {
+                (st.p_enter, st.distance, st.eta, st.person) = (Some(e.p), e.distance, e.eta, e.person);
+                (st.approaching, st.c_enter) = (n.approaching, Some(o.entering_above()));
+            }
+            if let ZoneRole::Observed(RoomIdx(r)) = z.role {
+                let t = &targets[r];
+                (st.target, st.p_target, st.c_target) = (t.on, Some(t.p), Some(o.target_above(&z.id)));
+                (st.target_weight, st.target_walks) = (t.weight, t.walks);
+                st.target_from = t.from.map(|f| plan.room(f).id.clone());
+                (st.target_distance, st.target_eta, st.target_person) = (t.distance, t.eta, t.person);
+            }
+            st
+        })
+        .collect();
+    states.push(ZoneState::of(HOUSE, house.count, house.moving, house.still));
+    states
 }
 
 // ------------------------------------------------------------------ "Ziel" (until it is in Rust)
@@ -1189,6 +1316,52 @@ mod tests {
         // nothing heard from its own sensor for longer than silent_after: not available
         let (zones, _) = tr.zone_numbers(31.0);
         assert!(!zones[0].available && zones[1].available);
+    }
+
+    #[test]
+    fn the_zones_states_are_the_numbers_with_their_thresholds_rooms_first_and_the_house_last() {
+        let mut tr = walking([1.0, 4.0], [0.0, 0.0]);
+        tr.start_at(0.0);
+        let (numbers, house) = tr.zone_numbers(0.0);
+        let targets = tr.targets().to_vec();
+        let states = tr.zone_states(0.0);
+        let ids: Vec<&str> = states.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["wohn", "sofa", HOUSE]);
+        let o = &tr.world().outputs;
+        let (room, sofa, all) = (&states[0], &states[1], &states[2]);
+        assert_eq!(
+            (room.count, room.probability, room.decided),
+            (numbers[0].count, numbers[0].probability, numbers[0].decided)
+        );
+        assert_eq!(room.decided.source().map(Source::name), Some("filter"));
+        assert_eq!(
+            (room.c_enter, sofa.c_enter),
+            (Some(o.entering_above()), Some(o.entering_above()))
+        );
+        assert_eq!(sofa.p_enter, numbers[1].entering.map(|e| e.p));
+        // "Ziel" in the observed room only, with its own threshold
+        assert_eq!(
+            (room.p_target, room.c_target),
+            (Some(targets[0].p), Some(o.target_above("wohn")))
+        );
+        assert_eq!(
+            (sofa.p_target, sofa.c_target, sofa.target, sofa.target_weight),
+            (None, None, false, 0.0)
+        );
+        let whole = ZoneState::of(HOUSE, house.count, house.moving, house.still);
+        assert_eq!(*all, whole);
+        // an area before the room in the configuration: the room still comes first
+        let config = testing::config(
+            &[("wohn", "wohn", [0.05, 0.05], 45.0)],
+            r#"[{"id": "sofa", "name": "Sofa", "kind": "area", "shape": "rect", "points": [[0, 3], [2, 5]]},
+                {"id": "wohn", "name": "Wohn", "kind": "room", "shape": "rect", "points": [[0, 0], [6, 5]]}]"#,
+            "[]",
+            "[]",
+        );
+        let mut tr = Tracker::new(World::build(&config, crate::params::Params::default()).expect("a world"));
+        tr.reset_people(None).expect("nobody known");
+        let ids: Vec<String> = tr.zone_states(0.0).into_iter().map(|s| s.id).collect();
+        assert_eq!(ids, ["wohn", "sofa", HOUSE]);
     }
 
     #[test]

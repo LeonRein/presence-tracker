@@ -2,18 +2,27 @@
 //! LD2410Cs' measured view and the tracker's parameters; the background image is the UI's), read with serde. Lengths in metres,
 //! angles in degrees, in the house frame. The rooms are already the faces between the walls
 //! (floorplan.sync_rooms runs where the plan is edited, in the shell). Every field the shell always
-//! writes is required: no defaults here that could hide a renamed field.
+//! writes is required: no defaults here that could hide a renamed field. Before it is read it is checked
+//! (check.rs: the limits of every number, also the ones of the web UI's fields). The sensors' geometry here
+//! is the only one: the shell's calibration and simulation use it too (presence_core.Geometry).
 //!
 //! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
+
+mod check;
 
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
+use serde_json::Value;
+
+pub use check::{
+    ConfigError, DOOR, LAYER, Limits, MAX_CELLS, MAX_RANGE, MAX_SENSORS, PARAMS, Part, Problem, SENSOR, check,
+};
 
 use crate::geometry::{Point, Shape, line_of_sight};
 use crate::vmath::py_hypot;
 
-/// m: sight lines start this far in front of a sensor (model.SIGHT_OFFSET): it hangs on a wall, often
+/// m: sight lines start this far in front of a sensor: it hangs on a wall, often
 /// in a corner, and a few centimetres of drawing error would otherwise put it behind that wall.
 pub const SIGHT_OFFSET: f64 = 0.2;
 
@@ -79,7 +88,7 @@ impl SensorConfig {
         self.mount().to_local(p)
     }
 
-    /// Within its field of view and range, grown by margin (SensorConfig.in_fov).
+    /// Within its field of view and range, grown by margin.
     pub fn in_fov(&self, p: Point, margin: f64) -> bool {
         let [lx, ly] = self.to_local(p);
         let r = py_hypot(lx, ly);
@@ -89,13 +98,13 @@ impl SensorConfig {
         lx.atan2(ly).to_degrees().abs() <= self.fov / 2.0 + (margin / r.max(0.3)).to_degrees()
     }
 
-    /// Where its sight lines start (SensorConfig.sight_origin).
+    /// Where its sight lines start: SIGHT_OFFSET in front of it.
     pub fn sight_origin(&self) -> Point {
         let [c, s] = self.axis();
         [self.x + SIGHT_OFFSET * c, self.y + SIGHT_OFFSET * s]
     }
 
-    /// In its field of view and no wall between (SensorConfig.sees).
+    /// In its field of view and no wall between.
     pub fn sees(&self, p: Point, walls: &[[Point; 2]], margin: f64) -> bool {
         self.in_fov(p, margin) && line_of_sight(self.sight_origin(), p, walls)
     }
@@ -124,7 +133,7 @@ pub struct OnFloor {
 
 impl Mount {
     /// The house frame -> the sensor's frame on the floor (x right, y forward), as it measures (its
-    /// scale taken out; SensorConfig.to_local).
+    /// scale taken out).
     pub fn to_local(&self, [wx, wy]: Point) -> Point {
         let [c, s] = self.axis;
         let (dx, dy) = ((wx - self.at[0]) / self.scale, (wy - self.at[1]) / self.scale);
@@ -136,11 +145,8 @@ impl Mount {
     /// A target (m, sensor frame) in the house frame (the inverse of to_local on the floor). The radar measures the
     /// slant distance from its antenna; the height difference to the reflecting body is taken out so
     /// that the position lies on the floor. Then the sensor's scale corrects the distance.
-    pub fn to_world(&self, [lx, ly]: Point, target_height: f64) -> OnFloor {
-        let lx = if self.mirror { -lx } else { lx };
-        let slant = py_hypot(lx, ly);
-        let dh = self.height - target_height;
-        let ground = (slant * slant - dh * dh).max(0.01).sqrt();
+    pub fn to_world(&self, local: Point, target_height: f64) -> OnFloor {
+        let ([lx, ly], ground, slant) = self.slant_out(local, target_height);
         let k = if slant > 0.0 {
             self.scale * ground / slant
         } else {
@@ -154,6 +160,24 @@ impl Mount {
             ground: self.scale * ground,
             slant: self.scale * slant,
         }
+    }
+
+    /// A target (m, sensor frame) on the floor in the sensor's own frame (x right, y forward), its scale
+    /// not applied: the slant taken out as in to_world (the calibration fits the scale itself).
+    pub fn on_floor(&self, local: Point, target_height: f64) -> Point {
+        let ([lx, ly], ground, slant) = self.slant_out(local, target_height);
+        let k = if slant > 0.0 { ground / slant } else { 1.0 };
+        [lx * k, ly * k]
+    }
+
+    /// A target's sensor coordinates with the mirror taken out, its distance on the floor (at least 0.1 m)
+    /// and along the beam.
+    fn slant_out(&self, [lx, ly]: Point, target_height: f64) -> (Point, f64, f64) {
+        let lx = if self.mirror { -lx } else { lx };
+        let slant = py_hypot(lx, ly);
+        let dh = self.height - target_height;
+        let ground = (slant * slant - dh * dh).max(0.01).sqrt();
+        ([lx, ly], ground, slant)
     }
 }
 
@@ -344,118 +368,19 @@ impl Default for TrackerParams {
     }
 }
 
-/// cells of 0.1 m the raster of the plan may have at most (10^6: 100 m x 100 m): a typing error such as
-/// x = 1e6 is refused, not tried (the configuration is saved: the app would run into it at every start)
-pub const MAX_CELLS: f64 = 1e6;
-/// m: the farthest a sensor may be said to see (the LD2450 sees 6 m; a sensor's sight is built over its range)
-pub const MAX_RANGE: f64 = 10.0;
-/// sensors at most (a set of sensors is a bit set, SensorSet)
-pub const MAX_SENSORS: usize = 64;
-
 impl Config {
-    /// The configuration of the JSON of model.Config.to_dict(), checked field by field (Err names the
-    /// first that does not fit).
-    pub fn from_json(json: &str) -> Result<Self, String> {
-        let config: Self = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        config.check()?;
-        Ok(config)
-    }
-
-    fn check(&self) -> Result<(), String> {
-        // (what, the value, whether it fits)
-        let real = |x: f64| x.is_finite();
-        let positive = |x: f64| x > 0.0 && x.is_finite();
-        let at_least_0 = |x: f64| x >= 0.0 && x.is_finite();
-        let mut checks: Vec<(String, bool)> = Vec::new();
-        for s in &self.sensors {
-            let id = &s.id;
-            checks.extend([
-                (
-                    format!("sensor {id}: x, y, heading"),
-                    real(s.x) && real(s.y) && real(s.heading),
-                ),
-                (format!("sensor {id}: height"), positive(s.height)),
-                (format!("sensor {id}: scale"), positive(s.scale)),
-                (format!("sensor {id}: fov"), positive(s.fov) && s.fov <= 180.0),
-                (format!("sensor {id}: range"), positive(s.range) && s.range <= MAX_RANGE),
-            ]);
-        }
-        checks.push((
-            format!("at most {MAX_SENSORS} sensors"),
-            self.sensors.len() <= MAX_SENSORS,
-        ));
-        if let Some(id) = first_twice(self.sensors.iter().map(|s| &s.id)) {
-            checks.push((format!("sensor {id}: its id twice"), false));
-        }
-        if let Some(id) = first_twice(self.zones.iter().map(|z| &z.id)) {
-            checks.push((format!("zone {id}: its id twice"), false));
-        }
-        for z in &self.zones {
-            checks.push((
-                format!("zone {}: its corners", z.id),
-                z.shape.outline(4).iter().flatten().all(|&v| real(v)),
-            ));
-        }
-        let ends = self.walls.iter().flat_map(|w| [w.a, w.b]).flatten();
-        checks.push(("the walls' ends".into(), ends.into_iter().all(real)));
-        for d in &self.doors {
-            checks.push((format!("door {}", d.id), real(d.x) && real(d.y) && positive(d.width)));
-        }
-        checks.push(("ld_view".into(), self.ld_view.values().all(|&v| at_least_0(v))));
-        let p = &self.params;
-        let unit = |x: f64| x > 0.0 && x < 1.0;
-        checks.extend([
-            ("target_height".into(), at_least_0(p.target_height)),
-            ("range_sigma_base".into(), positive(p.range_sigma_base)),
-            ("range_sigma_slope".into(), at_least_0(p.range_sigma_slope)),
-            ("lateral_sigma_base".into(), positive(p.lateral_sigma_base)),
-            ("lateral_sigma_slope".into(), at_least_0(p.lateral_sigma_slope)),
-            ("wall_margin".into(), at_least_0(p.wall_margin)),
-            ("dwell_median".into(), positive(p.dwell_median)),
-            ("dwell_spread".into(), positive(p.dwell_spread)),
-            ("ld2410_hold".into(), at_least_0(p.ld2410_hold)),
-            ("light_cost".into(), positive(p.light_cost)),
-            ("seen_hold".into(), at_least_0(p.seen_hold)),
-            ("lead_time".into(), at_least_0(p.lead_time)),
-            ("approach_cost".into(), positive(p.approach_cost)),
-            ("target_threshold".into(), unit(p.target_threshold)),
-            (
-                "target_thresholds".into(),
-                p.target_thresholds.values().all(|&c| unit(c)),
-            ),
-        ]);
-        // the raster around the rooms
-        let rooms: Vec<[f64; 4]> = self
-            .zones
-            .iter()
-            .filter(|z| z.kind.is_room())
-            .map(|z| z.shape.bounds())
-            .collect();
-        let span = |k: usize| {
-            let lo = rooms.iter().map(|b| b[k]).fold(f64::INFINITY, f64::min);
-            let hi = rooms.iter().map(|b| b[k + 2]).fold(f64::NEG_INFINITY, f64::max);
-            (hi - lo) / 0.1 + 3.0
-        };
-        checks.push((
-            "the plan's extent".into(),
-            rooms.is_empty() || span(0) * span(1) <= MAX_CELLS,
-        ));
-        match checks.into_iter().find(|(_, ok)| !ok) {
-            Some((what, _)) => Err(format!("the configuration does not fit: {what}")),
-            None => Ok(()),
-        }
+    /// The configuration of the JSON of model.Config.to_dict(), checked field by field (check.rs; the
+    /// error names the first problem).
+    pub fn from_json(json: &str) -> Result<Self, ConfigError> {
+        let value: Value = serde_json::from_str(json).map_err(ConfigError::unreadable)?;
+        check(&value)?;
+        Self::deserialize(value).map_err(ConfigError::unreadable)
     }
 
     /// The rooms, the outside rooms too.
     pub fn rooms(&self) -> impl Iterator<Item = &ZoneConfig> {
         self.zones.iter().filter(|z| z.kind.is_room())
     }
-}
-
-/// The first id that came before.
-fn first_twice<'a>(ids: impl Iterator<Item = &'a String>) -> Option<&'a String> {
-    let mut seen = std::collections::BTreeSet::new();
-    ids.into_iter().find(|id| !seen.insert(*id))
 }
 
 impl ZoneKind {
@@ -470,31 +395,40 @@ mod tests {
     use super::*;
     use crate::testing::config_json;
 
-    const ROOM: &str = r#"[{"id": "a", "name": "A", "kind": "room", "shape": "rect", "points": [[0, 0], [3, 3]]}]"#;
-
-    fn refused(json: &str) -> String {
-        Config::from_json(json).expect_err("refused")
+    #[test]
+    fn on_the_floor_the_slant_is_taken_out_but_not_the_scale() {
+        // 1.5 m up, a chest at 1 m: 1.3 m along the beam straight ahead is 1.2 m on the floor; 1 m at
+        // 36.87 deg (0.6, 0.8) is sqrt(0.75) m, in the same direction, x to the left when mirrored
+        let mount = |mirror| Mount {
+            at: [5.0, 5.0],
+            axis: [0.0, 1.0],
+            height: 1.5,
+            mirror,
+            scale: 2.0,
+        };
+        let close = |a: Point, b: Point| (a[0] - b[0]).abs() < 1e-15 && (a[1] - b[1]).abs() < 1e-15;
+        assert!(close(mount(false).on_floor([0.0, 1.3], 1.0), [0.0, 1.2]));
+        let k = 0.75_f64.sqrt();
+        assert!(close(mount(false).on_floor([0.6, 0.8], 1.0), [0.6 * k, 0.8 * k]));
+        assert!(close(mount(true).on_floor([0.6, 0.8], 1.0), [-0.6 * k, 0.8 * k]));
     }
 
     #[test]
-    fn a_configuration_the_core_cannot_hold_is_refused_by_name() {
-        // 65 sensors: a SensorSet's assert; ids twice: one sensor's frames went to the other
-        let ids: Vec<String> = (0..=MAX_SENSORS).map(|k| format!("s{k}")).collect();
-        let many: Vec<(&str, &str, Point, f64)> = ids.iter().map(|id| (id.as_str(), "", [0.5, 0.5], 0.0)).collect();
-        assert!(refused(&config_json(&many, ROOM, "[]", "[]")).contains("at most 64 sensors"));
-        let twice = [("s", "", [0.5, 0.5], 0.0), ("s", "", [1.5, 0.5], 0.0)];
-        assert!(refused(&config_json(&twice, ROOM, "[]", "[]")).contains("sensor s: its id twice"));
-        let zones = format!(
-            r#"[{}, {{"id": "a", "name": "B", "kind": "area", "shape": "rect", "points": [[0, 0], [1, 1]]}}]"#,
-            &ROOM[1..ROOM.len() - 1]
-        );
+    fn a_configuration_is_checked_before_it_is_read() {
         let one = [("s", "", [0.5, 0.5], 0.0)];
-        assert!(refused(&config_json(&one, &zones, "[]", "[]")).contains("zone a: its id twice"));
-        // sizes that took all memory in the build: a range of 50 m, a plan of 200 m x 200 m
-        let far = config_json(&one, ROOM, "[]", "[]").replace(r#""range": 6.0"#, r#""range": 50.0"#);
-        assert!(refused(&far).contains("sensor s: range"));
-        let wide = ROOM.replace("[3, 3]", "[200, 200]");
-        assert!(refused(&config_json(&one, &wide, "[]", "[]")).contains("the plan's extent"));
-        Config::from_json(&config_json(&one, ROOM, "[]", "[]")).expect("fits");
+        let far = config_json(&one, "[]", "[]", "[]").replace(r#""range": 6.0"#, r#""range": 50.0"#);
+        let err = Config::from_json(&far).expect_err("refused");
+        assert_eq!((err.part, err.field), (Part::Sensor(Some("s".into())), Some("range")));
+        // a field the shell always writes is required (what the check lets pass as missing)
+        let missing = config_json(&one, "[]", "[]", "[]").replace(r#""ld_view": {}, "#, "");
+        assert!(matches!(
+            Config::from_json(&missing).expect_err("refused").problem,
+            Problem::Unreadable(_)
+        ));
+        assert!(matches!(
+            Config::from_json("{").expect_err("refused").problem,
+            Problem::Unreadable(_)
+        ));
+        Config::from_json(&config_json(&one, "[]", "[]", "[]")).expect("fits");
     }
 }

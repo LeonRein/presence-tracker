@@ -8,14 +8,16 @@ import math
 import pathlib
 from dataclasses import asdict, dataclass, field, fields
 
-from .floorplan import sight_segments, sync_rooms
-from .geometry import Shape, line_of_sight
+import presence_core
+
+from .floorplan import sync_rooms
+from .geometry import Shape
 from .util import atomic_write
 
 
-SIGHT_OFFSET = 0.2  # m, see SensorConfig.sight_origin
 @dataclass
 class SensorConfig:
+    """A sensor: where it hangs and how it looks (its geometry is the core's: Config.geometry)."""
     id: str  # ESPHome name, also the MQTT topic: presence/<id>/frame
     name: str = ""
     x: float = 0.0
@@ -29,36 +31,8 @@ class SensorConfig:
     enabled: bool = True
     placed: bool = False  # set once the user has put it on the map
 
-    def __post_init__(self):
-        self._update()
-
-    def _update(self):
-        h = math.radians(self.heading)
-        self._cos, self._sin = math.cos(h), math.sin(h)
-
-    def to_local(self, wx: float, wy: float) -> tuple:
-        """House frame -> sensor frame on the floor plane (x right, y forward), as the sensor
-        measures it (scale taken out)."""
-        dx, dy = (wx - self.x) / self.scale, (wy - self.y) / self.scale
-        gy = dx * self._cos + dy * self._sin
-        gx = dx * self._sin - dy * self._cos
-        return (-gx if self.mirror else gx), gy
-
-    def in_fov(self, wx: float, wy: float, margin: float = 0.0) -> bool:
-        lx, ly = self.to_local(wx, wy)
-        r = math.hypot(lx, ly)
-        if r > self.range + margin or ly <= 0:
-            return False
-        return abs(math.degrees(math.atan2(lx, ly))) <= self.fov / 2 + math.degrees(margin / max(r, 0.3))
-
-    def sight_origin(self) -> tuple:
-        """Where sight lines start: 20 cm in front of the sensor. It hangs on a wall (often in a
-        corner), and a few centimeters of drawing or calibration error would otherwise put it
-        behind that wall, blind for everything."""
-        return (self.x + SIGHT_OFFSET * self._cos, self.y + SIGHT_OFFSET * self._sin)
-
-    def sees(self, wx: float, wy: float, walls: list, margin: float = 0.0) -> bool:
-        return self.in_fov(wx, wy, margin) and line_of_sight(self.sight_origin(), (wx, wy), walls)
+    def to_dict(self) -> dict:
+        return {k.name: getattr(self, k.name) for k in fields(self)}
 
 
 @dataclass
@@ -125,169 +99,118 @@ class TrackerParams:
     target_threshold: float = 0.8
     target_thresholds: dict = field(default_factory=dict)
 
-# What the web UI may set (PUT /api/config, Config.from_dict(check=True)) and what its fields accept:
-# key -> (label, low, high, low excluded, high excluded). A value outside is a typo, not a setting:
-# light_cost 0 (an emptied field) put every room above its threshold, every light on.
-PARAM_LIMITS = {
-    "target_height": ("Höhe des Oberkörpers", 0.0, 2.5, False, False),
-    "range_sigma_base": ("Messfehler in Blickrichtung, Grundwert", 0.0, 2.0, True, False),
-    "range_sigma_slope": ("Messfehler in Blickrichtung, Anstieg", 0.0, 1.0, False, False),
-    "lateral_sigma_base": ("Messfehler seitlich, Grundwert", 0.0, 2.0, True, False),
-    "lateral_sigma_slope": ("Messfehler seitlich, Anstieg", 0.0, 1.0, False, False),
-    "wall_margin": ("Toleranz an Wänden", 0.0, 2.0, False, False),
-    "dwell_median": ("Typischer Aufenthalt", 0.0, 7 * 86400.0, True, False),  # ln(dwell_median)
-    "dwell_spread": ("Streuung des Aufenthalts", 0.0, 10.0, True, False),  # divides
-    "ld2410_hold": ("Haltezeit LD2410C", 0.0, 60.0, False, False),
-    "light_cost": ("Kosten: Licht ohne Person", 0.0, 1000.0, True, False),  # threshold c / (c + 1) > 0
-    "seen_hold": ("Haltezeit eigener LD2450", 0.0, 120.0, False, False),  # 0: the filter alone
-    "lead_time": ("Vorausschau „wird betreten“", 0.0, 5.0, True, False),
-    "approach_cost": ("Kosten: Einschalten auf Verdacht", 0.0, 1000.0, True, False),
-    "target_threshold": ("Schwelle „Ziel“", 0.0, 1.0, True, True),
+# The configuration is checked by the core (presence_core.check_config: what the model can't run with, and
+# the limits of every number, which the web UI reads for its fields). Here only its problems in the words of
+# the web UI: the labels of the numbers, the sentences.
+LABELS = {
+    "params": {
+        "target_height": "Höhe des Oberkörpers",
+        "range_sigma_base": "Messfehler in Blickrichtung, Grundwert",
+        "range_sigma_slope": "Messfehler in Blickrichtung, Anstieg",
+        "lateral_sigma_base": "Messfehler seitlich, Grundwert",
+        "lateral_sigma_slope": "Messfehler seitlich, Anstieg",
+        "wall_margin": "Toleranz an Wänden",
+        "dwell_median": "Typischer Aufenthalt",
+        "dwell_spread": "Streuung des Aufenthalts",
+        "ld2410_hold": "Haltezeit LD2410C",
+        "light_cost": "Kosten: Licht ohne Person",
+        "seen_hold": "Haltezeit eigener LD2450",
+        "lead_time": "Vorausschau „wird betreten“",
+        "approach_cost": "Kosten: Einschalten auf Verdacht",
+        "target_threshold": "Schwelle „Ziel“",
+    },
+    "sensor": {"x": "x", "y": "y", "heading": "Blickrichtung", "height": "Montagehöhe", "fov": "Öffnungswinkel",
+               "range": "Reichweite", "scale": "Maßstab"},
+    "door": {"width": "Breite der Tür"},
+    "layer": {"x": "x des Bildes", "y": "y des Bildes", "scale": "Maßstab des Bildes", "rotation": "Drehung des Bildes",
+              "opacity": "Deckkraft des Bildes"},
 }
-SENSOR_LIMITS = {
-    "x": ("x", -1000.0, 1000.0, False, False),
-    "y": ("y", -1000.0, 1000.0, False, False),
-    "heading": ("Blickrichtung", -720.0, 720.0, False, False),
-    "height": ("Montagehöhe", 0.1, 4.0, False, False),
-    "fov": ("Öffnungswinkel", 0.0, 180.0, True, False),
-    "range": ("Reichweite", 0.0, 10.0, True, False),  # as the core (config.rs MAX_RANGE)
-    "scale": ("Maßstab", 0.25, 4.0, False, False),
-}
-DOOR_LIMITS = {"width": ("Breite der Tür", 0.0, 20.0, True, False)}
-LAYER_LIMITS = {
-    "x": ("x des Bildes", -1e4, 1e4, False, False),
-    "y": ("y des Bildes", -1e4, 1e4, False, False),
-    "scale": ("Maßstab des Bildes", 0.0, 10.0, True, False),  # m per pixel; an SVG drawn in meters: about 1
-    "rotation": ("Drehung des Bildes", -3600.0, 3600.0, False, False),
-    "opacity": ("Deckkraft des Bildes", 0.0, 1.0, False, False),
-}
+LABELS["threshold"] = LABELS["params"]
 
-
-def limits_dict() -> dict:
-    """The limits for the web UI: per group key -> [low, high, low excluded, high excluded]."""
-    groups = {"params": PARAM_LIMITS, "sensor": SENSOR_LIMITS, "door": DOOR_LIMITS, "layer": LAYER_LIMITS}
-    return {g: {k: list(v[1:]) for k, v in lim.items()} for g, lim in groups.items()}
+# (part, reason[, field]) -> the sentence; {where} the part with its name, {label} the field's, {name}, {field},
+# {value} (as _num writes it), {raw} (the value as it is), {low}/{high} the limits. Missing: the reason alone.
+_SENTENCES = {
+    (None, "empty"): "{where}{label}: leer, eine Zahl fehlt.",
+    (None, "not_a_number"): "{where}{label}: keine Zahl ({value}).",
+    (None, "out_of_range"): "{where}{label} muss {low} und {high} sein, nicht {value}.",
+    (None, "not_an_object"): "{field} ist kein Objekt.",
+    (None, "not_a_list"): "{field} ist keine Liste.",
+    (None, "unreadable"): "Konfiguration unvollständig oder falsch: {raw}",
+    ("config", "not_an_object"): "Konfiguration ist kein Objekt.",
+    ("config", "too_many_sensors"): "Höchstens {value} Sensoren.",
+    ("config", "too_large"): "Der Grundriss ist zu groß (höchstens 100 × 100 m).",
+    ("params", "not_an_object"): "Einstellungen sind kein Objekt.",
+    ("params", "not_an_object", "target_thresholds"): "Schwelle „Ziel“ je Raum ist kein Objekt.",
+    ("sensor", "no_id"): "Sensor ohne ID.",
+    ("sensor", "id_chars"): "{where}Die ID darf kein /, + oder # enthalten (sie ist Teil des MQTT-Topics).",
+    ("sensor", "id_twice"): "Sensor-ID {raw} doppelt.",
+    ("sensor", "not_a_bool"): "{where}{field} ist nicht ja/nein.",
+    ("wall", "not_points"): "Wand {name}: Punkte sind keine endlichen Koordinaten.",
+    ("wall", "not_a_segment"): "Wand {name}: braucht genau zwei verschiedene Punkte.",
+    ("wall", "unknown_kind"): "Wand {name}: unbekannte Art {raw!r}.",
+    ("door", "no_position"): "Tür ohne endliche Position.",
+    ("zone", "not_an_object"): "Zone ist kein Objekt.",
+    ("zone", "no_id"): "Zone ohne ID.",
+    ("zone", "id_twice"): "Zonen-ID {raw} doppelt.",
+    ("zone", "unknown_kind"): "Zone {name}: unbekannte Art {raw!r}.",
+    ("zone", "unknown_shape"): "Zone {name}: unbekannte Form {raw!r}.",
+    ("zone", "not_points"): "Zone {name}: Punkte sind keine endlichen Koordinaten.",
+    ("zone", "rect_corners"): "Zone {name}: ein Rechteck braucht zwei Ecken.",
+    ("zone", "polygon_corners"): "Zone {name}: eine Fläche braucht mindestens drei Eckpunkte.",
+    ("zone", "no_centre"): "Zone {name}: ein Kreis braucht einen Mittelpunkt.",
+    ("zone", "negative"): "Zone {name}: Radius ist keine Zahl ≥ 0.",
+    ("ld_view", "not_an_object"): "Blick des LD2410C ist kein Objekt.",
+    ("ld_view", "negative"): "Blick des LD2410C {name}: keine Zahl ≥ 0 ({value}).",
+    ("layer", "not_an_object"): "Bildebene ist kein Objekt.",
+}
+_WHERE = {"threshold": "Raum {name}: ", "sensor": "Sensor {name}: "}
 
 
 def _num(v) -> str:
     return f"{v:g}".replace(".", ",") if isinstance(v, (int, float)) and not isinstance(v, bool) else repr(v)
 
 
-def _finite(v) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+def message(problem) -> str:
+    """The sentence of the web UI for a problem the core found (presence_core.ConfigProblem)."""
+    p = problem
+    text = (_SENTENCES.get((p.part, p.reason, p.field)) or _SENTENCES.get((p.part, p.reason))
+            or _SENTENCES[None, p.reason])
+    words = {"where": _WHERE.get(p.part, "").format(name=p.name), "name": p.name, "field": p.field,
+             "label": LABELS.get(p.part, {}).get(p.field, p.field), "raw": p.value, "value": _num(p.value)}
+    if p.reason == "out_of_range":
+        lo, hi, lo_open, hi_open = p.limits
+        words["low"] = f"größer als {_num(lo)}" if lo_open else f"mindestens {_num(lo)}"
+        words["high"] = f"kleiner als {_num(hi)}" if hi_open else f"höchstens {_num(hi)}"
+    return text.format(**words)
 
 
-def _check_value(where: str, v, lim):
-    label, lo, hi, lo_open, hi_open = lim
-    if v is None or v == "":
-        raise ValueError(f"{where}{label}: leer, eine Zahl fehlt.")
-    if not _finite(v):
-        raise ValueError(f"{where}{label}: keine Zahl ({_num(v)}).")
-    if v < lo or v > hi or (lo_open and v == lo) or (hi_open and v == hi):
-        low = f"größer als {_num(lo)}" if lo_open else f"mindestens {_num(lo)}"
-        high = f"kleiner als {_num(hi)}" if hi_open else f"höchstens {_num(hi)}"
-        raise ValueError(f"{where}{label} muss {low} und {high} sein, nicht {_num(v)}.")
+def _plain(v):
+    """A configuration for the core's JSON: a number that is no number (NaN, inf; JSON has none) as its name."""
+    if isinstance(v, float) and not math.isfinite(v):
+        return repr(v)
+    if isinstance(v, dict):
+        return {k: _plain(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_plain(x) for x in v]
+    return v
 
 
-def _check_points(where: str, pts):
-    if not isinstance(pts, list) or not all(isinstance(p, (list, tuple)) and len(p) == 2
-                                            and all(_finite(c) for c in p) for p in pts):
-        raise ValueError(f"{where}: Punkte sind keine endlichen Koordinaten.")
+def check(d) -> None:
+    """Rejects what the model can't run with (the core's check: values outside their limits, coordinates that
+    are no finite numbers, ids twice, walls that are no segment, zones of an unknown kind or shape or
+    without what their shape needs, ...): ValueError with the sentence for the web UI. Only what is present
+    is checked; what is missing takes its default. (A circle without a center passed until 0.18 and failed
+    every tick after, also after every restart.)"""
+    try:
+        presence_core.check_config(json.dumps(_plain(d)))
+    except presence_core.ConfigError as e:
+        raise ValueError(message(e.args[0])) from e
 
 
-ZONE_KINDS = ("room", "area", "entry")
-ZONE_SHAPES = ("rect", "circle", "polygon")
-WALL_KINDS = ("wall", "divider")
-
-
-def check_config(d: dict):
-    """Rejects what the model can't run with (ValueError with a German message for the UI): the
-    parameters and sensor values outside PARAM_LIMITS / SENSOR_LIMITS, coordinates that are no finite
-    numbers, sensors or zones with the same id, walls that are no segment, zones of an unknown kind
-    or shape or without what their shape needs. Only what is present is checked; what is missing
-    takes its default. (A circle without a center passed until 0.18 and failed every tick after,
-    also after every restart.)"""
-    if not isinstance(d, dict):
-        raise ValueError("Konfiguration ist kein Objekt.")
-    params = d.get("params") or {}
-    if not isinstance(params, dict):
-        raise ValueError("Einstellungen sind kein Objekt.")
-    for k, lim in PARAM_LIMITS.items():
-        if k in params:
-            _check_value("", params[k], lim)
-    per_room = params.get("target_thresholds") or {}
-    if not isinstance(per_room, dict):
-        raise ValueError("Schwelle „Ziel“ je Raum ist kein Objekt.")
-    for room, v in per_room.items():
-        _check_value(f"Raum {room}: ", v, PARAM_LIMITS["target_threshold"])
-    ids = set()
-    for s in d.get("sensors") or []:
-        if not isinstance(s, dict) or not isinstance(s.get("id"), str) or not s["id"]:
-            raise ValueError("Sensor ohne ID.")
-        where = f"Sensor {s.get('name') or s['id']}: "
-        if any(c in s["id"] for c in "/+#"):
-            raise ValueError(f"{where}Die ID darf kein /, + oder # enthalten (sie ist Teil des MQTT-Topics).")
-        if s["id"] in ids:
-            raise ValueError(f"Sensor-ID {s['id']} doppelt.")
-        ids.add(s["id"])
-        for k, lim in SENSOR_LIMITS.items():
-            if k in s:
-                _check_value(where, s[k], lim)
-        for k in ("mirror", "enabled", "placed"):
-            if k in s and not isinstance(s[k], bool):
-                raise ValueError(f"{where}{k} ist nicht ja/nein.")
-    for i, w in enumerate(d.get("walls") or []):
-        pts = w.get("points") if isinstance(w, dict) else None
-        _check_points(f"Wand {i + 1}", pts)
-        if len(pts) != 2 or pts[0][0] == pts[1][0] and pts[0][1] == pts[1][1]:
-            raise ValueError(f"Wand {i + 1}: braucht genau zwei verschiedene Punkte.")
-        if w.get("kind", "wall") not in WALL_KINDS:
-            raise ValueError(f"Wand {i + 1}: unbekannte Art {w.get('kind')!r}.")
-    for door in d.get("doors") or []:
-        if not isinstance(door, dict) or not (_finite(door.get("x")) and _finite(door.get("y"))):
-            raise ValueError("Tür ohne endliche Position.")
-        if "width" in door:
-            _check_value("", door["width"], DOOR_LIMITS["width"])
-    ids = set()
-    for z in d.get("zones") or []:
-        if not isinstance(z, dict):
-            raise ValueError("Zone ist kein Objekt.")
-        if not isinstance(z.get("id"), str) or not z["id"]:
-            raise ValueError("Zone ohne ID.")
-        name = z.get("name") or z["id"]
-        if z["id"] in ids:
-            raise ValueError(f"Zonen-ID {z['id']} doppelt.")
-        ids.add(z["id"])
-        kind, shape = z.get("kind", "area"), z.get("shape", "rect")
-        if kind not in ZONE_KINDS:
-            raise ValueError(f"Zone {name}: unbekannte Art {kind!r}.")
-        if shape not in ZONE_SHAPES:
-            raise ValueError(f"Zone {name}: unbekannte Form {shape!r}.")
-        if "points" in z:
-            _check_points(f"Zone {name}", z["points"])
-        n = len(z.get("points") or [])
-        if shape == "rect" and n != 2:
-            raise ValueError(f"Zone {name}: ein Rechteck braucht zwei Ecken.")
-        if shape == "polygon" and n < 3:
-            raise ValueError(f"Zone {name}: eine Fläche braucht mindestens drei Eckpunkte.")
-        if shape == "circle" and z.get("center") is None:
-            raise ValueError(f"Zone {name}: ein Kreis braucht einen Mittelpunkt.")
-        if z.get("center") is not None:
-            _check_points(f"Zone {name}", [z["center"]])
-        if "radius" in z and not (_finite(z["radius"]) and z["radius"] >= 0):
-            raise ValueError(f"Zone {name}: Radius ist keine Zahl ≥ 0.")
-    view = d.get("ld_view") or {}
-    if not isinstance(view, dict):
-        raise ValueError("Blick des LD2410C ist kein Objekt.")
-    for pair, v in view.items():
-        if not _finite(v) or v < 0:
-            raise ValueError(f"Blick des LD2410C {pair}: keine Zahl ≥ 0 ({_num(v)}).")
-    for layer in (d.get("background") or {}).get("layers") or []:
-        if not isinstance(layer, dict):
-            raise ValueError("Bildebene ist kein Objekt.")
-        for k, lim in LAYER_LIMITS.items():
-            if k in layer:
-                _check_value("", layer[k], lim)
+def limits() -> dict:
+    """The limits of the numbers for the web UI (the core's): per group key -> [low, high, low excluded,
+    high excluded]."""
+    return presence_core.config_limits()
 
 
 @dataclass
@@ -309,10 +232,12 @@ class Config:
     def rebuild(self):
         """Recompute derived data after an edit. The places of the people model (observed rooms, regions,
         closed rooms) are the core's plan (filter.plan)."""
-        for s in self.sensors:
-            s._update()
-        self.wall_segments = sight_segments(self.walls, self.doors)
         self.sensor_by_id = {s.id: s for s in self.sensors}
+
+    def geometry(self) -> presence_core.Geometry:
+        """The core's sensor geometry of this configuration (MODEL.md 2, 4.1; for the calibration and the
+        simulation): its sensors' frames and fields of view, the walls that block their sight."""
+        return presence_core.Geometry(json.dumps(self.to_dict()))
 
     def zones_of(self, kind: str) -> list:
         return [z for z in self.zones if z.kind == kind]
@@ -326,7 +251,7 @@ class Config:
 
     def to_dict(self) -> dict:
         return {
-            "sensors": [{k.name: getattr(s, k.name) for k in fields(s)} for s in self.sensors],
+            "sensors": [s.to_dict() for s in self.sensors],
             "zones": [z.to_dict() for z in self.zones],
             "walls": self.walls,
             "doors": self.doors,
@@ -336,12 +261,9 @@ class Config:
         }
 
     @classmethod
-    def from_dict(cls, d: dict, check: bool = False) -> "Config":
-        """check: reject values outside the limits (check_config), as for an edit in the web UI; a
-        stored configuration loads as it is."""
-        if check:
-            check_config(d)
-
+    def from_dict(cls, d: dict) -> "Config":
+        """The configuration as stored or sent (what is missing: the defaults); unchecked (check(d) first for
+        an edit in the web UI: a stored configuration loads as it is)."""
         def pick(dc, data):
             names = {f.name for f in fields(dc)}
             return dc(**{k: v for k, v in data.items() if k in names})

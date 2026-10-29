@@ -6,7 +6,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::core::{config_from, world_of};
+use crate::config::config_from;
+use crate::core::world_of;
 use presence_core::geometry::Point;
 
 fn array<'py>(py: Python<'py>, v: &[f64], shape: &[usize]) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {

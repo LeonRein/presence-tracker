@@ -110,7 +110,7 @@ impl Part {
         }
     }
 
-    /// The cell of a house point in the sensor's frame (SensorConfig.to_local).
+    /// The cell of a house point in the sensor's frame (SensorConfig::to_local).
     fn cell(&self, [px, py]: Point) -> usize {
         let p = &self.pose;
         let h = p.heading.to_radians();

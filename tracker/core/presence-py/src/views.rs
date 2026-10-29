@@ -4,12 +4,12 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::core::config_from;
+use crate::config::config_from;
 use presence_core::filter;
 use presence_core::frames::Detection;
 use presence_core::geometry::Point;
 use presence_core::learn::destination::Target;
-use presence_core::outputs::{Cloud, Decision, Entering, HouseNumbers, Person, Source, ZoneNumbers};
+use presence_core::outputs::{Cloud, Entering, Person, Source, ZoneState};
 use presence_core::plan::{Plan, RoomIdx, ZoneIdx};
 use presence_core::world::World;
 use presence_core::world::sight::SensorMap;
@@ -137,15 +137,6 @@ pub fn plan<'py>(py: Python<'py>, config: &str) -> PyResult<Bound<'py, PyDict>> 
     plan_view(py, &Plan::new(&config_from(config)?))
 }
 
-/// The name of what decided a room occupied.
-pub(crate) fn source_name(source: Source) -> &'static str {
-    match source {
-        Source::Filter => "filter",
-        Source::Ld2450 => "ld2450",
-        Source::Both => "beide",
-    }
-}
-
 /// A detection of a sensor's last frame: where in the house and in the sensor's frame, its radial speed,
 /// whether it is no person (hidden) or only held by the LD2450 (stale: no measurement).
 #[pyclass(module = "presence_core", frozen, get_all)]
@@ -195,7 +186,6 @@ impl SensorMapView {
 /// "wird betreten" of a zone: the probability, and for who most probably enters the way, the time and
 /// their id in the display (None: not known).
 #[pyclass(module = "presence_core", frozen, get_all)]
-#[derive(Clone)] // the getter of ZoneView.entering hands Python its own
 pub struct EnteringView {
     p: f64,
     distance: Option<f64>,
@@ -264,58 +254,61 @@ impl CloudView {
     }
 }
 
-/// The numbers of a zone of the home (MODEL.md 6): count, P(somebody there) where known, the decision
-/// (None: none; else occupied and by what), moving and still, "wird betreten", approaching, available.
+/// A zone's state (the core's ZoneState; the shell's zones.ZoneState, field for field): decided None where no
+/// decision is made, source what decided it occupied ("filter", "ld2450", "beide").
 #[pyclass(module = "presence_core", frozen, get_all)]
-pub struct ZoneView {
+pub struct ZoneStateView {
     id: String,
     count: usize,
+    moving: usize,
+    still: usize,
+    approaching: bool,
+    p_enter: Option<f64>,
+    eta: Option<f64>,
+    distance: Option<f64>,
+    person: Option<usize>,
+    c_enter: Option<f64>,
+    target: bool,
+    p_target: Option<f64>,
+    c_target: Option<f64>,
+    target_weight: f64,
+    target_walks: f64,
+    target_from: Option<String>,
+    target_distance: Option<f64>,
+    target_eta: Option<f64>,
+    target_person: Option<usize>,
     probability: Option<f64>,
     decided: Option<bool>,
     source: Option<&'static str>,
-    moving: usize,
-    still: usize,
-    entering: Option<EnteringView>,
-    approaching: bool,
     available: bool,
 }
 
-impl ZoneView {
-    pub(crate) fn of(id: &str, n: &ZoneNumbers) -> Self {
-        let (decided, source) = match n.decided {
-            Decision::None => (None, None),
-            Decision::Free => (Some(false), None),
-            Decision::Occupied(s) => (Some(true), Some(source_name(s))),
-        };
+impl ZoneStateView {
+    pub(crate) fn of(z: ZoneState) -> Self {
         Self {
-            id: id.to_owned(),
-            count: n.count,
-            probability: n.probability,
-            decided,
-            source,
-            moving: n.moving,
-            still: n.still,
-            entering: n.entering.as_ref().map(EnteringView::of),
-            approaching: n.approaching,
-            available: n.available,
-        }
-    }
-}
-
-/// The house's numbers: people, of them moving and still.
-#[pyclass(module = "presence_core", frozen, get_all)]
-pub struct HouseView {
-    count: usize,
-    moving: usize,
-    still: usize,
-}
-
-impl HouseView {
-    pub(crate) fn of(h: &HouseNumbers) -> Self {
-        Self {
-            count: h.count,
-            moving: h.moving,
-            still: h.still,
+            id: z.id,
+            count: z.count,
+            moving: z.moving,
+            still: z.still,
+            approaching: z.approaching,
+            p_enter: z.p_enter,
+            eta: z.eta,
+            distance: z.distance,
+            person: z.person,
+            c_enter: z.c_enter,
+            target: z.target,
+            p_target: z.p_target,
+            c_target: z.c_target,
+            target_weight: z.target_weight,
+            target_walks: z.target_walks,
+            target_from: z.target_from,
+            target_distance: z.target_distance,
+            target_eta: z.target_eta,
+            target_person: z.target_person,
+            probability: z.probability,
+            decided: z.decided.occupied(),
+            source: z.decided.source().map(Source::name),
+            available: z.available,
         }
     }
 }

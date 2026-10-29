@@ -161,8 +161,9 @@ wird; einen eigenen Bearbeiten-Modus gibt es nicht.
 
 Zahlenfelder nehmen nur Werte in ihren Grenzen an. Ein leeres Feld oder ein Wert außerhalb (etwa
 *Kosten: Licht ohne Person* = 0, was jeden Raum besetzt und jedes Licht eingeschaltet hätte) wird nicht
-gespeichert: Der alte Wert bleibt, das Feld wird rot markiert und sagt, was erlaubt ist. Der Server prüft
-dieselben Grenzen und lehnt solche Änderungen mit einer Meldung ab, ebenso doppelte IDs von Sensoren oder
+gespeichert: Der alte Wert bleibt, das Feld wird rot markiert und sagt, was erlaubt ist. Die Grenzen sind die
+des Modells: Sein Kern prüft jede Konfiguration, und die Felder lesen ihre Grenzen von dort. Der Server lehnt
+eine Änderung außerhalb mit einer Meldung ab, ebenso doppelte IDs von Sensoren oder
 Zonen, Wände ohne genau zwei Punkte, unbekannte Zonenarten und -formen und Kreise ohne Mittelpunkt; eine
 Konfiguration, mit der das Modell nicht läuft, gilt gar nicht erst (die vorige bleibt). Was während einer
 abgelehnten Speicherung schon weiter geändert wurde, bleibt erhalten und wird danach gespeichert. Ein

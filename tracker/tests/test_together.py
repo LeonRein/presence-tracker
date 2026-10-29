@@ -24,7 +24,7 @@ def test_two_standing_together_stay_two():
     b = Person(walk((-1.0, 4.2), FLUR_DOOR, (3.25, 2.5), (3.25, 2.5), start=15, pauses={3: 360}))
     crowd = Tracker(config, start=0.0, people=["outside", "outside"])
     end = b.waypoints[3][0] + 300
-    for t, sid, frame in simulate([a, b], sim_sensors(config, resolution=0.6), end, walls=config.wall_segments):
+    for t, sid, frame in simulate([a, b], sim_sensors(config, resolution=0.6), end, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
     d = crowd.count_distribution()["wohn"]
     assert d[2] > 0.9, d
@@ -41,7 +41,7 @@ def test_two_lying_together_stay_two_for_long():
     b = Person(walk((-1.0, 4.2), FLUR_DOOR, (3.3, 2.5), (3.3, 2.5), start=15, pauses={3: 2000}))
     crowd = Tracker(config, start=0.0, people=["outside", "outside"])
     end = b.waypoints[3][0] + 1800
-    for t, sid, frame in simulate([a, b], sim_sensors(config, resolution=0.6), end, rate=4.0, walls=config.wall_segments):
+    for t, sid, frame in simulate([a, b], sim_sensors(config, resolution=0.6), end, rate=4.0, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
     d = crowd.count_distribution()["wohn"]
     assert d[2] > 0.9, d
@@ -62,7 +62,7 @@ def test_a_copy_beside_a_walker_does_not_walk_along():
     sensors[1].blind_to, sensors[1].blind_after = (1,), 0.0
     crowd = Tracker(config, start=0.0, people=["outside"])
     most = 0.0
-    for t, sid, frame in simulate([a, copy], sensors, a.waypoints[-1][0] - 1, walls=config.wall_segments):
+    for t, sid, frame in simulate([a, copy], sensors, a.waypoints[-1][0] - 1, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         if t > t1 + 60:
             most = max(most, mean(crowd.count_distribution()["wohn"]))
@@ -79,7 +79,7 @@ def test_somebody_walking_in_alone_is_a_person_within_seconds():
     seen = None
     late = []
     c = config.params.light_cost / (config.params.light_cost + 1.0)
-    for t, sid, frame in simulate([a], sim_sensors(config), a.waypoints[-1][0] - 1, walls=config.wall_segments):
+    for t, sid, frame in simulate([a], sim_sensors(config), a.waypoints[-1][0] - 1, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         if seen is None and frame.get("targets") and t > a.waypoints[1][0]:
             seen = t

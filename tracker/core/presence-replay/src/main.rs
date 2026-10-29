@@ -22,9 +22,8 @@ use std::{env, fs, io::Write};
 
 use presence_core::config::Config;
 use presence_core::frames::{Frame, SensorClock};
-use presence_core::outputs::{Decision, Source};
+use presence_core::outputs::ZoneState;
 use presence_core::params::Params;
-use presence_core::plan::RoomIdx;
 use presence_core::tracker::Tracker;
 use presence_core::world::World;
 use serde_json::Value;
@@ -115,7 +114,6 @@ struct Replayed {
 /// zones' states `stepped` gets the tracker, the frame time, that of the first frame and the states.
 fn replay(
     tracker: &mut Tracker,
-    layout: &Layout,
     messages: &[Message],
     limit: f64,
     mut stepped: impl FnMut(&mut Tracker, f64, f64, &[ZoneState]) -> Result<(), String>,
@@ -145,7 +143,7 @@ fn replay(
         if t >= next && tracker.start().is_some() {
             let start = Instant::now();
             tracker.step(t).map_err(|e| format!("the step at {t}: {e}"))?;
-            let states = layout.states(tracker);
+            let states = tracker.zone_states(tracker.now());
             done.in_steps += start.elapsed();
             next = t + TICK;
             stepped(tracker, t, t0, &states)?;
@@ -162,7 +160,7 @@ fn trace(config: &str, recording: &str, limit: &str, out: &str, every: &str) -> 
     let mut file = fs::File::create(out).map_err(|e| format!("{out}: {e}"))?;
     let mut due = 0.0;
     let mut line = String::new();
-    let done = replay(&mut tracker, &layout, &messages, limit, |tracker, t, t0, states| {
+    let done = replay(&mut tracker, &messages, limit, |tracker, t, t0, states| {
         if t < due {
             return Ok(());
         }
@@ -182,8 +180,7 @@ fn prof(config: &str, recording: &str, limit: &str) -> Result<(), String> {
     let limit = seconds(limit)?;
     let mut tracker = tracker(config)?;
     let messages = messages(recording)?;
-    let layout = Layout::of(tracker.world());
-    let done = replay(&mut tracker, &layout, &messages, limit, |_, _, _, _| Ok(()))?;
+    let done = replay(&mut tracker, &messages, limit, |_, _, _, _| Ok(()))?;
     let (frames, steps) = (done.in_frames.as_secs_f64(), done.in_steps.as_secs_f64());
     println!(
         "frames {} span {:.0}s  cpu frames {frames:.1}s step {steps:.1}s total {:.1}s = {:.2}% of a core",
@@ -195,14 +192,9 @@ fn prof(config: &str, recording: &str, limit: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The zones as the shell's Tracker.zone_states orders them (the rooms of the home, then the areas, each in
-/// the configuration's order) and the names of the trace's distributions.
+/// The names of the trace's distributions: the observed rooms' ids and the places' names (count_distribution,
+/// place_distribution of the shell).
 struct Layout {
-    /// per zone of the home in the shell's order: its id and its index among the plan's home zones
-    zones: Vec<(String, usize)>,
-    /// per observed room its position in `zones` ("Ziel" is the observed rooms')
-    of_room: Vec<usize>,
-    /// the observed rooms' ids and the places' names (count_distribution, place_distribution)
     rooms: Vec<String>,
     places: Vec<String>,
 }
@@ -210,77 +202,10 @@ struct Layout {
 impl Layout {
     fn of(world: &World) -> Self {
         let plan = &world.plan;
-        let mut zones: Vec<(String, usize)> = plan.home().enumerate().map(|(k, z)| (z.id.clone(), k)).collect();
-        let home: Vec<bool> = plan.home().map(|z| z.is_room()).collect();
-        zones.sort_by_key(|&(_, k)| !home[k]); // stable: rooms first, as sorted(..., key=kind != "room")
-        let rooms: Vec<String> = plan.observed().map(|z| z.id.clone()).collect();
-        let of_room = rooms
-            .iter()
-            .map(|r| {
-                zones
-                    .iter()
-                    .position(|(id, _)| id == r)
-                    .expect("an observed room is a zone of the home")
-            })
-            .collect();
-        let places = plan.place_names().into_iter().map(String::from).collect();
         Self {
-            zones,
-            of_room,
-            rooms,
-            places,
+            rooms: plan.observed().map(|z| z.id.clone()).collect(),
+            places: plan.place_names().into_iter().map(String::from).collect(),
         }
-    }
-
-    /// Per zone its state and then the house's (Tracker.zone_states: the core's numbers, "Ziel" for the
-    /// observed rooms).
-    fn states(&self, tracker: &mut Tracker) -> Vec<ZoneState> {
-        let now = tracker.now();
-        let (numbers, house) = tracker.zone_numbers(now);
-        let outputs = &tracker.world().outputs;
-        let c_enter = outputs.entering_above();
-        let mut states: Vec<ZoneState> = self
-            .zones
-            .iter()
-            .map(|&(_, k)| {
-                let n = &numbers[k];
-                let (decided, source) = match n.decided {
-                    Decision::None => (None, None),
-                    Decision::Free => (Some(false), None),
-                    Decision::Occupied(s) => (Some(true), Some(s)),
-                };
-                let mut st = ZoneState {
-                    count: n.count,
-                    moving: n.moving,
-                    still: n.still,
-                    probability: n.probability,
-                    decided,
-                    source,
-                    available: n.available,
-                    ..ZoneState::default()
-                };
-                if let Some(e) = &n.entering {
-                    (st.p_enter, st.distance, st.eta, st.person) = (Some(e.p), e.distance, e.eta, e.person);
-                    (st.approaching, st.c_enter) = (n.approaching, Some(c_enter));
-                }
-                st
-            })
-            .collect();
-        let c_target: Vec<f64> = self.rooms.iter().map(|r| outputs.target_above(r)).collect();
-        for ((t, &z), c) in tracker.targets().iter().zip(&self.of_room).zip(c_target) {
-            let st = &mut states[z];
-            (st.target, st.c_target, st.p_target) = (t.on, Some(c), Some(t.p));
-            (st.target_weight, st.target_walks, st.target_from) = (t.weight, t.walks, t.from);
-            (st.target_distance, st.target_eta, st.target_person) = (t.distance, t.eta, t.person);
-        }
-        states.push(ZoneState {
-            count: house.count,
-            moving: house.moving,
-            still: house.still,
-            available: true, // ZoneState's default
-            ..ZoneState::default()
-        });
-        states
     }
 
     /// The line of trace.py: {"t", "hyps", "w", "counts", "places", "zones"}.
@@ -288,15 +213,7 @@ impl Layout {
         let mut w = tracker.hyp_weights();
         w.sort_by(|a, b| b.total_cmp(a));
         let hyps = w.len();
-        let zones = Dict(
-            self.zones
-                .iter()
-                .map(|(id, _)| id.as_str())
-                .chain(["_total"])
-                .zip(states)
-                .map(|(id, st)| (id, ZoneOut { st, rooms: &self.rooms }))
-                .collect(),
-        );
+        let zones = Dict(states.iter().map(|st| (st.id.as_str(), ZoneOut(st))).collect());
         Fields::new(out)
             .field("t", &t)
             .field("hyps", &hyps)
@@ -328,48 +245,15 @@ impl PyJson for &[f64] {
     }
 }
 
-/// zones.ZoneState of the shell: its fields with their defaults.
-#[derive(Default)]
-struct ZoneState {
-    count: usize,
-    moving: usize,
-    still: usize,
-    approaching: bool,
-    p_enter: Option<f64>,
-    eta: Option<f64>,
-    distance: Option<f64>,
-    person: Option<usize>,
-    c_enter: Option<f64>,
-    target: bool,
-    p_target: Option<f64>,
-    c_target: Option<f64>,
-    target_weight: f64,
-    target_walks: f64,
-    target_from: Option<RoomIdx>,
-    target_distance: Option<f64>,
-    target_eta: Option<f64>,
-    target_person: Option<usize>,
-    probability: Option<f64>,
-    decided: Option<bool>,
-    source: Option<Source>,
-    available: bool,
-}
-
-/// A zone's state as trace.py writes it (dataclasses.asdict: every field in order).
-struct ZoneOut<'a> {
-    st: &'a ZoneState,
-    rooms: &'a [String],
-}
+/// A zone's state as trace.py writes it (dataclasses.asdict of the shell's zones.ZoneState: every field in
+/// order).
+struct ZoneOut<'a>(&'a ZoneState);
 
 impl PyJson for ZoneOut<'_> {
     fn write(&self, out: &mut String) {
-        let s = self.st;
-        let from = s.target_from.map(|RoomIdx(k)| self.rooms[k].as_str());
-        let source = s.source.map(|s| match s {
-            Source::Filter => "filter",
-            Source::Ld2450 => "ld2450",
-            Source::Both => "beide",
-        });
+        let s = self.0;
+        let from = s.target_from.as_deref();
+        let source = s.decided.source().map(|s| s.name());
         Fields::new(out)
             .field("count", &s.count)
             .field("moving", &s.moving)
@@ -390,7 +274,7 @@ impl PyJson for ZoneOut<'_> {
             .field("target_eta", &s.target_eta)
             .field("target_person", &s.target_person)
             .field("probability", &s.probability)
-            .field("decided", &s.decided)
+            .field("decided", &s.decided.occupied())
             .field("source", &source)
             .field("available", &s.available)
             .end();

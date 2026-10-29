@@ -88,7 +88,7 @@ export function fmt(v, digits = 2) {
 }
 
 // A number from an input field against its limits [low, high, low excluded, high excluded] (from the
-// server, model.PARAM_LIMITS): the error text, or '' if it is fine. Empty is an error: "" became 0
+// server: the core's, presence_core.config_limits): the error text, or '' if it is fine. Empty is an error: "" became 0
 // before, and light_cost 0 switched every light on.
 export function numberError(raw, lim) {
   const text = String(raw ?? '').trim();
@@ -252,7 +252,7 @@ export function sightSegments(config) {
   return out;
 }
 
-// Sensor geometry, same conventions as model.py: heading = viewing direction (degrees, CCW from +x),
+// Sensor geometry for drawing while editing, the core's conventions (config.rs SensorConfig): heading = viewing direction (degrees, CCW from +x),
 // LD2450 x to the right of the viewing direction (or to the left when mirrored), as the sensor
 // measures it (scale taken out).
 export function sensorToLocal(s, x, y) {
@@ -267,7 +267,7 @@ export function sensorSees(s, x, y, segs) {
   const r = Math.hypot(lx, ly);
   if (ly <= 0 || r > s.range || Math.abs(deg(Math.atan2(lx, ly))) > s.fov / 2) return false;
   const c = Math.cos(rad(s.heading)), sn = Math.sin(rad(s.heading));
-  // 20 cm in front of the sensor, like SensorConfig.sight_origin: it hangs on a wall
+  // 20 cm in front of the sensor, like the core's SensorConfig::sight_origin: it hangs on a wall
   const from = [s.x + 0.2 * c, s.y + 0.2 * sn];
   for (const [a, b] of segs) if (segmentsCross(from, [x, y], a, b)) return false;
   return true;

@@ -1,5 +1,5 @@
 //! The plan as the people model sees it (MODEL.md 2), derived from the configuration, never stored
-//! (model.Config._places, floorplan.sight_segments): the places - the observed
+//! (model.Config._places until 0.39): the places - the observed
 //! area, the regions without a sensor behind doors, outside -, the doors out of the observed area,
 //! the walls the radar does not see through, which room is whose sensor's, and the rule which
 //! detections are reflections. Every zone of the configuration is in one table with its role; what
@@ -216,7 +216,7 @@ struct DoorSide {
     normal: Point,
 }
 
-/// floorplan.wall_pieces: every wall longer than 1 µm.
+/// Every wall longer than 1 µm.
 fn pieces(config: &Config) -> impl Iterator<Item = ([Point; 2], WallKind)> + '_ {
     config
         .walls
@@ -225,12 +225,18 @@ fn pieces(config: &Config) -> impl Iterator<Item = ([Point; 2], WallKind)> + '_ 
         .map(|w| ([w.a, w.b], w.kind))
 }
 
-/// The walls that block the radar: real walls without their door openings (floorplan.sight_segments).
-fn sight_walls(config: &Config) -> Vec<[Point; 2]> {
-    let walls: Vec<[Point; 2]> = pieces(config)
+/// The real walls as lines, their doors not cut out (the calibration: a step across one goes through a wall
+/// or a door).
+pub fn wall_lines(config: &Config) -> Vec<[Point; 2]> {
+    pieces(config)
         .filter(|&(_, k)| k == WallKind::Wall)
         .map(|(p, _)| p)
-        .collect();
+        .collect()
+}
+
+/// The walls that block the radar: real walls without their door openings.
+fn sight_walls(config: &Config) -> Vec<[Point; 2]> {
+    let walls = wall_lines(config);
     // per piece the openings of its doors (door_openings), along it in metres
     let mut cuts: Vec<Vec<(f64, f64)>> = vec![Vec::new(); walls.len()];
     for d in &config.doors {
@@ -509,11 +515,7 @@ fn places(
     let zone = |r: usize| &config.zones[home[r]];
     let seen: Vec<bool> = (0..home.len()).map(|r| covered(zone(r), placed, walls)).collect();
     let pieces: Vec<([Point; 2], WallKind)> = pieces(config).collect();
-    let real: Vec<[Point; 2]> = pieces
-        .iter()
-        .filter(|&&(_, k)| k == WallKind::Wall)
-        .map(|&(p, _)| p)
-        .collect();
+    let real = wall_lines(config);
     let normal = |[a, b]: [Point; 2]| {
         let length = py_hypot(b[0] - a[0], b[1] - a[1]);
         [-(b[1] - a[1]) / length, (b[0] - a[0]) / length]
@@ -819,7 +821,9 @@ mod tests {
                 "ld_view",
             ),
         ] {
-            let err = Config::from_json(&json(sensor, &params, zones, view)).expect_err(name);
+            let err = Config::from_json(&json(sensor, &params, zones, view))
+                .expect_err(name)
+                .to_string();
             assert!(err.contains(name), "{err}");
         }
         // a field the shell always writes is required

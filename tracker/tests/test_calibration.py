@@ -11,22 +11,22 @@ from presence_tracker.sim import Person, SimSensor, simulate
 from test_frames import walk
 
 
-def _collect(truth, guess, people, duration, walls=(), hours=MIN_STRETCHES):
+def _collect(truth, guess, people, duration, plan=None, hours=MIN_STRETCHES):
     """The app's calibration data: raw frames of simulated sensors (placed as in `truth`) into a
     Calibrator that knows only `guess`; the same walk once in each of `hours` hours (independent
     stretches of everyday life)."""
     calibrator = Calibrator(guess)
     for k in range(hours):
         sensors = [SimSensor(s, noise=0.05) for s in truth.sensors]
-        for t, sid, frame in simulate(people, sensors, duration, walls=walls, seed=k + 1):
+        for t, sid, frame in simulate(people, sensors, duration, plan=plan, seed=k + 1):
             calibrator.on_frame(sid, t + k * STRETCH, Frame.of(frame))
     status = calibrator.status()
     assert status["since"] is not None and all(n > 0 for n in status["frames"].values())
     return calibrator
 
 
-def _session(truth, guess, people, duration, walls=(), check_mirror=False, hours=MIN_STRETCHES):
-    calibrator = _collect(truth, guess, people, duration, walls, hours)
+def _session(truth, guess, people, duration, plan=None, check_mirror=False, hours=MIN_STRETCHES):
+    calibrator = _collect(truth, guess, people, duration, plan, hours)
     return solve(guess, calibrator.data(), check_mirror)
 
 
@@ -115,7 +115,7 @@ def test_sensors_that_share_only_a_door():
     door = [(4.3, 2.5), (5.7, 2.5)]
     path = [*left, *door, *right, *door[::-1], *left[::-1], *door, *right[::-1], *door[::-1], (2, 2)]
     person = Person(walk(*path, speed=0.8))
-    result = _session(truth, guess, [person], person.waypoints[-1][0], walls=truth.wall_segments)
+    result = _session(truth, guess, [person], person.waypoints[-1][0], plan=truth)
     for s in truth.sensors:
         r = result["sensors"][s.id]
         assert r["mirror"] is True
@@ -139,13 +139,13 @@ def test_a_single_walk_proposes_nothing():
     guess.sensors[1].heading = 125
     guess.rebuild()
     person = _door_walk()
-    result = _session(truth, guess, [person], person.waypoints[-1][0], walls=truth.wall_segments, hours=1)
+    result = _session(truth, guess, [person], person.waypoints[-1][0], plan=truth, hours=1)
     for sid, r in result["sensors"].items():
         assert not r["apply"]["heading"] and not r["apply"]["scale"]
         assert r["heading"] == guess.sensor_by_id[sid].heading
         assert r["few"] and r["reason"] == "Erst 1 von 3 Stunden mit Gehenden."
     # the progress before a solve counts as the solve does
-    calibrator = _collect(truth, guess, [person], person.waypoints[-1][0], walls=truth.wall_segments, hours=1)
+    calibrator = _collect(truth, guess, [person], person.waypoints[-1][0], plan=truth, hours=1)
     status = calibrator.status()
     assert status["min_hours"] == MIN_STRETCHES and set(status["hours"].values()) == {1}
     assert status["points"] == {sid: r["points"] for sid, r in result["sensors"].items()}
@@ -154,7 +154,7 @@ def test_a_single_walk_proposes_nothing():
 def test_no_pose_that_puts_more_walking_out_of_sight():
     truth = _two_rooms()
     person = _door_walk()
-    data = _collect(truth, truth, [person], person.waypoints[-1][0], truth.wall_segments, hours=1).data()
+    data = _collect(truth, truth, [person], person.waypoints[-1][0], truth, hours=1).data()
     prob = Problem(truth, data, ["a", "b"])
     right = prob.start()
     turned = right.copy()

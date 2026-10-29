@@ -17,7 +17,7 @@ import numpy as np
 
 import presence_core
 
-from .model import SensorConfig
+from .model import Config, SensorConfig
 
 CELLS = 16  # the LD2410C's: 9 moving gates, 7 still ones (2-8)
 # the model's numbers (the core's defaults): the LD2410C is simulated as the filter models it
@@ -90,16 +90,19 @@ class SimSensor:
     _ld_gain: list | None = None  # per cell: the Ornstein-Uhlenbeck processes of its energy's Gamma factor
 
 
-def simulate(people: list, sensors: list, duration: float, rate: float = 11.0, seed: int = 1, walls: list = ()):
-    """Yield (t, sensor_id, frame) in time order, as the firmware sends them (SimSensor.idle). walls:
-    sight-blocking segments (Config.wall_segments)."""
+def simulate(people: list, sensors: list, duration: float, rate: float = 11.0, seed: int = 1, plan: Config | None = None):
+    """Yield (t, sensor_id, frame) in time order, as the firmware sends them (SimSensor.idle). plan: the
+    configuration whose walls and doors block the sensors' sight (None: nothing blocks it); what a sensor sees
+    is the core's (Config.geometry), with the simulated sensors as they are configured."""
+    geometry = Config(sensors=[s.config for s in sensors], walls=plan.walls if plan else [],
+                      doors=plan.doors if plan else []).geometry()
     rng = random.Random(seed)
     dt = 1 / rate
     t = 0.0
     while t < duration:
         for k, s in enumerate(sensors):
             ts = t + k * dt / len(sensors)
-            frame = _frame(s, people, ts, dt, rng, walls)
+            frame = _frame(s, people, ts, dt, rng, geometry)
             ld = frame["ld2410"]
             empty = not frame["targets"] and not ld.get("moving") and not ld.get("still")
             if empty and s._sent[1] and ts - s._sent[0] < s.idle:
@@ -111,14 +114,20 @@ def simulate(people: list, sensors: list, duration: float, rate: float = 11.0, s
         t += dt
 
 
-def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, walls) -> dict:
+def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, geometry) -> dict:
     c = s.config
+
+    def sees(p) -> bool:
+        return geometry.sees(c.id, [p])[0]
+
+    def to_local(x, y) -> tuple:
+        return tuple(geometry.to_local(c.id, [(x, y)])[0])
     targets = []
     for i, person in enumerate(people):
         if i in s.blind_to and s.blind_after <= t < s.blind_until:
             continue
         pos = person.position(t)
-        if pos is None or not c.sees(pos[0], pos[1], walls):
+        if pos is None or not sees(pos):
             # lost: the LD2450 coasts the target with its last speed, slowing down, for 15 frames
             co = s._coast.get(i)
             if co is not None and co[5] > 0:
@@ -139,7 +148,7 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
                 continue
         else:
             s._dropped.pop(i, None)
-        lx, ly = c.to_local(*pos)
+        lx, ly = to_local(*pos)
         if s.bias:
             a = math.exp(-dt / s.bias_time)
             bx, by = s._bias.get(i, (rng.gauss(0, s.bias), rng.gauss(0, s.bias)))
@@ -159,7 +168,7 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
             "resolution": 360,
         }
         targets.append((ground, tgt))
-        lvx, lvy = c.to_local(pos[0] + vx, pos[1] + vy)
+        lvx, lvy = to_local(pos[0] + vx, pos[1] + vy)
         s._coast[i] = (tgt["x"] / 1000, tgt["y"] / 1000, lvx - lx, lvy - ly, tgt["speed"] or 10, 15)
     if s.ghost_rate and rng.random() < s.ghost_rate / 60 * dt:
         s._ghost_until = t + rng.uniform(0.2, 1.0)
@@ -169,7 +178,7 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
         targets.append((math.hypot(gx, gy), {"x": round(gx * 1000), "y": round(gy * 1000), "speed": 0, "resolution": 360}))
     for t0, t1, x, y in s.reflections:
         if t0 <= t <= t1:
-            lx, ly = c.to_local(x, y)
+            lx, ly = to_local(x, y)
             targets.append((math.hypot(lx, ly), {"x": round((lx + rng.gauss(0, s.noise)) * 1000),
                                                  "y": round((ly + rng.gauss(0, s.noise)) * 1000),
                                                  "speed": 0, "resolution": 360}))
@@ -196,9 +205,9 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
     put = np.zeros(CELLS)
     for person in people:
         p = person.position(t)
-        if p is None or not c.sees(p[0], p[1], walls):
+        if p is None or not sees(p):
             continue
-        lx, ly = c.to_local(*p)
+        lx, ly = to_local(*p)
         if ly <= 0:
             continue
         angle = math.degrees(math.atan2(abs(lx), ly))

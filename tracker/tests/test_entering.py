@@ -37,7 +37,7 @@ def run(person, until):
     config = two_rooms()
     tr = Tracker(config, start=0.0, people=["observed"])
     out, nxt = [], 0.0
-    for t, sid, frame in simulate([person], sim_sensors(config), until, walls=config.wall_segments):
+    for t, sid, frame in simulate([person], sim_sensors(config), until, plan=config):
         tr.process_frame(sid, t, Frame.of(frame))
         if t >= nxt:
             tr.step(t)

@@ -18,7 +18,7 @@ export const state = {
   showRaw: loadPref('showRaw', false),  // the raw sensor data on the live map (remembered per browser)
   holds: {},            // zone id -> {approach, target}: badges held for HOLD_MS after they went off
   calibResult: null,
-  limits: {},           // allowed values of the number fields, from the server (model.PARAM_LIMITS)
+  limits: {},           // allowed values of the number fields, from the server (the core's, presence_core.config_limits)
 };
 
 // small per-browser preferences; storage may be missing or blocked (private mode)

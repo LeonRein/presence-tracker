@@ -20,7 +20,9 @@ use crate::learn::destination::Target;
 use crate::learn::ghost_map::GhostMap;
 use crate::learn::pauses::Pauses;
 use crate::learn::{Learned, LearnedError};
-use crate::outputs::{self, Cloud, Distributions, Entering, HouseNumbers, OutputCache, Person, Source, ZoneNumbers};
+use crate::outputs::{
+    self, Cloud, Distributions, Entering, HouseNumbers, OutputCache, Person, Source, ZoneNumbers, ZoneState,
+};
 use crate::params::{FRAME, IDLE, OutputParams};
 use crate::plan::Place;
 use crate::room_seen::RoomSeen;
@@ -220,7 +222,7 @@ impl Tracker {
     }
 
     /// Whether the people of this world live in that one too: the same tiles and sensors (Err says not).
-    fn fits(&self, world: &World) -> Result<(), String> {
+    pub fn fits(&self, world: &World) -> Result<(), String> {
         let (old, new) = (&self.world, world);
         if new.density_shape() != old.density_shape()
             || !new.tiles.same_as(&old.tiles)
@@ -935,6 +937,22 @@ impl Tracker {
         let occupancy = self.occupancy(now);
         let silent = self.silent(now);
         outputs::zones_of(&mut self.outputs, &self.filter, &self.world, &occupancy, &silent)
+    }
+
+    /// The zones' states at `now` (Tracker.zone_states; outputs::zone_states): the numbers, then "Ziel".
+    pub fn zone_states(&mut self, now: f64) -> Vec<ZoneState> {
+        let (numbers, house) = self.zone_numbers(now);
+        let Self {
+            outputs,
+            filter,
+            world,
+            learned,
+            ..
+        } = self;
+        let targets = outputs
+            .at(filter.epoch())
+            .targets(filter, world, learned.destinations.map());
+        outputs::zone_states(world, &numbers, &house, targets)
     }
 
     /// What the rooms' own LD2450s saw (RoomSeen).

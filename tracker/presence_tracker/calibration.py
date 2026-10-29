@@ -54,7 +54,6 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from .floorplan import wall_pieces
 from .model import Config
 from presence_core import Frame, TrackStage
 from .filter import plan
@@ -141,25 +140,23 @@ def thin(t: np.ndarray, key: np.ndarray, every: float) -> np.ndarray:
     return np.array(sorted(keep), dtype=int)
 
 
-def walking_times(config: Config, sid: str, a: np.ndarray) -> np.ndarray:
+def walking_times(geometry, sid: str, a: np.ndarray) -> np.ndarray:
     """The times of one sensor's walking points as Problem takes them (one per EVERY seconds and
-    LD2450 track, at least MIN_RANGE away on the floor): for the progress before a solve."""
-    s = config.sensor_by_id[sid]
-    z = ground(s, a[:, LX], a[:, LY], s.mirror, config.params.target_height)
+    LD2450 track, at least MIN_RANGE away on the floor): for the progress before a solve. geometry:
+    the configuration's (Config.geometry)."""
+    z = on_floor(geometry, sid, a)
     idx = np.flatnonzero((np.abs(a[:, V]) >= MIN_SPEED) & (np.abs(z) >= MIN_RANGE))
     idx = idx[thin(a[idx, T], a[idx, SEG], EVERY)]
     return a[idx, T]
 
 
-def ground(s, lx, ly, mirror: bool, target_height: float) -> np.ndarray:
-    """Raw LD2450 meters -> floor point in the sensor frame as complex x + iy (as the core's Mount.to_world
-    without scale and pose)."""
-    x = -lx if mirror else lx
-    slant = np.hypot(x, ly)
-    dh = s.height - target_height
-    g = np.sqrt(np.maximum(slant**2 - dh**2, 0.01))
-    k = g / np.maximum(slant, 1e-6)
-    return x * k + 1j * ly * k
+def on_floor(geometry, sid: str, a: np.ndarray, mirror: bool | None = None) -> np.ndarray:
+    """The raw LD2450 meters of rows a -> floor points in the sensor frame as complex x + iy (the core's
+    Mount.on_floor: the slant taken out, without scale and pose), with the sensor's mirror or this one."""
+    if not len(a):
+        return np.zeros(0, complex)
+    f = np.array(geometry.on_floor(sid, np.column_stack([a[:, LX], a[:, LY]]).tolist(), mirror))
+    return f[:, 0] + 1j * f[:, 1]
 
 
 def heading_of(c: complex) -> float:
@@ -173,43 +170,6 @@ def angle_diff(a: float, b: float) -> float:
 
 # ---------------------------------------------------------------------------------- geometry
 
-def _in_polygon(px, py, pts) -> np.ndarray:
-    inside = np.zeros(px.shape, bool)
-    n = len(pts)
-    for i in range(n):
-        (xi, yi), (xj, yj) = pts[i], pts[i - 1]
-        cross = (yi > py) != (yj > py)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            xs = (xj - xi) * (py - yi) / (yj - yi) + xi
-        inside ^= cross & (px < xs)
-    return inside
-
-
-def _sight(origin, px, py, segments) -> np.ndarray:
-    """Line of sight from origin to every point (no wall segment crossed)."""
-    ox, oy = origin
-    free = np.ones(px.shape, bool)
-    for (ax, ay), (bx, by) in segments:
-        d1 = (bx - ax) * (oy - ay) - (by - ay) * (ox - ax)
-        d2 = (bx - ax) * (py - ay) - (by - ay) * (px - ax)
-        d3 = (px - ox) * (ay - oy) - (py - oy) * (ax - ox)
-        d4 = (px - ox) * (by - oy) - (py - oy) * (bx - ox)
-        free &= ~((d1 * d2 < 0) & (d3 * d4 < 0))
-    return free
-
-
-def _crossing(p, q, segments) -> np.ndarray:
-    """For steps p -> q (complex arrays): does it cross any of the segments?"""
-    hit = np.zeros(len(p), bool)
-    cross = lambda u, v, w: ((v - u) * np.conj(w - u)).imag  # noqa: E731
-    for (ax, ay), (bx, by) in segments:
-        a, b = complex(ax, ay), complex(bx, by)
-        d1, d2 = cross(a, b, p), cross(a, b, q)
-        d3, d4 = cross(p, q, a), cross(p, q, b)
-        hit |= (d1 * d2 < 0) & (d3 * d4 < 0)
-    return hit
-
-
 def open_rooms(config: Config) -> list:
     """The rooms in which the sensors may see people of the home: not those of closed regions nor the
     outside rooms (the core's plan, MODEL.md 2)."""
@@ -219,10 +179,10 @@ def open_rooms(config: Config) -> list:
 
 class FreeSpace:
     """Where a sensor can see a person directly: in a room that is not a closed room without a
-    sensor, in its line of sight (rooms: those not closed, open_rooms). On a grid: for every cell outside,
-    the nearest free point."""
+    sensor, in its line of sight (rooms: those not closed, open_rooms; the core's geometry). On a grid: for
+    every cell outside, the nearest free point."""
 
-    def __init__(self, config: Config, rooms: list, origin):
+    def __init__(self, geometry, rooms: list, origin):
         b = np.array([z.geometry.bounds() for z in rooms])
         self.x0, self.y0 = b[:, 0].min() - 2.0, b[:, 1].min() - 2.0
         x1, y1 = b[:, 2].max() + 2.0, b[:, 3].max() + 2.0
@@ -230,10 +190,7 @@ class FreeSpace:
         gx = self.x0 + CELL * (np.arange(self.nx) + 0.5)
         gy = self.y0 + CELL * (np.arange(self.ny) + 0.5)
         px, py = np.meshgrid(gx, gy, indexing="ij")
-        inroom = np.zeros(px.shape, bool)
-        for z in rooms:
-            inroom |= _in_polygon(px, py, z.geometry.outline())
-        free = inroom & _sight(origin, px, py, config.wall_segments)
+        free = np.array(geometry.free(origin, np.column_stack([px.ravel(), py.ravel()]).tolist())).reshape(px.shape)
         self.free = free
         self.area = max(free.sum() * CELL * CELL, 1.0)
         # nearest free cell for every cell: brute force against the free cells on the edge
@@ -275,8 +232,8 @@ class Problem:
         self.npar = 4 if self.positions else 2
         mirrors = mirrors or {}
         self.mirror = {sid: mirrors.get(sid, s.mirror) for sid, s in config.sensor_by_id.items()}
+        self.geometry = config.geometry()
         p = config.params
-        self.th = p.target_height
         # MODEL.md 4.1: the error along and across the line of sight, per axis their mean
         self.sigma0 = (p.range_sigma_base + p.lateral_sigma_base) / 2
         self.sigma1 = (p.range_sigma_slope + p.lateral_sigma_slope) / 2
@@ -302,12 +259,12 @@ class Problem:
                 self.pairs.append(q)
         rooms = open_rooms(config)
         self.rooms = bool(rooms)
-        self.fields = {sid: FreeSpace(config, rooms, config.sensor_by_id[sid].sight_origin())
+        self.fields = {sid: FreeSpace(self.geometry, rooms, self.geometry.sight_origin(sid))
                        for sid in self.points} if rooms else {}
         self.views = {sid: math.radians(config.sensor_by_id[sid].fov) / 2 * VIEW**2 for sid in self.points}
 
     def z(self, sid, a) -> np.ndarray:
-        return ground(self.config.sensor_by_id[sid], a[:, LX], a[:, LY], self.mirror[sid], self.th)
+        return on_floor(self.geometry, sid, a, self.mirror[sid])
 
     def sigma(self, z):
         return self.sigma0 + self.sigma1 * np.abs(z)
@@ -704,8 +661,7 @@ def pair_agreement(prob: Problem, phi) -> dict:
 def crossings(prob: Problem, phi) -> dict:
     """People walk through doors, not walls (Woodman & Harle 2008): per sensor, the steps of its
     walking tracks (one LD2450 track, < 0.5 s apart) that cross a wall line, and how many of them
-    pass through an opening."""
-    pieces = [(a, b) for a, b, k in wall_pieces(prob.config.walls) if k == "wall"]
+    pass through an opening (the core's walls: Geometry.crossings)."""
     out = {}
     for sid, a in prob.data.items():
         z = prob.z(sid, a)
@@ -715,9 +671,10 @@ def crossings(prob: Problem, phi) -> dict:
         t, seg, w = t[order], seg[order], w[order]
         step = (seg[1:] == seg[:-1]) & (np.diff(t) <= 0.5)
         p, q = w[:-1][step], w[1:][step]
-        line = _crossing(p, q, pieces)
-        wall = _crossing(p[line], q[line], prob.config.wall_segments)
-        out[sid] = (int(line.sum()), int(line.sum() - wall.sum()))
+        line, wall = prob.geometry.crossings(np.column_stack([p.real, p.imag]).tolist(),
+                                             np.column_stack([q.real, q.imag]).tolist())
+        line, wall = np.array(line, bool), np.array(wall, bool)
+        out[sid] = (int(line.sum()), int((line & ~wall).sum()))
     return out
 
 
@@ -991,11 +948,12 @@ class Calibrator:
         parts, since, config, gen, t = self._parts(), self.since, self.config, self._gen, time.monotonic()
 
         def count():
+            geometry = config.geometry()
             data = {sid: a for sid, a in self._join(parts).items() if sid in config.sensor_by_id}
             frames = {sid: len(a) for sid, a in data.items()}
             points, hours = {}, {}
             for sid, a in data.items():
-                times = walking_times(config, sid, a)
+                times = walking_times(geometry, sid, a)
                 points[sid] = len(times)
                 per_hour = collections.Counter((times // STRETCH).astype(int).tolist())
                 hours[sid] = sum(n >= MIN_POINTS for n in per_hour.values())

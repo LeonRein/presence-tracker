@@ -6,32 +6,27 @@ use pyo3::exceptions::{PyException, PyFloatingPointError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
+use crate::config::config_from;
 use crate::frames::PyFrame;
 use crate::views::{
-    CloudView, DetectionView, EnteringView, HouseView, HypView, PersonView, SensorMapView, TargetView, TilesView,
-    ZoneView, plan_view, source_name,
+    CloudView, DetectionView, EnteringView, HypView, PersonView, SensorMapView, TargetView, TilesView, ZoneStateView,
+    plan_view,
 };
 
-use presence_core::config::Config;
 use presence_core::filter::{NotFinite, Start};
-use presence_core::frames::CallError;
 use presence_core::geometry::Point;
 use presence_core::ld2410::CELLS;
 use presence_core::ld2410::background;
 use presence_core::ld2410::profile::expected;
 use presence_core::learn::pauses::{Pause, Pauses};
 use presence_core::learn::{Learned, LearnedError};
+use presence_core::outputs::Source;
 use presence_core::params::{OutputParams, Params, STILL, WALK};
 use presence_core::plan::Place;
 use presence_core::sensors::SensorSet;
 use presence_core::tracker::{Branched, Event, Fault, Tracker};
 use presence_core::world::World;
 use serde_json::Value;
-
-/// The configuration (the JSON of model.Config.to_dict()).
-pub(crate) fn config_from(json: &str) -> PyResult<Config> {
-    Config::from_json(json).map_err(PyValueError::new_err)
-}
 
 /// The model (the JSON of filtermodel.Model's fields and filter.py's constants).
 fn params_from(json: &str) -> PyResult<Params> {
@@ -48,8 +43,30 @@ create_exception!(
     WorldChanged,
     PyException,
     "The new world of a recalibration has other tiles or sensors: the people do not live in it (the \
-     shell starts the model over)."
+     shell starts the model over in it: the World given is still whole)."
 );
+
+/// A world built of a configuration and a model (JSON), once and without the GIL: a Core is made of it, a
+/// recalibration takes it, and if the people do not live in it (WorldChanged) it stays here for the
+/// new Core.
+#[pyclass(module = "presence_core", name = "World")]
+pub struct PyWorld(Option<World>);
+
+#[pymethods]
+impl PyWorld {
+    #[new]
+    fn new(py: Python<'_>, config: &str, model: &str) -> PyResult<Self> {
+        Ok(Self(Some(world_of(py, config, model)?)))
+    }
+}
+
+impl PyWorld {
+    fn take(&mut self) -> PyResult<World> {
+        self.0
+            .take()
+            .ok_or_else(|| PyValueError::new_err("this world went into a core already"))
+    }
+}
 
 fn not_finite(e: NotFinite) -> PyErr {
     PyFloatingPointError::new_err(e.to_string())
@@ -136,12 +153,11 @@ impl Core {
 #[allow(clippy::needless_pass_by_value)]
 #[pymethods]
 impl Core {
-    /// A tracker in the world of a configuration and model (JSON: the fields that differ from the
-    /// defaults).
+    /// A tracker in this world (it goes into the tracker).
     #[new]
-    fn new(py: Python<'_>, config: &str, model: &str) -> PyResult<Self> {
+    fn new(mut world: PyRefMut<'_, PyWorld>) -> PyResult<Self> {
         Ok(Self {
-            tracker: Tracker::new(world_of(py, config, model)?),
+            tracker: Tracker::new(world.take()?),
         })
     }
 
@@ -204,26 +220,26 @@ impl Core {
         events_out(py, events.map_err(fault)?)
     }
 
-    /// Sensors changed, the people's world not: their tracks end, then the new world (Tracker::recalibrate).
-    /// WorldChanged, and nothing changed, if the people do not live in it; ValueError if the configuration
-    /// or model is none.
+    /// Sensors changed, the people's world not: their tracks end, then the new world (Tracker::recalibrate),
+    /// which goes into the tracker. WorldChanged, and nothing changed, if the people do not live in it: the
+    /// world stays whole for a new Core.
     fn recalibrate<'py>(
         &mut self,
         py: Python<'py>,
         changed: Vec<usize>,
-        config: &str,
-        model: &str,
+        mut world: PyRefMut<'_, PyWorld>,
     ) -> PyResult<Bound<'py, PyList>> {
         let changed = changed
             .into_iter()
             .map(|si| self.sensor(si))
             .collect::<PyResult<SensorSet>>()?;
-        let world = world_of(py, config, model)?;
+        let new = world.take()?;
+        if let Err(why) = self.tracker.fits(&new) {
+            world.0 = Some(new);
+            return Err(WorldChanged::new_err(why));
+        }
         let tracker = &mut self.tracker;
-        let events = py.detach(|| tracker.recalibrate(changed, world)).map_err(|e| match e {
-            Fault::Call(CallError::World) => WorldChanged::new_err(e.to_string()),
-            _ => fault(e),
-        })?;
+        let events = py.detach(|| tracker.recalibrate(changed, new)).map_err(fault)?;
         events_out(py, events)
     }
 
@@ -283,6 +299,13 @@ impl Core {
     /// The LD2410Cs learn nothing from their next `seconds` s of frames.
     fn hold_background(&mut self, seconds: f64) {
         self.tracker.hold_background(seconds);
+    }
+
+    /// How far on the floor a target `slant` m along sensor si's beam is (straight ahead; the display's
+    /// LD2410C distance; Mount::on_floor).
+    fn floor_distance(&self, si: usize, slant: f64) -> PyResult<f64> {
+        let w = self.tracker.world();
+        Ok(w.mounts[self.sensor(si)?].on_floor([0.0, slant], w.reading.target_height)[1])
     }
 
     /// The ghost map's rate (per m^2 and s) of sensor si at the points, and s it watched.
@@ -453,7 +476,7 @@ impl Core {
         self.tracker
             .occupancy(now)
             .into_iter()
-            .map(|s| s.map(source_name))
+            .map(|s| s.map(Source::name))
             .collect()
     }
 
@@ -467,19 +490,12 @@ impl Core {
         self.tracker.clouds().into_iter().map(CloudView::of).collect()
     }
 
-    /// Per zone of the home (in the plan's order: the configuration's) its numbers, and the house's.
-    fn zone_numbers(&mut self, py: Python<'_>, now: f64) -> (Vec<ZoneView>, HouseView) {
+    /// The zones' states at now (Tracker::zone_states): the rooms of the home, then its other zones, the house
+    /// ("_total") last.
+    fn zone_states(&mut self, py: Python<'_>, now: f64) -> Vec<ZoneStateView> {
         let tracker = &mut self.tracker;
-        let (zones, house) = py.detach(|| tracker.zone_numbers(now));
-        let zones = self
-            .tracker
-            .world()
-            .plan
-            .home()
-            .zip(&zones)
-            .map(|(z, n)| ZoneView::of(&z.id, n))
-            .collect();
-        (zones, HouseView::of(&house))
+        let states = py.detach(|| tracker.zone_states(now));
+        states.into_iter().map(ZoneStateView::of).collect()
     }
 
     /// Whether the sensor with this id sent a frame lately.

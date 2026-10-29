@@ -48,7 +48,7 @@ def test_the_intervals():
 
 def _run(tr, person, until, config):
     out, nxt = [], 0.0
-    for t, sid, frame in simulate([person], sim_sensors(config), until, walls=config.wall_segments):
+    for t, sid, frame in simulate([person], sim_sensors(config), until, plan=config):
         tr.process_frame(sid, t, Frame.of(frame))
         if t >= nxt:
             tr.step(t)
@@ -101,7 +101,7 @@ def test_learning_goes_on_after_the_pause():
 
 def _frames(config, until=60.0):
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), (4.5, 1.0), start=5, pauses={2: 20, 3: 60}))
-    return list(simulate([a], sim_sensors(config, idle=0.0), until, walls=config.wall_segments))
+    return list(simulate([a], sim_sensors(config, idle=0.0), until, plan=config))
 
 
 def test_the_switch_pauses_the_app_and_survives_a_restart(tmp_path):

@@ -5,7 +5,7 @@ The floor plan is drawn as walls only. Every wall is one straight segment with a
   divider  a room boundary without a wall (e.g. between living and dining area): splits rooms,
            blocks nothing
 Doors are separate objects on a wall (center + width). For finding rooms they count as closed,
-for the line of sight they are open.
+for the line of sight they are open (the core's plan: Config.geometry).
 
 Rooms are the closed areas between the walls (faces of the planar graph). Each room zone keeps an
 anchor point inside it; after an edit, the face that contains the anchor is the same room, so
@@ -19,56 +19,6 @@ from .geometry import distance_to_segment, point_in_polygon
 
 SNAP = 0.03  # m, wall ends this close to each other or to a wall are joined
 MIN_ROOM_AREA = 0.3  # m², smaller closed areas are slivers, not rooms
-DOOR_REACH = 0.25  # m, a door belongs to a wall segment this close to its center
-
-
-def wall_pieces(walls: list) -> list:
-    """All walls as (a, b, kind)."""
-    return [(tuple(w["points"][0]), tuple(w["points"][1]), w["kind"]) for w in walls
-            if math.dist(w["points"][0], w["points"][1]) > 1e-6]
-
-
-# ------------------------------------------------------------------ line of sight
-
-def door_openings(walls: list, doors: list) -> list:
-    """For every door: (piece index, t0, t1) along the wall piece it sits on, in meters."""
-    pieces = [p for p in wall_pieces(walls) if p[2] == "wall"]
-    out = []
-    for d in doors:
-        c = (d["x"], d["y"])
-        best = None
-        for i, (a, b, _) in enumerate(pieces):
-            dist = distance_to_segment(c[0], c[1], a, b)
-            if dist < DOOR_REACH and (best is None or dist < best[0]):
-                best = (dist, i)
-        if best is None:
-            continue
-        a, b, _ = pieces[best[1]]
-        length = math.dist(a, b)
-        t = ((c[0] - a[0]) * (b[0] - a[0]) + (c[1] - a[1]) * (b[1] - a[1])) / length
-        half = d.get("width", 0.9) / 2
-        out.append((best[1], max(t - half, 0.0), min(t + half, length)))
-    return out
-
-
-def sight_segments(walls: list, doors: list) -> list:
-    """Segments that block the radar: real walls without their door openings."""
-    pieces = [p for p in wall_pieces(walls) if p[2] == "wall"]
-    cuts: dict[int, list] = {}
-    for i, t0, t1 in door_openings(walls, doors):
-        cuts.setdefault(i, []).append((t0, t1))
-    out = []
-    for i, (a, b, _) in enumerate(pieces):
-        length = math.dist(a, b)
-        ux, uy = (b[0] - a[0]) / length, (b[1] - a[1]) / length
-        start = 0.0
-        for t0, t1 in sorted(cuts.get(i, [])):
-            if t0 > start:
-                out.append(((a[0] + ux * start, a[1] + uy * start), (a[0] + ux * t0, a[1] + uy * t0)))
-            start = max(start, t1)
-        if start < length:
-            out.append(((a[0] + ux * start, a[1] + uy * start), b))
-    return out
 
 
 # ------------------------------------------------------------------------- rooms
@@ -91,7 +41,8 @@ def _intersection(p1, p2, q1, q2):
 
 def faces(walls: list, snap: float = SNAP, min_area: float = MIN_ROOM_AREA) -> list:
     """Closed areas enclosed by the walls (all kinds), as counterclockwise polygons."""
-    segs = [(a, b) for a, b, _ in wall_pieces(walls)]
+    segs = [(tuple(w["points"][0]), tuple(w["points"][1])) for w in walls
+            if math.dist(w["points"][0], w["points"][1]) > 1e-6]
 
     # split every piece where another one crosses it or ends on it (T-junctions)
     cuts = [[(0.0, a), (1.0, b)] for a, b in segs]

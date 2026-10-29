@@ -14,6 +14,11 @@ from presence_tracker.sim import SimSensor, ld_prior
 from fixture import fixture
 
 
+def local(s, x, y) -> tuple:
+    """A point of the house in sensor s's frame, as it measures it (the core's geometry)."""
+    return tuple(Config(sensors=[s]).geometry().to_local(s.id, [(x, y)])[0])
+
+
 def room_config() -> Config:
     return Config(
         sensors=[
@@ -86,7 +91,7 @@ def test_behind_a_wall_is_measured_across_it_not_along_the_line_of_sight():
     config = Config(sensors=[s], walls=[{"points": [[0.0, -1.0], [0.0, 6.0]], "kind": "wall"}])
 
     def target(x, y):
-        lx, ly = s.to_local(x, y)
+        lx, ly = local(s, x, y)
         return {"slot": 1, "x": round(lx * 1000), "y": round(ly * 1000), "speed": 0}
 
     hidden = [detections(config, s, {"targets": [target(x, y)]})[0].hidden
@@ -130,7 +135,6 @@ def _changed(**change) -> Config:
     config = room_config()
     for k, v in change.items():
         setattr(config.sensors[0], k, v)
-    config.sensors[0]._update()
     config.rebuild()
     return config
 

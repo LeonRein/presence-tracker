@@ -23,7 +23,7 @@ def test_who_walks_out_through_the_stairwell_door_is_outside():
     t_in = a.waypoints[4][0] - 5  # sitting
     t_out = a.waypoints[6][0] + 30  # 30 s after the stairwell door
     seen = {}
-    for t, sid, frame in simulate([a], sim_sensors(config), t_out, walls=config.wall_segments):
+    for t, sid, frame in simulate([a], sim_sensors(config), t_out, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         crowd.check()
         if "in" not in seen and t >= t_in:

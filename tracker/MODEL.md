@@ -291,7 +291,7 @@ Eine Spur, die zu keiner Person gehört.
   offline auf gewählten Zeitfenstern.
 - **Im Rahmen des Sensors** (`learn/ghost_map.rs`, nach 0.27): Jeder Sensor hat seinen Teil der Karte in seinem
   eigenen Rahmen, auf dem Boden, Maßstab herausgerechnet, x-Achse wie der LD2450 sie meldet
-  (`SensorConfig.to_local`; Zellen 0,4 m, bis 8 m seitlich und nach vorn). Wo ein Sensor Geister sieht,
+  (`SensorConfig::to_local` des Kerns; Zellen 0,4 m, bis 8 m seitlich und nach vorn). Wo ein Sensor Geister sieht,
   ist eine Eigenschaft seines Blicks: Reflexionen an Wänden und Möbeln, wie er sie sieht, Mehrwege am
   eigenen Gehäuse. Eine neue Kalibrierung (Richtung, Maßstab, Spiegelung, eine berichtigte Zeichnung)
   ändert, wie seine Meldungen gelesen werden, nicht, was er meldet. Im Hausrahmen folgt die Karte der

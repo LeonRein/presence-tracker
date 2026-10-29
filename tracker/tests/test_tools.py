@@ -28,7 +28,7 @@ def test_a_window_that_excuses_walks_leaves_the_others_alone(tmp_path):
     rec.mkdir()
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3.0, 2.5), (3.1, 2.5), start=2, pauses={2: 60}))
     with open(rec / time.strftime("%Y%m%d-%H.jsonl", time.localtime(T0)), "w") as f:
-        for t, sid, frame in simulate([a], sim_sensors(config), 50.0, walls=config.wall_segments):
+        for t, sid, frame in simulate([a], sim_sensors(config), 50.0, plan=config):
             f.write(json.dumps({"t": T0 + t, "topic": f"presence/{sid}/frame", "payload": frame}) + "\n")
     truth = {"app_starts": [stamp(0)], "reports": [
         {"name": "night", "from": stamp(20), "to": stamp(45), "text": "", "rooms": {"wohn": 0}, "walks": 30},
@@ -58,7 +58,7 @@ def test_windows_in_a_pause_are_not_scored(tmp_path):
     switched_off = False
     with open(rec / time.strftime("%Y%m%d-%H.jsonl", time.localtime(T0)), "w") as f:
         f.write(json.dumps({"t": T0 + 10, "topic": pause.COMMAND, "payload": "ON"}) + "\n")
-        for t, sid, frame in simulate([a], sim_sensors(config), 60.0, walls=config.wall_segments):
+        for t, sid, frame in simulate([a], sim_sensors(config), 60.0, plan=config):
             if t > 20 and not switched_off:
                 f.write(json.dumps({"t": T0 + 20, "topic": pause.COMMAND, "payload": "OFF"}) + "\n")
                 switched_off = True

@@ -7,7 +7,7 @@ from presence_tracker.filter import Tracker
 from presence_tracker.model import Config
 from presence_tracker.frames import Frame
 
-from test_frames import detections
+from test_frames import detections, local
 
 
 def two_rooms() -> Config:
@@ -31,7 +31,7 @@ def two_rooms() -> Config:
 
 
 def target(s, x, y):
-    lx, ly = s.to_local(x, y)
+    lx, ly = local(s, x, y)
     return {"slot": 1, "x": round(lx * 1000), "y": round(ly * 1000), "speed": 0}
 
 

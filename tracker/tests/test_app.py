@@ -51,7 +51,7 @@ def test_a_report_replays_to_what_the_app_showed(tmp_path):
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), (4.5, 1.0), start=5, pauses={2: 20, 3: 60}))
     next_tick = 0.0
     # every frame sent (no heartbeat thinning): the frames drive the app's ticks here
-    for t, sid, frame in simulate([a], sim_sensors(config, idle=0.0), 60.0, walls=config.wall_segments):
+    for t, sid, frame in simulate([a], sim_sensors(config, idle=0.0), 60.0, plan=config):
         app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
         if t >= next_tick:
             assert app.tick(1000.0 + t)
@@ -112,7 +112,7 @@ def test_a_report_without_the_model_start_has_what_was_learned_at_the_report(tmp
     app = App(tmp_path, publish=False)
     app.clock = lambda: 1040.0
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), start=5, pauses={2: 30}))
-    for t, sid, frame in simulate([a], sim_sensors(config), 40.0, walls=config.wall_segments):
+    for t, sid, frame in simulate([a], sim_sensors(config), 40.0, plan=config):
         app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
         assert app.tick(1000.0 + t)
 
@@ -135,7 +135,7 @@ def test_a_restarted_app_keeps_the_people_and_reports_from_where(tmp_path):
     config = flat_config(entry=True)
     config.save(tmp_path / "tracker.json")
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.6, 1.0), start=2, pauses={2: 300}))
-    frames = list(simulate([a], sim_sensors(config), 140.0, walls=config.wall_segments))
+    frames = list(simulate([a], sim_sensors(config), 140.0, plan=config))
     app = App(tmp_path, publish=False)
     for t, sid, frame in frames:
         if t >= 60:
@@ -201,7 +201,7 @@ def test_a_report_after_a_live_recalibration_replays_to_what_the_app_showed(tmp_
 
     done = False
     next_tick = 0.0
-    for t, sid, frame in simulate([a], sim_sensors(config, idle=0.0), 120.0, walls=config.wall_segments):
+    for t, sid, frame in simulate([a], sim_sensors(config, idle=0.0), 120.0, plan=config):
         if t >= 40 and not done:
             d = app.config.to_dict()
             d["sensors"][0]["heading"] += 8.0  # sensor a recalibrated by 8 degrees
@@ -253,7 +253,7 @@ def test_the_live_view_counts_the_calibration_data_in_a_thread(tmp_path):
     config.save(tmp_path / "tracker.json")
     app = App(tmp_path, publish=False)
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), (4.5, 1.0), start=1))
-    for t, sid, frame in simulate([a], sim_sensors(config), 20.0, walls=config.wall_segments):
+    for t, sid, frame in simulate([a], sim_sensors(config), 20.0, plan=config):
         app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
         assert app.tick(1000.0 + t)
 
@@ -390,7 +390,7 @@ def test_a_refused_floor_plan_keeps_the_people(tmp_path, monkeypatch):
     config.save(tmp_path / "tracker.json")
     app = App(tmp_path, publish=False)
     sit = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.52, 1.0), start=1, pauses={2: 600}))
-    for t, sid, frame in simulate([sit], sim_sensors(config), 60.0, walls=config.wall_segments):
+    for t, sid, frame in simulate([sit], sim_sensors(config), 60.0, plan=config):
         app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
         app.tick(1000.0 + t)
     fingerprint = app.tracker.tiles()["id"]

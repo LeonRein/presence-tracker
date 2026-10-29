@@ -25,7 +25,7 @@ def _sit(seat, minutes, leave=0.0):
     sensors = [SimSensor(s, still_dropout=1.0, still_gap=900.0) for s in config.sensors]
     sat, gone = p.waypoints[3][0], p.waypoints[-1][0]
     occupied, after, nxt = [], 0.0, sat + 600
-    for t, sid, frame in simulate([p], sensors, gone + leave, walls=config.wall_segments):
+    for t, sid, frame in simulate([p], sensors, gone + leave, plan=config):
         tr.process_frame(sid, t, Frame.of(frame))
         if t >= nxt and t < sat + minutes * 60:
             occupied.append(1 - tr.count_distribution()["wohn"][0])
@@ -61,7 +61,7 @@ def test_a_new_sensor_learns_an_empty_room_that_is_louder_than_the_prior():
     for s in sensors:
         s.ld_background = louder
     worst = 0.0
-    for t, sid, frame in simulate([nobody], sensors, 1800, walls=config.wall_segments):
+    for t, sid, frame in simulate([nobody], sensors, 1800, plan=config):
         tr.process_frame(sid, t, Frame.of(frame))
         if t > 60:
             worst = max(worst, 1 - tr.count_distribution()["wohn"][0])
@@ -82,7 +82,7 @@ def test_a_sitter_the_model_starts_with_is_not_learned_where_an_echo_source_hold
     p = Person([(0.0, *seat), (3600.0, seat[0] + 0.05, seat[1])])
     tr = Tracker(config, start=0.0)
     sensors = [SimSensor(s, still_dropout=1.0, still_gap=900.0) for s in config.sensors]
-    for t, sid, frame in simulate([p], sensors, 3600, walls=config.wall_segments):
+    for t, sid, frame in simulate([p], sensors, 3600, plan=config):
         tr.process_frame(sid, t, Frame.of(frame))
     prior = ld_prior()
     assert np.all(np.abs(tr.background("a")[0] / prior - 1) < 0.3), tr.background("a")[0]

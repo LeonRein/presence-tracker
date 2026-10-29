@@ -239,7 +239,7 @@ def test_a_stop_says_offline_and_a_silent_app_has_no_last_will(tmp_path, monkeyp
 def run_a_while(app, until=40.0):
     config = app.config
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), start=2, pauses={2: 60}))
-    for t, sid, frame in simulate([a], sim_sensors(config), until, walls=config.wall_segments):
+    for t, sid, frame in simulate([a], sim_sensors(config), until, plan=config):
         app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
         app.tick(1000.0 + t)
 
@@ -550,7 +550,7 @@ def test_reset_tracks_sees_whoever_sits_there_again(tmp_path):
     c = config.params.light_cost / (config.params.light_cost + 1.0)
     sit = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.52, 1.0), start=1, pauses={2: 600}))
     p, done, bg = {}, False, None
-    for t, sid, frame in simulate([sit], sim_sensors(config), 300.0, walls=config.wall_segments):
+    for t, sid, frame in simulate([sit], sim_sensors(config), 300.0, plan=config):
         if t >= 60.0 and not done:
             asyncio.run(app.h_reset_tracks(None))
             done = True

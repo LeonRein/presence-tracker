@@ -1,4 +1,5 @@
-"""Plane geometry in the house frame (meters, Dobby map axes)."""
+"""Plane geometry in the house frame (meters, Dobby map axes) for drawing the plan: the zones' outlines, the
+rooms between the walls (floorplan.py). What the sensors see is the core's (Config.geometry)."""
 
 import math
 
@@ -16,19 +17,6 @@ def point_in_polygon(x: float, y: float, points: list) -> bool:
     return inside
 
 
-def segments_intersect(p1, p2, q1, q2) -> bool:
-    """True if the open segments p1-p2 and q1-q2 cross (touching endpoints don't count)."""
-
-    def orient(a, b, c):
-        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
-
-    d1 = orient(q1, q2, p1)
-    d2 = orient(q1, q2, p2)
-    d3 = orient(p1, p2, q1)
-    d4 = orient(p1, p2, q2)
-    return d1 * d2 < 0 and d3 * d4 < 0
-
-
 def distance_to_segment(x: float, y: float, a, b) -> float:
     ax, ay = a
     bx, by = b
@@ -36,10 +24,6 @@ def distance_to_segment(x: float, y: float, a, b) -> float:
     length2 = dx * dx + dy * dy
     t = 0.0 if length2 == 0 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / length2))
     return math.hypot(x - ax - t * dx, y - ay - t * dy)
-
-
-def line_of_sight(a, b, segments: list) -> bool:
-    return not any(segments_intersect(a, b, s, e) for s, e in segments)
 
 
 class Shape:

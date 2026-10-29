@@ -45,7 +45,7 @@ def run(config, people, duration, start_places, every=0.5, check=False, **kw):
     crowd = Tracker(config, start=0.0, people=start_places)
     samples = []
     next_sample = 0.0
-    for t, sid, frame in simulate(people, sim_sensors(config, **kw), duration, walls=config.wall_segments):
+    for t, sid, frame in simulate(people, sim_sensors(config, **kw), duration, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         if check:
             crowd.check()
@@ -131,7 +131,7 @@ def test_a_recalibrated_sensor_keeps_the_people():
     crowd = Tracker(config, start=0.0, people=["outside"])
     samples = []
     done = False
-    for t, sid, frame in simulate([a, b], sim_sensors(config), end, walls=config.wall_segments):
+    for t, sid, frame in simulate([a, b], sim_sensors(config), end, plan=config):
         if t >= 100 and not done:
             crowd.reconfigure(turned)
             crowd.check()
@@ -172,7 +172,7 @@ def test_reconfigure_builds_nothing_for_the_outputs_and_starts_over_only_in_anot
     d = config.to_dict()
     d["params"].update(light_cost=3.0, lead_time=3.0)
     with monkeypatch.context() as m:
-        m.setattr(tr, "_world", lambda: pytest.fail("a world was built"))
+        m.setattr(tr, "_new_world", lambda: pytest.fail("a world was built"))
         assert not tr.reconfigure(Config.from_dict(d))
     assert tr._c.thresholds()[0] == 3.0 / 4.0
     bad = {**d, "sensors": [{**s, "range": 50.0} for s in d["sensors"]]}  # beyond what the core holds
@@ -182,7 +182,12 @@ def test_reconfigure_builds_nothing_for_the_outputs_and_starts_over_only_in_anot
     assert not issubclass(presence_core.WorldChanged, ValueError)
     tr.reconfigure(Config.from_dict(d))
     blind = {**d, "sensors": [{**s, "enabled": False} for s in d["sensors"]]}
-    assert tr.reconfigure(Config.from_dict(blind))  # no sensor sees the tiles: WorldChanged, started over
+    built, world, tiles = [], presence_core.World, tr.tiles()["id"]
+    with monkeypatch.context() as m:
+        m.setattr(presence_core, "World", lambda *a: built.append(a) or world(*a))
+        assert tr.reconfigure(Config.from_dict(blind))  # no sensor sees the tiles: WorldChanged, started over
+    assert len(built) == 1  # in the world the recalibration built
+    assert tr.tiles()["id"] != tiles  # the new world's
 
 
 def test_a_short_track_in_an_empty_room_is_a_ghost():
@@ -234,7 +239,7 @@ def test_the_ghost_map_does_not_confirm_itself():
     learned = _learned(crowd)
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, seat, (seat[0] + 0.05, seat[1]), start=2, pauses={2: 150}))
     for t, sid, frame in simulate([a], sim_sensors(config, still_dropout=1 / 30, still_gap=40), a.waypoints[-1][0],
-                                  walls=config.wall_segments):
+                                  plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
     at_seat = [p for z, p in learned if np.hypot(z[0] - seat[0], z[1] - seat[1]) < 0.5]
     assert len(at_seat) >= 2 and max(at_seat) < 0.01, learned
@@ -252,7 +257,7 @@ def test_a_sitter_taken_for_ghosts_does_not_become_a_ghost_source():
     learned = _learned(crowd)
     a = Person([(0.0, *seat), (600.0, seat[0] + 0.05, seat[1])])
     for t, sid, frame in simulate([a], sim_sensors(config, still_dropout=1 / 60, ld2410=False), 600,
-                                  walls=config.wall_segments):
+                                  plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
     prior_rate = crowd.learned()["ghost_map"]["prior_rate"]
     assert sum(p for _, p in learned) > 2, learned  # the case: some of them were taken for ghosts
@@ -264,7 +269,7 @@ def test_a_ghost_in_an_empty_house_is_learned_as_one():
     crowd = Tracker(config, start=0.0, people=["outside", "outside"])
     learned = _learned(crowd)
     ghost = Person([(20.0, 3.0, 2.5), (21.0, 3.0, 2.5)])
-    for t, sid, frame in simulate([ghost], sim_sensors(config), 40, walls=config.wall_segments):
+    for t, sid, frame in simulate([ghost], sim_sensors(config), 40, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
     assert learned and min(p for _, p in learned) > 0.9, learned
 
@@ -279,7 +284,7 @@ def test_a_sitter_the_ld2450_loses_stays_while_the_ld2410c_sees_them():
         s.blind_to, s.blind_after = (0,), a.waypoints[2][0] + 10
     crowd = Tracker(config, start=0.0, people=["flur"])
     samples = []
-    for t, sid, frame in simulate([a], sensors, a.waypoints[-1][0] - 1, walls=config.wall_segments):
+    for t, sid, frame in simulate([a], sensors, a.waypoints[-1][0] - 1, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         if t > a.waypoints[2][0] + 180 and not samples:
             samples.append(1 - crowd.count_distribution()["wohn"][0])
@@ -312,7 +317,7 @@ def test_the_tracks_of_a_sensor_that_died_end():
     c = config.params.light_cost / (config.params.light_cost + 1.0)
     # walks in, sits at (4.5, 1) until about 130 s, then walks out through the flat's door
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), FLUR_DOOR, (-1.0, 4.0), start=1, pauses={2: 120}))
-    frames = list(simulate([a], sim_sensors(config), 300, walls=config.wall_segments))
+    frames = list(simulate([a], sim_sensors(config), 300, plan=config))
     for dead in (("a", "b"), ("a",)):
         crowd = Tracker(config, start=0.0, people=["outside"])
         p = {}

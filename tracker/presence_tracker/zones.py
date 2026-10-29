@@ -1,4 +1,5 @@
-"""Zone states: what goes to Home Assistant (computed by Tracker.zone_states)."""
+"""Zone states: what goes to Home Assistant (the core's, Core.zone_states, copied field for field by
+Tracker.zone_states; here only how they are rounded for Home Assistant)."""
 
 import math
 from dataclasses import dataclass
