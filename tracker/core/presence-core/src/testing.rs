@@ -56,6 +56,7 @@ use crate::ld2410::{FLOOR, profile::expected};
 use crate::params::{Params, Shapes};
 use crate::params::{STILL, WALK};
 use crate::plan::RoomIdx;
+use crate::vmath::py_hypot;
 use crate::world::{
     CELL, Grid, LdExport, LdPlace, LdSight, LdTiles, Raster, RoomGrid, SensorExport, Tiles, World, WorldExport,
 };
@@ -114,7 +115,7 @@ pub const TILE: f64 = 0.5;
 fn segment_distance(p: Point, [x0, y0, x1, y1]: [f64; 4]) -> f64 {
     let (dx, dy) = (x1 - x0, y1 - y0);
     let t = (((p[0] - x0) * dx + (p[1] - y0) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
-    (p[0] - x0 - t * dx).hypot(p[1] - y0 - t * dy)
+    py_hypot(p[0] - x0 - t * dx, p[1] - y0 - t * dy)
 }
 
 /// A JSON object written as the shell writes it ("key": value, ...): the tests change it by its text.

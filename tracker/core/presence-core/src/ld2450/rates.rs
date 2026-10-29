@@ -8,6 +8,7 @@ use std::f64::consts::{LN_2, PI};
 use crate::geometry::Point;
 use crate::params::{P_FA, Params, STILL, WALK};
 use crate::sensors::SensorSet;
+use crate::vmath::py_hypot;
 use crate::world::Sight;
 
 /// A live track of a sensor as the rates see it: where it measures its target, or where it holds
@@ -52,7 +53,7 @@ impl RateModel {
 
     /// The rate without the sensor's live tracks at a point, for walkers or still people (mode).
     fn base(&self, sight: &Sight, p: Point, mode: usize) -> f64 {
-        let r = (p[0] - sight.at[0]).hypot(p[1] - sight.at[1]);
+        let r = py_hypot(p[0] - sight.at[0], p[1] - sight.at[1]);
         let [rho, r50] = self.acquire[mode];
         rho * self.pd(r, r50) * sight.grid.at(p)
     }
@@ -66,7 +67,7 @@ impl RateModel {
         }
         let [sx, sy] = sight.at;
         let (dx, dy) = (p[0] - sx, p[1] - sy);
-        let r = dx.hypot(dy);
+        let r = py_hypot(dx, dy);
         let th = dy.atan2(dx);
         let mut mask = 1.0;
         for spot in tracks {
@@ -75,7 +76,7 @@ impl RateModel {
                 mask *= 1.0 - (-0.5 * (ex * ex + ey * ey) / sq(self.find_radius)).exp();
             } else {
                 let (zx, zy) = (spot.at[0] - sx, spot.at[1] - sy);
-                let (rz, tz) = (zx.hypot(zy), zy.atan2(zx));
+                let (rz, tz) = (py_hypot(zx, zy), zy.atan2(zx));
                 let dr = r - rz;
                 let mut a = th - tz; // in (-2 pi, 2 pi): to (-pi, pi]
                 if a > PI {

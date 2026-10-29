@@ -2,6 +2,34 @@
 
 ## Unveröffentlicht
 
+## 0.53.0 (Branch `rust-core`, der Kern rechnet auf allen Rechnern gleich; nicht live, kein Tag)
+
+Modell unverändert, Zahlen auf Rundungsniveau anders (Entscheidung Leon nach 0.52.0).
+- **`hypot` richtig gerundet:** alle 15 Aufrufe von `f64::hypot` (die `hypot` der C-Bibliothek) im Kern
+  (`world/build.rs`, `world/tiles.rs`, `motion/imm.rs`, `ld2450/rates.rs`, `outputs.rs`, `learn/destination.rs`,
+  `geometry.rs`, `calibration/mod.rs`, `calibration/problem.rs`, `testing.rs`) rufen jetzt `vmath::py_hypot`
+  (CPythons `math.hypot`, schon im Kern). Gegen Decimal auf 300000 Argumentpaaren (Beträge 1e-150 bis 1e150, auch sehr
+  ungleiche) 0 falsch gerundet, hermanns glibc 2.44 30205. `tracker/core/clippy.toml` verbietet `f64::hypot`
+  (`disallowed-methods`), clippy `-D warnings` lässt es nicht wieder herein. Das Wheel braucht `hypot@GLIBC_2.35` nicht
+  mehr (`manylinux_2_34` statt `_2_35`).
+- **Die übrigen Funktionen der C-Bibliothek**, die der Kern einbindet (`nm -D`: `atan2`, `exp`, `expm1`, `log`,
+  `log1p`, `log2`, `pow`, `sincos`), rechnen auf hermann (glibc 2.44) und im Image (Debian 2.41) gleich (je 300000
+  Argumente in drei Bereichen, über ctypes): nichts weiter ersetzt.
+- **Welt gegen 0.52.0** (`build_export` aller Test- und privaten Konfigurationen): größte Abweichung 2,3e-13 absolut
+  (LD2410C-Kacheln, Werte um 100), sonst relativ unter 1e-14 (`wall_dist` an Werten nahe 0 bis 4,4e-16 absolut);
+  Reflexionen und Fingerprint der Kacheln gleich. `fixtures/core_build.json` und die privaten `core_build_0381.json`
+  neu, `core_reflections*.json` unverändert. `test_core_build` prüft die Digests ohne Probe der C-Bibliothek (nur noch
+  amd64).
+- **Spuren:** hermann und amd64-Image (glibc 2.41) byte-gleich, je Stunde Rust (presence-replay) = Hülle
+  (`trace.py`). Gegen 0.52.0: 7.10. 3 Uhr bis 1,1e-16; 8.10. 19 Uhr bis 1,2e-2 (Zahlen, Gewichte), keine Raumsekunde
+  auf der anderen Seite von 0,5, gleich viele Hypothesen; 10.10. 12 Uhr wächst die Abweichung von 1e-14 (7,5 s) über
+  1e-9 (1300 s) auf 0,1 (1590 s), ab 2474 s verliert der Filter die sitzende Person im Arbeitszimmer, die 0.52.0 bis
+  zum Ende hält (LD2450 sieht sie weiter zeitweise): 841 Raumsekunden Arbeitszimmer, 2 Esszimmer, 1 Küche auf der
+  anderen Seite von 0,5, 839 Datensätze mit anderer Zahl von Hypothesen. Der Schnitt der Hypothesen entscheidet dort
+  auf Rundungsniveau.
+- **CPU:** ab.sh 1200 16,4–16,7 s; gleichzeitig gegen das 0.52.0-Wheel 17,0 gegen 16,6 s (+0,45 s, +2,7 %):
+  `py_hypot` rechnet die Quadrate doppelt genau und mit einem Newton-Schritt.
+
 ## 0.52.0 (Branch `rust-core`, CI baut Wheels und Images bei einem Tag; nicht live, kein Tag)
 
 Modell unverändert. Phase 11 (docs/rust-core.md 5, Variante B): HA baut das Image nicht mehr selbst, es zieht das

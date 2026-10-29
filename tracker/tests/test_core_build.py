@@ -6,8 +6,6 @@ the Python tracker's build (the plan, raster and tiles exactly, the numbers up t
 core_reflections.json, made by fixtures/make/; the private ones' in PT_CONFIGS). The plan the shell, the
 calibration and the tools read (filter.plan: regions, observed and closed rooms) is the core's build."""
 
-import ctypes
-import ctypes.util
 import hashlib
 import importlib.util
 import json
@@ -82,16 +80,6 @@ def reflections(config) -> dict:
     return out
 
 
-def _hermanns_hypot() -> bool:
-    """Whether the C library's hypot is hermann's (CachyOS glibc 2.44), under which the digests were taken: the
-    core's f64::hypot is the C library's, and Debian's (the image, 2.41) and Ubuntu's (CI) differ from it in the
-    last bit for a few arguments, as for this pair - enough to change the digests, not the model."""
-    libm = ctypes.CDLL(ctypes.util.find_library("m"))
-    libm.hypot.restype, libm.hypot.argtypes = ctypes.c_double, [ctypes.c_double, ctypes.c_double]
-    x, y, h = (float.fromhex(v) for v in ("0x1.34f4220ae1b3cp+2", "0x1.1724c29e515bcp+1", "0x1.53046533ae846p+2"))
-    return libm.hypot(x, y) == h
-
-
 CONFIGS = configs()
 IDS = [name for name, *_ in CONFIGS]
 
@@ -100,8 +88,6 @@ IDS = [name for name, *_ in CONFIGS]
 def test_the_core_builds_the_world_0381_built(name, config, build, reflected):
     if platform.machine() not in ("x86_64", "AMD64"):  # the digests are bits: of amd64 (x86-64-v3), as built
         pytest.skip("the digests are of amd64's floating point")
-    if not _hermanns_hypot():
-        pytest.skip("the digests are of hermann's C library (hypot)")
     got = core_build.digests(config, "{}", Tracker(config).tiles()["id"])
     assert sorted(got) == sorted(build)
     assert [k for k in build if got[k] != build[k]] == []  # the parts that differ

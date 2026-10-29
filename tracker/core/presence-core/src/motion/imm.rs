@@ -17,7 +17,7 @@ use crate::filter::densities::{Densities, Kind};
 use crate::filter::mixture::{Kalman, Mixture, Slot, collapse, log_add, weights2};
 use crate::geometry::Point;
 use crate::params::{Params, STILL, Shapes, WALK};
-use crate::vmath::pairwise_sum;
+use crate::vmath::{pairwise_sum, py_hypot};
 use crate::world::World;
 
 /// The numbers of one step dt.
@@ -260,7 +260,7 @@ fn reflect_at_walls(world: &World, before: &Kalman, after: &mut Kalman, f: &Squa
     let p0 = |ax: usize, i: usize, j: usize| before.cov[(ax * d + i) * d + j];
     let (vx, vv) = (p0(0, 0, 0).max(p0(1, 0, 0)), p0(0, 1, 1).max(p0(1, 1, 1)));
     let s = 8f64.sqrt();
-    let reach = (to[0] - from[0]).hypot(to[1] - from[1])
+    let reach = py_hypot(to[0] - from[0], to[1] - from[1])
         + s * (vx.max(0.0).sqrt() + f.at(0, 1).abs() * vv.max(0.0).sqrt() + q.at(0, 0).max(0.0).sqrt());
     if world.clear(from, reach) {
         return;

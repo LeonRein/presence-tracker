@@ -6,7 +6,7 @@ use super::{
     C, END_SPAN, EVERY, HANDOVER, MAX_GAP, MIN_RANGE, MIN_SPEED, PRIOR_DEG, Row, TAU_V, VAR_V, heading_of, thin,
 };
 use crate::config::{Config, Mount};
-use crate::vmath::py_round;
+use crate::vmath::{py_hypot, py_round};
 
 /// The walking points of one sensor: one per EVERY s and LD2450 track, at least MIN_RANGE away on the floor.
 #[derive(Debug)]
@@ -224,7 +224,7 @@ impl<'a> Problem<'a> {
             sigma: za
                 .iter()
                 .zip(&zb)
-                .map(|(&x, &y)| self.sigma(x).hypot(self.sigma(y)))
+                .map(|(&x, &y)| py_hypot(self.sigma(x), self.sigma(y)))
                 .collect(),
             t: keep.iter().map(|&i| tb[i]).collect(),
             za,

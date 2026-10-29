@@ -231,9 +231,9 @@ pub fn lgamma(x: f64) -> f64 {
 }
 
 /// sqrt(x^2 + y^2) as CPython's math.hypot computes it (Modules/mathmodule.c, vector_norm: scaled to
-/// the largest, the squares summed exactly in two parts, one Newton step): libm's hypot differs from it
-/// in the last bit for 13 % of the arguments, and the plan decides with it (fields of view, circles,
-/// the sides of a door).
+/// the largest, the squares summed exactly in two parts, one Newton step), correctly rounded. The core's
+/// only hypot: the C library's (f64::hypot) is not correctly rounded and differs between machines (glibc
+/// 2.44 in the last bit for 13 % of the arguments, Debian's 2.41 for 0.6 %); clippy.toml forbids it.
 pub fn py_hypot(x: f64, y: f64) -> f64 {
     let (x, y) = (x.abs(), y.abs());
     if x.is_infinite() || y.is_infinite() {

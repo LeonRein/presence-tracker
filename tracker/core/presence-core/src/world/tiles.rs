@@ -10,7 +10,7 @@ use crate::geometry::{Point, Walls};
 use crate::linalg::{expm, solve};
 use crate::params::Params;
 use crate::plan::{Place, Plan, RegionIdx, RoomIdx};
-use crate::vmath::{max2, pairwise_sum};
+use crate::vmath::{max2, pairwise_sum, py_hypot};
 use crate::world::raster::{CELL, Raster, RoomGrid};
 
 /// A tile next to a door into a region or out of the house: as its small Gaussian (centre, spread
@@ -318,7 +318,7 @@ fn door_rates(cells: &Cells, layout: &Layout, m: &Moments, floor: &Floor, d: f64
         let count = mids.len() as f64;
         let sum = mids.iter().fold([0.0, 0.0], |s, p| [s[0] + p[0], s[1] + p[1]]);
         let mean = [sum[0] / count, sum[1] / count];
-        let dd = 2.0 * max2((mean[0] - m.centers[*t][0]).hypot(mean[1] - m.centers[*t][1]), CELL);
+        let dd = 2.0 * max2(py_hypot(mean[0] - m.centers[*t][0], mean[1] - m.centers[*t][1]), CELL);
         rate[*t][*r] = d * count * CELL / (m.area[*t] * dd);
     }
     rate
@@ -335,7 +335,7 @@ fn generator(m: &Moments, border: &[f64], door_rate: &[Vec<f64>], d: f64, region
         for j in 0..n {
             let l = border[i * n + j] + border[j * n + i];
             if l != 0.0 {
-                let dist = (m.centers[i][0] - m.centers[j][0]).hypot(m.centers[i][1] - m.centers[j][1]);
+                let dist = py_hypot(m.centers[i][0] - m.centers[j][0], m.centers[i][1] - m.centers[j][1]);
                 q[j * big + i] = d * l / (m.area[i] * dist.max(CELL));
             }
         }

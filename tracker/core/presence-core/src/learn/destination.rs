@@ -329,7 +329,7 @@ fn neighbours(cells: &[DestCell], space: &[usize], walls: &Walls, c: usize) -> V
         .filter(|&k| {
             let p = cells[k].centre;
             k != c
-                && (p[0] - at[0]).hypot(p[1] - at[1]) <= NEAR + CELL
+                && py_hypot(p[0] - at[0], p[1] - at[1]) <= NEAR + CELL
                 && space[cells[k].room.0] == space[cells[c].room.0]
         })
         .collect();

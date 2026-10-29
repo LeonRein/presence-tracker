@@ -99,7 +99,7 @@ impl Walls {
             let Some((_, w)) = first else { continue };
             let seg = &self.segs[w];
             let (ex, ey) = (seg[2] - seg[0], seg[3] - seg[1]);
-            let h = ex.hypot(ey);
+            let h = py_hypot(ex, ey);
             let (nx, ny) = (-ey / h, ex / h);
             let off = (b[0] - seg[0]) * nx + (b[1] - seg[1]) * ny;
             out[i] = [out[i][0] - 2.0 * off * nx, out[i][1] - 2.0 * off * ny];

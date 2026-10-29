@@ -16,8 +16,8 @@ use crate::learn::destination::{self, DestMap, Target};
 use crate::motion::imm::walk_ahead;
 use crate::params::WALK;
 use crate::plan::{Place, RoomIdx, Zone, ZoneRole};
-use crate::vmath::max2;
 use crate::vmath::{log_factorials, pairwise_sum};
+use crate::vmath::{max2, py_hypot};
 use crate::world::World;
 
 /// "wird betreten": a person walking with less probability can raise no zone's p_enter by more than
@@ -425,7 +425,7 @@ impl Person {
     /// Shown as moving: with a measuring track, walking and fast enough (the zones' moving / still).
     pub fn moving(&self) -> bool {
         self.shown.is_some_and(|s| {
-            !self.lost && s.walk > MOVING_WALK && crate::vmath::py_hypot(s.velocity[0], s.velocity[1]) > MOVING_SPEED
+            !self.lost && s.walk > MOVING_WALK && py_hypot(s.velocity[0], s.velocity[1]) > MOVING_SPEED
         })
     }
 }
@@ -689,7 +689,7 @@ pub fn entering(filter: &Filter, world: &World, h: f64) -> Vec<Entering> {
             }
         }
         let rise = &rises[best];
-        let speed = rise.velocity[0].hypot(rise.velocity[1]);
+        let speed = py_hypot(rise.velocity[0], rise.velocity[1]);
         o.distance = ray_distance(world, z, rise.at, rise.velocity);
         o.eta = o.distance.filter(|_| speed > 0.05).map(|dist| dist / speed);
         let obj = holders.objects()[rise.entry];
@@ -708,7 +708,7 @@ fn maximum(a: f64, b: f64) -> f64 {
 fn ray_distance(world: &World, z: usize, at: Point, velocity: Point) -> Option<f64> {
     const REACH: f64 = 5.0;
     const STEP: f64 = 0.05;
-    let speed = velocity[0].hypot(velocity[1]);
+    let speed = py_hypot(velocity[0], velocity[1]);
     if speed < 1e-6 {
         return None;
     }

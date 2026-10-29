@@ -73,7 +73,7 @@ pub(super) fn wall_dist(raster: &Raster, walls: &[[Point; 2]]) -> Vec<f64> {
                 let d = [b[0] - a[0], b[1] - a[1]];
                 let t = (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / (d[0] * d[0] + d[1] * d[1]).max(1e-12))
                     .clamp(0.0, 1.0);
-                best.min((p[0] - a[0] - t * d[0]).hypot(p[1] - a[1] - t * d[1]))
+                best.min(py_hypot(p[0] - a[0] - t * d[0], p[1] - a[1] - t * d[1]))
             });
             d - CELL / 2f64.sqrt()
         })
@@ -361,7 +361,7 @@ fn point_sight(b: &Built, s: &SensorConfig, coarse: &CoarseSight) -> (Vec<f64>, 
 fn offset_var(raster: &Raster, p: &TrackerParams, s: &SensorConfig) -> Vec<f64> {
     let reading = crate::frames::Reading::of(p);
     cells(raster)
-        .map(|c| reading.offset_var((c[0] - s.x).hypot(c[1] - s.y)))
+        .map(|c| reading.offset_var(py_hypot(c[0] - s.x, c[1] - s.y)))
         .collect()
 }
 

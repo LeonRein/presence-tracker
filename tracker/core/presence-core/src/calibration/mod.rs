@@ -230,9 +230,9 @@ impl C {
         Self { re, im }
     }
 
-    /// |c| (numpy's and Python's abs: libm's hypot)
+    /// |c| (correctly rounded, as Python's abs)
     fn abs(self) -> f64 {
-        self.re.hypot(self.im)
+        crate::vmath::py_hypot(self.re, self.im)
     }
 }
 

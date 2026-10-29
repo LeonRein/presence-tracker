@@ -1,0 +1,2 @@
+# the C library's hypot is not correctly rounded and differs between machines: the core computes the same everywhere
+disallowed-methods = [{ path = "f64::hypot", reason = "use vmath::py_hypot (correctly rounded, the same on every machine)" }]

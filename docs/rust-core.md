@@ -417,10 +417,10 @@ Schlüssel vorher ab.
   Package settings auf **Public** stellen (HA zieht ohne Anmeldung). (4) Prüfen, dass beide Tags ohne Anmeldung
   ziehbar sind (`podman pull ghcr.io/leonrein/amd64-presence-tracker:<version>`). (5) Erst dann main auf den Commit
   vorspulen: HA zeigt das Update, sobald `version` auf main steigt, und das Image muss dann schon da sein.
-- **Gleitkomma und C-Bibliothek:** `f64::hypot` ist die `hypot` der C-Bibliothek. Die von hermann (CachyOS glibc
-  2.44) weicht im letzten Bit von Debians (Image, 2.41) ab; die Spuren im Image sind deshalb nicht
-  byte-gleich mit denen auf hermann (`exp`, `log`, `pow`, `atan2`, `expm1`, `log1p`, `sin`, `cos` sind gleich). Die
-  Digests von `test_core_build` gelten nur unter hermanns `hypot` (sonst übersprungen).
+- **Gleitkomma:** Der Kern rechnet auf allen Rechnern gleich (hermann = Image, byte-gleiche Spuren): `hypot` ist
+  `vmath::py_hypot`, richtig gerundet (`f64::hypot` der C-Bibliothek verbietet `clippy.toml`), die übrigen Funktionen
+  der C-Bibliothek (`exp`, `log`, `pow`, `atan2`, `expm1`, `log1p`, `log2`, `sincos`) rechnen in glibc 2.44 und 2.41
+  gleich.
 
 ## 6. Wiedergabe in Rust und Prüfplan
 
