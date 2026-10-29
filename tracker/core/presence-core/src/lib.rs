@@ -16,6 +16,7 @@ pub mod outputs;
 pub mod params;
 pub mod plan;
 pub(crate) mod room_seen;
+pub use room_seen::SILENT_AFTER;
 pub mod sensors;
 pub mod tracker;
 pub(crate) mod vmath;

@@ -5,8 +5,8 @@
 //! at the mount); inside: the first observed room whose outline holds the point is this room. Other
 //! sensors don't count: from 6-7 m a person at a room's edge is measured in the next room.
 //!
-//! Silent: a room whose own sensors in use all sent no frame for more than a limit (roomseen.SILENT_AFTER
-//! = 30 s) has no data (Home Assistant gets it as unavailable, not as empty). 30 s, not LOST (6 s): the
+//! Silent: a room whose own sensors in use all sent no frame for more than a limit (SILENT_AFTER = 30 s)
+//! has no data (Home Assistant gets it as unavailable, not as empty). 30 s, not LOST (6 s): the
 //! WLAN's gaps of 6-20 s came 88 times in 64 h; a board that is gone stays silent for minutes. A sensor
 //! that sent nothing since the model started counts from the start.
 //!
@@ -15,6 +15,10 @@
 
 use crate::geometry::Point;
 use crate::plan::{Plan, RoomIdx};
+
+/// s without any frame until a room's own board counts as gone and its room as silent (the shell's and the
+/// replay's; a world is built with it, World::build).
+pub const SILENT_AFTER: f64 = 30.0;
 
 #[derive(Debug, Default)]
 pub struct RoomSeen {

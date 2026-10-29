@@ -61,11 +61,9 @@ def plan(config) -> dict:
 # what only the outputs (MODEL.md 6) or the display read: a change restarts nothing
 OUTPUT_PARAMS = ("target_threshold", "target_thresholds", "light_cost", "seen_hold", "approach_cost", "lead_time",
                  "ld2410_hold")
-# s without any frame: the board is gone, its room is silent (MODEL.md 6 "Belegt"; room_seen.rs). 30 s, not
-# LOST (6 s, when the filter ends its tracks): in 64 h of recordings 6-20 s gaps of one board while the
-# others sent came 88 times (the WLAN), each would have made its room unavailable for seconds; a board that
-# is gone stays silent for minutes
-SILENT_AFTER = 30.0
+# s without any frame: the board is gone, its room is silent (MODEL.md 6 "Belegt"; the core's room_seen.rs, which
+# says why 30 s); the tests change it here
+SILENT_AFTER = presence_core.SILENT_AFTER
 
 
 class _Seen:

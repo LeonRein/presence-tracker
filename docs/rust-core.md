@@ -319,6 +319,11 @@ die App), optional Gelerntes und `people_state` als Start, und treibt den Tracke
 - später `segments`: was `seg_replay.py` für `fast_eval` tut (Abschnitte aus den `learned.json.gz`-Prüfpunkten, dieselben
   Ausgaben), parallel über Prozesse statt Threads im Kern. Bis dahin läuft `fast_eval` über die Python-Hülle.
 
+**Umgesetzt in Phase 10 (0.41.0):** `trace` und `prof` wie oben; CONFIG ist das JSON von `Config.to_dict()`, das
+Modell die Standards des Kerns. Die Spur schreibt ein eigener kleiner Schreiber im Format von Pythons `json.dumps`
+(`presence-replay/src/pyjson.rs`), weil serde_json Zahlen anders schreibt; byte-gleich mit `trace.py` über die Hülle
+(drei Referenzstunden, `tests/test_replay.py`). Nicht dabei: Start aus Gelerntem/`people_state`, `--model`, `segments`.
+
 **Prüfplan:**
 - **Rust-Tests** je Modul mit den Fällen der heutigen Python-Tests; `vlog/vexp` ≤ 1 ulp; Pool-Invarianten
   (`check`); die Formate: Dateien, die 0.31.1 geschrieben hat, lesen und gleich wieder schreiben (Inhalt gleich,

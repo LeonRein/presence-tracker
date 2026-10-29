@@ -2,6 +2,22 @@
 
 ## Unveröffentlicht
 
+## 0.41.0 (Branch `rust-core`, Phase 10: die Wiedergabe in Rust; nicht live)
+
+Modell unverändert; Spuren der drei Referenzstunden über die Hülle byte-gleich mit 0.40.1; ab.sh 1200 16,5 s (0.31.1 47,4 s);
+141 + 2 Rust-, 244 Python-Tests mit PT_CONFIGS; fmt/clippy sauber.
+
+- **`presence-replay`** (`core/presence-replay`, Programm ohne Python): `trace CONFIG RECORDING SECONDS OUT [EVERY]`
+  und `prof CONFIG RECORDING SECONDS`. Treibt den Kern wie die App (`trace.py`/`prof.py`): jeder Frame geprüft wie in
+  der App (ungültige verworfen), Bildzeit über `SensorClock`, alle 0,1 s ein Schritt und die Zonenwerte wie
+  `zone_states`. CONFIG ist das JSON von `Config.to_dict()` (`tracker.json`).
+- **trace** schreibt genau die Zeilen von `trace.py` über die Hülle, byte-gleich (`pyjson.rs`: Pythons `json.dumps`
+  mit `repr` der Zahlen, bei einer genauen Mitte gerade gerundet wie Python): alle drei Referenzstunden gleich;
+  `tests/test_replay.py` prüft es an einer Simulation (der Test der Bindung; braucht `cargo build --release -p
+  presence-replay`).
+- **prof** (1200 s vom 10.10., ein Kern): Kern allein 15,9 s, über die Python-Hülle (`prof.py`) 16,3 s – die Hülle
+  kostet ~0,4 s (2,5 %).
+- `SILENT_AFTER` (30 s) steht nur noch im Kern (`presence_core.SILENT_AFTER`); die Hülle übernimmt ihn.
 ## 0.40.1 (Branch `rust-core`, nach Leons Prüfung der Aufräumrunde; nicht live)
 
 Modell unverändert; Spuren der drei Referenzstunden byte-gleich mit 0.40.0.

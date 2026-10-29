@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["presence-core", "presence-py"]
+members = ["presence-core", "presence-py", "presence-replay"]
 
 [workspace.package]
 edition = "2024"

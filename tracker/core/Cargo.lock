@@ -586,6 +586,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "presence-replay"
+version = "0.1.0"
+dependencies = [
+ "presence-core",
+ "serde_json",
+]
+
+[[package]]
 name = "private-gemm-x86"
 version = "0.1.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
