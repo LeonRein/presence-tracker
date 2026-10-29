@@ -2,6 +2,27 @@
 
 ## Unveröffentlicht
 
+## 0.54.1 (Branch `rust-core`, „Gelerntes“ für alle Sensoren zugleich; nicht live, kein Tag)
+
+Rückmeldung Leon zu 0.54.0: kein Sensor-Auswahlfeld, das Gelernte aller Sensoren zugleich, die Auswahl hebt hervor
+(wie die Sicht je Kachel). Nur Oberfläche; Kern, Endpunkt und Spuren unverändert.
+- **Jede Ebene zeigt alle Sensoren**, jeden in seiner Farbe. Ein Sensor wird wie überall durch Klick auf der Karte
+  gewählt (oder in der Liste der Ebene; nochmal klicken oder Klick ins Leere: keiner). Der gewählte tritt hervor, die
+  anderen zurück; ohne Wahl sind alle gleich stark. Im Tab lässt sich ein Sensor nur wählen, nicht verschieben oder
+  drehen (`PickTool`).
+  - *Geister*: alle Sensoren übereinander, nur wo öfter als das Vorwissen (Skala: das höchste Verhältnis aller), der
+    gewählte obenauf; die Liste nennt je Sensor das höchste Verhältnis und die Stunden. Der Text sagt jetzt deutlich:
+    gezählt werden beginnende Spuren mit der Wahrscheinlichkeit, mit der der Filter sie für Geister hält – sein
+    Urteil, keine Wahrheit.
+  - *LD2410C-Hintergrund*: die Balken aller Sensoren untereinander, kompakt (bewegt und ruhig nebeneinander), der
+    gewählte oben, die anderen blasser; je Sensor Stunden, Langzeitwert, Echorate; die Legende einmal.
+  - *Blick des LD2410C*: ohne Wahl eine Übersicht aller Sensoren mit den Räumen, die ihr LD2410C weniger als ganz
+    sieht („nicht gemessen (Anteil 1)“, wo nichts gemessen ist); mit Wahl färbt die Karte die Räume nach dem Anteil
+    dieses Sensors.
+  - *Ziele*: unverändert (nicht je Sensor).
+- Entschieden mit Leon: eigener Tab, kein Schalter für das Gelernte in anderen Tabs; im Tab Sensoren keine Auswahl
+  des Gelernten (seit 0.54.0).
+
 ## 0.54.0 (Branch `rust-core`, Tab „Gelerntes“; nicht live, kein Tag)
 
 Modell unverändert: die Spuren der drei Referenzstunden sind byte-gleich mit 0.53.x.

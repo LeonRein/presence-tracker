@@ -1,7 +1,8 @@
 """The tab "Gelerntes" (static/js: view.js _learned, panels.js learnedBars): the web UI draws what the core says was
-learned (GET /api/learned) and knows no number of the model - the ghost map's scale is the prior the core sends, the
-destination cells' colour the outcome the core names likeliest, the gates' distances the core's gate length, the
-measured view as sent (none: nothing drawn). Runs the modules in Node; skipped without it."""
+learned (GET /api/learned), all sensors at once in their colours, the one chosen on the map strong and the others
+faint, and knows no number of the model - the ghost map's scale is the prior the core sends, the destination cells'
+colour the outcome the core names likeliest, the gates' distances the core's gate length, the measured view of the
+chosen sensor as sent (none chosen or none measured: nothing drawn). Runs the modules in Node; skipped without it."""
 
 import copy
 import json
@@ -23,8 +24,8 @@ def draw(learned, config, layer, sensor=None, colors=False):
     script = f"""
 import {{ MapView }} from {json.dumps((JS / 'view.js').as_uri())};
 import {{ state }} from {json.dumps((JS / 'store.js').as_uri())};
-Object.assign(state, {{ config: {json.dumps(config)}, learnedLayer: {json.dumps(layer)}, learnedSensor: {json.dumps(sensor)},
-  learnedColors: {json.dumps(colors)} }});
+Object.assign(state, {{ config: {json.dumps(config)}, learned: {json.dumps(learned)}, learnedLayer: {json.dumps(layer)},
+  selection: {json.dumps({"kind": "sensor", "id": sensor} if sensor else None)}, learnedColors: {json.dumps(colors)} }});
 const view = {{ s: 100, P: (x, y) => [x * 100, -y * 100] }};
 view.pts = list => list.map(([x, y]) => view.P(x, y).join(',')).join(' ');
 console.log(JSON.stringify(MapView.prototype._learned.call(view, {json.dumps(learned)})));"""
@@ -49,22 +50,28 @@ def opacities(svg, attr="fill-opacity"):
 def test_the_learned_layers_are_drawn_from_the_cores_numbers_only(tmp_path):
     app = an_app(tmp_path)
     learned, config = app.tracker.learned_view(), app.config.to_dict()
-    # the ghost map: nothing learned, every watched tile as the prior, faint and alike
+    # the ghost map: nothing learned, nothing above the prior, nothing drawn
     g = learned["sensors"]["a"]["ghosts"]
     watched = [k for k, v in enumerate(g["rate"]) if v is not None]
-    assert watched and len(set(opacities(draw(learned, config, "ghosts", "a")))) == 1
-    # one tile at ten times the prior: the strongest; the same relations to another prior draw the same map
+    assert watched and "<rect" not in draw(learned, config, "ghosts")
+    # one tile of a at ten times its prior, one of b at three times: each in its colour; the same relations to
+    # another prior draw the same map
     more = copy.deepcopy(learned)
-    m = more["sensors"]["a"]["ghosts"]
-    m["rate"][watched[0]] = 10 * m["prior"]
-    svg = draw(more, config, "ghosts", "a")
-    a = opacities(svg)
-    assert len(a) == len(watched) and a[0] == max(a) > min(a)
+    for sid, k in (("a", 10), ("b", 3)):
+        m = more["sensors"][sid]["ghosts"]
+        m["rate"][watched[0]] = k * m["prior"]
+    svg = draw(more, config, "ghosts")
+    fills = re.findall(r'<rect [^>]*fill="([^"]+)" fill-opacity="([0-9.]+)"', svg)
+    assert len(fills) == 2 and fills[0][0] != fills[1][0]
+    alike = {c: float(a) for c, a in fills}
     scaled = copy.deepcopy(more)
     s = scaled["sensors"]["a"]["ghosts"]
     s["prior"] *= 3
     s["rate"] = [None if v is None else 3 * v for v in s["rate"]]
-    assert draw(scaled, config, "ghosts", "a") == svg
+    assert draw(scaled, config, "ghosts") == svg
+    # b chosen: b stronger than without a choice, a fainter, and b drawn on top
+    (ca, a), (cb, b) = re.findall(r'<rect [^>]*fill="([^"]+)" fill-opacity="([0-9.]+)"', draw(more, config, "ghosts", "b"))
+    assert float(b) > alike[cb] and float(a) < alike[ca]
 
     # the destination map: an arrow per cell along its velocity, the cell in the colour of the outcome the core names
     d = learned["destinations"]
@@ -84,19 +91,22 @@ def test_the_learned_layers_are_drawn_from_the_cores_numbers_only(tmp_path):
     assert opacities(svg)[0] < 0.3  # as strong as its share (0.1)
     assert "<rect" not in draw(learned, config, "destinations", colors=False)
 
-    # the measured view: none (Anteil 1) draws nothing; a measured one per room as sent
+    # the measured view: none (Anteil 1) draws nothing; a measured one per room as sent, for the chosen sensor only
     assert draw(learned, config, "ld_view", "a") == ""
     learned["sensors"]["a"]["ld_view"] = {"wohn": 0.25}
     svg = draw(learned, config, "ld_view", "a")
     assert svg.count("<polygon") == 1 and "25 %" in svg
+    assert draw(learned, config, "ld_view") == "" == draw(learned, config, "ld_view", "b")
+    learned["sensors"]["a"]["ld_view"] = {"wohn": 0.998}  # not all of it: not "100 %"
+    assert "99,8 %" in draw(learned, config, "ld_view", "a")
 
 
 def test_the_learned_background_is_drawn_per_gate_of_the_cores_length(tmp_path):
     b = an_app(tmp_path).tracker.learned_view()["sensors"]["a"]["background"]
     live = {"move_gates": [50, 40, 30, 20, 10, 5, 5, 5, 5], "still_gates": [0, 0, 30, 20, 10, 5, 5, 5, 5]}
     svg = bars(b, live, 0.5)
-    labels = re.findall(r'text-anchor="middle" fill="var\(--muted\)">([^<]*)<', svg)
-    assert labels[:3] == ["0,00", "0,50", "1,00"] and len(labels) == 18  # 9 gates, moving and still
+    labels = re.findall(r'font-size="8" fill="var\(--muted\)">([^<]*)<', svg)
+    assert labels[:3] == ["0,00", "1,00", "2,00"] and len(labels) == 10  # every other of 9 gates, moving and still
     # learned and now per gate; no still energy in gates 0 and 1
     assert svg.count("<title>gelernt") == 9 + 7 and svg.count("<title>jetzt") == 9 + 7
     assert svg.count("<title>Langzeitwert") == 9 + 7

@@ -159,19 +159,22 @@ Filter mit ihr rechnet (der ausgewählte Sensor kräftiger), und *Tote Winkel ze
 
 **Gelerntes** (Tab *Gelerntes*): alles, was die App im Betrieb lernt, so wie das Modell es gerade verwendet, je
 Ebene mit einer kurzen Erklärung. Nur zum Anschauen; geholt wird es beim Öffnen des Tabs und mit *Aktualisieren*
-(gerechnet nur dann, das Modell wird dabei nur gelesen).
-- *Geister* (je Sensor): wo der Sensor Spuren beginnt, die zu keiner Person gehören, je Kachel als Rate je m² und
-  Stunde, je röter, desto öfter gegenüber dem Vorwissen; dazu, über wie viele Stunden er beobachtet hat. Der Filter
-  nutzt die Karte.
-- *LD2410C-Hintergrund* (je Sensor): die Energie ohne Person je Entfernungsstufe (bewegt und ruhig), gelernt neben
+(gerechnet nur dann, das Modell wird dabei nur gelesen). Jede Ebene zeigt alle Sensoren zugleich, jeden in seiner
+Farbe. Ein Klick auf einen Sensor auf der Karte (oder in der Liste der Ebene) hebt ihn hervor, die anderen treten
+zurück; nochmal klicken oder ein Klick ins Leere: alle gleich. Verschieben lässt sich hier nichts.
+- *Geister*: wo jeder Sensor Spuren beginnt, die der Filter für Geister hält, je Kachel als Rate je m² und Stunde,
+  umso kräftiger, je öfter gegenüber dem Vorwissen; dazu, über wie viele Stunden er beobachtet hat. Gezählt wird jede
+  beginnende Spur mit der Wahrscheinlichkeit, mit der der Filter sie für einen Geist hält: sein Urteil, keine
+  Wahrheit. Der Filter nutzt die Karte.
+- *LD2410C-Hintergrund*: je Sensor die Energie ohne Person je Entfernungsstufe (bewegt und ruhig), gelernt neben
   jetzt gemessen, mit dem Langzeitwert des Sensors, aus wie vielen Stunden beides gelernt ist und wie oft
-  Echoquellen beginnen. Der Filter nutzt ihn.
+  Echoquellen beginnen; der gewählte Sensor oben. Der Filter nutzt ihn.
 - *Ziele*: die Zielkarte, je Zelle ein Pfeil in die häufigste Gehrichtung (Länge nach dem Tempo, Deckkraft nach
   der Zahl der Gänge); auf Wunsch die Zellen in der Farbe des häufigsten Ziels der Gänge von dort (Raum hinter der
   ersten Tür, Bereich ohne Sensor, außer Haus; kräftiger, je größer sein Anteil, ohne Farbe, wo alle stehen
   blieben). Sie dient nur der Ausgabe *Ziel* und ändert den Filter nicht.
-- *Blick des LD2410C* (je Sensor): wie viel sein LD2410C von einer Person in einem anderen Raum mitbekommt, die
-  Räume nach diesem Anteil eingefärbt. Er ist **gemessen, nicht gelernt** (MODEL.md 4.3 „Blick des LD2410C“,
+- *Blick des LD2410C*: wie viel der LD2410C eines Sensors von einer Person in einem anderen Raum mitbekommt; ohne
+  Wahl je Sensor die Räume, die er weniger als ganz sieht, mit Wahl die Räume nach dem Anteil dieses Sensors gefärbt. Er ist **gemessen, nicht gelernt** (MODEL.md 4.3 „Blick des LD2410C“,
   `tools/ld2410/footprint.py`) und steht in `tracker.json` unter `ld_view` („eigener Raum<-anderer Raum“ → Anteil,
   fehlt: 1); ohne Messung zeigt der Tab „nicht gemessen (Anteil 1)“. *Alle auf Standard* lässt ihn stehen, eine
   gespeicherte Änderung von Sensorlage oder Grundriss leert ihn (gemessen unter der alten Lage). Eine `tracker.json`

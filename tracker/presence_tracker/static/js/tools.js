@@ -190,6 +190,20 @@ function linkedFarEnds(c, links) {
 
 // ----------------------------------------------------------------- select / drag
 
+// Chooses a sensor on the map without moving or turning it (the tab "Gelerntes" only shows): a click on it chooses
+// it, on it again or on the empty map none
+export class PickTool {
+  down(world, hit) {
+    if (hit?.dataset.kind !== 'sensor') return false;
+    select(state.selection?.kind === 'sensor' && state.selection.id === hit.dataset.id ? null : { kind: 'sensor', id: hit.dataset.id });
+    return true;
+  }
+
+  click(world, hit) {
+    if (!hit) select(null);
+  }
+}
+
 export class SelectTool {
   constructor(kinds) { this.kinds = kinds; this.drag = null; }
 

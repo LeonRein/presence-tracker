@@ -1,7 +1,7 @@
 // Side panel per tab.
-import { api, coverageNow, edit, emit, heldBadges, onWall, refreshCoverage, savePref, saveNow, select, sensorById, sensorColor, setTool, state } from './store.js';
+import { api, coverageNow, edit, emit, heldBadges, learnedSelected, onWall, refreshCoverage, savePref, saveNow, select, sensorById, sensorColor, setTool, state } from './store.js';
 import { autoFitImage, deleteSelection, fitFromCalibration } from './tools.js';
-import { LABELS, LAYER_LIMITS, ZONE_KINDS, bindNumber, dist, esc, fmt, h, onSegment, outcomeColor, personColor, regionOfRoom, roomsWithSensor, toast, uid, zoneArea } from './util.js';
+import { LABELS, LAYER_LIMITS, ZONE_KINDS, bindNumber, dist, esc, fmt, h, onSegment, outcomeColor, personColor, regionOfRoom, roomsWithSensor, sharePct, toast, uid, zoneArea } from './util.js';
 import { loadSize } from './view.js';
 
 let skipRender = false;
@@ -254,31 +254,28 @@ function gateBars(ld) {
 }
 
 // The LD2410C's learned background per gate (the core's: what the filter weighs with now, the long-run level as a
-// line) next to its energies now, moving and still, the gates' distances from derived.ld2410_gate. The scale is the
-// learned one's (three times its largest): an energy now above it is cut, with a mark (someone there)
+// line) next to its energies now, moving and still side by side, the gates' distances from derived.ld2410_gate. The
+// scale is the learned one's (three times its largest): an energy now above it is cut, with a mark (someone there)
 export function learnedBars(b, ld) {
   const gate = state.derived?.ld2410_gate;
-  const w = 28, hgt = 70, gap = 4;
+  const w = 16, hgt = 44, gap = 2, side = 9 * (w + gap), mid = 14;
   const kinds = [['moving', 'move_gates', 'bewegt'], ['still', 'still_gates', 'ruhig']];
   const learned = kinds.flatMap(([k]) => [...b.now[k], ...b.anchor[k]]).filter(Number.isFinite);
   const top = Math.min(100, Math.max(10, Math.ceil(3 * Math.max(...learned) / 10) * 10));
   const y = v => hgt - Math.min(v, top) * hgt / top;
-  return kinds.map(([k, now, label]) => {
-    const bars = b.now[k].map((v, i) => {
-      const x = i * (w + gap), cur = ld?.[now]?.[i];
-      if (v == null) return `<text x="${x + w / 2}" y="${hgt + 12}" font-size="9" text-anchor="middle" fill="var(--muted)">${gate ? fmt(i * gate, 2) : ''}</text>`;
-      return `<rect x="${x}" y="${y(v)}" width="${w / 2 - 1}" height="${hgt - y(v)}" fill="var(--${k})" fill-opacity="0.35"><title>gelernt ${fmt(v, 1)}</title></rect>
-        <line x1="${x}" x2="${x + w / 2 - 1}" y1="${y(b.anchor[k][i])}" y2="${y(b.anchor[k][i])}" stroke="var(--text)" stroke-width="1.5"><title>Langzeitwert ${fmt(b.anchor[k][i], 1)}</title></line>
-        ${Number.isFinite(cur) ? `<rect x="${x + w / 2}" y="${y(cur)}" width="${w / 2 - 1}" height="${hgt - y(cur)}" fill="var(--${k})"><title>jetzt ${fmt(cur, 0)}</title></rect>` : ''}
-        ${cur > top ? `<path d="M${x + w / 2},${y(cur) - 2}l${(w / 2 - 1) / 2},-6l${(w / 2 - 1) / 2},6z" fill="var(--${k})"/>` : ''}
-        <text x="${x + w / 2}" y="${hgt + 12}" font-size="9" text-anchor="middle" fill="var(--muted)">${gate ? fmt(i * gate, 2) : ''}</text>`;
-    }).join('');
-    return `<h3>${label}</h3><svg viewBox="-2 -12 ${9 * (w + gap) + 4} ${hgt + 26}" width="100%" style="max-width:320px">
-      <text x="0" y="-3" font-size="9" fill="var(--muted)">${top}</text><line x1="0" x2="${9 * (w + gap)}" y1="${hgt}" y2="${hgt}" stroke="var(--line)"/>${bars}</svg>`;
-  }).join('') + `<div class="legend"><span><span class="swatch" style="background:var(--moving);opacity:.35"></span>gelernt</span>
-    <span><span class="swatch" style="background:var(--moving)"></span>jetzt gemessen</span>
-    <span><svg width="14" height="10"><line x1="0" x2="14" y1="5" y2="5" stroke="var(--text)" stroke-width="1.5"/></svg>Langzeitwert</span>
-    <span>Abstand in m, Energie (▲ jetzt über der Skala)</span></div>${ld?.still_gates ? '' : '<p class="note">Keine Energiewerte pro Entfernungsstufe vom Sensor (Firmware mit Engineering Mode nötig): nur das Gelernte.</p>'}`;
+  const part = ([k, now, label], x0) => `<text x="${x0}" y="-3" font-size="9" fill="var(--muted)">${label}</text>
+    <line x1="${x0}" x2="${x0 + side - gap}" y1="${hgt}" y2="${hgt}" stroke="var(--line)"/>` + b.now[k].map((v, i) => {
+    const x = x0 + i * (w + gap), cur = ld?.[now]?.[i];
+    const at = i % 2 ? '' : `<text x="${x}" y="${hgt + 11}" font-size="8" fill="var(--muted)">${gate ? fmt(i * gate, 2) : ''}</text>`;
+    if (v == null) return at;
+    return `${at}<rect x="${x}" y="${y(v)}" width="${w / 2 - 1}" height="${hgt - y(v)}" fill="var(--${k})" fill-opacity="0.35"><title>gelernt ${fmt(v, 1)}</title></rect>
+      <line x1="${x}" x2="${x + w / 2 - 1}" y1="${y(b.anchor[k][i])}" y2="${y(b.anchor[k][i])}" stroke="var(--text)" stroke-width="1.5"><title>Langzeitwert ${fmt(b.anchor[k][i], 1)}</title></line>
+      ${Number.isFinite(cur) ? `<rect x="${x + w / 2}" y="${y(cur)}" width="${w / 2 - 1}" height="${hgt - y(cur)}" fill="var(--${k})"><title>jetzt ${fmt(cur, 0)}</title></rect>` : ''}
+      ${cur > top ? `<path d="M${x + w / 2},${y(cur) - 1}l${(w / 2 - 1) / 2},-5l${(w / 2 - 1) / 2},5z" fill="var(--${k})"/>` : ''}`;
+  }).join('');
+  return `<svg viewBox="-2 -12 ${2 * side + mid + 4} ${hgt + 24}" width="100%" style="max-width:340px">
+    ${part(kinds[0], 0)}${part(kinds[1], side + mid)}<text x="${2 * side + mid - gap}" y="-3" font-size="8" text-anchor="end" fill="var(--muted)">Skala bis ${top}</text></svg>
+    ${ld?.still_gates ? '' : '<p class="note">Keine Energiewerte pro Entfernungsstufe vom Sensor (Firmware mit Engineering Mode nötig): nur das Gelernte.</p>'}`;
 }
 
 // what the panels show of the model of the saved configuration (updateDerived)
@@ -840,13 +837,8 @@ function calibrationResult(el, r) {
 // ---------------------------------------------------------------- learned
 
 // What the running model learned (the core's, api/learned: fetched when the tab opens and on "Aktualisieren"), one
-// layer at a time on the map (view.js _learned); per layer what it is for and its numbers here
-const LEARNED_LAYERS = {
-  ghosts: { label: 'Geister', sensor: true },
-  background: { label: 'LD2410C-Hintergrund', sensor: true },
-  destinations: { label: 'Ziele', sensor: false },
-  ld_view: { label: 'Blick des LD2410C', sensor: true },
-};
+// layer at a time on the map for all sensors (view.js _learned); per layer what it is for and its numbers here
+const LEARNED_LAYERS = { ghosts: 'Geister', background: 'LD2410C-Hintergrund', destinations: 'Ziele', ld_view: 'Blick des LD2410C' };
 
 async function refreshLearned() {
   try {
@@ -866,55 +858,61 @@ function placeName(id) {
   return state.config.zones.find(z => z.id === id)?.name || state.derived?.plan.regions[id]?.name || id;
 }
 
+// All sensors at once, each in its colour; a sensor chosen on the map or in the list (click again: none) stands out,
+// the others step back
 function learnedPanel(panel) {
   const L = state.learned;
   if (!L) refreshLearned();
   const layer = LEARNED_LAYERS[state.learnedLayer] ? state.learnedLayer : 'ghosts';
-  const sensors = Object.keys(L?.sensors || {});
-  if (!sensors.includes(state.learnedSensor)) state.learnedSensor = sensors[0] ?? null;
-  const sid = state.learnedSensor;
   panel.append(h(`<div>
     <h2>Gelerntes</h2>
     <p class="note">Was die App im Betrieb lernt, so wie das Modell es gerade verwendet. Nur zum Anschauen. Eine gespeicherte Änderung von Sensorlage oder Grundriss verwirft alles Gelernte; solange „Lernen pausieren“ an ist, lernt nichts davon.</p>
     <div class="seg" id="layers" style="margin-bottom:8px;flex-wrap:wrap">${Object.entries(LEARNED_LAYERS).map(([k, v]) =>
-      `<button data-layer="${k}" class="${k === layer ? 'active' : ''}">${v.label}</button>`).join('')}</div>
-    ${LEARNED_LAYERS[layer].sensor && sensors.length ? `<label class="field">Sensor<select id="lsensor">${sensors.map(id =>
-      `<option value="${esc(id)}" ${id === sid ? 'selected' : ''}>${esc(sensorById(id)?.name || id)}</option>`).join('')}</select></label>` : ''}
+      `<button data-layer="${k}" class="${k === layer ? 'active' : ''}">${v}</button>`).join('')}</div>
     <div id="ltext"></div>
     <div class="row" style="margin-top:8px"><button class="btn" id="lrefresh">Aktualisieren</button></div>
   </div>`));
   for (const b of panel.querySelectorAll('#layers button')) {
     b.onclick = () => { state.learnedLayer = b.dataset.layer; savePref('learnedLayer', state.learnedLayer); emit('learned'); };
   }
-  const pick = panel.querySelector('#lsensor');
-  if (pick) pick.onchange = () => { state.learnedSensor = pick.value; emit('learned'); };
   panel.querySelector('#lrefresh').onclick = () => refreshLearned();
   const text = panel.querySelector('#ltext');
   if (!L) { text.innerHTML = '<p class="note">Lädt …</p>'; return; }
   if (L.error) { text.innerHTML = `<p class="note" style="color:var(--bad)">${esc(L.error)}</p>`; return; }
-  if (layer !== 'destinations' && !sid) { text.innerHTML = '<p class="note">Kein Sensor in Gebrauch.</p>'; return; }
-  const s = L.sensors[sid];
+  const sel = learnedSelected();
+  // the sensors in use, the chosen one first; a row per sensor that chooses it
+  const ids = Object.keys(L.sensors).sort((a, b) => (b === sel) - (a === sel));
+  const choose = sel ? 'Auf der Karte oder hier einen anderen Sensor wählen; nochmal klicken: alle gleich.' : 'Einen Sensor auf der Karte oder hier wählen, um ihn hervorzuheben.';
+  const row = (id, body) => `<div class="item ${id === sel ? 'selected' : ''}" data-sid="${esc(id)}" style="flex-wrap:wrap${sel && id !== sel ? ';opacity:.55' : ''}">
+    <span class="swatch" style="background:${sensorColor(id)}"></span><span class="grow">${esc(sensorById(id)?.name || id)}</span>${body}</div>`;
   text.innerHTML = {
     ghosts: () => {
-      const g = s.ghosts;
-      const top = Math.max(g.prior, ...g.rate.filter(v => v != null));
-      return `<p class="note">Wo der Sensor Spuren beginnt, die zu keiner Person gehören (Reflexionen an Fenstern, Spiegeln, Heizkörpern). Je röter die Kachel, desto öfter, gemessen am Vorwissen: blass so oft wie angenommen, kräftig am häufigsten. Der Filter liest daraus, wie wahrscheinlich eine neue Spur dort ein Geist ist.</p>
-        <dl class="kv"><dt>am häufigsten</dt><dd>${fmt(top, 2)} je m² und Stunde (${fmt(top / g.prior, 1)}-mal das Vorwissen)</dd>
-        <dt>Vorwissen</dt><dd>${fmt(g.prior, 3)} je m² und Stunde</dd>
-        <dt>gelernt über</dt><dd>${span(g.hours)} Beobachtung; Älteres verblasst (Zeitkonstante ${span(g.forget_hours)})</dd></dl>`;
+      const top = id => Math.max(...L.sensors[id].ghosts.rate.filter(v => v != null), 0) / L.sensors[id].ghosts.prior;
+      const g = L.sensors[ids[0]]?.ghosts;
+      return `<p class="note">Wo ein Sensor Spuren beginnt, die der Filter für Geister hält (Reflexionen an Fenstern, Spiegeln, Heizkörpern): Gezählt wird jede beginnende Spur mit der Wahrscheinlichkeit, mit der der Filter sie für einen Geist hält. Das ist sein eigenes Urteil, keine Wahrheit: Hält er eine Person für einen Geist, lernt er ihren Platz als Geisterquelle. Je Sensor in seiner Farbe, umso kräftiger, je öfter gegenüber dem Vorwissen; wo nicht öfter als angenommen, ohne Farbe. Der Filter liest daraus, wie wahrscheinlich eine neue Spur dort ein Geist ist.</p>
+        <p class="note">${choose}</p>
+        <div class="list">${ids.map(id => row(id, `<span class="meta">bis ${fmt(top(id), 1)}-mal · ${span(L.sensors[id].ghosts.hours)}</span>`)).join('')}</div>
+        ${g ? `<p class="note">Vorwissen ${fmt(g.prior, 3)} Geister je m² und Stunde; Stunden: wie lange der Sensor beobachtet hat, Älteres verblasst (Zeitkonstante ${span(g.forget_hours)}).</p>` : ''}`;
     },
     background: () => {
-      const b = s.background;
-      return `<p class="note">Die Energie, die der LD2410C ohne Person misst, je Entfernungsstufe. Der Filter wiegt jede gemessene Energie gegen diesen Hintergrund ab: Was deutlich darüber liegt, kann eine Person sein. Gelernt wird laufend aus den Zeiten, in denen niemand im Blick ist; ohne neue Daten geht er zum Langzeitwert des Sensors zurück.</p>
-        <div data-live="learnedGates" data-id="${esc(sid)}"></div>
-        <dl class="kv"><dt>gelernt aus</dt><dd>${span(b.hours)} (Zeitkonstante ${span(b.forget_hours)})</dd>
-        <dt>Langzeitwert aus</dt><dd>${span(b.anchor_hours)} (Zeitkonstante ${span(b.anchor_forget_hours)})</dd>
-        <dt>Echoquellen</dt><dd>${fmt(b.echo_rate, 2)} je Stunde (Vorwissen ${fmt(b.echo_prior, 2)}): kurze Energie ohne Person, die der Filter nicht für jemanden hält</dd></dl>`;
+      const b = L.sensors[ids[0]]?.background;
+      return `<p class="note">Die Energie, die ein LD2410C ohne Person misst, je Entfernungsstufe. Der Filter wiegt jede gemessene Energie gegen diesen Hintergrund ab: Was deutlich darüber liegt, kann eine Person sein. Gelernt wird laufend aus den Zeiten, in denen niemand im Blick ist; ohne neue Daten geht er zum Langzeitwert des Sensors zurück.</p>
+        <div class="legend"><span><span class="swatch" style="background:var(--moving);opacity:.35"></span>gelernt</span>
+          <span><span class="swatch" style="background:var(--moving)"></span>jetzt gemessen</span>
+          <span><svg width="14" height="10"><line x1="0" x2="14" y1="5" y2="5" stroke="var(--text)" stroke-width="1.5"/></svg>Langzeitwert</span>
+          <span>Abstand in m; ▲ jetzt über der Skala</span></div>
+        <p class="note">${choose}</p>
+        <div class="list">${ids.map(id => {
+          const x = L.sensors[id].background;
+          return row(id, `<div class="meta sub">${span(x.hours)} gelernt · Langzeitwert aus ${span(x.anchor_hours)} · Echo ${fmt(x.echo_rate, 2)} je h</div>
+            <div style="flex-basis:100%" data-live="learnedGates" data-id="${esc(id)}"></div>`);
+        }).join('')}</div>
+        ${b ? `<p class="note">Stunden, aus denen der Hintergrund und der Langzeitwert gelernt sind; Zeitkonstanten ${span(b.forget_hours)} bzw. ${span(b.anchor_forget_hours)}. Echo: wie oft je Stunde kurze Energie ohne Person beginnt, die der Filter nicht für jemanden hält (Vorwissen ${fmt(b.echo_prior, 2)}).</p>` : ''}`;
     },
     destinations: () => {
       const d = L.destinations;
       const likely = [...new Set(d.cells.map(c => c.likely).filter(k => k != null))].sort((a, b) => a - b);
-      return `<p class="note">Wohin Gänge führten: je Zelle ein Pfeil in die häufigste Gehrichtung, so lang wie schnell dort gegangen wurde, umso kräftiger, je mehr Gänge. Ausgang eines Gangs ist der Raum hinter der ersten Tür, ein Bereich ohne Sensor, außer Haus, oder er bleibt (stehen geblieben). Daraus entsteht nur die Ausgabe „Ziel“; den Filter ändert die Karte nicht.</p>
+      return `<p class="note">Wohin Gänge führten: je Zelle ein Pfeil in die häufigste Gehrichtung, so lang wie schnell dort gegangen wurde, umso kräftiger, je mehr Gänge. Ausgang eines Gangs ist der Raum hinter der ersten Tür, ein Bereich ohne Sensor, außer Haus, oder er bleibt (stehen geblieben). Daraus entsteht nur die Ausgabe „Ziel“; den Filter ändert die Karte nicht. Sie gilt für alle Sensoren zusammen.</p>
         <label class="check"><input type="checkbox" id="lcolors" ${state.learnedColors ? 'checked' : ''}> Zellen nach dem häufigsten Ziel färben</label>
         ${state.learnedColors ? '<p class="note">Farbe: wohin Gänge von hier am häufigsten weitergingen (über alle Richtungen, ohne „bleibt“), umso kräftiger, je größer ihr Anteil; ohne Farbe: alle blieben.</p>' : ''}
         ${state.learnedColors && likely.length ? `<div class="legend">${likely.map(k =>
@@ -922,14 +920,18 @@ function learnedPanel(panel) {
         <dl class="kv"><dt>gezählt</dt><dd>${d.cells.length ? `${fmt(d.walks, 0)} Gänge` : 'noch keine Gänge'}; Älteres verblasst (Zeitkonstante ${span(d.forget_hours)})</dd>
         <dt>am meisten</dt><dd>${fmt(Math.max(0, ...d.cells.map(c => c.walks)), 1)} Gänge durch eine Zelle in ihrer häufigsten Richtung</dd></dl>`;
     },
-    ld_view: () => {
-      const v = s.ld_view;
-      return `<p class="note">Wie viel der LD2410C dieses Sensors von einer Person in einem anderen Raum mitbekommt, als Anteil dessen, was Sichtlinie und Wände erwarten lassen. Gemessen (tools/ld2410/footprint.py aus Aufnahmen), nicht gelernt; steht in tracker.json unter ld_view. Eine gespeicherte Änderung von Sensorlage oder Grundriss leert ihn.</p>
-        ${v ? `<table class="data"><tr><th>Raum</th><th>Anteil</th></tr>${Object.entries(v).map(([id, x]) =>
-          `<tr><td>${esc(placeName(id))}</td><td>${pct(x)}</td></tr>`).join('')}</table>`
-        : '<p><b>nicht gemessen (Anteil 1)</b>: Der Filter nimmt die Sicht aus der Geometrie.</p>'}`;
-    },
+    ld_view: () => `<p class="note">Wie viel der LD2410C eines Sensors von einer Person in einem anderen Raum mitbekommt, als Anteil dessen, was Sichtlinie und Wände erwarten lassen. Gemessen (tools/ld2410/footprint.py aus Aufnahmen), nicht gelernt; steht in tracker.json unter ld_view. Eine gespeicherte Änderung von Sensorlage oder Grundriss leert ihn. Je Sensor die Räume, die er weniger als ganz sieht; alle anderen mit Anteil 1. Ist ein Sensor gewählt, zeigt die Karte seine Räume nach dem Anteil.</p>
+      <p class="note">${choose}</p>
+      <div class="list">${ids.map(id => {
+        const v = L.sensors[id].ld_view;
+        const less = Object.entries(v || {}).filter(([, x]) => x < 1).sort((a, b) => a[1] - b[1]);
+        return row(id, `<div class="meta sub" style="white-space:normal">${!v ? 'nicht gemessen (Anteil 1)'
+          : less.length ? less.map(([room, x]) => `${esc(placeName(room))} ${sharePct(x)}`).join(', ') : 'alle Räume ganz (Anteil 1)'}</div>`);
+      }).join('')}</div>`,
   }[layer]();
+  for (const r of text.querySelectorAll('[data-sid]')) {
+    clickable(r, () => select(r.dataset.sid === sel ? null : { kind: 'sensor', id: r.dataset.sid }));
+  }
   panel.querySelector('#lcolors')?.addEventListener('change', e => { state.learnedColors = e.target.checked; emit('learned'); });
 }
 

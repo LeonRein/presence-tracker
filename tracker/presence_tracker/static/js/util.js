@@ -90,6 +90,9 @@ export function uid(prefix = 'z') {
   return prefix + Math.random().toString(36).slice(2, 8);
 }
 
+// a share in percent; just under 1 with a decimal, so that it does not read as all of it
+export const sharePct = x => `${x < 1 && x >= 0.995 ? fmt(100 * x, 1) : Math.round(100 * x)}\u00a0%`;
+
 export function fmt(v, digits = 2) {
   return Number.isFinite(v) ? v.toFixed(digits).replace('.', ',') : '–';
 }

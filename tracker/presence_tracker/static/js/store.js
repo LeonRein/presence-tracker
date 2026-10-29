@@ -16,10 +16,9 @@ export const state = {
   selectable: [],       // element kinds that can be selected in the current tab
   showCoverage: false,
   // the tab "Gelerntes": what the model learned (api/learned, the core's; null: not fetched since the tab opened),
-  // the layer shown (remembered per browser), its sensor, the destination cells coloured by their likeliest outcome
+  // the layer shown (remembered per browser), the destination cells coloured by their likeliest outcome
   learned: null,
   learnedLayer: loadPref('learnedLayer', 'ghosts'),
-  learnedSensor: null,
   learnedColors: false,
   showRaw: loadPref('showRaw', false),  // the raw sensor data on the live map (remembered per browser)
   holds: {},            // zone id -> {approach, target}: badges held for HOLD_MS after they went off
@@ -254,6 +253,9 @@ export function setTool(tool) {
   state.tool = tool;
   emit('tool');
 }
+
+// the sensor chosen in the tab "Gelerntes" (on the map or in its list) if it has something learned, else null: all alike
+export const learnedSelected = () => (state.selection?.kind === 'sensor' && state.learned?.sensors?.[state.selection.id] ? state.selection.id : null);
 
 export function sensorById(id) {
   return state.config.sensors.find(s => s.id === id);

@@ -1,6 +1,6 @@
 import { renderPanel, seenTotal, updateDerived, updateLive } from './panels.js';
 import { TAB_NAMES, emit, loadConfig, onChange, redo, redoState, saveNow, select, setTool, state, undo, undoState, unsaved, updateHolds, heldBadges } from './store.js';
-import { AlignTool, DoorTool, PlaceSensorTool, SelectTool, WallTool, ZoneTool } from './tools.js';
+import { AlignTool, DoorTool, PickTool, PlaceSensorTool, SelectTool, WallTool, ZoneTool } from './tools.js';
 import { fmt, sensorsOnline, toast } from './util.js';
 import { MapView } from './view.js';
 
@@ -11,7 +11,7 @@ const SELECTABLE = {
   sensors: ['sensor'],
   zones: ['zone', 'room'],
   calibration: [],
-  learned: [],
+  learned: ['sensor'],
   settings: [],
 };
 
@@ -27,6 +27,7 @@ function makeController() {
   else if (t?.name === 'zone') ctl = new ZoneTool(t.shape, t.kind);
   else if (t?.name === 'place') ctl = new PlaceSensorTool(t.id);
   else if (t?.name === 'align') ctl = new AlignTool(t.layer);
+  else if (state.tab === 'learned') ctl = new PickTool();
   else ctl = new SelectTool(SELECTABLE[state.tab]);
   state.selectable = SELECTABLE[state.tab];
   ctl.view = view;
