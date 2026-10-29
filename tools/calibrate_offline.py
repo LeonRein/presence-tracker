@@ -6,9 +6,11 @@ usage: python tools/calibrate_offline.py --config FILE [--recordings DIR] [--fro
                                          [--bootstrap N] [--profile ID] [--mirrors] [--cache FILE]
                                          [--out FILE] [--pauses FILE]
 
-The model is the app's (tracker/presence_tracker/calibration.py: pairs, handovers, floor plan,
-scale prior; MODEL.md 10): the recorded frames go through the same code as in the app's
-calibration session. This tool adds what the app doesn't need: other time spans, a block bootstrap
+The model is the app's (pairs, handovers, floor plan, scale prior; MODEL.md 10): the recorded frames go
+through the same code as in the app's calibration session. Since 0.45.0 the estimator is the Rust core's
+(presence-core/src/calibration/; the app: presence_core.calibrate) and its inner parts (Problem, Fit, the
+checks) are no longer Python: run this tool with --tracker on a tree of 0.43.0 (git worktree add ../pt-0430
+7838967; its own .venv with its core built), where the estimator was Python and gave the same results. This tool adds what the app doesn't need: other time spans, a block bootstrap
 over BLOCK-s blocks next to the robust covariance, the mirror and scale profiles, shifting drawn
 positions, and a copy of the config with the result.
 

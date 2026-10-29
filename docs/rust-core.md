@@ -42,7 +42,7 @@ zum Programm. Ohne Ausnahme; was nicht passt, ist ein Fehler im Aufbau.
 |---|---|
 | MQTT (`sources.py`), Home Assistant (`ha.py`, `ZoneState`-Rundung und Ausgabe-Halten), Web-Oberfläche (`app.py`, `static/`) | unverändert |
 | Konfiguration bearbeiten und speichern (`model.py` ohne das Abgeleitete; die Räume aus den Wänden rechnet der Kern, `presence_core.sync_rooms`, 0.44.0); geprüft wird sie im Kern (`presence_core.check_config`, beim Bearbeiten `check_edit` mit den Bildebenen; die Grenzen aller Zahlen, `config_limits()` für die Eingabefelder), die Hülle übersetzt nur dessen `ConfigError` in die deutschen Sätze der Oberfläche (0.43.0) | gekürzt |
-| Kalibrierung (`calibration.py`, vorerst Python mit numpy, der Schätzer): die LD2450-Spuren aus dem Kern (`TrackStage`, `Frame`), die Sensorgeometrie auch (`presence_core.Geometry`: Bodenpunkt, Sicht, freie Fläche, Schritte durch Wände; 0.43.0) | angepasst |
+| Kalibrierung (`calibration.py`): die Messzeilen jedes Frames vom Kern (`presence_core.Walking`) sammeln, einen Tag halten und speichern (`calibration.npz`), dem Kern im Thread geben (`presence_core.calibrate`, `calibration_status`: der Schätzer seit 0.45.0 im Kern, `presence-core/src/calibration/`), seine Gründe in Worte fassen | gekürzt |
 | Simulation (`sim.py`, mit der Sensorgeometrie des Kerns seit 0.43.0), Pausen schalten und speichern (`pause.py`), Dateien und Fehlerberichte schreiben | unverändert |
 | `filter.Tracker` als dünne Hülle mit der heutigen API (4) | neu, klein |
 

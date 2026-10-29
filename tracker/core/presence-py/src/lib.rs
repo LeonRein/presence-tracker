@@ -3,6 +3,7 @@
 use pyo3::panic::PanicException;
 use pyo3::prelude::*;
 
+mod calibration;
 mod config;
 mod core;
 mod floorplan;
@@ -18,7 +19,7 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<core::PyWorld>()?;
     m.add_class::<core::PyLearned>()?;
     m.add_class::<frames::PyClock>()?;
-    m.add_class::<frames::PyTrackStage>()?;
+    m.add_class::<calibration::PyWalking>()?;
     m.add_class::<frames::PyFrame>()?;
     m.add_class::<geometry::PyGeometry>()?;
     m.add_function(wrap_pyfunction!(core::model_defaults, m)?)?;
@@ -26,6 +27,8 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(core::forgetting, m)?)?;
     m.add_function(wrap_pyfunction!(core::ld_prior, m)?)?;
     m.add_function(wrap_pyfunction!(views::plan, m)?)?;
+    m.add_function(wrap_pyfunction!(calibration::calibrate, m)?)?;
+    m.add_function(wrap_pyfunction!(calibration::calibration_status, m)?)?;
     m.add_function(wrap_pyfunction!(floorplan::faces, m)?)?;
     m.add_function(wrap_pyfunction!(floorplan::sync_rooms, m)?)?;
     m.add_function(wrap_pyfunction!(config::check_config, m)?)?;

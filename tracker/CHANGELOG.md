@@ -2,6 +2,32 @@
 
 ## Unveröffentlicht
 
+## 0.45.0 (Branch `rust-core`, Regel „Rust rechnet, Python verbindet“ Teil 2: die Kalibrierung im Kern; nicht live)
+
+Modell unverändert; Spuren der drei Referenzstunden byte-gleich mit 0.43.0.
+
+- **Der Schätzer der Kalibrierung ist Rust** (`presence-core/src/calibration/`, vorher `calibration.py`): Messzeilen
+  jedes Frames (`Walking`: gehende Ziele durch die eigenen Spuren der Boards, nichts während „Lernen pausieren“),
+  Punkte, Paare und Übergaben (`problem.rs`), freie Fläche je Sensor mit dem nächsten freien Punkt (`space.rs`),
+  EM und Gauß-Newton mit numerischer Jacobi-Matrix, robuste Kovarianz in 30-s-Blöcken, zweiter Modus (`fit.rs`,
+  faer mit `Par::Seq`), Vorschlag mit Jackknife über Stunden, Spiegelprüfung und Gründen als Enum, Fortschritt der
+  Daten (`solve.rs`). Bindung: `presence_core.Walking`, `presence_core.calibrate(config, {id: bytes}, check_mirror)`
+  (ohne GIL) und `presence_core.calibration_status`; die Zeilen gehen als die Bytes ihrer float64-Zeilen hinein, wie
+  das npz sie speichert. Python (`calibration.py`) sammelt, hält einen Tag, speichert (`calibration.npz`, Format
+  gleich), gibt dem Kern die Daten im Thread und fasst seine Gründe in die Sätze der Oberfläche.
+- **Gegen Python 0.43.0** auf acht festen Datensätzen (sechs simulierte der Tests, zwei echte: `live_config.json` mit
+  den Aufnahmen vom 10.10. 0–24 Uhr und 8.10. 17–23 Uhr durch die Sammlung der App; je ohne und mit Spiegelprüfung,
+  dazu der Fortschritt): alle Entscheidungen, Gründe und gerundeten Zahlen gleich, nur zweimal die Verbesserung durch
+  Spiegeln um 0,1 bei −2647 und −2798 (die Konvergenzgrenze 1e-6·|ll| des Gauß-Newton). Der echte Tag in 1,8 s statt
+  6,5 s (mit Spiegelprüfung 4,2 s statt 18,0 s).
+- Python 0.43.0 hätte mit dem echten Tag keine Antwort geschickt: numpy-Wahrheitswerte im Ergebnis waren nicht als
+  JSON schreibbar (`TypeError` im Endpunkt). Der Kern gibt JSON.
+- Gelöscht: in Python `track_frame`, `thin`, `walking_times`, `on_floor`, `FreeSpace`, `Problem`, `Fit`, `outside`,
+  `out_of_sight`, `more_out_of_sight`, `pair_agreement`, `crossings`, `stretch_groups`, `jackknife`; in der Bindung
+  `TrackStage`, `Geometry.in_fov/sight_origin/free/crossings/on_floor`. Die freien Lagen (`positions`, nur offline)
+  gibt es im Kern nicht: `tools/calibrate_offline.py` läuft für seine Analysen auf einem Baum von 0.43.0.
+- Tests: „mehr Punkte außerhalb der Sicht“ als Rust-Test, jeder Grund des Kerns ein deutscher Satz (Python).
+
 ## 0.44.0 (Branch `rust-core`, Regel „Rust rechnet, Python verbindet“ Teil 1: Räume aus Wänden; REVIEW_0430; nicht live)
 
 Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.43.0 (presence-replay und `trace.py` über die

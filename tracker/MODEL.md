@@ -986,8 +986,9 @@ Geister geschätzt (4.2).
   erzeugen; der Rang der wahren Zahl unter der Filterverteilung muss gleichverteilt sein.
 - Werkzeuge: `tools/record.py` (Aufnahme), `tools/replay.py` (Aufnahmen durch den Tracker),
   `tools/ghostmap.py` (Geisterkarte offline), `tools/calibrate_offline.py` (Kalibrierung aus
-  Aufnahmen mit dem Modell der App, `calibration.py`, dazu Block-Bootstrap, Spiegel- und Maßstabsprofile
-  und freie Positionen; 10).
+  Aufnahmen mit dem Modell der App, dazu Block-Bootstrap, Spiegel- und Maßstabsprofile und freie Positionen;
+  10; seit 0.45.0 rechnet der Kern den Schätzer, `presence-core/src/calibration/`, die Analysen des Werkzeugs
+  laufen auf einem Baum von 0.43.0).
 
 ## 9. Bekannte Schwächen und Offenes
 Offen beim LD2410C (4.3): Flur 21:35 und 21:56 (Eintretende zu 0,5 statt 0,9 im Flur) liegen nicht

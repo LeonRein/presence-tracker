@@ -4,11 +4,14 @@ import numpy as np
 import pytest
 
 from presence_tracker.frames import Frame
-from presence_tracker.calibration import MIN_STRETCHES, STRETCH, Calibrator, Problem, more_out_of_sight, solve
+from presence_tracker.calibration import Calibrator, solve
 from presence_tracker.model import Config, SensorConfig, TrackerParams
 from presence_tracker.sim import Person, SimSensor, simulate
 
 from test_frames import walk
+
+MIN_STRETCHES = 3  # hours with walking data for a proposal (the core's; the status says it as "min_hours")
+STRETCH = 3600.0  # s, an hour: the core's stretches of everyday situations
 
 
 def _collect(truth, guess, people, duration, plan=None, hours=MIN_STRETCHES):
@@ -151,19 +154,6 @@ def test_a_single_walk_proposes_nothing():
     assert status["points"] == {sid: r["points"] for sid, r in result["sensors"].items()}
 
 
-def test_no_pose_that_puts_more_walking_out_of_sight():
-    truth = _two_rooms()
-    person = _door_walk()
-    data = _collect(truth, truth, [person], person.waypoints[-1][0], truth, hours=1).data()
-    prob = Problem(truth, data, ["a", "b"])
-    right = prob.start()
-    turned = right.copy()
-    turned[2] += np.radians(25)  # b turned by 25 deg: its walk into the neighbouring room and the wall
-    assert more_out_of_sight(prob, right, turned, "b")
-    assert not more_out_of_sight(prob, turned, right, "b")
-    assert not more_out_of_sight(prob, right, right, "a")
-
-
 def test_the_collected_data_survive_a_restart(tmp_path):
     truth, guess, person = _three_sensors()
     calibrator = _collect(truth, guess, [person], 30.0, hours=1)
@@ -246,3 +236,17 @@ def test_the_status_counts_a_copy_and_a_reset_drops_a_count_under_way(tmp_path):
     again = Calibrator(guess)
     again.load(tmp_path / "calibration.npz")
     assert again.status()["frames"] == calibrator.status()["frames"]
+
+
+@pytest.mark.parametrize("reason", [
+    {"kind": "few", "stretches": 1, "min": 3}, {"kind": "worse", "after": 0.125, "before": 0.05},
+    {"kind": "conflict", "plan": 40.2, "pairs": 50.1}, {"kind": "ambiguous", "alt": 123.4},
+    {"kind": "heading_uncertain", "sd": 6.2}, {"kind": "no_ruler"}, {"kind": "scale_uncertain", "sd": 0.091},
+    {"kind": "mirrored", "gain": 12.3},
+])
+def test_every_reason_of_the_core_is_a_sentence(reason):
+    from presence_tracker.calibration import words
+    text = words(reason)
+    assert text[0].isupper() and text.endswith((".", "?")) and "{" not in text
+    if reason["kind"] == "worse":
+        assert "(12 % statt 5 %)" in text

@@ -225,9 +225,8 @@ fn pieces(config: &Config) -> impl Iterator<Item = ([Point; 2], WallKind)> + '_ 
         .map(|w| ([w.a, w.b], w.kind))
 }
 
-/// The real walls as lines, their doors not cut out (the calibration: a step across one goes through a wall
-/// or a door).
-pub fn wall_lines(config: &Config) -> Vec<[Point; 2]> {
+/// The real walls as lines, their doors not cut out.
+fn wall_lines(config: &Config) -> Vec<[Point; 2]> {
     pieces(config)
         .filter(|&(_, k)| k == WallKind::Wall)
         .map(|(p, _)| p)

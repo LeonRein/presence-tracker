@@ -1,5 +1,5 @@
 //! Frames from Python (MODEL.md 4.1): a frame checked once by the core (presence_core.Frame, from the
-//! MQTT payload or a recording's dict), the boards' clocks, and the LD2450's tracks for the calibration.
+//! MQTT payload or a recording's dict) and the boards' clocks.
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -7,7 +7,6 @@ use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 use serde_json::{Map, Number, Value};
 
 use presence_core::frames::{Anchor, Frame, SensorClock};
-use presence_core::ld2450::tracks::TrackStage;
 
 /// Deeper than this a frame is not (its gates are lists in an object in an object).
 const MAX_DEPTH: usize = 8;
@@ -143,31 +142,5 @@ impl PyClock {
     #[getter]
     fn last_up(&self) -> Option<f64> {
         self.0.anchor().map(|a| a.last_up)
-    }
-}
-
-/// The LD2450's own tracks of several boards with one sequence of track ids, for the calibration
-/// (ld2450::tracks::TrackStage).
-#[pyclass(name = "TrackStage", module = "presence_core")]
-pub struct PyTrackStage(TrackStage);
-
-#[pymethods]
-impl PyTrackStage {
-    #[new]
-    fn new(first_id: u64) -> Self {
-        Self(TrackStage::starting_at(first_id))
-    }
-
-    /// A frame of a board at t: its targets measured in a track as (track, x, y (m, sensor frame),
-    /// radial speed (m/s)); ValueError for a time that is no number.
-    fn update(&mut self, sensor_id: &str, t: f64, frame: &Bound<'_, PyFrame>) -> PyResult<Vec<(u64, f64, f64, f64)>> {
-        let measured = self
-            .0
-            .update(sensor_id, t, &frame.get().0)
-            .map_err(|e| invalid(e.to_string()))?;
-        Ok(measured
-            .into_iter()
-            .map(|m| (m.seg.0, m.local[0], m.local[1], m.speed))
-            .collect())
     }
 }
