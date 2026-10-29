@@ -2,7 +2,8 @@
 //! UI's): of a saved configuration the plan (observed rooms with the share the sensors see, regions) and the
 //! thresholds that follow from the parameters; of the running world, per tile how many sensors see it and
 //! each sensor's sight there (the numbers the filter computes with). No geometry for drawing: the web UI
-//! draws the walls, doors, tiles and clouds itself (static/js/view.js).
+//! draws the walls, doors, tiles and clouds itself (static/js/view.js), from the numbers as they are (the
+//! shell rounds what it sends).
 
 use std::collections::BTreeMap;
 
@@ -10,28 +11,14 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::geometry::Point;
-use crate::params::{OutputParams, Params};
-use crate::plan::{DOOR_ON_WALL, OBSERVED_SHARE, Plan, RoomIdx, ZoneRole};
+use crate::params::{OUTPUT_FIELDS, OutputParams, Params};
+use crate::plan::{DOOR_ON_WALL, OBSERVED_SHARE, Opening, Plan, RoomIdx, ZoneRole, door_openings};
 use crate::world::World;
 use crate::world::tiles::SIZE;
 
 /// A sensor sees a tile where its sight of a person there is at least this (MODEL.md 4.1: the sight falls to
 /// half at the edge of the field of view)
 pub const SEES_TILE: f64 = 0.5;
-
-/// mm: what the display gets
-fn mm(v: f64) -> f64 {
-    (v * 1000.0).round() / 1000.0
-}
-
-fn mm2(p: Point) -> Point {
-    [mm(p[0]), mm(p[1])]
-}
-
-/// A sight to two places (0..1): enough to draw it
-fn cents(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
-}
 
 #[derive(Debug, Serialize)]
 pub struct RegionShown {
@@ -52,6 +39,10 @@ pub struct PlanShown {
     pub observed_share: f64,
     /// the sensors in use (enabled and placed)
     pub in_use: Vec<String>,
+    /// the zones of the home (its rooms and areas, in the configuration's order): what Home Assistant gets
+    pub home: Vec<String>,
+    /// per door of the configuration (in its order) its opening in the real wall it is on (None: on none)
+    pub doors: Vec<Option<Opening>>,
     /// m: a door belongs to the real wall its centre lies on up to this (the editor keeps it there)
     pub door_on_wall: f64,
 }
@@ -71,6 +62,8 @@ pub struct Derived {
     pub thresholds: Thresholds,
     /// m: the length of an LD2410C gate (its energies come per gate)
     pub ld2410_gate: f64,
+    /// the parameters only the outputs read: a change of them alone does not start the model over
+    pub output_params: [&'static str; OUTPUT_FIELDS.len()],
 }
 
 /// The derived view of a configuration.
@@ -78,16 +71,17 @@ pub fn derive(config: &Config) -> Derived {
     let plan = Plan::new(config);
     let outputs = OutputParams::of(&config.params, Params::default().silent_after);
     Derived {
-        plan: plan_shown(&plan),
+        plan: plan_shown(&plan, door_openings(config)),
         thresholds: Thresholds {
             occupied: outputs.occupied_above(),
             entering: outputs.entering_above(),
         },
         ld2410_gate: crate::ld2410::GATE,
+        output_params: OUTPUT_FIELDS,
     }
 }
 
-fn plan_shown(plan: &Plan) -> PlanShown {
+fn plan_shown(plan: &Plan, doors: Vec<Option<Opening>>) -> PlanShown {
     let id = |z: usize| plan.zones[z].id.clone();
     PlanShown {
         observed: plan.observed().map(|z| z.id.clone()).collect(),
@@ -104,10 +98,12 @@ fn plan_shown(plan: &Plan) -> PlanShown {
             })
             .collect(),
         shares: (0..plan.zones.len())
-            .filter_map(|z| plan.shares[z].map(|s| (id(z), mm(s))))
+            .filter_map(|z| plan.shares[z].map(|s| (id(z), s)))
             .collect(),
         observed_share: OBSERVED_SHARE,
         in_use: plan.sensors.iter().filter(|s| s.in_use).map(|s| s.id.clone()).collect(),
+        home: plan.home().map(|z| z.id.clone()).collect(),
+        doors,
         door_on_wall: DOOR_ON_WALL,
     }
 }
@@ -163,7 +159,7 @@ pub fn coverage(world: &World) -> Coverage {
         let Some(RoomIdx(r)) = room else { continue };
         for si in in_use.iter() {
             if let Some(v) = sight.get_mut(&plan.sensors[si].id) {
-                v.push(cents(world.sights[si].tiles[t]));
+                v.push(world.sights[si].tiles[t]);
             }
         }
         let seen = in_use
@@ -175,7 +171,7 @@ pub fn coverage(world: &World) -> Coverage {
             1 => single[r] += tiles.area[t],
             _ => {}
         }
-        shown.push((mm2(tiles.squares[t]), plan.room(RoomIdx(r)).id.clone(), seen, mm(best)));
+        shown.push((tiles.squares[t], plan.room(RoomIdx(r)).id.clone(), seen, best));
     }
     let rooms = plan
         .zones
@@ -189,15 +185,15 @@ pub fn coverage(world: &World) -> Coverage {
             };
             let area = z.shape.area();
             let (blind, single) = observed.map_or((0.0, 0.0), |r| (blind[r], single[r]));
-            let of_area = |a: f64| if area > 0.0 { mm(a / area) } else { 0.0 };
+            let of_area = |a: f64| if area > 0.0 { a / area } else { 0.0 };
             Some(RoomCoverage {
                 id: z.id.clone(),
                 name: z.name.clone(),
-                area: mm(area),
+                area,
                 observed: observed.is_some(),
-                share: mm(share),
-                blind: mm(blind),
-                single: mm(single),
+                share,
+                blind,
+                single,
                 blind_share: of_area(blind),
                 single_share: of_area(single),
             })
@@ -249,6 +245,27 @@ mod tests {
             (d.plan.door_on_wall, d.ld2410_gate),
             (DOOR_ON_WALL, crate::ld2410::GATE)
         );
+        // the zones of the home; the door's opening in the bottom wall (wall 0), 0.8 m about x = 1 (1.5 m from
+        // its first end at x = -0.5)
+        assert_eq!(d.plan.home, ["r", "a", "c"]);
+        let o = d.plan.doors[0].expect("on a wall");
+        assert_eq!(o.wall, 0);
+        assert!((o.t0 - 1.1).abs() < 1e-12 && (o.t1 - 1.9).abs() < 1e-12);
+        assert!(d.output_params.contains(&"light_cost") && !d.output_params.contains(&"wall_margin"));
+    }
+
+    #[test]
+    fn a_door_opening_ends_at_its_wall_ends_and_names_the_wall_of_the_configuration() {
+        // a divider first (no wall), then a 1 m wall with a door of 0.8 m at 0.2 m from its first end
+        let c = config(
+            &[("s", "s", [0.0, 2.0], 0.0)],
+            "[]",
+            r#"[{"points": [[0, 5], [4, 5]], "kind": "divider"}, {"points": [[0, 0], [1, 0]], "kind": "wall"}]"#,
+            r#"[{"id": "d", "x": 0.2, "y": 0.0, "width": 0.8}]"#,
+        );
+        let o = derive(&c).plan.doors[0].expect("on a wall");
+        assert_eq!(o.wall, 1);
+        assert!(o.t0 == 0.0 && (o.t1 - 0.6).abs() < 1e-12);
     }
 
     #[test]
@@ -257,11 +274,10 @@ mod tests {
         let both = coverage(&World::build(&flat_config(), Params::default()).expect("the flat world"));
         assert_eq!(both.rooms.len(), 1);
         let r = &both.rooms[0];
-        assert!(r.observed && r.share == 1.0 && r.area == 30.0);
+        assert!(r.observed && r.share == 1.0 && (r.area - 30.0).abs() < 1e-9);
         assert!(both.tiles.iter().any(|t| t.2 == 2) && both.tiles.iter().all(|t| t.1 == "wohn" && t.2 <= 2));
-        assert!(r.blind + r.single <= r.area && (r.blind_share - r.blind / 30.0).abs() < 1e-3);
+        assert!(r.blind + r.single <= r.area && (r.blind_share - r.blind / r.area).abs() < 1e-12);
         // per sensor in use its sight per tile shown: as many seeing it at least SEES_TILE as the count says
-        // (where no sight is rounded across it)
         assert_eq!(both.sight.len(), 2);
         assert!(
             both.sight
@@ -269,9 +285,7 @@ mod tests {
                 .all(|v| v.len() == both.tiles.len() && v.iter().all(|&x| (0.0..=1.0).contains(&x)))
         );
         for (k, t) in both.tiles.iter().enumerate() {
-            if both.sight.values().all(|v| (v[k] - both.sees).abs() > 0.005) {
-                assert_eq!(both.sight.values().filter(|v| v[k] >= both.sees).count(), t.2);
-            }
+            assert_eq!(both.sight.values().filter(|v| v[k] >= both.sees).count(), t.2);
         }
         let mut one = flat_config();
         one.sensors[1].enabled = false;

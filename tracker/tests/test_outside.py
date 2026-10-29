@@ -25,11 +25,11 @@ def test_who_walks_out_through_the_stairwell_door_is_outside():
     seen = {}
     for t, sid, frame in simulate([a], sim_sensors(config), t_out, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
-        crowd.check()
+        crowd.core.check()
         if "in" not in seen and t >= t_in:
-            seen["in"] = crowd.place_distribution()
+            seen["in"] = crowd.core.place_distribution()
     crowd.step(t_out)
-    out = crowd.place_distribution()
+    out = crowd.core.place_distribution()
     assert "flur" not in out and set(out) == {"observed", "balkon", "outside", "_house"}
     assert 1 - seen["in"]["observed"][0] > 0.9, seen["in"]["observed"]  # in the flat
     assert out["_house"][0] > 0.9, out["_house"]  # left it: nobody at home
@@ -38,7 +38,7 @@ def test_who_walks_out_through_the_stairwell_door_is_outside():
     # who left: their record expires out there, where no sensor can test it (MODEL.md 5.5); they do
     # not become an unknown person
     # out of the house who comes back at the rate of coming home for a day
-    ppp_out = max(hy["unknown_out"] for hy in crowd.hypotheses())
+    ppp_out = max(hy.unknown_out for hy in crowd.core.hypotheses())
     assert ppp_out < 0.05, ppp_out
     # the person is out (or forgotten, MODEL.md 5.5): not in the flat
     for d in crowd.persons():
@@ -51,7 +51,7 @@ def test_nobody_is_shown_or_published_in_the_stairwell():
     states = crowd.zone_states()
     assert "flur" not in states and {"wohn", "balkon", "_total"} <= set(states)
     snap = crowd.snapshot()
-    assert "flur" not in snap["regions"] and "flur" not in crowd.count_distribution()
+    assert "flur" not in snap["regions"] and "flur" not in crowd.core.count_distribution()
     assert crowd.rooms == ["wohn"]
 
     sent = []

@@ -43,9 +43,9 @@ def shell_trace(config, recording: pathlib.Path, limit: float) -> str:
             nxt = tt + 0.1
             if tt >= nd:
                 nd = tt + 1.0
-                w = sorted((float(x) for x in tr.hyp_weights()), reverse=True)
-                out.append(json.dumps({"t": tt - t0, "hyps": len(w), "w": w, "counts": tr.count_distribution(),
-                                       "places": tr.place_distribution(),
+                w = sorted((float(x) for x in tr.core.hyp_weights()), reverse=True)
+                out.append(json.dumps({"t": tt - t0, "hyps": len(w), "w": w, "counts": tr.core.count_distribution(),
+                                       "places": tr.core.place_distribution(),
                                        "zones": {z: dataclasses.asdict(s) for z, s in zones.items()}}) + "\n")
     return "".join(out)
 

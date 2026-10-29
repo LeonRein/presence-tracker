@@ -7,7 +7,7 @@ only where nobody is in view and judged without itself; the destination map is o
 import numpy as np
 
 from presence_tracker.filter import Tracker
-from sim import MODEL, Person, SimSensor, ld_prior, simulate
+from sim import Person, SimSensor, ld_prior, model, simulate
 from presence_tracker.frames import Frame
 
 from test_filter import FLUR_DOOR, flat_config
@@ -22,16 +22,16 @@ def _sit(seat, minutes, leave=0.0):
     pts = [(-1.0, 4.0), FLUR_DOOR, seat, (seat[0] + 0.05, seat[1])] + ([FLUR_DOOR, (-1.0, 4.0)] if leave else [])
     p = Person(walk(*pts, start=5, pauses={3: minutes * 60}))
     tr = Tracker(config, start=0.0, people=["outside"])
-    sensors = [SimSensor(s, still_dropout=1.0, still_gap=900.0) for s in config.sensors]
+    sensors = [SimSensor(s, still_dropout=1.0, still_gap=900.0) for s in config.data["sensors"]]
     sat, gone = p.waypoints[3][0], p.waypoints[-1][0]
     occupied, after, nxt = [], 0.0, sat + 600
     for t, sid, frame in simulate([p], sensors, gone + leave, plan=config):
         tr.process_frame(sid, t, Frame.of(frame))
         if t >= nxt and t < sat + minutes * 60:
-            occupied.append(1 - tr.count_distribution()["wohn"][0])
+            occupied.append(1 - tr.core.count_distribution()["wohn"][0])
             nxt += 600
         if leave and t > gone + 20:
-            after = max(after, 1 - tr.count_distribution()["wohn"][0])
+            after = max(after, 1 - tr.core.count_distribution()["wohn"][0])
     return tr, occupied, after
 
 
@@ -43,8 +43,8 @@ def test_a_sitter_for_an_hour_is_not_learned_as_background():
     tr, occupied, after = _sit((1.3, 1.3), 60, leave=60.0)
     prior = ld_prior()
     for s in ("a", "b"):
-        assert np.all(np.abs(tr.background(s)[0] / prior - 1) < 0.3), (s, tr.background(s)[0])
-        assert tr.background(s)[1] < 1.3 * MODEL["ld_echo_rate"], (s, tr.background(s)[1] * 3600)
+        assert np.all(np.abs(tr.core.background(s)[0] / prior - 1) < 0.3), (s, tr.core.background(s)[0])
+        assert tr.core.background(s)[1] < 1.3 * model()["ld_echo_rate"], (s, tr.core.background(s)[1] * 3600)
     assert min(occupied) > c, occupied
     assert after < c, after
 
@@ -57,18 +57,18 @@ def test_a_new_sensor_learns_an_empty_room_that_is_louder_than_the_prior():
     louder = ld_prior() * 1.56
     nobody = Person([(0.0, -1.0, 4.0), (1.0, -1.0, 4.0)])  # out in the stairwell, gone
     tr = Tracker(config, start=0.0, people=["outside"])
-    sensors = [SimSensor(s) for s in config.sensors]
+    sensors = [SimSensor(s) for s in config.data["sensors"]]
     for s in sensors:
         s.ld_background = louder
     worst = 0.0
     for t, sid, frame in simulate([nobody], sensors, 1800, plan=config):
         tr.process_frame(sid, t, Frame.of(frame))
         if t > 60:
-            worst = max(worst, 1 - tr.count_distribution()["wohn"][0])
+            worst = max(worst, 1 - tr.core.count_distribution()["wohn"][0])
     assert worst < 2 / 3, worst
     for s in ("a", "b"):  # from 0.64 of it (the prior) to the empty room
-        ratio = tr.background(s)[0][9:] / louder[9:]
-        assert abs(ratio.mean() - 1) < 0.1 and np.all(np.abs(ratio - 1) < 0.25), tr.background(s)[0]
+        ratio = tr.core.background(s)[0][9:] / louder[9:]
+        assert abs(ratio.mean() - 1) < 0.1 and np.all(np.abs(ratio - 1) < 0.25), tr.core.background(s)[0]
 
 
 def test_a_sitter_the_model_starts_with_is_not_learned_where_an_echo_source_holds_them():
@@ -81,8 +81,8 @@ def test_a_sitter_the_model_starts_with_is_not_learned_where_an_echo_source_hold
     seat = (1.3, 1.3)
     p = Person([(0.0, *seat), (3600.0, seat[0] + 0.05, seat[1])])
     tr = Tracker(config, start=0.0)
-    sensors = [SimSensor(s, still_dropout=1.0, still_gap=900.0) for s in config.sensors]
+    sensors = [SimSensor(s, still_dropout=1.0, still_gap=900.0) for s in config.data["sensors"]]
     for t, sid, frame in simulate([p], sensors, 3600, plan=config):
         tr.process_frame(sid, t, Frame.of(frame))
     prior = ld_prior()
-    assert np.all(np.abs(tr.background("a")[0] / prior - 1) < 0.3), tr.background("a")[0]
+    assert np.all(np.abs(tr.core.background("a")[0] / prior - 1) < 0.3), tr.core.background("a")[0]

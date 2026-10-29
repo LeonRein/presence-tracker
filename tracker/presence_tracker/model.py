@@ -1,4 +1,11 @@
-"""Configuration: map, sensors, zones and tracker parameters. Stored as one JSON file.
+"""The configuration: map, sensors, zones and tracker parameters, stored as one JSON file.
+
+Its meaning is the core's (docs/rust-core.md 1): it checks a configuration and brings it into its one form
+(presence_core.canonical: what it leaves out filled in with the core's values, presence_core.config_defaults,
+which the web UI's editor also gives every new element). The app stores exactly that form, hands it back to the
+web UI and reads the file through the core again: there is no second version, and no value here. Python reads
+of it only what it connects: the sensors' ids (MQTT topics). The web UI's own parts (the background image, the
+rooms' label points) the core keeps as they came and the model never reads (model_part).
 
 All lengths in meters, angles in degrees, in the house frame (the axes of the Dobby map).
 """
@@ -7,175 +14,19 @@ import copy
 import json
 import math
 import pathlib
-from dataclasses import asdict, dataclass, field, fields
 
 import presence_core
 
 from .util import atomic_write
 
 
-@dataclass
-class SensorConfig:
-    """A sensor: where it hangs and how it looks (its geometry is the core's: Config.geometry)."""
-    id: str  # ESPHome name, also the MQTT topic: presence/<id>/frame
-    name: str = ""
-    x: float = 0.0
-    y: float = 0.0
-    heading: float = 0.0  # direction the sensor looks, degrees from the +x axis, counterclockwise
-    height: float = 1.5  # mounting height above the floor
-    mirror: bool = False  # LD2450 x axis points to the left instead of the right
-    scale: float = 1.0  # true distance on the floor / measured one (from the calibration)
-    fov: float = 120.0
-    range: float = 6.0
-    enabled: bool = True
-    placed: bool = False  # set once the user has put it on the map
-
-    def to_dict(self) -> dict:
-        return {k.name: getattr(self, k.name) for k in fields(self)}
-
-
-@dataclass
-class ZoneConfig:
-    """A zone as stored: its outline is data (the core reads it: which room a point is in, the rooms of the
-    home, MODEL.md 2)."""
-    id: str
-    name: str
-    kind: str = "area"  # room | area | entry
-    shape: str = "rect"  # rect | circle | polygon
-    points: list = field(default_factory=list)
-    center: list | None = None
-    radius: float = 0.0
-    anchor: list | None = None  # rooms from walls (the editor's, static/js/floorplan.js): a point inside it
-    entry: bool = False  # rooms: outside the home, the public space beyond its door (stairwell; MODEL.md 2)
-
-    def to_dict(self) -> dict:
-        d = {k.name: getattr(self, k.name) for k in fields(self)}
-        if self.shape != "circle":
-            d.pop("center")
-            d.pop("radius")
-        if self.kind != "room":
-            d.pop("anchor")
-            d.pop("entry")
-        return d
-
-
-@dataclass
-class TrackerParams:
-    target_height: float = 1.0  # height of the reflecting body (chest), for the slant correction
-    # LD2450 measurement error (1 sigma) = base + slope * distance on the floor; values from a
-    # sweep over the 2026-10-03 recordings
-    range_sigma_base: float = 0.15  # m, along the line of sight
-    range_sigma_slope: float = 0.02
-    lateral_sigma_base: float = 0.10  # m, across it
-    lateral_sigma_slope: float = 0.05
-    wall_margin: float = 0.4  # m, detections farther behind a wall or outside all rooms are reflections
-    # rooms without a sensor (MODEL.md 3.3, assumed)
-    dwell_median: float = 120.0  # s, typical stay in such a room
-    dwell_spread: float = 1.5  # spread of ln(duration), wide: long stays stay possible
-    # LD2410C
-    ld2410_hold: float = 1.5  # s, gaps in the LD2410C presence up to this long are bridged (display)
-    # outputs
-    light_cost: float = 2.0  # a second of light without anybody costs as much as this many seconds dark
-                             # with somebody there (assumed; Leon: light without a person is the worst)
-    # "Belegt" (MODEL.md 6): occupied also while the room's own LD2450 measured somebody in it within
-    # this many s (the core's room_seen.rs); 0: the filter alone. 10 s: measured on the truth of 6.-8.10.
-    seen_hold: float = 10.0  # s
-    # "wird betreten" (MODEL.md 6): P(a walker enters within lead_time) above approach_cost / (approach_cost
-    # + 1); approach_cost: a light switched on in vain costs as much as this many entries into a dark room.
-    # 2 s and 0.05 (measured 6./7.10., MODEL.md 6): light >= 1 s / 1 m before 60 / 62 % of the entries, 4.0
-    # vain 30-s lights per hour; Leon's trial of "1 s / 1 m ahead"
-    lead_time: float = 2.0  # s
-    approach_cost: float = 0.05
-    # "Ziel" (MODEL.md 6): somebody walking goes into the room next, from their motion and the learned
-    # map of where walks went; on at P >= the room's threshold c = K_false / (K_false + K_late) (a light
-    # switched on in vain against an entry into a dark room). 0.8: a vain light costs as much as 4 late
-    # ones. Per room (room id -> threshold) where it differs; where nothing is learned, "Ziel" is "wird
-    # betreten" whatever the threshold
-    target_threshold: float = 0.8
-    target_thresholds: dict = field(default_factory=dict)
-
-# The configuration is checked by the core (presence_core.check_config: what the model can't run with, and
-# the limits of every number it reads, which the web UI reads for its fields). Here only its problems in the
-# words of the web UI: the labels of the numbers, the sentences. The background image is not the model's: the
-# web UI checks its layers, the core never sees them (model_part).
-LABELS = {
-    "params": {
-        "target_height": "Höhe des Oberkörpers",
-        "range_sigma_base": "Messfehler in Blickrichtung, Grundwert",
-        "range_sigma_slope": "Messfehler in Blickrichtung, Anstieg",
-        "lateral_sigma_base": "Messfehler seitlich, Grundwert",
-        "lateral_sigma_slope": "Messfehler seitlich, Anstieg",
-        "wall_margin": "Toleranz an Wänden",
-        "dwell_median": "Typischer Aufenthalt",
-        "dwell_spread": "Streuung des Aufenthalts",
-        "ld2410_hold": "Haltezeit LD2410C",
-        "light_cost": "Kosten: Licht ohne Person",
-        "seen_hold": "Haltezeit eigener LD2450",
-        "lead_time": "Vorausschau „wird betreten“",
-        "approach_cost": "Kosten: Einschalten auf Verdacht",
-        "target_threshold": "Schwelle „Ziel“",
-    },
-    "sensor": {"x": "x", "y": "y", "heading": "Blickrichtung", "height": "Montagehöhe", "fov": "Öffnungswinkel",
-               "range": "Reichweite", "scale": "Maßstab"},
-    "door": {"width": "Breite der Tür"},
-}
-LABELS["threshold"] = LABELS["params"]
-
-# (part, reason[, field]) -> the sentence; {where} the part with its name, {label} the field's, {name}, {field},
-# {value} (as _num writes it), {raw} (the value as it is), {low}/{high} the limits. Missing: the reason alone.
-_SENTENCES = {
-    (None, "empty"): "{where}{label}: leer, eine Zahl fehlt.",
-    (None, "not_a_number"): "{where}{label}: keine Zahl ({value}).",
-    (None, "out_of_range"): "{where}{label} muss {low} und {high} sein, nicht {value}.",
-    (None, "not_an_object"): "Konfiguration: „{field}“ ist kein Objekt.",
-    (None, "not_a_list"): "Konfiguration: „{field}“ ist keine Liste.",
-    (None, "unreadable"): "Konfiguration unvollständig oder falsch: {raw}",
-    ("config", "not_an_object"): "Konfiguration ist kein Objekt.",
-    ("config", "too_many_sensors"): "Höchstens {value} Sensoren.",
-    ("config", "too_large"): "Der Grundriss ist zu groß (höchstens 100 × 100 m).",
-    ("params", "not_an_object"): "Einstellungen sind kein Objekt.",
-    ("params", "not_an_object", "target_thresholds"): "Schwelle „Ziel“ je Raum ist kein Objekt.",
-    ("sensor", "no_id"): "Sensor ohne ID.",
-    ("sensor", "id_chars"): "{where}Die ID darf kein /, + oder # enthalten (sie ist Teil des MQTT-Topics).",
-    ("sensor", "id_twice"): "Sensor-ID {raw} doppelt.",
-    ("sensor", "not_a_bool"): "{where}{field} ist nicht ja/nein.",
-    ("wall", "not_points"): "Wand {name}: Punkte sind keine endlichen Koordinaten.",
-    ("wall", "not_a_segment"): "Wand {name}: braucht genau zwei verschiedene Punkte.",
-    ("wall", "unknown_kind"): "Wand {name}: unbekannte Art {raw!r}.",
-    ("door", "no_position"): "Tür ohne endliche Position.",
-    ("door", "not_on_wall"): "Eine Tür liegt auf keiner Wand (Türen sitzen auf Wänden, nicht auf Raumgrenzen).",
-    ("zone", "not_an_object"): "Zone ist kein Objekt.",
-    ("zone", "no_id"): "Zone ohne ID.",
-    ("zone", "id_twice"): "Zonen-ID {raw} doppelt.",
-    ("zone", "unknown_kind"): "Zone {name}: unbekannte Art {raw!r}.",
-    ("zone", "unknown_shape"): "Zone {name}: unbekannte Form {raw!r}.",
-    ("zone", "not_points"): "Zone {name}: Punkte sind keine endlichen Koordinaten.",
-    ("zone", "rect_corners"): "Zone {name}: ein Rechteck braucht zwei Ecken.",
-    ("zone", "polygon_corners"): "Zone {name}: eine Fläche braucht mindestens drei Eckpunkte.",
-    ("zone", "no_centre"): "Zone {name}: ein Kreis braucht einen Mittelpunkt.",
-    ("zone", "not_at_least_0"): "Zone {name}: Radius ist keine Zahl ≥ 0.",
-    ("ld_view", "not_an_object"): "Blick des LD2410C ist kein Objekt.",
-    ("ld_view", "not_at_least_0"): "Blick des LD2410C {name}: keine Zahl ≥ 0 ({value}).",
-}
-_WHERE = {"threshold": "Raum {name}: ", "sensor": "Sensor {name}: "}
-
-
-def _num(v) -> str:
-    return f"{v:g}".replace(".", ",") if isinstance(v, (int, float)) and not isinstance(v, bool) else repr(v)
-
-
-def message(problem) -> str:
-    """The sentence of the web UI for a problem the core found (presence_core.ConfigProblem)."""
-    p = problem
-    text = (_SENTENCES.get((p.part, p.reason, p.field)) or _SENTENCES.get((p.part, p.reason))
-            or _SENTENCES[None, p.reason])
-    words = {"where": _WHERE.get(p.part, "").format(name=p.name), "name": p.name, "field": p.field,
-             "label": LABELS.get(p.part, {}).get(p.field, p.field), "raw": p.value, "value": _num(p.value)}
-    if p.reason == "out_of_range":
-        lo, hi, lo_open, hi_open = p.limits
-        words["low"] = f"größer als {_num(lo)}" if lo_open else f"mindestens {_num(lo)}"
-        words["high"] = f"kleiner als {_num(hi)}" if hi_open else f"höchstens {_num(hi)}"
-    return text.format(**words)
+def problem(e: presence_core.ConfigError) -> dict:
+    """The core's problem with a configuration (ConfigError.args[0], a ConfigProblem) for the web UI, which words
+    it (static/js/util.js problemText): part, name, field, reason, limits ([low, high, low excluded, high
+    excluded] or None), value."""
+    p = e.args[0]
+    return {"part": p.part, "name": p.name, "field": p.field, "reason": p.reason,
+            "limits": None if p.limits is None else list(p.limits), "value": p.value}
 
 
 def _plain(v):
@@ -190,27 +41,18 @@ def _plain(v):
 
 
 def model_part(d: dict) -> dict:
-    """What of a configuration the model reads: all but the background image (the web UI's alone); what is no
-    configuration as it is (the core's check says why)."""
-    return {k: v for k, v in d.items() if k != "background"} if isinstance(d, dict) else d
-
-
-def check(d) -> None:
-    """Rejects what the model can't run with (the core's check: values outside their limits, coordinates that
-    are no finite numbers, ids twice, walls that are no segment, a door on no wall, zones of an unknown kind or
-    shape or without what their shape needs, ...): ValueError with the sentence for the web UI. Only what is
-    present is checked; what is missing takes its default. (A circle without a center passed until 0.18 and
-    failed every tick after, also after every restart.)"""
-    try:
-        presence_core.check_config(json.dumps(_plain(model_part(d))))
-    except presence_core.ConfigError as e:
-        raise ValueError(message(e.args[0])) from e
+    """What of a configuration the model reads: all but the background image and the rooms' label points (the
+    web UI's alone)."""
+    out = {k: v for k, v in d.items() if k != "background"}
+    out["zones"] = [{k: v for k, v in z.items() if k != "anchor"} for z in d.get("zones", [])]
+    return out
 
 
 def derive(d: dict) -> dict:
     """The model's quantities of the configuration d the web UI shows (the core's: presence_core.derive): the
-    plan, the thresholds, the numbers the editor reads (door_on_wall, ld2410_gate)."""
-    return json.loads(presence_core.derive(json.dumps(_plain(model_part(d)))))
+    plan (with the zones of the home and each door's opening), the thresholds, the numbers the editor reads
+    (door_on_wall, ld2410_gate), the parameters only the outputs read."""
+    return json.loads(presence_core.derive(json.dumps(model_part(d))))
 
 
 def limits() -> dict:
@@ -219,72 +61,47 @@ def limits() -> dict:
     return presence_core.config_limits()
 
 
-@dataclass
+def defaults() -> dict:
+    """What a configuration may leave out, with the values the model takes then, and what the web UI's editor
+    gives every new element (the core's): {"params", "sensor", "door", "wall"}."""
+    return json.loads(presence_core.config_defaults())
+
+
 class Config:
-    sensors: list = field(default_factory=list)
-    zones: list = field(default_factory=list)
-    walls: list = field(default_factory=list)  # [{"points": [a, b], "kind": "wall" | "divider"}], one segment each
-    doors: list = field(default_factory=list)  # [{"id", "x", "y", "width"}] on a wall
-    background: dict = field(default_factory=dict)  # image placement, see web UI
-    # the LD2410Cs' measured view of other rooms (MODEL.md 4.3 "Blick des LD2410C"): "own<-other" (room ids) ->
-    # the share of what the geometric sight expects; missing: 1. Measured data of the home, like the walls:
-    # no setting, not in params ("Alle auf Standard" keeps it)
-    ld_view: dict = field(default_factory=dict)
-    params: TrackerParams = field(default_factory=TrackerParams)
+    """A configuration in the core's form (from_dict), as the dict `data`: "sensors", "zones", "walls", "doors",
+    "ld_view", "params" (and "background", the web UI's). Nothing here gives or reads a value of it but the
+    sensors' ids."""
 
-    def __post_init__(self):
-        self.rebuild()
+    def __init__(self, data: dict):
+        self.data = data
 
-    def rebuild(self):
-        """Recompute derived data after an edit. The places of the people model (observed rooms, regions,
-        closed rooms) are the core's plan (filter.plan)."""
-        self.sensor_by_id = {s.id: s for s in self.sensors}
-
-    # --- persistence ---
-
-    def to_dict(self) -> dict:
-        """The stored form, a copy (an edit of it does not change this configuration)."""
-        return copy.deepcopy({
-            "sensors": [s.to_dict() for s in self.sensors],
-            "zones": [z.to_dict() for z in self.zones],
-            "walls": self.walls,
-            "doors": self.doors,
-            "background": self.background,
-            "ld_view": self.ld_view,
-            "params": asdict(self.params),
-        })
-
-    def model_json(self) -> str:
-        """The configuration as the core reads it (JSON): all but the background image."""
-        return json.dumps(model_part(self.to_dict()))
+    @property
+    def sensor_ids(self) -> list:
+        """The sensors' ids (their MQTT names), in the configuration's order."""
+        return [s["id"] for s in self.data["sensors"]]
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Config":
-        """The configuration as stored or sent (what is missing: the defaults); unchecked (check(d) first for
-        an edit in the web UI). The map comes finished from the web UI's editor: the rooms between the walls,
-        the doors on their walls. A stored configuration loads as it is; the core checks what the model reads
-        when it builds the world."""
-        def pick(dc, data):
-            names = {f.name for f in fields(dc)}
-            return dc(**{k: v for k, v in data.items() if k in names})
-
-        walls = [{"points": [list(p) for p in w["points"]], "kind": w.get("kind", "wall")} for w in d.get("walls", [])]
-        return cls(
-            sensors=[pick(SensorConfig, s) for s in d.get("sensors", [])],
-            zones=[pick(ZoneConfig, z) for z in d.get("zones", [])],
-            walls=walls,
-            doors=[{"id": str(x.get("id", "")), "x": float(x["x"]), "y": float(x["y"]),
-                    "width": float(x.get("width", 0.9))} for x in d.get("doors", [])],
-            background=d.get("background", {}),
-            ld_view=d.get("ld_view", {}),
-            params=pick(TrackerParams, d.get("params", {})),
-        )
+    def from_dict(cls, d) -> "Config":
+        """The configuration as stored or sent, in the core's form (presence_core.canonical): checked, what it
+        leaves out filled in; presence_core.ConfigError (a ValueError) with the first problem (problem(e) for
+        the web UI). The map comes finished from the web UI's editor: the rooms between the walls, the doors on
+        their walls. (A circle without a center passed until 0.18 and failed every tick after, also after every
+        restart.)"""
+        return cls(json.loads(presence_core.canonical(json.dumps(_plain(d)))))
 
     @classmethod
     def load(cls, path: pathlib.Path) -> "Config":
-        if not path.exists():
-            return cls()
-        return cls.from_dict(json.loads(path.read_text()))
+        """The stored configuration through the core (none stored: the empty one); ConfigError if the core
+        refuses it."""
+        return cls.from_dict(json.loads(path.read_text()) if path.exists() else {})
+
+    def to_dict(self) -> dict:
+        """The stored form, a copy (an edit of it does not change this configuration)."""
+        return copy.deepcopy(self.data)
+
+    def model_json(self) -> str:
+        """The configuration as the core reads it (JSON): all but the web UI's parts."""
+        return json.dumps(model_part(self.data))
 
     def save(self, path: pathlib.Path):
-        atomic_write(path, json.dumps(self.to_dict(), indent=1, ensure_ascii=False).encode())
+        atomic_write(path, json.dumps(self.data, indent=1, ensure_ascii=False).encode())

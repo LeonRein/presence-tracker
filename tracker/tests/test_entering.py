@@ -21,9 +21,9 @@ def two_rooms() -> Config:
         return {"points": [list(a), list(b)], "kind": "wall"}
     return Config.from_dict({
         "sensors": [
-            {"id": "a1", "x": 0.05, "y": 0.05, "heading": 45, "placed": True},
-            {"id": "a2", "x": 5.95, "y": 4.95, "heading": 225, "placed": True},
-            {"id": "b1", "x": 9.95, "y": 0.05, "heading": 135, "placed": True},
+            {"id": "a1", "name": "", "x": 0.05, "y": 0.05, "heading": 45, "placed": True},
+            {"id": "a2", "name": "", "x": 5.95, "y": 4.95, "heading": 225, "placed": True},
+            {"id": "b1", "name": "", "x": 9.95, "y": 0.05, "heading": 135, "placed": True},
         ],
         "zones": [rect("a", 0, 0, 6, 5), rect("b", 6, 0, 10, 5)],
         "walls": [w((0, 0), (6, 0)), w((6, 0), (10, 0)), w((10, 0), (10, 5)), w((10, 5), (6, 5)),

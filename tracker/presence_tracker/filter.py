@@ -93,39 +93,40 @@ class _Seen:
     @property
     def last(self) -> dict:
         """room id -> the last time its own LD2450 measured somebody in it"""
-        return dict(self._tr._c.seen_last())
+        return dict(self._tr.core.seen_last())
 
     def watched(self) -> set:
         """The rooms with an own sensor in use: these may be silent (Home Assistant: their own availability)."""
-        return {r for r, w in zip(self._tr.rooms, self._tr._c.watched()) if w}
+        return {r for r, w in zip(self._tr.rooms, self._tr.core.watched()) if w}
 
     def silent(self, now: float) -> set:
         """The rooms whose own sensors in use all sent no frame for more than silent_after s, counted
         from the model's start for one that sent nothing (not started: nothing silent)."""
-        return {r for r, q in zip(self._tr.rooms, self._tr._c.silent(now)) if q}
+        return {r for r, q in zip(self._tr.rooms, self._tr.core.silent(now)) if q}
 
     def online(self, sensor_id: str, now: float) -> bool:
         """The sensor sent a frame lately (the web UI's "online" too)."""
-        return self._tr._c.online(sensor_id, now)
+        return self._tr.core.online(sensor_id, now)
 
 
 class Tracker:
     def __init__(self, config, start: float | None = None, people=None, model: dict | None = None):
-        """model: the numbers of the model that differ from the core's (presence_core.model_defaults();
-        infinite ones as floats). Nothing here is random."""
+        """model: the numbers of the model that differ from the core's (its Params; the tests and tools change
+        them, infinite ones as floats). Nothing here is random."""
         self.model = dict(model or {})
         self.config = config
-        self.p = config.params
         self.listeners = []
         self.runtime = {}
-        self._c = None  # the Rust core (presence_core.Core, _Guarded): the filter, its world and what it learns
+        # the Rust core (presence_core.Core, _Guarded): the filter, its world and what it learns; the tests and
+        # tools read it directly (its readings of the filter's state and outputs: feature "testing")
+        self.core = None
         # Lernen pausieren (pause.py): in these intervals nothing learns (the ghost map, MODEL.md 4.2; the
         # LD2410C background and echo rate, 4.3; the destination map, 6 "Ziel"); the tracking goes on
         self.pauses = Pauses()
         self.seen = _Seen(self)  # the rooms' own LD2450 (output only, MODEL.md 6 "Belegt"; in the core)
         self._build()
         if start is not None:
-            self._c.start_at(float(start))
+            self.core.start_at(float(start))
         self.reset_people(people)
 
     # --------------------------------------------------------------- setup
@@ -133,36 +134,26 @@ class Tracker:
     def _build(self, world=None):
         """A new core in a new world (built of the configuration and model; or this one, presence_core.World,
         if it was built already)."""
-        old = self._c
-        self._c = _Guarded(_core(presence_core.Core, world if world is not None else self._new_world()))
+        old = self.core
+        self.core = _Guarded(_core(presence_core.Core, world if world is not None else self._new_world()))
         self._names()
         if old is not None:  # what the rooms' own LD2450s saw, the ids of new tracks, the time and evidence,
-            self._c.adopt(old.core)  # what was learned and the pauses, what the LD2410Cs gathered go on
+            self.core.adopt(old.core)  # what was learned and the pauses, what the LD2410Cs gathered go on
 
     def _names(self):
         """The names of the core's plan and its tiles (they change only with the world)."""
-        self.sensors = [s.id for s in self.config.sensors]
+        self.sensors = self.config.sensor_ids
         self.sidx = {sid: k for k, sid in enumerate(self.sensors)}
-        self.plan = self._c.plan()  # as plan(self.config)
+        self.plan = self.core.plan()  # as plan(self.config)
         self.rooms, self.places = self.plan["observed"], self.plan["places"]
         self._own = {sid: r for sid, r in zip(self.sensors, self.plan["own_rooms"]) if r is not None}
-        self._tiles = self._c.tiles_view()
+        self._tiles = self.core.tiles_view()
 
     def _new_world(self):
         """The core's world of the configuration and the model (docs/rust-core.md 1; their JSON, infinite
         numbers of the model as "inf"), built once (presence_core.World)."""
         model = {k: (str(v) if isinstance(v, float) and not math.isfinite(v) else v) for k, v in self.model.items()}
         return _core(presence_core.World, self.config.model_json(), json.dumps(model))
-
-    @property
-    def loglik(self) -> float:
-        """log evidence of everything seen so far"""
-        return self._c.loglik[0]
-
-    @property
-    def loglik_cut(self) -> float:
-        """... the part of it that is mass of hypotheses dropped (MODEL.md 5.1)"""
-        return self._c.loglik[1]
 
     def reset_people(self, people=None):
         """Start over (in the core): nothing known about the people (MODEL.md 5.3: no known people, the
@@ -174,13 +165,13 @@ class Tracker:
         nobody unknown (for tests and tools)."""
         index = {name: i for i, name in enumerate(self.places)}
         places = None if people is None else [None if w == "anywhere" else index[w] for w in people]
-        self._c.reset_people(places)  # no live tracks, nothing of the sensors gathered
+        self.core.reset_people(places)  # no live tracks, nothing of the sensors gathered
         self.started_from = None  # the saved state the people were restored from (restore_people)
 
     def reset_tracks(self):
         """The sensors' own tracks start over, as after lost data (MODEL.md 4.1): their next frames are a
         start, so whoever a sensor is tracking now counts (app "Tracks zurücksetzen")."""
-        self._c.reset_tracks()
+        self.core.reset_tracks()
 
     def people_state(self) -> dict:
         """What is known about the people, to start from after a restart (MODEL.md 5.3): per
@@ -190,7 +181,7 @@ class Tracker:
         and the hypotheses that then say the same are merged (5.6) - one per number of known
         people (in the core, on copies). The time is that of the last move of everybody; the format
         is the core's (filter/saved.rs)."""
-        return json.loads(self._c.people_state())
+        return json.loads(self.core.people_state())
 
     def restore_people(self, state: dict | None) -> bool:
         """Start from a saved state (people_state): the posterior then is the prior now (the PMBM
@@ -204,7 +195,7 @@ class Tracker:
             text = json.dumps(state, allow_nan=False)
         except (TypeError, ValueError):
             return False
-        why = self._c.restore_people(text)
+        why = self.core.restore_people(text)
         if why is not None:
             log.info("the saved people are not taken: %s", why)
             return False
@@ -223,17 +214,17 @@ class Tracker:
         self.reconfigured_from = None
         self._sync_pauses()  # the ends of the changed sensors' tracks learn, or not, as at any time
         way, changed = presence_core.changes(self.config.model_json(), config.model_json())
-        self.config, self.p = config, config.params
+        self.config = config
         # what was learned follows (in the core): recalibrated sensors keep their parts, a remounted one
         # starts over; the destination map holds while the rooms and doors are the same
         if way == "outputs":
-            self._c.set_outputs(config.model_json())  # only what the outputs read: nothing built
+            self.core.set_outputs(config.model_json())  # only what the outputs read: nothing built
             return False
         world = None
         if way == "sensors":
             world = self._new_world()
             try:  # the people stay if they live in the new world too (the core checks first, then changes)
-                self._tell(self._c.recalibrate([self.sidx[sid] for sid in changed], world))
+                self._tell(self.core.recalibrate([self.sidx[sid] for sid in changed], world))
                 self._names()
                 return False
             except presence_core.WorldChanged:  # the sensors changed which rooms are observed: the world is
@@ -251,35 +242,23 @@ class Tracker:
         with the prior the model has now; else (also None) start a new one from the prior. Each sensor's
         part is in its own frame: it follows a recalibrated sensor, and only a sensor mounted elsewhere
         starts its part over. Returns whether the learned map is used; ValueError if it cannot be read."""
-        return self._c.use_ghost_map(None if gm is None else json.dumps(gm))
+        return self.core.use_ghost_map(None if gm is None else json.dumps(gm))
 
     def use_dest_map(self, dm) -> bool:
         """Use a learned destination map (MODEL.md 6 "Ziel"; its dict) if it was learned with these rooms,
         doors and regions; else (also None) start an empty one. ValueError if it cannot be read."""
-        return self._c.use_dest_map(None if dm is None else json.dumps(dm))
+        return self.core.use_dest_map(None if dm is None else json.dumps(dm))
 
     def use_ld_background(self, bg) -> list:
         """Use a learned LD2410C background (MODEL.md 4.3; its dict, None: nothing learned), per sensor only
         where it was learned with the sensor where it is now. Returns why sensors' parts were dropped (a
         part out of range is dropped alone, the others are used); ValueError if it is no background."""
-        return self._c.use_ld_background(None if bg is None else json.dumps(bg))
+        return self.core.use_ld_background(None if bg is None else json.dumps(bg))
 
     def hold_background(self, seconds: float):
         """The LD2410Cs learn nothing from their next `seconds` s of frames (after "Tracks zurücksetzen":
         whom the filter does not see yet would be learned as background)."""
-        self._c.hold_background(float(seconds))
-
-    def background(self, sensor_id: str) -> tuple:
-        """The LD2410C background of this sensor (16 cells, MODEL.md 4.3) and its echo sources' rate per
-        s, as the next weighing reads them."""
-        b, rate = self._c.background(self.sidx[sensor_id])
-        return np.array(b), rate
-
-    def ghost_rates(self, sensor_id: str, pts) -> tuple:
-        """The ghost map's rate of ghost births per m^2 and s at the points (n, 2) for this sensor, and
-        the s it watched (the web UI)."""
-        rates, watched = self._c.ghost_rates(self.sidx[sensor_id], [tuple(map(float, p)) for p in pts])
-        return np.array(rates), watched
+        self.core.hold_background(float(seconds))
 
     # ------------------------------------------------------------- frames
 
@@ -288,16 +267,15 @@ class Tracker:
         everybody on to t, then its frame is evidence, MODEL.md 4; the ghost map, the LD2410C background
         and the destination map learn where they always did, docs/rust-core.md 2.0)."""
         self._sync_pauses()
-        events = self._c.frame(sensor_id, t, frame)
+        events = self.core.frame(sensor_id, t, frame)
         rt = self.runtime.setdefault(sensor_id, SensorRuntime())
         rt.frames += 1
-        sensor = self.config.sensor_by_id.get(sensor_id)
-        if sensor is not None:
+        if sensor_id in self.sidx:
             rt.detections = [Detection(np.array(d.pos), tuple(d.local), d.speed, d.hidden, d.stale)
-                             for d in self._c.detections(self.sidx[sensor_id])]
+                             for d in self.core.detections(self.sidx[sensor_id])]
             self._ld_runtime(rt, frame.ld2410 or {})
             for listener in self.listeners:
-                listener("frame", (sensor, t, rt.detections))
+                listener("frame", (sensor_id, t, rt.detections))
         self._tell(events)
 
     def _tell(self, events):
@@ -333,55 +311,32 @@ class Tracker:
         """Is learning paused at any time of [t0, t1] (t1 None: the moment t0; the core's pauses: the
         calibration data are not kept then)?"""
         self._sync_pauses()
-        return self._c.paused(t0, t1)
+        return self.core.paused(t0, t1)
 
     def _sync_pauses(self):
         p = self._pauses
         if self._pauses_sent != (id(p), p.changes):
-            self._c.set_pauses([(s, e) for s, e in p.intervals + p.known])
+            self.core.set_pauses([(s, e) for s, e in p.intervals + p.known])
             self._pauses_sent = (id(p), p.changes)
 
     @property
     def now(self) -> float:
         """The model's time (the last frame's or step's)."""
-        return self._c.now
+        return self.core.now
 
     @property
     def start(self) -> float | None:
         """When the model started (its first frame; None: not yet)."""
-        return self._c.start
+        return self.core.start
 
     def step(self, t: float):
         """Time goes on to t (MODEL.md 3; in the core): everybody is moved and weighed by the tracks not
         started meanwhile together, in parts of at most max_step s; who almost surely does not exist is
         given back; the walks are counted into the destination map."""
         self._sync_pauses()
-        self._tell(self._c.step(t))
+        self._tell(self.core.step(t))
 
     # ------------------------------------------------------------- reading the filter
-
-    def hyp_weights(self) -> np.ndarray:
-        """The hypotheses' weights (core), summing to 1."""
-        return np.array(self._c.hyp_weights())
-
-    def hypotheses(self) -> list:
-        """The hypotheses for reading (tests, tools): per hypothesis {"logw", "key", "known",
-        "unknown_out"}. key: what it says about the live tracks - the track sets of its people with
-        tracks and its ghost tracks (hypotheses differing only in the people without a track are one,
-        MODEL.md 5.6); known: per known person how probably they exist (1 with a track); unknown_out:
-        the mass of the unknown ones outside."""
-        return [{"logw": h.logw, "key": (frozenset(frozenset(p) for p in h.people), frozenset(h.ghosts)),
-                 "known": h.known, "unknown_out": h.unknown_out}
-                for h in self._c.hypotheses()]
-
-    def tracks(self) -> dict:
-        """The filter's live tracks: track id -> sensor id."""
-        return {seg: self.sensors[si] for seg, si in self._c.tracks()}
-
-    def check(self):
-        """The bookkeeping's invariants (in the core: the hypotheses and the live tracks, the holders,
-        the pools, the parts gone through a door); ValueError with what is wrong."""
-        self._c.check()
 
     def tiles(self) -> dict:
         """The tiles (MODEL.md 5.3) for drawing where unseen people may be: "id" (their fingerprint: a
@@ -394,20 +349,15 @@ class Tracker:
     def coverage(self) -> dict:
         """The coverage of the running world, that is of the saved configuration (the core's: per tile how
         many sensors see it, per sensor in use its sight per tile, per room of the home its area, the share
-        seen, m^2 blind and seen once)."""
-        return json.loads(self._c.coverage())
-
-    def tile_near(self, xy) -> int | None:
-        """The tile of a point, or of the cell in view nearest to it (None: no tiles)."""
-        return self._c.tile_near(tuple(map(float, xy)))
-
-    def sight(self, sensor_id: str, pts) -> np.ndarray:
-        """How well the sensor sees a person at the points (n, 2), 0..1 (MODEL.md 4.1)."""
-        return np.array(self._c.sight(self.sidx[sensor_id], [tuple(map(float, p)) for p in pts]))
-
-    def observed(self) -> np.ndarray:
-        """How well the best sensor can test a person in each tile, 0..1 (MODEL.md 5.5)."""
-        return np.array(self._c.observed())
+        seen, m^2 blind and seen once), rounded for the web UI: positions, areas and shares to mm (0.001), the
+        sight to two places."""
+        c = json.loads(self.core.coverage())
+        mm = lambda v: round(v, 3)  # noqa: E731
+        c["tiles"] = [[[mm(x), mm(y)], room, n, mm(best)] for (x, y), room, n, best in c["tiles"]]
+        c["sight"] = {sid: [round(v, 2) for v in s] for sid, s in c["sight"].items()}
+        for r in c["rooms"]:
+            r.update({k: mm(r[k]) for k in ("area", "share", "blind", "single", "blind_share", "single_share")})
+        return c
 
     def sensor_map(self, sensor_id: str) -> dict:
         """For the web UI: what one sensor sees from the geometry (its coarse map, MODEL.md 4.1) and the
@@ -415,7 +365,7 @@ class Tracker:
         it watched (the core's, in columns of rows here)."""
         if sensor_id not in self.sidx:
             return {}
-        m = self._c.sensor_map(self.sidx[sensor_id])
+        m = self.core.sensor_map(self.sidx[sensor_id])
         (x0, y0), rows = m.corner, m.rows
         columns = [range(i * rows, (i + 1) * rows) for i in range(m.cols)]
         return {"cell": m.cell, "x0": x0, "y0": y0, "cols": m.cols, "rows": rows,
@@ -423,10 +373,6 @@ class Tracker:
                 "prior": [[round(float(m.prior[k]), 3) for k in col] for col in columns],
                 "ghosts": [[None if m.ghosts[k] is None else round(m.ghosts[k], 4) for k in col] for col in columns],
                 "watched_h": round(m.watched_h, 1)}
-
-    def room_at(self, pts) -> list:
-        """Per point (x, y) the observed room it is in (id; None: in none). For the tools."""
-        return self._c.room_at([tuple(map(float, p)) for p in pts])
 
     # -------------------------------------------------------------- LD2410C
 
@@ -437,20 +383,6 @@ class Tracker:
 
     # -------------------------------------------------------------- outputs (MODEL.md 6; in the core)
 
-    def count_distribution(self) -> dict:
-        """room id -> [P(0 people), P(1), ...] over the observed rooms, and "_observed"."""
-        c = self._c.count_distribution()
-        out = dict(zip(self.rooms, c))
-        out["_observed"] = c[-1]
-        return out
-
-    def place_distribution(self) -> dict:
-        """place name -> [P(0 people), P(1), ...], and "_house" (anywhere but outside)."""
-        c = self._c.place_distribution()
-        out = dict(zip(self.places, c))
-        out["_house"] = c[-1]
-        return out
-
     def persons(self) -> list:
         """The known people of the most probable hypothesis that more probably exist than not
         (Garcia-Fernandez et al. 2018, sec. VI), for the display: those with a track first. Where to
@@ -459,7 +391,7 @@ class Tracker:
         rounded here)."""
         places = self.places
         out = []
-        for p in self._c.persons():
+        for p in self.core.persons():
             d = {"id": p.id, "places": {places[i]: round(v, 3) for i, v in enumerate(p.places) if v >= 0.005},
                  "place": places[p.place], "lost": p.lost, "r": round(p.r, 3), "room": p.room,
                  "moving": p.moving}
@@ -481,15 +413,7 @@ class Tracker:
         squares: /api/tiles). How it is drawn is the web UI's."""
         return [{"id": c.id, "gauss": [[round(v, 3) for v in g] for g in c.gauss],
                  "rooms": c.rooms, "tiles": [[i, round(m, 4)] for i, m in c.tiles]}
-                for c in self._c.clouds()]
-
-    def occupancy(self) -> dict:
-        """Observed room id -> (occupied, source), MODEL.md 6 "Belegt" (in the core): P(somebody there)
-        above the threshold c = light_cost / (light_cost + 1), or the room's own LD2450 measured
-        somebody in it within the last seen_hold s. source: "filter", "ld2450", "beide" (both), None if
-        not occupied. Only an output: reads the filter, changes nothing in it."""
-        sources = self._c.occupancy(self.now)
-        return {z: (s is not None, s) for z, s in zip(self.rooms, sources)}
+                for c in self.core.clouds()]
 
     def zone_states(self) -> dict:
         """Per zone its state (MODEL.md 6; the core's, ZoneState field for field): the most probable number of
@@ -500,7 +424,7 @@ class Tracker:
         A room whose own sensors in use all went silent is not available: Home Assistant gets
         "unavailable" instead of its state (ha.py). The rooms of the home first, then its other zones (as
         Home Assistant and the display have them), last the house ("_total")."""
-        return {z.id: ZoneState(**{f: getattr(z, f) for f in _ZONE_FIELDS}) for z in self._c.zone_states(self.now)}
+        return {z.id: ZoneState(**{f: getattr(z, f) for f in _ZONE_FIELDS}) for z in self.core.zone_states(self.now)}
 
     def snapshot(self) -> dict:
         """For the web UI: the people of the most probable hypothesis at their most probable place (and the
@@ -508,12 +432,12 @@ class Tracker:
         t = self.now
         tracks = self.persons()
         clouds = self._clouds()
-        count, moving, still = self._c.observed_total()
+        count, moving, still = self.core.observed_total()
         sensors = {}
         for sid, rt in self.runtime.items():
             known = sid in self.sidx
-            last = self._c.last_frame(self.sidx[sid]) if known else -math.inf
-            present, distance = self._c.ld_shown(self.sidx[sid]) if known else (False, 0.0)
+            last = self.core.last_frame(self.sidx[sid]) if known else -math.inf
+            present, distance = self.core.ld_shown(self.sidx[sid]) if known else (False, 0.0)
             sensors[sid] = {
                 "online": self.seen.online(sid, t),  # as Home Assistant's rooms
                 "detections": [{"x": round(float(d.pos[0]), 3), "y": round(float(d.pos[1]), 3),
@@ -524,10 +448,10 @@ class Tracker:
                            "move_gates": rt.move_gates, "still_gates": rt.still_gates},
             }
         # how long people stay in a region (MODEL.md 3.3): log-normal, the same for every region
-        median, p90 = self._c.dwell
+        median, p90 = self.core.dwell
         dwell = {"median": round(median), "p90": round(p90)}
         regions = {}
-        for r in self._c.regions():  # the regions without a sensor, as the core has them
+        for r in self.core.regions():  # the regions without a sensor, as the core has them
             plan = self.plan["regions"][r.id]
             regions[r.id] = {"name": plan["name"], "rooms": plan["rooms"], "open": plan["open"], "count": r.count,
                              "probabilities": [round(r.p_any, 3)] if r.p_any >= 0.005 else [], "dwell": dwell}
@@ -542,7 +466,7 @@ class Tracker:
 
     def learned_snapshot(self):
         """A copy of what was learned now; its json() packs it without the tracker (the app: in a thread)."""
-        return self._c.learned()
+        return self.core.learned()
 
     def load_learned(self, data: dict):
         """Take over what was learned (learned()), each part present: the ghost map if learned with the

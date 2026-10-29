@@ -11,6 +11,7 @@ import presence_core
 
 from presence_tracker.app import App
 from presence_tracker.filter import Tracker
+from presence_tracker.model import Config
 from aiohttp.test_utils import TestClient, TestServer
 from test_filter import flat_config
 
@@ -55,14 +56,45 @@ def test_the_saved_configuration_comes_with_the_model_of_it(tmp_path):
     assert {k: v for k, v in got["derived"].items() if k != "thresholds"} == \
         {k: v for k, v in put["derived"].items() if k != "thresholds"}
     # nothing of the model changed: nothing new to show
-    assert again == {"ok": True, "restarted": False, "derived": None}
+    assert again == {"ok": True, "restarted": False, "derived": None, "config": put["config"]}
     d = got["derived"]
-    assert set(d) == {"plan", "thresholds", "ld2410_gate"}  # the model's numbers; nothing to draw
+    assert set(d) == {"plan", "thresholds", "ld2410_gate", "output_params"}  # the model's numbers; nothing to draw
     assert d["plan"]["observed"] == ["wohn"] and abs(d["thresholds"]["occupied"] - 2 / 3) < 1e-12  # light_cost 2
     assert d["plan"]["door_on_wall"] == 0.01 and d["ld2410_gate"] == 0.75
+    assert "light_cost" in d["output_params"] and "wall_margin" not in d["output_params"]
+    # the zones of the home; per door its wall and opening (the balcony door on the wall x = 6, the flat's door on
+    # x = 0: walls 1 and 3 of the flat, 0.9 m wide)
+    assert d["plan"]["home"] == [z["id"] for z in got["config"]["zones"] if z["kind"] in ("room", "area")
+                                 and not z.get("entry")]
+    assert [o["wall"] for o in d["plan"]["doors"]] == [1, 3]
+    assert all(abs(o["t1"] - o["t0"] - 0.9) < 1e-9 for o in d["plan"]["doors"])
+    # what a configuration may leave out, for the editor's new sensors
+    assert got["defaults"]["sensor"]["fov"] == 120.0 and got["defaults"]["params"]["light_cost"] == 2.0
     # the people for the map: no trail breaks, no polygons; the rooms of their Gaussians
     assert all("jumped" not in p for p in live["tracks"]) and all(set(c) == {"id", "gauss", "rooms", "tiles"}
                                                                    for c in live["clouds"])
+
+
+def test_a_save_is_a_round_trip_through_the_core(tmp_path):
+    """One version of the configuration: what is saved with fields left out comes back in the core's form, and
+    the answer, the file, GET and the core's own reading of the file are that same form."""
+    app = an_app(tmp_path)
+    data = app.config.to_dict()
+    del data["sensors"][0]["fov"], data["sensors"][1]["heading"], data["doors"][0]["width"]
+    del data["params"]["light_cost"], data["walls"][0]["kind"]
+    data["params"]["old_setting"] = 5
+    data["background"] = {"layers": [{"id": "l", "x": 1}]}
+    [(status, put), (_, got)] = call(app, ("PUT", "/api/config", data), ("GET", "/api/config", None))
+    assert status == 200
+    template = got["defaults"]
+    stored = json.loads((tmp_path / "tracker.json").read_text())
+    assert put["config"] == got["config"] == stored == Config.load(tmp_path / "tracker.json").data
+    assert json.loads(presence_core.canonical(json.dumps(stored))) == stored
+    s0, s1 = stored["sensors"]
+    assert s0["fov"] == template["sensor"]["fov"] and s1["heading"] == template["sensor"]["heading"]
+    assert stored["doors"][0]["width"] == template["door"]["width"] and stored["walls"][0]["kind"] == "wall"
+    assert stored["params"]["light_cost"] == template["params"]["light_cost"] and "old_setting" not in stored["params"]
+    assert stored["background"] == data["background"]
 
 
 def test_the_rooms_are_taken_as_the_editor_sent_them(tmp_path):
@@ -101,7 +133,7 @@ def test_an_edit_of_the_background_image_alone_does_not_touch_the_core(tmp_path,
                                       "rotation": 0, "opacity": 0.5, "visible": True}]}
     [(status, put)] = call(app, ("PUT", "/api/config", data))
     assert status == 200 and put["derived"] is None and put["restarted"] is False
-    assert app.tracker is tracker and app.config.background == data["background"]
+    assert app.tracker is tracker and app.config.data["background"] == data["background"]
     assert json.loads((tmp_path / "tracker.json").read_text())["background"] == data["background"]
     assert {k: v for k, v in app.config.to_dict().items() if k != "background"} == \
         {k: v for k, v in config.items() if k != "background"}

@@ -130,6 +130,8 @@ body.stale [data-live] { opacity: .5; }
 }
 .map-tools button:disabled { opacity: .45; cursor: default; }
 .map-tools #redo { margin-bottom: 8px; }
+.map-tools #save { width: auto; padding: 0 10px; font-size: 13px; margin-bottom: 8px; }
+.map-tools #save.unsaved { background: var(--accent); color: #fff; border-color: var(--accent); }
 .hint {
   position: absolute; left: 50%; top: 12px; transform: translateX(-50%); max-width: calc(100% - 24px);
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
@@ -222,6 +224,8 @@ table.data td { padding: 4px 4px; border-bottom: 1px solid var(--line); }
 .door line { stroke: var(--muted); stroke-width: 1.5; }
 .door.selected line { stroke: var(--accent); stroke-width: 2.5; }
 .door line.opening { stroke: var(--map-bg); stroke-width: 6; }
+.door-entered { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.door-entered.selected { stroke: var(--accent); stroke-width: 2.5; }
 .wall-draft { stroke: var(--accent); stroke-width: 3; stroke-dasharray: 6 4; fill: none; }
 .wall-draft.divider { stroke-width: 2; stroke-dasharray: 2 4; }
 .zone { stroke-width: 1.5; }

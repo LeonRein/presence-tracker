@@ -7,6 +7,8 @@
 //!
 //! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
+use serde::Serialize;
+
 use crate::config::{Config, SensorConfig, WallKind, ZoneConfig, ZoneKind};
 use crate::geometry::{Point, Shape, distance_to_segment, line_of_sight};
 use crate::vmath::{py_dist, py_hypot};
@@ -229,12 +231,20 @@ fn pieces(config: &Config) -> impl Iterator<Item = ([Point; 2], WallKind)> + '_ 
         .map(|w| ([w.a, w.b], w.kind))
 }
 
+/// The real walls as lines, their doors not cut out, with their index in the configuration's walls.
+fn real_walls(config: &Config) -> Vec<(usize, [Point; 2])> {
+    config
+        .walls
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| w.kind == WallKind::Wall && py_dist(w.a, w.b) > 1e-6)
+        .map(|(i, w)| (i, [w.a, w.b]))
+        .collect()
+}
+
 /// The real walls as lines, their doors not cut out.
 fn wall_lines(config: &Config) -> Vec<[Point; 2]> {
-    pieces(config)
-        .filter(|&(_, k)| k == WallKind::Wall)
-        .map(|(p, _)| p)
-        .collect()
+    real_walls(config).into_iter().map(|(_, p)| p).collect()
 }
 
 /// The real wall a door's centre lies on (an index into walls): the nearest within DOOR_ON_WALL; a wall
@@ -250,21 +260,35 @@ pub fn wall_of_door(c: Point, walls: &[[Point; 2]]) -> Option<usize> {
     best.map(|(_, i)| i)
 }
 
-/// Per door the real wall piece it is on (an index into wall_lines: wall_of_door) and its opening along it,
-/// metres from the piece's first end (door_openings); None: on no wall (the check refuses that).
-fn door_openings(config: &Config) -> Vec<Option<(usize, f64, f64)>> {
-    let walls = wall_lines(config);
+/// A door's opening in its wall: the wall (an index into the configuration's walls) and where the opening
+/// begins and ends along it, metres from the wall's first end, cut at its ends.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct Opening {
+    pub wall: usize,
+    pub t0: f64,
+    pub t1: f64,
+}
+
+/// Per door of the configuration the real wall it is on (wall_of_door) and its opening there; None: on no
+/// wall (the check refuses that).
+pub fn door_openings(config: &Config) -> Vec<Option<Opening>> {
+    let real = real_walls(config);
+    let lines: Vec<[Point; 2]> = real.iter().map(|&(_, p)| p).collect();
     config
         .doors
         .iter()
         .map(|d| {
             let c = [d.x, d.y];
-            wall_of_door(c, &walls).map(|i| {
-                let [a, b] = walls[i];
+            wall_of_door(c, &lines).map(|k| {
+                let (wall, [a, b]) = real[k];
                 let length = py_dist(a, b);
                 let t = ((c[0] - a[0]) * (b[0] - a[0]) + (c[1] - a[1]) * (b[1] - a[1])) / length;
                 let half = d.width / 2.0;
-                (i, (t - half).max(0.0), (t + half).min(length))
+                Opening {
+                    wall,
+                    t0: (t - half).max(0.0),
+                    t1: (t + half).min(length),
+                }
             })
         })
         .collect()
@@ -279,14 +303,14 @@ fn along([a, b]: [Point; 2], t: f64) -> Point {
 
 /// The walls that block the radar: real walls without their door openings.
 fn sight_walls(config: &Config) -> Vec<[Point; 2]> {
-    let walls = wall_lines(config);
-    // per piece the openings of its doors, along it in metres
-    let mut cuts: Vec<Vec<(f64, f64)>> = vec![Vec::new(); walls.len()];
-    for (i, t0, t1) in door_openings(config).into_iter().flatten() {
-        cuts[i].push((t0, t1));
+    // per wall of the configuration the openings of its doors, along it in metres
+    let mut cuts: Vec<Vec<(f64, f64)>> = vec![Vec::new(); config.walls.len()];
+    for o in door_openings(config).into_iter().flatten() {
+        cuts[o.wall].push((o.t0, o.t1));
     }
     let mut out = Vec::new();
-    for (&[a, b], cuts) in walls.iter().zip(&mut cuts) {
+    for (i, [a, b]) in real_walls(config) {
+        let cuts = &mut cuts[i];
         let length = py_dist(a, b);
         let at = |t: f64| along([a, b], t);
         let mut start = 0.0;
@@ -836,7 +860,7 @@ mod tests {
                 r#"{{"sensors": [{sensor}], "zones": {zones}, "walls": [], "doors": [], "ld_view": {view}, "params": {params}}}"#
             )
         };
-        let params = crate::testing::PARAMS;
+        let params = &crate::testing::params_json();
         for (sensor, params, zones, view, name) in [
             (
                 r#"{"id": "s", "name": "", "x": 0, "y": 0, "heading": 0, "height": 1.5, "mirror": false, "scale": 1, "fov": 120, "range": 0, "enabled": true, "placed": true}"#,

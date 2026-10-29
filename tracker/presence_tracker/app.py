@@ -17,6 +17,7 @@ import uuid
 from collections import defaultdict
 
 import aiohttp
+import presence_core
 from aiohttp import web
 
 from . import __version__, code_hash, ha
@@ -118,12 +119,11 @@ class App:
         self.config_path = data_dir / "tracker.json"
         if ld_view_into_config(self.config_path):
             log.info("tracker.json: the LD2410C's measured view of the other rooms entered (until 0.39 the model's)")
-        self.config = Config.load(self.config_path)
-        if self.config_path.exists():  # stored, it loads as it is: say loudly if the model may fail with it
-            try:  # (what the model reads; the background image is the web UI's)
-                model.check(json.loads(self.config_path.read_text()))
-            except ValueError as e:
-                log.error("tracker.json does not pass the check: %s - the model may fail with it", e)
+        try:  # read through the core, in its form: the model can't run with one it refuses
+            self.config = Config.load(self.config_path)
+        except presence_core.ConfigError as e:
+            log.error("tracker.json does not pass the check: %s", e)
+            raise
         self.prefix = prefix
         self.publish_enabled = publish
         self.replay = replay
@@ -663,11 +663,11 @@ class App:
             "Content-Security-Policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox"})
 
     async def h_get_config(self, request):
-        known = sorted(set(self.tracker.runtime) | set(self.config.sensor_by_id))
+        known = sorted(set(self.tracker.runtime) | set(self.config.sensor_ids))
         config = self.config.to_dict()
         return web.json_response({"config": config, "derived": model.derive(config), "sensors_seen": known,
                                   "status": self.sensor_status, "replay": bool(self.replay),
-                                  "ha": bool(self.ha_url), "limits": model.limits()})
+                                  "ha": bool(self.ha_url), "limits": model.limits(), "defaults": model.defaults()})
 
     async def h_coverage(self, request):
         """The coverage of the saved configuration and each sensor's sight per tile, of the world the model runs in
@@ -678,39 +678,33 @@ class App:
             return web.json_response({"error": f"Das Modell läuft gerade nicht: {e!r}"}, status=503)
 
     async def h_put_config(self, request):
-        """An edit in the web UI. Values outside the limits (the core's check, model.check) are refused with
-        400 and a message: an emptied field must not switch every light on. The new configuration
-        holds only once the model runs with it (reconfigure, and the zones' states once, as every tick
-        computes them); else the model goes on with the old one (rebuilt: reconfigure may have changed
-        half of it) and the edit is refused with 400 - the web UI then reloads what holds. The map comes
-        finished from the web UI's editor (rooms between the walls, doors on their walls). Answers "derived",
-        what the web UI shows of the model of the saved configuration (None: the model's did not change).
-        An edit of the background image alone (the web UI's: it checks the layers) is only stored: the model
-        never reads it."""
+        """A save in the web UI: the configuration in the core's form (Config.from_dict: checked, what it leaves
+        out filled in) is stored as it is and goes back ("config"): the web UI goes on with exactly that.
+        Refused with 400 and the core's problem ("problem", model.problem; the web UI words it): an emptied field
+        must not switch every light on. The new configuration holds only once the model runs with it
+        (reconfigure, and the zones' states once, as every tick computes them); else the model goes on with the
+        old one (rebuilt: reconfigure may have changed half of it) and the save is refused with 400. The map
+        comes finished from the web UI's editor (rooms between the walls, doors on their walls). Answers
+        "derived", what the web UI shows of the model of the saved configuration (None: the model's did not
+        change). A change of what only the web UI reads (the background image: it checks the layers; the rooms'
+        label points) is only stored: the model never reads it."""
         try:
             data = await request.json()
         except ValueError:
             return web.json_response({"error": "Keine gültige Konfiguration (JSON)."}, status=400)
         try:
-            image = Config.from_dict(data)
-        except Exception:  # noqa: BLE001 - no configuration: the check below says why
-            image = None
-        if image is not None and model.model_part(image.to_dict()) == model.model_part(self.config.to_dict()):
-            self.config.background = image.background
+            config = Config.from_dict(data)
+        except presence_core.ConfigError as e:
+            return web.json_response({"problem": model.problem(e)}, status=400)
+        if config.model_json() == self.config.model_json():
+            # the model's part is the same: it goes on as it is (with this configuration, the same to it)
+            self.config = self.tracker.config = self.calibrator.config = config
             try:
-                self.config.save(self.config_path)
+                config.save(self.config_path)
             except OSError as e:
                 log.exception("tracker.json not saved")
                 return web.json_response({"error": f"Nicht gespeichert: {e}"}, status=500)
-            return web.json_response({"ok": True, "restarted": False, "derived": None})
-        try:
-            model.check(data)  # as sent, then with the defaults filled in
-            config = Config.from_dict(data)
-            model.check(config.to_dict())
-        except ValueError as e:
-            return web.json_response({"error": str(e)}, status=400)
-        except Exception as e:  # noqa: BLE001 - whatever the check let through: refused, not a 500
-            return web.json_response({"error": f"Konfiguration unvollständig oder falsch: {e!r}"}, status=400)
+            return web.json_response({"ok": True, "restarted": False, "derived": None, "config": config.to_dict()})
         # only sensors recalibrated: the people stay; else the model starts over as after a restart (MODEL.md 5.3)
         try:
             restarted = self.tracker.reconfigure(config)
@@ -735,7 +729,8 @@ class App:
         except OSError as e:
             log.exception("tracker.json not saved")
             return web.json_response({"error": f"In Gebrauch, aber nicht gespeichert: {e}"}, status=500)
-        return web.json_response({"ok": True, "restarted": restarted, "derived": model.derive(config.to_dict())})
+        return web.json_response({"ok": True, "restarted": restarted, "derived": model.derive(config.to_dict()),
+                                  "config": config.to_dict()})
 
     async def h_live(self, request):
         ws = web.WebSocketResponse(heartbeat=30)

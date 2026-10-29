@@ -6,7 +6,7 @@
 //!   presence-replay trace CONFIG RECORDING SECONDS OUT [EVERY]
 //!   presence-replay prof CONFIG RECORDING SECONDS
 //!
-//! CONFIG is the JSON of model.Config.to_dict() (the app's tracker.json); the model the core's defaults.
+//! CONFIG is the app's tracker.json; the model the core's defaults.
 //! trace writes every EVERY s (1) of frame time the line trace.py writes through the Python shell, byte for
 //! byte: the hypotheses' weights, the count and place distributions, the zones' states. prof tells the time
 //! of the frames and of the steps with the outputs, as prof.py does with the shell (without Python: the

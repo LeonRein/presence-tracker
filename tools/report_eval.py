@@ -11,7 +11,7 @@ usage: python tools/report_eval.py --config FILE --truth FILE [--recordings DIR]
                                    [--published] [--json OUT]
 
 --published: the light of the observed rooms as the app publishes it (MODEL.md 6 "Belegt": P(somebody there)
-> c or the room's own LD2450 measuring somebody, Tracker.occupancy); without it P > c alone, the filter.
+> c or the room's own LD2450 measuring somebody, Core.occupancy); without it P > c alone, the filter.
 --json: both scores (the filter alone and published) per report and room, and their sums, into OUT.
 
 --downtime: the app did not run for this long before each start (the recorder did: those frames are
@@ -66,7 +66,7 @@ def main():
     ap.add_argument("--pauses", help="intervals in which learning was paused (tools/vacuum_history.py)")
     ap.add_argument("--no-pauses", action="store_true", help="learn everywhere, score every window")
     ap.add_argument("--published", action="store_true",
-                    help="score the observed rooms by what the app publishes as occupied (Tracker.occupancy: the "
+                    help="score the observed rooms by what the app publishes as occupied (Core.occupancy: the "
                          "filter or the room's own LD2450, MODEL.md 6) instead of P(somebody there) > c")
     ap.add_argument("--json", help="write both scores (filter, published) per report and room to this file")
     ap.add_argument("--trace", action="store_true", help="print the rooms' P(somebody there) and the people of the "
@@ -98,10 +98,10 @@ def main():
     fresh = {parse_time(s) for s in truth.get("fresh_starts", [])}
     end = max(parse_time(r["to"]) for r in reports)
     windows = [(parse_time(r["from"]), parse_time(r["to"]), r) for r in reports]
-    c = config.params.light_cost / (config.params.light_cost + 1.0)
+    c = config.data["params"]["light_cost"] / (config.data["params"]["light_cost"] + 1.0)
     the_plan = plan(config)
     rooms = the_plan["observed"]
-    outside = {z.id for z in config.zones if z.kind == "room" and z.entry}  # entry rooms: counts there are not scored
+    outside = {z["id"] for z in config.data["zones"] if z["kind"] == "room" and z["entry"]}  # entry rooms: counts there are not scored
     seen = {}  # room -> last time an LD2450 measured somebody there (for windows that excuse walks)
 
     tracker = None
@@ -134,9 +134,9 @@ def main():
                 # the people when it stopped
                 people = None
                 if tracker is not None:
-                    loglik += tracker.loglik
-                    cut += getattr(tracker, "loglik_cut", 0.0)
-                    segments.append(tracker.loglik)
+                    loglik += tracker.core.loglik[0]
+                    cut += tracker.core.loglik[1]
+                    segments.append(tracker.core.loglik[0])
                     learned = tracker.learned()
                     people = None if a.forget or starts[next_start] in fresh else json.loads(json.dumps(tracker.people_state()))
                 tracker = Tracker(config_of(m["t"]))
@@ -156,7 +156,7 @@ def main():
             rt = tracker.runtime.get(sid)
             for d in (rt.detections if rt is not None else []):
                 if not d.hidden and not d.stale:
-                    z = tracker.room_at([d.pos])[0]  # the observed room it is in (the core's)
+                    z = tracker.core.room_at([tuple(d.pos)])[0]  # the observed room it is in (the core's)
                     if z is not None:
                         seen[z] = m["t"]
             if tt >= next_step:
@@ -168,12 +168,12 @@ def main():
             if not inside:
                 continue
             next_sample = tt + a.every
-            counts = tracker.count_distribution()
-            places = tracker.place_distribution()
+            counts = tracker.core.count_distribution()
+            places = tracker.core.place_distribution()
             p = {z: counts[z] for z in rooms}
             p.update({rid: places[rid] for rid in the_plan["regions"]})
             # what the app publishes as "besetzt" in the observed rooms (MODEL.md 6 "Belegt"); else P > c
-            pub = {z: v[0] for z, v in tracker.occupancy().items()} if a.published or a.json else {}
+            pub = {z: v is not None for z, v in tracker.core.occupancy().items()} if a.published or a.json else {}
             for r in inside:
                 q = p
                 if r.get("walks"):  # nobody stays: where an LD2450 measures somebody, they walk through
@@ -181,13 +181,13 @@ def main():
                 samples[r["name"]].append((m["t"], q, pub))  # (not p: the next window would get the filter too)
             if a.trace:
                 print(time.strftime("%H:%M:%S", time.localtime(m["t"])) + " "
-                      + " ".join(f"{z[:5]} {1 - v[0]:.2f}" for z, v in p.items()) + f" H{len(tracker.hyp_weights())}"
+                      + " ".join(f"{z[:5]} {1 - v[0]:.2f}" for z, v in p.items()) + f" H{len(tracker.core.hyp_weights())}"
                       + "".join(f" | P{d['id']} {max(d['places'].items(), key=lambda kv: kv[1])[0][:6]}"
                                 + ("" if d["x"] is None else f" ({d['x']:.1f},{d['y']:.1f}){' unseen' if d['lost'] else ''}")
                                 for d in tracker.persons()), flush=True)
-    loglik += tracker.loglik if tracker is not None else 0.0
-    cut += getattr(tracker, "loglik_cut", 0.0) if tracker is not None else 0.0
-    segments.append(tracker.loglik if tracker is not None else 0.0)
+    loglik += tracker.core.loglik[0] if tracker is not None else 0.0
+    cut += tracker.core.loglik[1] if tracker is not None else 0.0
+    segments.append(tracker.core.loglik[0] if tracker is not None else 0.0)
 
     # per report and room: mean P(somebody there), share of the time the light would be wrong
     wrong_on = wrong_off = n_on = n_off = 0.0

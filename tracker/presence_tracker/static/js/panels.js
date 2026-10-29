@@ -1,7 +1,7 @@
 // Side panel per tab.
 import { api, coverageNow, edit, emit, heldBadges, onWall, refreshCoverage, savePref, saveNow, select, sensorById, sensorColor, setTool, state } from './store.js';
 import { autoFitImage, deleteSelection, fitFromCalibration } from './tools.js';
-import { LAYER_LIMITS, ZONE_KINDS, bindNumber, dist, esc, fmt, h, onSegment, personColor, regionOfRoom, roomsWithSensor, toast, uid, zoneArea } from './util.js';
+import { LABELS, LAYER_LIMITS, ZONE_KINDS, bindNumber, dist, esc, fmt, h, onSegment, personColor, regionOfRoom, roomsWithSensor, toast, uid, zoneArea } from './util.js';
 import { loadSize } from './view.js';
 
 let skipRender = false;
@@ -141,7 +141,8 @@ const LIVE = {
     const t = seenTotal();
     if (!t) return '–';
     const live = state.live;
-    const occupied = state.config.zones.filter(z => (z.kind === 'room' && !z.entry || z.kind === 'area') && live?.zones?.[z.id]?.occupied);
+    const home = new Set(state.derived?.plan.home || []);  // the zones of the home (the core's)
+    const occupied = state.config.zones.filter(z => home.has(z.id) && live?.zones?.[z.id]?.occupied);
     return `<div class="occupied-line">${occupied.length ? `Besetzt: <b>${occupied.map(z => esc(z.name)).join(', ')}</b>` : 'Kein Raum besetzt'}</div>
       <div><b style="font-size:22px">${t.count}</b> <span class="note">${t.count === 1 ? 'Person' : 'Personen'} in den Räumen mit Sensor · ${t.moving} bewegt · ${t.still} ruhig</span></div>`;
   },
@@ -295,11 +296,11 @@ function livePanel(panel, view) {
         <label class="field grow">Was war falsch?<select id="rep-kind"></select></label>
       </div>
       <div class="row">
-        <label class="field">Vor wie vielen Minuten?<input type="number" id="rep-ago" min="0" max="15" step="1" value="0" style="width:6em"></label>
+        <label class="field">Vor wie vielen Minuten?<input type="number" id="rep-ago" min="0" step="1" value="0" style="width:6em"></label>
         <label class="field grow" style="flex-basis:100%">Was war los? (optional)<input id="rep-text" placeholder="z. B. saß auf dem Sofa, wurde nach 1 min verloren"></label>
       </div>
       <div class="row"><button class="btn primary" id="rep-send">Melden</button></div>
-      <p class="note">Speichert die Sensordaten der letzten 15 Minuten mit der Konfiguration, zum genauen Nachspielen. Die Meldungen sind die Wahrheitsdaten für die Bewertung.</p>
+      <p class="note">Speichert die Sensordaten der letzten <span id="rep-window">Minuten</span> mit der Konfiguration, zum genauen Nachspielen. Die Meldungen sind die Wahrheitsdaten für die Bewertung.</p>
       <div class="list" id="rep-list"></div>
     </details>
     <h3>Räume mit Sensor</h3>
@@ -349,6 +350,9 @@ async function reportForm(el) {
   const list = el.querySelector('#rep-list');
   const load = async () => {
     const data = await api('api/reports');
+    // how far back a report reaches (the server's: what it keeps of the sensor data)
+    el.querySelector('#rep-ago').max = data.window_min;
+    el.querySelector('#rep-window').textContent = `${fmt(data.window_min, 0)} Minuten`;
     const kinds = el.querySelector('#rep-kind');
     if (!kinds.options.length) kinds.innerHTML = Object.entries(data.kinds).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
     const names = Object.fromEntries(rooms.map(z => [z.id, z.name]));
@@ -415,7 +419,7 @@ function planPanel(panel, view) {
   if (sel?.kind === 'wall' && c.walls[sel.id]) wallDetail(detail, sel.id);
   else if (sel?.kind === 'door') doorDetail(detail, sel.id);
   else if (sel?.kind === 'room') { const z = c.zones.find(z => z.id === sel.id); if (z) roomDetail(detail, z); }
-  else detail.append(h('<p class="note">Wand, Tür oder Raum anklicken zum Bearbeiten. Jede Änderung wird sofort gespeichert; Rückgängig und Wiederholen mit ↶ ↷ unten rechts auf der Karte (oder Strg+Z / Strg+Y).</p>'));
+  else detail.append(h('<p class="note">Wand, Tür oder Raum anklicken zum Bearbeiten. Änderungen sind ein Entwurf, bis „Speichern“ unten rechts auf der Karte (oder Strg+S) gedrückt wird; erst dann rechnet das Modell damit. Rückgängig und Wiederholen mit ↶ ↷ (oder Strg+Z / Strg+Y).</p>'));
 
   const roomList = panel.querySelector('#rooms');
   for (const z of rooms) {
@@ -481,7 +485,7 @@ function doorDetail(el, id) {
   if (!door) return;
   el.append(h(`<div class="card">
     <div class="row"><b style="flex:1">Tür</b><button class="btn danger" id="del">Löschen</button></div>
-    <label class="field">Breite (m)<input type="number" step="0.01" value="${door.width}" id="width"></label>
+    <label class="field">${LABELS.door.width} (m)<input type="number" step="0.01" value="${door.width}" id="width"></label>
     <p class="note">Entlang der Wand ziehen verschiebt die Tür, die Griffe an den Enden ändern die Breite. Für die Räume ist die Tür zu, für Radar und Personen offen.</p>
   </div>`));
   el.querySelector('#del').onclick = deleteSelection;
@@ -602,13 +606,8 @@ function sensorDetail(el, s) {
   el.append(h(`<div class="card" style="margin-top:12px">
     <div class="grid2">
       <label class="field" style="grid-column: span 2">Name<input type="text" value="${esc(s.name)}" data-k="name"></label>
-      <label class="field">x (m)<input type="number" step="0.01" value="${s.x}" data-k="x"></label>
-      <label class="field">y (m)<input type="number" step="0.01" value="${s.y}" data-k="y"></label>
-      <label class="field">Blickrichtung (°)<input type="number" step="1" value="${s.heading}" data-k="heading"></label>
-      <label class="field">Montagehöhe (m)<input type="number" step="0.05" value="${s.height}" data-k="height"></label>
-      <label class="field">Öffnungswinkel (°)<input type="number" step="5" value="${s.fov}" data-k="fov"></label>
-      <label class="field">Reichweite (m)<input type="number" step="0.5" value="${s.range}" data-k="range"></label>
-      <label class="field">Maßstab<input type="number" step="0.01" value="${s.scale}" data-k="scale"></label>
+      ${[['x', 'm', 0.01], ['y', 'm', 0.01], ['heading', '°', 1], ['height', 'm', 0.05], ['fov', '°', 5], ['range', 'm', 0.5], ['scale', '', 0.01]]
+        .map(([k, unit, step]) => `<label class="field">${LABELS.sensor[k]}${unit ? ` (${unit})` : ''}<input type="number" step="${step}" value="${s[k]}" data-k="${k}"></label>`).join('')}
     </div>
     <p class="note">Maßstab: wahre Entfernung geteilt durch die gemessene. 1,04 = der Sensor misst 4 % zu kurz. Stellt die Kalibrierung ein.</p>
     <label class="check"><input type="checkbox" data-k="mirror" ${s.mirror ? 'checked' : ''}> x-Achse gespiegelt</label>
@@ -828,7 +827,7 @@ function calibrationResult(el, r) {
     return `<div class="calib-sensor">
       <div class="row"><b class="grow">${esc(cur?.name || id)}</b><span class="badge ${cls[s.quality]}">${label[s.quality]}</span></div>
       <dl class="kv"><dt>Drehung</dt><dd>${turn}</dd><dt>Maßstab</dt><dd>${scale}</dd>
-        ${s.mirror !== cur?.mirror ? '<dt>x-Richtung</dt><dd><b>ändern</b></dd>' : ''}</dl>
+        ${s.apply.mirror ? '<dt>x-Richtung</dt><dd><b>ändern</b></dd>' : ''}</dl>
       <p class="note">${s.points} Punkte in Bewegung aus ${s.stretches}/${need}\u00a0h, ${s.pairs}\u00a0s gleichzeitig mit anderen Sensoren gesehen (${s.agree} passend), ${s.handovers} Übergänge. Außerhalb der Sicht: ${out[0]}\u00a0% → ${out[1]}\u00a0%.${s.reason && !s.few ? ' ' + esc(s.reason) : ''}</p>
     </div>`;
   }).join('');
@@ -847,11 +846,11 @@ function calibrationResult(el, r) {
         const sc = c.sensors.find(x => x.id === id);
         if (s.apply.heading) sc.heading = s.heading;
         if (s.apply.scale) sc.scale = s.scale;
-        if (s.mirror !== sc.mirror && s.apply.heading) sc.mirror = s.mirror;
+        if (s.apply.mirror) sc.mirror = s.mirror;
       }
     });
     state.calibResult = null;
-    toast(`${usable.length} Sensoren übernommen`);
+    toast(`${usable.length} Sensoren übernommen: Speichern, damit das Modell damit rechnet`);
     emit('tab');
   });
 }
@@ -860,26 +859,26 @@ function calibrationResult(el, r) {
 
 const PARAMS = [
   ['Messung', [
-    ['target_height', 'Höhe des Oberkörpers', 'm', 'Für die Umrechnung des schrägen Abstands auf den Boden.', 0.05],
-    ['range_sigma_base', 'Messfehler in Blickrichtung, Grundwert', 'm', 'Fehler = Grundwert + Anstieg × Abstand. Größer = einzelne Messungen zählen weniger.', 0.01],
-    ['range_sigma_slope', 'Messfehler in Blickrichtung, Anstieg', 'm/m', '', 0.005],
-    ['lateral_sigma_base', 'Messfehler seitlich, Grundwert', 'm', 'Seitlich wächst der Fehler schneller mit dem Abstand (Winkelfehler).', 0.01],
-    ['lateral_sigma_slope', 'Messfehler seitlich, Anstieg', 'm/m', '', 0.005],
-    ['wall_margin', 'Toleranz an Wänden', 'm', 'Messpunkte weiter hinter einer Wand oder außerhalb aller Räume sind Reflexionen und werden verworfen.', 0.05],
+    ['target_height', 'm', 'Für die Umrechnung des schrägen Abstands auf den Boden.', 0.05],
+    ['range_sigma_base', 'm', 'Fehler = Grundwert + Anstieg × Abstand. Größer = einzelne Messungen zählen weniger.', 0.01],
+    ['range_sigma_slope', 'm/m', '', 0.005],
+    ['lateral_sigma_base', 'm', 'Seitlich wächst der Fehler schneller mit dem Abstand (Winkelfehler).', 0.01],
+    ['lateral_sigma_slope', 'm/m', '', 0.005],
+    ['wall_margin', 'm', 'Messpunkte weiter hinter einer Wand oder außerhalb aller Räume sind Reflexionen und werden verworfen.', 0.05],
   ]],
   ['Räume ohne Sensor', [
-    ['dwell_median', 'Typischer Aufenthalt', 's', 'Annahme für Räume ohne Sensor. Das Treppenhaus zählt nicht dazu: Es liegt außer Haus.', 10],
-    ['dwell_spread', 'Streuung des Aufenthalts', '', 'Streuung von ln(Dauer): breit, damit lange Aufenthalte möglich bleiben.', 0.1],
+    ['dwell_median', 's', 'Annahme für Räume ohne Sensor. Das Treppenhaus zählt nicht dazu: Es liegt außer Haus.', 10],
+    ['dwell_spread', '', 'Streuung von ln(Dauer): breit, damit lange Aufenthalte möglich bleiben.', 0.1],
   ]],
   ['LD2410C', [
-    ['ld2410_hold', 'Haltezeit (Anzeige)', 's', 'Lücken in der LD2410C-Präsenz bis zu dieser Länge werden in der Anzeige überbrückt.', 0.1],
+    ['ld2410_hold', 's', 'Lücken in der LD2410C-Präsenz bis zu dieser Länge werden in der Anzeige überbrückt.', 0.1],
   ]],
   ['Ausgabe', [
-    ['light_cost', 'Kosten: Licht ohne Person', '×', 'Eine Sekunde Licht ohne Person ist so schlimm wie so viele Sekunden Dunkel mit Person. Ein Raum gilt als besetzt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.5],
-    ['seen_hold', 'Haltezeit eigener LD2450', 's', 'Ein Raum gilt auch als besetzt, solange der LD2450 dieses Raums in den letzten so vielen Sekunden ein gemessenes Ziel im Raum hatte (nicht gehalten, nicht hinter einer Wand), auch wenn der Filter „leer“ sagt. Nur der Sensor des Raums zählt: Andere messen Personen an Raumgrenzen im Nachbarraum. 0 = nur der Filter. Gemessen mit 10 s auf den Wahrheiten bis 8.10.: dunkel mit Person 25,6 → 0,6 min, Licht im leeren Raum 4,3 → 6,3 min.', 1],
-    ['lead_time', 'Vorausschau „wird betreten“', 's', 'So weit rechnet das Modell jeden Gehenden mit seinem eigenen Bewegungsmodell voraus (Wände halten auf, Türen nicht). Weil es Richtung und Tempo mit der Zeit vergisst, kommt das Signal später als diese Zeit vor dem Eintritt: gemessen mit 2 s: bei 60 % der Eintritte mindestens 1 s (1 m) vorher.', 0.1],
-    ['approach_cost', 'Kosten: Einschalten auf Verdacht', '×', 'Ein Einschalten auf Verdacht, nach dem niemand hereinkommt, ist so schlimm wie so viele Eintritte in einen dunklen Raum. „Wird betreten“ gilt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.01],
-    ['target_threshold', 'Schwelle „Ziel“', '', '„Ziel“ ist an, wenn die Wahrscheinlichkeit, dass ein Gehender als Nächstes in den Raum geht, mindestens so hoch ist. Sie entsteht aus der Bewegung (wie „wird betreten“) und der gelernten Karte, wohin die Gänge von dort bisher gingen; wo die Karte noch nichts weiß, ist „Ziel“ genau „wird betreten“. Schwelle = K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein vergebliches Licht ist so schlimm wie 4 späte. Je Raum unten anders einstellbar.', 0.05],
+    ['light_cost', '×', 'Eine Sekunde Licht ohne Person ist so schlimm wie so viele Sekunden Dunkel mit Person. Ein Raum gilt als besetzt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.5],
+    ['seen_hold', 's', 'Ein Raum gilt auch als besetzt, solange der LD2450 dieses Raums in den letzten so vielen Sekunden ein gemessenes Ziel im Raum hatte (nicht gehalten, nicht hinter einer Wand), auch wenn der Filter „leer“ sagt. Nur der Sensor des Raums zählt: Andere messen Personen an Raumgrenzen im Nachbarraum. 0 = nur der Filter. Gemessen mit 10 s auf den Wahrheiten bis 8.10.: dunkel mit Person 25,6 → 0,6 min, Licht im leeren Raum 4,3 → 6,3 min.', 1],
+    ['lead_time', 's', 'So weit rechnet das Modell jeden Gehenden mit seinem eigenen Bewegungsmodell voraus (Wände halten auf, Türen nicht). Weil es Richtung und Tempo mit der Zeit vergisst, kommt das Signal später als diese Zeit vor dem Eintritt: gemessen mit 2 s: bei 60 % der Eintritte mindestens 1 s (1 m) vorher.', 0.1],
+    ['approach_cost', '×', 'Ein Einschalten auf Verdacht, nach dem niemand hereinkommt, ist so schlimm wie so viele Eintritte in einen dunklen Raum. „Wird betreten“ gilt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.01],
+    ['target_threshold', '', '„Ziel“ ist an, wenn die Wahrscheinlichkeit, dass ein Gehender als Nächstes in den Raum geht, mindestens so hoch ist. Sie entsteht aus der Bewegung (wie „wird betreten“) und der gelernten Karte, wohin die Gänge von dort bisher gingen; wo die Karte noch nichts weiß, ist „Ziel“ genau „wird betreten“. Schwelle = K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein vergebliches Licht ist so schlimm wie 4 späte. Je Raum unten anders einstellbar.', 0.05],
   ]],
 ];
 
@@ -913,15 +912,18 @@ function targetRooms(p) {
 
 function settingsPanel(panel) {
   const p = state.config.params;
-  const root = h('<div><h2>Einstellungen</h2><p class="note">Änderungen wirken sofort. Dabei startet das Modell neu (außer bei allem unter „Ausgabe“ und der Haltezeit des LD2410C): Es behält, was es über die Personen weiß, wenn der Grundriss gleich bleibt.</p></div>');
+  // what only the outputs read: a change of it alone does not start the model over (the core's)
+  // (the per-room thresholds of "Ziel" with it)
+  const outputs = (state.derived?.output_params || []).filter(k => LABELS.params[k]).map(k => LABELS.params[k]);
+  const root = h(`<div><h2>Einstellungen</h2><p class="note">Änderungen wirken nach dem Speichern. Dabei startet das Modell neu, außer bei: ${esc(outputs.join(', '))}. Es behält, was es über die Personen weiß, wenn der Grundriss gleich bleibt.</p></div>`);
   const experts = h(`<details style="margin-top:16px"><summary><b>Experten: Werte des Modells</b></summary>
     <p class="note">Gemessen oder aus Messungen abgeleitet. Wer sie ändert, ändert das Modell; die Auswertung mit
     bekannter Wahrheit gilt dann nicht mehr. Nur zum Ausprobieren.</p></details>`);
   for (const [group, items] of PARAMS) {
     const target = HOME_GROUPS.includes(group) ? root : experts;
     target.append(h(`<h3>${group}</h3>`));
-    for (const [key, label, unit, desc, step] of items) {
-      const el = h(`<div class="param"><label class="field">${label}${unit ? ` (${unit})` : ''}
+    for (const [key, unit, desc, step] of items) {
+      const el = h(`<div class="param"><label class="field">${LABELS.params[key]}${unit ? ` (${unit})` : ''}
         <input type="number" step="${step}" value="${p[key]}"></label>${desc ? `<div class="desc">${desc}</div>` : ''}
         ${THRESHOLD_OF[key] ? `<div class="desc derived" data-derived="${THRESHOLD_OF[key]}Text"></div>` : ''}</div>`);
       bindNumber(el.querySelector('input'), state.limits.params?.[key], v => panelEdit(c => { c.params[key] = v; }));
@@ -932,10 +934,9 @@ function settingsPanel(panel) {
   root.append(experts);
   const reset = h('<button class="btn" style="margin-top:12px">Alle auf Standard</button>');
   reset.onclick = async () => {
-    if (!confirm('Alle Einstellungen zurücksetzen?')) return;
+    if (!confirm('Alle Einstellungen zurücksetzen und speichern?')) return;
     edit(c => { c.params = {}; });
-    await saveNow();  // the reload shows what the server took over (a fixed delay could cut the request off)
-    location.reload();
+    await saveNow();  // the server's answer has the core's values: the panel shows them
   };
   root.append(reset);
   panel.append(root);

@@ -25,7 +25,7 @@ def sensors_online(config, live):
 
 
 def sensor(sid, enabled=True, placed=True):
-    return {"id": sid, "name": sid, "enabled": enabled, "placed": placed, "x": 1.0, "y": 1.0}
+    return {"id": sid, "name": sid, "enabled": enabled, "placed": placed, "x": 1.0, "y": 1.0, "heading": 0.0}
 
 
 def test_offline_sensors_count_in_the_header():

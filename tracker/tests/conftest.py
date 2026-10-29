@@ -1,7 +1,9 @@
 """The tests' hooks into the core: the tests marked "hooks" need presence_core built with its test hooks
-(the feature "testing": build_export, hidden_at, panic_for_test, Core.normalize/spoil_weights_for_test/ld_last,
-Geometry). Every test of a module that simulates frames or asks the sensor geometry (sim.simulate, sim.geometry:
-presence_core.Geometry) is marked "hooks" here. Against a release wheel (CI): pytest -m "not hooks", with
+(the feature "testing": build_export, hidden_at, panic_for_test, model_defaults, ld_prior, ld_expected, Geometry,
+Core.normalize/spoil_weights_for_test/ld_last and the readings of the filter's state and outputs the tests and
+tools take from Tracker.core). Every test of a module that simulates frames or asks the sensor geometry
+(sim.simulate, sim.geometry: presence_core.Geometry) is marked "hooks" here; the others that read the core
+directly are marked by hand. Against a release wheel (CI): pytest -m "not hooks", with
 PT_RELEASE_WHEEL=1 (test_filter checks the wheel has no hooks)."""
 
 import presence_core

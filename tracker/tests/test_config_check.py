@@ -1,16 +1,32 @@
 """PUT /api/config refuses values the model can't run with: an emptied field in the web UI arrived as
-0, and light_cost 0 put every room above its threshold (every light on)."""
+0, and light_cost 0 put every room above its threshold (every light on). The core's problem goes to the web UI,
+which words it (static/js/util.js problemText, LABELS: run in Node, skipped without it)."""
 
 import asyncio
 import json
 import os
+import pathlib
+import shutil
+import subprocess
 
+import presence_core
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from presence_tracker.app import App
-from presence_tracker.model import LABELS, Config, check
+from presence_tracker.model import Config, problem
 from test_filter import flat_config
+
+UTIL = pathlib.Path(__file__).parents[1] / "presence_tracker" / "static" / "js" / "util.js"
+node = pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+
+
+def ui(expression: str):
+    """An expression of the web UI's util.js (its exports in scope), evaluated in Node."""
+    script = f"import * as util from {json.dumps(UTIL.as_uri())};\nconst {{ LABELS, problemText }} = util;\n" \
+             f"console.log(JSON.stringify({expression}));"
+    r = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, check=True)
+    return json.loads(r.stdout)
 
 
 def put(app, data):
@@ -39,9 +55,9 @@ def test_out_of_range_params_are_refused(app, tmp_path, key, value):
     data["params"][key] = value
     status, body = put(app, data)
     assert status == 400
-    assert LABELS["params"][key] in body["error"]
+    assert (body["problem"]["part"], body["problem"]["field"]) == ("params", key)
     assert (tmp_path / "tracker.json").read_text() == before
-    assert getattr(app.config.params, key) == getattr(Config().params, key)
+    assert app.config.data["params"][key] == Config.from_dict({}).data["params"][key]
 
 
 @pytest.mark.parametrize("key, value", [("height", 0), ("x", None), ("y", float("nan")), ("scale", 0),
@@ -50,7 +66,7 @@ def test_out_of_range_sensor_values_are_refused(app, key, value):
     data = app.config.to_dict()
     data["sensors"][0][key] = value
     status, body = put(app, data)
-    assert status == 400 and body["error"].startswith("Sensor ")
+    assert status == 400 and (body["problem"]["part"], body["problem"]["field"]) == ("sensor", key)
 
 
 def test_per_room_threshold_and_door_are_checked(app):
@@ -67,21 +83,22 @@ def test_a_valid_edit_says_whether_the_model_restarted(app):
     data["params"]["range_sigma_base"] = 0.2  # a parameter of the model
     status, body = put(app, data)
     assert status == 200 and body["restarted"] is True
-    assert app.config.params.range_sigma_base == 0.2
+    assert app.config.data["params"]["range_sigma_base"] == 0.2
     data["params"]["light_cost"] = 3.0  # outputs only: the people stay
     data["params"]["target_threshold"] = 0.6
     data["zones"][0]["name"] = "Wohnzimmer"
     status, body = put(app, data)
     assert status == 200 and body["restarted"] is False
-    assert app.config.params.light_cost == 3.0 and app.tracker.p.light_cost == 3.0
+    assert app.config.data["params"]["light_cost"] == 3.0 and app.tracker.config.data["params"]["light_cost"] == 3.0
 
 
-def test_the_stored_config_loads_as_it_is():
+def test_the_stored_config_goes_through_the_core(tmp_path, caplog):
     d = flat_config().to_dict()
     d["params"]["light_cost"] = 0
-    with pytest.raises(ValueError):
-        check(d)
-    assert Config.from_dict(d).params.light_cost == 0  # without check: as stored
+    (tmp_path / "tracker.json").write_text(json.dumps(d))
+    with pytest.raises(presence_core.ConfigError):  # the model can't run with it: said, not run
+        App(tmp_path, publish=False)
+    assert "does not pass the check" in caplog.text
 
 
 def test_the_ui_gets_the_limits(app):
@@ -97,30 +114,30 @@ def _area(**kw):
     return {"id": "z", "name": "Z", "kind": "area", "shape": "rect", "points": [[1, 1], [2, 2]], **kw}
 
 
-@pytest.mark.parametrize("change, message", [
-    (lambda d: d["sensors"].append(dict(d["sensors"][0])), "doppelt"),
-    (lambda d: d["sensors"][0].update(id="a/b"), "MQTT"),
-    (lambda d: d["walls"].append({"points": [[1, 1]], "kind": "wall"}), "zwei verschiedene Punkte"),
-    (lambda d: d["walls"].append({"points": [[1, 1], [2, 2], [3, 3]], "kind": "wall"}), "zwei verschiedene Punkte"),
-    (lambda d: d["walls"].append({"points": [[1, 1], [1, 1]], "kind": "wall"}), "zwei verschiedene Punkte"),
-    (lambda d: d["walls"].append({"points": [[1, 1], [2, 2]], "kind": "glass"}), "Art"),
-    (lambda d: d["zones"].append(_area(kind="foo")), "Art"),
-    (lambda d: d["zones"].append(_area(shape="blob")), "Form"),
-    (lambda d: d["zones"].append(_area(shape="circle", points=[], radius=1.0)), "Mittelpunkt"),
-    (lambda d: d["zones"].append(_area(shape="polygon", points=[[1, 1], [2, 2]])), "drei"),
-    (lambda d: d["zones"].append(_area(points=[[1, 1]])), "zwei Ecken"),
-    (lambda d: d["zones"].append(_area(id=None)), "ohne ID"),
-    (lambda d: d["zones"].append(dict(d["zones"][0])), "doppelt"),
-    (lambda d: d.update(ld_view={"a<-b": -0.5}), "Blick des LD2410C"),
+@pytest.mark.parametrize("change, reason", [
+    (lambda d: d["sensors"].append(dict(d["sensors"][0])), "id_twice"),
+    (lambda d: d["sensors"][0].update(id="a/b"), "id_chars"),
+    (lambda d: d["walls"].append({"points": [[1, 1]], "kind": "wall"}), "not_a_segment"),
+    (lambda d: d["walls"].append({"points": [[1, 1], [2, 2], [3, 3]], "kind": "wall"}), "not_a_segment"),
+    (lambda d: d["walls"].append({"points": [[1, 1], [1, 1]], "kind": "wall"}), "not_a_segment"),
+    (lambda d: d["walls"].append({"points": [[1, 1], [2, 2]], "kind": "glass"}), "unknown_kind"),
+    (lambda d: d["zones"].append(_area(kind="foo")), "unknown_kind"),
+    (lambda d: d["zones"].append(_area(shape="blob")), "unknown_shape"),
+    (lambda d: d["zones"].append(_area(shape="circle", points=[], radius=1.0)), "no_centre"),
+    (lambda d: d["zones"].append(_area(shape="polygon", points=[[1, 1], [2, 2]])), "polygon_corners"),
+    (lambda d: d["zones"].append(_area(points=[[1, 1]])), "rect_corners"),
+    (lambda d: d["zones"].append(_area(id=None)), "no_id"),
+    (lambda d: d["zones"].append(dict(d["zones"][0])), "id_twice"),
+    (lambda d: d.update(ld_view={"a<-b": -0.5}), "not_at_least_0"),
 ])
-def test_what_the_model_cannot_run_with_is_refused_with_400(app, tmp_path, change, message):
+def test_what_the_model_cannot_run_with_is_refused_with_400(app, tmp_path, change, reason):
     """Until 0.18 a one-point wall gave a 500, and a circle without a center was saved: every tick
     after it failed, also after every restart."""
     before = (tmp_path / "tracker.json").read_text()
     data = app.config.to_dict()
     change(data)
     status, body = put(app, data)
-    assert status == 400 and message in body["error"], body
+    assert status == 400 and body["problem"]["reason"] == reason, body
     assert (tmp_path / "tracker.json").read_text() == before
 
 
@@ -132,7 +149,7 @@ def test_a_plan_drawn_in_meters_may_be_scaled_above_1(app):
     data["background"] = {"layers": [{"x": 0, "y": 0, "scale": 1.02, "rotation": 0, "opacity": 0.5}]}
     assert put(app, data)[0] == 200
     data["background"]["layers"][0]["scale"] = 11
-    assert put(app, data)[0] == 200 and app.config.background["layers"][0]["scale"] == 11
+    assert put(app, data)[0] == 200 and app.config.data["background"]["layers"][0]["scale"] == 11
 
 
 def test_a_door_on_no_wall_is_refused(app):
@@ -141,7 +158,7 @@ def test_a_door_on_no_wall_is_refused(app):
     data = app.config.to_dict()
     data["doors"][0]["x"] += 0.05  # the balcony door on the wall x = 6
     status, body = put(app, data)
-    assert status == 400 and "keiner Wand" in body["error"]
+    assert status == 400 and (body["problem"]["part"], body["problem"]["reason"]) == ("door", "not_on_wall")
     data["doors"][0]["x"] -= 0.0495  # half a millimetre off: mm rounding
     assert put(app, data)[0] == 200
 
@@ -171,12 +188,13 @@ def test_a_configuration_the_model_fails_with_is_refused_and_the_old_one_holds(a
     app.tracker.zone_states()  # the model runs
 
 
+@node
 def test_every_field_of_the_ui_has_a_label():
-    # the web UI's fields: the core's limits; each needs its words here (and nothing else is worded)
-    import presence_core
+    # the web UI's fields: the core's limits; each needs its words in the web UI (and nothing else is worded)
     limits = presence_core.config_limits()
+    labels = ui("LABELS")
     assert {group: set(fields) for group, fields in limits.items()} == \
-        {group: set(LABELS[group]) for group in limits}
+        {group: set(labels[group]) for group in limits}
 
 
 def _sensor(**kw):
@@ -212,33 +230,36 @@ _PROBLEMS = {
 }
 
 
-@pytest.mark.parametrize("reason, config", [(r, c) for r, cs in _PROBLEMS.items() for c in cs])
-def test_every_problem_of_the_core_is_a_german_sentence(reason, config):
-    import presence_core
-    with pytest.raises(presence_core.ConfigError) as e:
-        presence_core.check_config(json.dumps(config))
-    problem = e.value.args[0]
-    assert problem.reason == reason
-    with pytest.raises(ValueError) as words:
-        check(config)
-    text = str(words.value)
-    assert text and text[0].isupper() and text.endswith((".", "?")) or "unvollständig" in text, text
-    assert "None" not in text and "{" not in text, text
-
-
-def test_an_unreadable_configuration_is_a_german_sentence():
-    import presence_core
-    from presence_tracker.model import message
+@node
+def test_every_problem_of_the_core_is_a_german_sentence():
+    problems = []
+    for reason, configs in _PROBLEMS.items():
+        for config in configs:
+            with pytest.raises(presence_core.ConfigError) as e:
+                Config.from_dict(config)
+            assert e.value.args[0].reason == reason
+            problems.append(problem(e.value))
     with pytest.raises(presence_core.ConfigError) as e:
         presence_core.check_config("{")
     assert e.value.args[0].reason == "unreadable"
-    assert message(e.value.args[0]).startswith("Konfiguration unvollständig oder falsch: ")
+    problems.append(problem(e.value))
+    json.dumps(problems)  # as the server sends them
+    texts = ui(f"{json.dumps(problems)}.map(problemText)")
+    for p, text in zip(problems, texts):
+        assert text and text[0].isupper() and text.endswith((".", "?")) or "unvollständig" in text, (p, text)
+        assert "None" not in text and "null" not in text and "undefined" not in text and "{" not in text, (p, text)
+        assert not text.startswith("Konfiguration: " + p["reason"]), (p, text)  # a sentence of its own
+    assert texts[-1].startswith("Konfiguration unvollständig oder falsch: ")
+    light = next(t for p, t in zip(problems, texts) if p["field"] == "light_cost" and p["reason"] == "out_of_range")
+    assert light == "Kosten: Licht ohne Person muss größer als 0 und höchstens 1000 sein, nicht 0."
 
 
 @pytest.mark.skipif(not os.environ.get("PT_RELEASE_WHEEL"), reason="against the release wheel only (CI)")
 def test_the_release_wheel_has_no_test_hooks():
     # here, not in a module that simulates: those are all "hooks" (conftest)
-    import presence_core
-    hooks = ["build_export", "hidden_at", "panic_for_test", "Geometry"]
+    hooks = ["build_export", "hidden_at", "panic_for_test", "Geometry", "model_defaults", "ld_prior", "ld_expected"]
     assert [h for h in hooks if hasattr(presence_core, h)] == []
-    assert [h for h in ("normalize", "spoil_weights_for_test", "ld_last") if hasattr(presence_core.Core, h)] == []
+    readings = ["normalize", "spoil_weights_for_test", "ld_last", "loglik", "hyp_weights", "check", "hypotheses",
+                "tracks", "room_at", "tile_near", "sight", "observed", "ghost_rates", "background", "count_distribution",
+                "place_distribution", "occupancy"]
+    assert [h for h in readings if hasattr(presence_core.Core, h)] == []

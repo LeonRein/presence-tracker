@@ -53,30 +53,30 @@ def configs():
 def _outline(z) -> list:
     """A room's corners (a circle by 32 of them), for the bounds of the grid (as model.Shape had them until
     0.46: the digests are of that grid)."""
-    if z.shape == "circle":
-        return [(z.center[0] + z.radius * math.cos(2 * math.pi * i / 32), z.center[1] + z.radius * math.sin(2 * math.pi * i / 32))
+    if z["shape"] == "circle":
+        return [(z["center"][0] + z["radius"] * math.cos(2 * math.pi * i / 32), z["center"][1] + z["radius"] * math.sin(2 * math.pi * i / 32))
                 for i in range(32)]
-    return [tuple(p) for p in z.points]
+    return [tuple(p) for p in z["points"]]
 
 
 def reflections(config) -> dict:
     """Per sensor a sha1 of the rule of reflections (presence_core.hidden_at) on a grid of points 0.37 m
     apart around the rooms, each looked at from the sensor."""
-    rooms = [z for z in config.zones if z.kind == "room"]
-    if not rooms or not config.sensors:
+    rooms = [z for z in config.data["zones"] if z["kind"] == "room"]
+    if not rooms or not config.data["sensors"]:
         return {}
     xs = [x for z in rooms for x, _ in _outline(z)]
     ys = [y for z in rooms for _, y in _outline(z)]
     x0, y0, x1, y1 = min(xs) - 1, min(ys) - 1, max(xs) + 1, max(ys) + 1
     points = [(x, y) for x in np.arange(x0, x1, 0.37) for y in np.arange(y0, y1, 0.37)]
     out = {}
-    for si, s in enumerate(config.sensors):
+    for si, s in enumerate(config.data["sensors"]):
         us = []
         for x, y in points:
-            d = math.hypot(x - s.x, y - s.y)
-            us.append(((x - s.x) / d, (y - s.y) / d) if d > 0 else (1.0, 0.0))
-        hidden = presence_core.hidden_at(json.dumps(config.to_dict()), si, points, us, config.params.wall_margin)
-        out[s.id] = hashlib.sha1(bytes(hidden)).hexdigest()[:16]
+            d = math.hypot(x - s["x"], y - s["y"])
+            us.append(((x - s["x"]) / d, (y - s["y"]) / d) if d > 0 else (1.0, 0.0))
+        hidden = presence_core.hidden_at(json.dumps(config.to_dict()), si, points, us, config.data["params"]["wall_margin"])
+        out[s["id"]] = hashlib.sha1(bytes(hidden)).hexdigest()[:16]
     return out
 
 
@@ -93,7 +93,7 @@ def test_the_core_builds_the_world_0381_built(name, config, build, reflected):
     assert [k for k in build if got[k] != build[k]] == []  # the parts that differ
     assert reflections(config) == reflected
     # the zones of the outputs are the home's, each by its own name (an outside room among them shifts nothing)
-    home = [z.id for z in config.zones if z.kind == "area" or z.kind == "room" and not z.entry]
+    home = [z["id"] for z in config.data["zones"] if z["kind"] == "area" or z["kind"] == "room" and not z["entry"]]
     assert set(Tracker(config).zone_states()) - {"_total"} == set(home) == {z[0] for z in plan(config)["home"]}
 
 
@@ -107,6 +107,6 @@ def test_the_plan_view_is_the_cores_build(name, config, build, reflected):
     assert view["observed"] == core["observed_rooms"] and view["own_rooms"] == core["own_rooms"]
     assert len(view["closed"]) == core["closed_rooms"]
     assert view["places"] == ["observed", *view["regions"], "outside"]
-    assert view["areas"] == [z.id for z in config.zones if z.kind == "area"]
+    assert view["areas"] == [z["id"] for z in config.data["zones"] if z["kind"] == "area"]
     tr = Tracker(config)
     assert tr.plan == view and tr.rooms == view["observed"] and tr.places == view["places"]

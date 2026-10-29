@@ -1,6 +1,9 @@
 //! The core behind the Python tracker (docs/rust-core.md 4): the filter, its world and what it learns
 //! are presence_core's; here only the conversion, and the views the shell, its tools and tests read.
 
+#[cfg(feature = "testing")]
+use std::collections::BTreeMap;
+
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyFloatingPointError, PyValueError};
 use pyo3::prelude::*;
@@ -8,19 +11,24 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::config::config_from;
 use crate::frames::PyFrame;
+#[cfg(feature = "testing")]
+use crate::views::HypView;
 use crate::views::{
-    CloudView, DetectionView, HypView, PersonView, RegionView, SensorMapView, TilesView, ZoneStateView, plan_view,
+    CloudView, DetectionView, PersonView, RegionView, SensorMapView, TilesView, ZoneStateView, plan_view,
 };
 
 use presence_core::filter::{NotFinite, Start};
+#[cfg(feature = "testing")]
 use presence_core::geometry::Point;
-use presence_core::ld2410::CELLS;
-use presence_core::ld2410::background;
-use presence_core::ld2410::profile::expected;
+#[cfg(feature = "testing")]
+use presence_core::ld2410::{CELLS, background, profile::expected};
 use presence_core::learn::pauses::{Pause, Pauses};
 use presence_core::learn::{Learned, LearnedError};
+#[cfg(feature = "testing")]
 use presence_core::outputs::Source;
-use presence_core::params::{OutputParams, Params, STILL, WALK};
+use presence_core::params::{OutputParams, Params};
+#[cfg(feature = "testing")]
+use presence_core::params::{STILL, WALK};
 use presence_core::plan::Place;
 use presence_core::sensors::SensorSet;
 use presence_core::tracker::{Branched, Event, Fault, Recalibrate, Tracker};
@@ -137,6 +145,16 @@ pub struct Core {
 }
 
 impl Core {
+    /// The index of the sensor with this id, else ValueError.
+    #[cfg(feature = "testing")]
+    fn sensor_of(&self, id: &str) -> PyResult<usize> {
+        let plan = &self.tracker.world().plan;
+        plan.sensors
+            .iter()
+            .position(|s| s.id == id)
+            .ok_or_else(|| PyValueError::new_err(format!("no sensor {id}")))
+    }
+
     /// si if the world has sensor si, else ValueError (the shell's index; a wrong one is a bug there).
     fn sensor(&self, si: usize) -> PyResult<usize> {
         let n = self.tracker.world().sights.len();
@@ -158,11 +176,6 @@ impl Core {
         Ok(Self {
             tracker: Tracker::new(world.take()?),
         })
-    }
-
-    #[getter]
-    fn loglik(&self) -> (f64, f64) {
-        self.tracker.filter().loglik()
     }
 
     /// When the model started (None: not yet) and its time now.
@@ -248,7 +261,7 @@ impl Core {
         }
     }
 
-    /// Only what the outputs read changed (the configuration's OUTPUT_PARAMS): nothing is built, nothing
+    /// Only what the outputs read changed (params::OUTPUT_FIELDS of the configuration): nothing is built, nothing
     /// starts over (Tracker::set_outputs). ValueError, and nothing changed, if they do not fit.
     fn set_outputs(&mut self, config: &str) -> PyResult<()> {
         let config = config_from(config)?;
@@ -319,39 +332,10 @@ impl Core {
         self.tracker.paused(t0, t1.unwrap_or(t0))
     }
 
-    /// Per point the observed room it is in (id; None: in none).
-    fn room_at(&self, points: Vec<Point>) -> Vec<Option<String>> {
-        let plan = &self.tracker.world().plan;
-        points
-            .iter()
-            .map(|&p| plan.room_at(p).map(|k| plan.room(k).id.clone()))
-            .collect()
-    }
-
-    /// The ghost map's rate (per m^2 and s) of sensor si at the points, and s it watched.
-    fn ghost_rates(&self, si: usize, points: Vec<Point>) -> PyResult<(Vec<f64>, f64)> {
-        Ok(self.tracker.ghost_rates(self.sensor(si)?, &points))
-    }
-
-    /// The background of sensor si's LD2410C (16 cells) and its echo sources' rate (per s).
-    fn background(&self, si: usize) -> PyResult<(Vec<f64>, f64)> {
-        let (b, rate) = self.tracker.background(self.sensor(si)?);
-        Ok((b.to_vec(), rate))
-    }
-
     #[cfg(feature = "testing")]
     #[pyo3(signature = (dropped=0.0))]
     fn normalize(&mut self, dropped: f64) -> PyResult<()> {
         self.tracker.normalize(dropped).map_err(not_finite)
-    }
-
-    fn hyp_weights(&self) -> Vec<f64> {
-        self.tracker.filter().hyp_weights()
-    }
-
-    /// The bookkeeping's invariants (Filter::check): ValueError with what is wrong.
-    fn check(&self) -> PyResult<()> {
-        self.tracker.filter().check().map_err(PyValueError::new_err)
     }
 
     /// What is known about the people in the saved format (JSON; Tracker::saved_people).
@@ -372,26 +356,6 @@ impl Core {
         .err()
     }
 
-    /// The hypotheses for reading.
-    fn hypotheses(&self) -> Vec<HypView> {
-        self.tracker
-            .filter()
-            .hypotheses()
-            .into_iter()
-            .map(HypView::of)
-            .collect()
-    }
-
-    /// The live tracks of the filter: (track id, sensor index).
-    fn tracks(&self) -> Vec<(u64, usize)> {
-        self.tracker
-            .filter()
-            .tracks()
-            .iter()
-            .map(|(s, i)| (s.0, i.si))
-            .collect()
-    }
-
     /// The coverage of the running world, the saved configuration's (presence_core::derived::coverage), as
     /// JSON.
     fn coverage(&self) -> String {
@@ -404,27 +368,10 @@ impl Core {
         TilesView::of(self.tracker.world())
     }
 
-    /// The tile of a point, or of the cell in view nearest to it (None: no tiles).
-    fn tile_near(&self, point: Point) -> Option<usize> {
-        self.tracker.world().tiles.cell_near(point)
-    }
-
     /// The coarse sight map of sensor si for the web UI.
     fn sensor_map(&self, si: usize) -> PyResult<SensorMapView> {
         let (map, ghosts, watched_h) = self.tracker.sensor_map(self.sensor(si)?);
         Ok(SensorMapView::of(map, ghosts, watched_h))
-    }
-
-    /// How well sensor si sees a person at the points, 0..1 (MODEL.md 4.1).
-    fn sight(&self, si: usize, points: Vec<Point>) -> PyResult<Vec<f64>> {
-        let grid = &self.tracker.world().sights[self.sensor(si)?].grid;
-        Ok(points.iter().map(|&p| grid.at(p)).collect())
-    }
-
-    /// How well the best sensor can test a person in each tile, 0..1 (MODEL.md 5.5).
-    fn observed(&self) -> Vec<f64> {
-        let w = self.tracker.world();
-        w.observed((0..w.sights.len()).collect())
     }
 
     /// The energies of sensor si's last LD2410C frame that counted (16), or None.
@@ -465,31 +412,6 @@ impl Core {
     }
 
     // ---------------------------------------------------------------- outputs (MODEL.md 6)
-
-    /// Per observed room the distribution of the number of people [P(0), P(1), ...], then of those
-    /// in view at all.
-    fn count_distribution<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let tracker = &mut self.tracker;
-        let rows = py.detach(|| tracker.count_distribution());
-        Ok(rows.into_pyobject(py)?.into_any())
-    }
-
-    /// Per place (observed, regions..., outside) the distribution of the number of people, then of
-    /// those in the house.
-    fn place_distribution<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let tracker = &mut self.tracker;
-        let rows = py.detach(|| tracker.place_distribution());
-        Ok(rows.into_pyobject(py)?.into_any())
-    }
-
-    /// Per observed room what decided it occupied at now ("filter", "ld2450", "beide"), None: not.
-    fn occupancy(&mut self, now: f64) -> Vec<Option<&'static str>> {
-        self.tracker
-            .occupancy(now)
-            .into_iter()
-            .map(|s| s.map(Source::name))
-            .collect()
-    }
 
     /// The people of the display.
     fn persons(&self) -> Vec<PersonView> {
@@ -563,10 +485,154 @@ impl Core {
     fn watched(&self) -> Vec<bool> {
         self.tracker.watched()
     }
+    // ---------------------------------------------------------------- for the tests and tools (feature "testing")
+
+    /// log evidence of everything seen so far, and the part of it that is mass of hypotheses dropped.
+    #[cfg(feature = "testing")]
+    #[getter]
+    fn loglik(&self) -> (f64, f64) {
+        self.tracker.filter().loglik()
+    }
+
+    /// The hypotheses' weights, summing to 1.
+    #[cfg(feature = "testing")]
+    fn hyp_weights(&self) -> Vec<f64> {
+        self.tracker.filter().hyp_weights()
+    }
+
+    /// The bookkeeping's invariants (Filter::check): ValueError with what is wrong.
+    #[cfg(feature = "testing")]
+    fn check(&self) -> PyResult<()> {
+        self.tracker.filter().check().map_err(PyValueError::new_err)
+    }
+
+    /// The hypotheses for reading.
+    #[cfg(feature = "testing")]
+    fn hypotheses(&self) -> Vec<HypView> {
+        self.tracker
+            .filter()
+            .hypotheses()
+            .into_iter()
+            .map(HypView::of)
+            .collect()
+    }
+
+    /// The live tracks of the filter: track id -> the id of its sensor.
+    #[cfg(feature = "testing")]
+    fn tracks(&self) -> BTreeMap<u64, String> {
+        let plan = &self.tracker.world().plan;
+        self.tracker
+            .filter()
+            .tracks()
+            .iter()
+            .map(|(s, i)| (s.0, plan.sensors[i.si].id.clone()))
+            .collect()
+    }
+
+    /// Per point the observed room it is in (id; None: in none).
+    #[cfg(feature = "testing")]
+    fn room_at(&self, points: Vec<Point>) -> Vec<Option<String>> {
+        let plan = &self.tracker.world().plan;
+        points
+            .iter()
+            .map(|&p| plan.room_at(p).map(|k| plan.room(k).id.clone()))
+            .collect()
+    }
+
+    /// The tile of a point, or of the cell in view nearest to it (None: no tiles).
+    #[cfg(feature = "testing")]
+    fn tile_near(&self, point: Point) -> Option<usize> {
+        self.tracker.world().tiles.cell_near(point)
+    }
+
+    /// How well the sensor with this id sees a person at the points, 0..1 (MODEL.md 4.1).
+    #[cfg(feature = "testing")]
+    fn sight(&self, id: &str, points: Vec<Point>) -> PyResult<Vec<f64>> {
+        let grid = &self.tracker.world().sights[self.sensor_of(id)?].grid;
+        Ok(points.iter().map(|&p| grid.at(p)).collect())
+    }
+
+    /// How well the best sensor can test a person in each tile, 0..1 (MODEL.md 5.5).
+    #[cfg(feature = "testing")]
+    fn observed(&self) -> Vec<f64> {
+        let w = self.tracker.world();
+        w.observed((0..w.sights.len()).collect())
+    }
+
+    /// The ghost map's rate (per m^2 and s) of the sensor with this id at the points, and the s it watched.
+    #[cfg(feature = "testing")]
+    fn ghost_rates(&self, id: &str, points: Vec<Point>) -> PyResult<(Vec<f64>, f64)> {
+        Ok(self.tracker.ghost_rates(self.sensor_of(id)?, &points))
+    }
+
+    /// The background of the LD2410C of the sensor with this id (16 cells, MODEL.md 4.3) and its echo sources'
+    /// rate (per s), as the next weighing reads them.
+    #[cfg(feature = "testing")]
+    fn background(&self, id: &str) -> PyResult<(Vec<f64>, f64)> {
+        let (b, rate) = self.tracker.background(self.sensor_of(id)?);
+        Ok((b.to_vec(), rate))
+    }
+
+    /// Per observed room (id) the distribution of the number of people [P(0), P(1), ...], and "_observed",
+    /// of those in view at all.
+    #[cfg(feature = "testing")]
+    fn count_distribution<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let plan = &self.tracker.world().plan;
+        let names: Vec<String> = plan.rooms.iter().map(|z| plan.zones[z.0].id.clone()).collect();
+        let tracker = &mut self.tracker;
+        let rows = py.detach(|| tracker.count_distribution());
+        named(py, names.iter().map(String::as_str).chain(["_observed"]), rows)
+    }
+
+    /// Per place (observed, the regions' ids, outside) the distribution of the number of people, and
+    /// "_house", of those anywhere but outside.
+    #[cfg(feature = "testing")]
+    fn place_distribution<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let names: Vec<String> = self
+            .tracker
+            .world()
+            .plan
+            .place_names()
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let tracker = &mut self.tracker;
+        let rows = py.detach(|| tracker.place_distribution());
+        named(py, names.iter().map(String::as_str).chain(["_house"]), rows)
+    }
+
+    /// Per observed room (id) what decided it occupied now (MODEL.md 6 "Belegt": "filter", "ld2450",
+    /// "beide"), None: not occupied.
+    #[cfg(feature = "testing")]
+    fn occupancy(&mut self) -> BTreeMap<String, Option<&'static str>> {
+        let now = self.tracker.now();
+        let sources = self.tracker.occupancy(now);
+        let plan = &self.tracker.world().plan;
+        plan.rooms
+            .iter()
+            .zip(sources)
+            .map(|(z, s)| (plan.zones[z.0].id.clone(), s.map(Source::name)))
+            .collect()
+    }
+}
+
+/// Rows by name, in the order of the names.
+#[cfg(feature = "testing")]
+fn named<'py, 'a>(
+    py: Python<'py>,
+    names: impl Iterator<Item = &'a str>,
+    rows: &[Vec<f64>],
+) -> PyResult<Bound<'py, PyDict>> {
+    let out = PyDict::new(py);
+    for (name, row) in names.zip(rows) {
+        out.set_item(name, row)?;
+    }
+    Ok(out)
 }
 
 /// The model's defaults (JSON of Params::default()): what a model given as the fields that differ is
 /// read against (the simulation's numbers).
+#[cfg(feature = "testing")]
 #[pyfunction]
 pub fn model_defaults() -> String {
     serde_json::to_value(Params::default())
@@ -574,17 +640,8 @@ pub fn model_defaults() -> String {
         .to_string()
 }
 
-/// s: how long what the ghost map and the destination map learned lasts (each fades with it; the tools that
-/// compose learned states).
-#[pyfunction]
-pub fn forgetting() -> (f64, f64) {
-    (
-        presence_core::learn::ghost_map::FORGET,
-        presence_core::learn::destination::FORGET,
-    )
-}
-
 /// The LD2410C's background (16 cells) before anything is learned, with the default model.
+#[cfg(feature = "testing")]
 #[pyfunction]
 pub fn ld_prior() -> [f64; CELLS] {
     background::prior(&Params::default())
@@ -592,6 +649,7 @@ pub fn ld_prior() -> [f64; CELLS] {
 
 /// The energy a person puts into the 16 cells of an LD2410C at `angle` degrees off its axis and `slant`
 /// m, in sight, with the default model: (standing, walking) (ld2410/profile.rs; the simulation's).
+#[cfg(feature = "testing")]
 #[pyfunction]
 pub fn ld_expected(angle: f64, slant: f64) -> ([f64; CELLS], [f64; CELLS]) {
     let p = Params::default();

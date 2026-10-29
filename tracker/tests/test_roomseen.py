@@ -11,7 +11,7 @@ import pytest
 
 from presence_tracker import ha
 from presence_tracker.filter import Tracker, plan
-from presence_tracker.model import Config, check
+from presence_tracker.model import Config
 from presence_tracker.frames import Frame
 
 LOST = 6.0  # the timing tests below run with a short silence limit (the app's: the model's silent_after)
@@ -22,6 +22,7 @@ def short_silence(monkeypatch):
     monkeypatch.setattr(sys.modules[__name__], "Tracker", functools.partial(Tracker, model={"silent_after": LOST}))
 
 
+@pytest.mark.hooks  # reads the core's outputs directly (feature "testing")
 def test_the_silence_limit_outlasts_the_wlan_gaps(monkeypatch):
     """The app's limit (30 s): a board's 6-20 s WLAN gap leaves its room available, a board gone not."""
     monkeypatch.undo()
@@ -74,10 +75,11 @@ def feed(tracker, sid, t0, t1, y_mm, frozen_from=None, k0=0):
 
 def dark_filter(config):
     """The filter alone never says occupied (its threshold near 1): what is occupied, the rule made."""
-    config.params.light_cost = 1000.0
+    config.data["params"]["light_cost"] = 1000.0
     return config
 
 
+@pytest.mark.hooks  # reads the core's outputs directly (feature "testing")
 def test_a_still_person_the_own_ld2450_measures_keeps_the_room_occupied():
     config = dark_filter(open_plan())
     tr = Tracker(config, start=0.0)
@@ -87,11 +89,11 @@ def test_a_still_person_the_own_ld2450_measures_keeps_the_room_occupied():
     assert st["wohn"].occupied and st["wohn"].source == "ld2450"
     assert st["wohn"].count >= 1 and st["_total"].count >= 1
     assert not st["ess"].occupied and st["ess"].source is None
-    assert tr.occupancy()["wohn"] == (True, "ld2450")
+    assert tr.core.occupancy()["wohn"] == "ld2450"
     # the sensor stops measuring: occupied for seen_hold s more, then the filter alone
-    tr.step(20.0 + config.params.seen_hold - 0.5)
+    tr.step(20.0 + config.data["params"]["seen_hold"] - 0.5)
     assert tr.zone_states()["wohn"].occupied
-    tr.step(20.0 + config.params.seen_hold + 0.5)
+    tr.step(20.0 + config.data["params"]["seen_hold"] + 0.5)
     st = tr.zone_states()["wohn"]
     assert not st.occupied and st.source is None
 
@@ -106,13 +108,14 @@ def test_a_held_frozen_target_after_leaving_does_not_keep_it():
     assert not st.occupied and st.source is None
 
 
+@pytest.mark.hooks  # reads the core's outputs directly (feature "testing")
 def test_another_rooms_sensor_seeing_into_the_room_does_not_count():
     config = dark_filter(open_plan())
     tr = Tracker(config, start=0.0)
     # the sensor of ess measures somebody 4.5 m ahead: in wohn (no wall between the rooms)
     feed(tr, "presence-ess", 0.0, 20.0, 4500)
     det = tr.runtime["presence-ess"].detections[0]
-    assert tr.room_at([det.pos]) == ["wohn"] and not det.hidden and not det.stale
+    assert tr.core.room_at([det.pos]) == ["wohn"] and not det.hidden and not det.stale
     st = tr.zone_states()
     assert not st["wohn"].occupied and not st["ess"].occupied
     assert tr.seen.last == {}
@@ -154,7 +157,7 @@ def test_home_assistant_gets_the_flip_at_once_and_quelle_as_attribute():
     feed(tr, "presence-wohn", 0.0, 20.0, 2500)
     states = []
     t = 20.0
-    while t < 20.0 + config.params.seen_hold + 1.0:  # the app's housekeeping: every 0.1 s
+    while t < 20.0 + config.data["params"]["seen_hold"] + 1.0:  # the app's housekeeping: every 0.1 s
         tr.step(t)
         sent.clear()
         asyncio.run(d.states(tr.zone_states(), t=t))
@@ -164,7 +167,7 @@ def test_home_assistant_gets_the_flip_at_once_and_quelle_as_attribute():
     assert first["occupied"] and first["source"] == "ld2450"
     assert not last["occupied"] and last["source"] is None
     # off within one tick of seen_hold after the last measured frame (19.9 s)
-    assert 19.9 + config.params.seen_hold < states[-1][0] <= 19.9 + config.params.seen_hold + 0.11
+    assert 19.9 + config.data["params"]["seen_hold"] < states[-1][0] <= 19.9 + config.data["params"]["seen_hold"] + 0.11
 
 
 @pytest.mark.parametrize("value, ok", [(-1.0, False), (0.0, True), (10.0, True), (120.0, True), (121.0, False)])
@@ -172,10 +175,10 @@ def test_seen_hold_has_limits(value, ok):
     d = open_plan().to_dict()
     d["params"]["seen_hold"] = value
     if ok:
-        check(d)
+        Config.from_dict(d)
     else:
-        with pytest.raises(ValueError, match="Haltezeit eigener LD2450"):
-            check(d)
+        with pytest.raises(presence_core.ConfigError, match="seen_hold"):
+            Config.from_dict(d)
 
 
 def test_changing_seen_hold_restarts_nothing():
@@ -185,7 +188,7 @@ def test_changing_seen_hold_restarts_nothing():
     d = config.to_dict()
     d["params"]["seen_hold"] = 3.0
     assert tr.reconfigure(Config.from_dict(d)) is False  # an output only: the people stay
-    assert tr.p.seen_hold == 3.0 and tr.seen.last == {"wohn": 4.9}
+    assert tr.config.data["params"]["seen_hold"] == 3.0 and tr.seen.last == {"wohn": 4.9}
 
 
 # ------------------------------------------------------------------ a silent sensor: unavailable

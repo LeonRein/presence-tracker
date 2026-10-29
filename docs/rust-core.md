@@ -21,8 +21,9 @@ laufen nur auf einem Arbeitsbaum von 0.31.1. Die frühere Frage „Gelerntes ble
 - **JavaScript (Oberfläche): die Bedienung** – der Karteneditor (Zeichnen, Einrasten, Wände teilen und verbinden,
   mitgehende Wände und Türen, Räume aus Wänden, Türen auf Wände setzen), die Darstellung. Beispiel für „Bedienung,
   nicht Modell“: **das Hintergrundbild** – Lage, Maßstab, Drehung, Deckkraft, Ausrichten an zwei Punkten, Einpassen;
-  die Oberfläche prüft und begrenzt es selbst, der Kern kennt den Schlüssel `background` nicht (die Hülle reicht ihn
-  nicht weiter, `model.model_part`), eine Änderung nur am Bild fasst den Kern nicht an.
+  die Oberfläche prüft und begrenzt es selbst; das Modell liest den Schlüssel `background` nie (die Hülle reicht ihn
+  nicht weiter, `model.model_part`; `canonical` behält ihn unverändert), eine Änderung nur am Bild fasst das Modell
+  nicht an.
 - **Python: verbinden und ablegen** – MQTT, Home Assistant, HTTP, Dateien; nur formatieren.
 
 Die Frage je Änderung: Ist es das Modell (aus gespeicherter Konfiguration und Daten) → Rust; Bedienen und Bearbeiten
@@ -30,11 +31,25 @@ Die Frage je Änderung: Ist es das Modell (aus gespeicherter Konfiguration und D
 den Kern, 0.47.0: unnötige feinteilige API für etwas, das mit dem Filter nichts zu tun hat; 0.48.0 nahm es zurück.)
 Tests und Dev-Werkzeuge gehören nicht zum Programm.
 
+**Eine Fassung der Konfiguration (0.50.0, Leon 29.10.): ihre Bedeutung legt der Kern fest.** Es gibt keinen Wert
+außerhalb des Kerns, der von ihm abweichen kann: Die Standards stehen nur im Kern (`config::defaults()`:
+`TrackerParams::default()`, Vorlagen für Sensor – mit Blickrichtung –, Tür und Wand), und der Editor legt jedes neue
+Element nur aus dieser Vorlage an (`GET /api/config` → `defaults`). Speichern ist ein Rundweg: Der Editor arbeitet an
+einem Entwurf, bis „Speichern“ gedrückt wird (Knopf, Strg+S); `PUT /api/config` → der Kern prüft und bringt die
+Konfiguration in ihre eine Form (`config::canonical`: geprüft, Fehlendes aus den Standards, je Teil genau die Felder,
+die das Modell liest, Zahlen, wie es sie liest; Hintergrundbild und Etikettpunkte der Räume, die Teile der Oberfläche,
+unverändert, Unbekanntes weg; Ablehnung mit dem Problem des Kerns) → Python schreibt genau diese Form in die Datei und
+gibt sie zurück → die Oberfläche arbeitet mit der Antwort weiter. `GET /api/config` und der Start der App lesen die
+Datei durch den Kern (eine Datei, die er ablehnt: der Start bricht mit dem Grund ab). Python hat kein eigenes Modell
+der Konfiguration: keine Standards, keine Prüfung, keine Feldnamen; es liest nur die IDs der Sensoren (MQTT).
+
 **Die eine Naht zwischen Editor und Modell: Türen.** Der Editor setzt eine Tür genau auf ihre Wand (mm) und hält sie
 dort (sie geht mit, wenn die Wand sich bewegt, und mit ihr, wenn die Wand gelöscht wird; eine Wand mit Tür wird keine
 Raumgrenze); der Kern liest nur die Wand, auf der ihr Mittelpunkt liegt (`plan::wall_of_door`, `DOOR_ON_WALL` = 1 cm für
 die mm-Rundung), und seine Prüfung weist eine Tür auf keiner Wand ab (bis 0.47.0 suchte er die nächste Wand bis
-25 cm). Der Editor liest die 1 cm vom Kern (`derived.plan.door_on_wall`, 0.49.0), keine zweite Zahl.
+25 cm). Der Editor liest die 1 cm vom Kern (`derived.plan.door_on_wall`, 0.49.0), keine zweite Zahl. Zum Zeichnen der
+Öffnungen und für den Spurbruch liefert der Kern je Tür ihre Wand und die Öffnung entlang dieser Wand, an den
+Wandenden gekappt (`derived.plan.doors`: `{wall, t0, t1}`, 0.50.0); die Oberfläche rechnet die Regel nicht nach.
 
 **Rust ist der ganze Filter: alles, was MODEL.md beschreibt.** Er ist ein reiner Kern: keine Ein-/Ausgabe
 (keine Dateien, kein Netz), keine Uhr (jede Zeit kommt als Argument), keine Threads, keine Zufallszahlen.
@@ -60,14 +75,14 @@ die mm-Rundung), und seine Prüfung weist eine Tür auf keiner Wand ab (bis 0.47
 
 | Python (Hülle): Modul | was es tut (nach dem Grundsatz oben, Stand 0.48.0) |
 |---|---|
-| `app.py` | nimmt entgegen (MQTT-Frames, HTTP der Oberfläche, Bilder), hält den Takt (alle 0,1 s `step` und Zonenzustände), speichert und lädt (tracker.json, Gelerntes, people.json, pause.json, calibration.npz, Fehlerberichte), sendet (Home Assistant über `ha.py`, Browser), Betrieb (Neubeginn nach Fehlern des Modells, Last). Rechnet nichts am Modell; eine Änderung nur am Hintergrundbild legt es ab, ohne den Kern zu fragen. |
-| `filter.py` | die Hülle des Kerns (`presence_core.Core`): reicht Konfiguration, Frames, Zeit und Pausen hinein, wandelt um (JSON, Ortsnamen ↔ Indizes), ruft die Listener, rundet für die Anzeige; welcher Weg eine neue Konfiguration nimmt, entscheidet der Kern (`presence_core.changes`). |
+| `app.py` | nimmt entgegen (MQTT-Frames, HTTP der Oberfläche, Bilder), hält den Takt (alle 0,1 s `step` und Zonenzustände), speichert und lädt (tracker.json, Gelerntes, people.json, pause.json, calibration.npz, Fehlerberichte), sendet (Home Assistant über `ha.py`, Browser), Betrieb (Neubeginn nach Fehlern des Modells, Last). Rechnet nichts am Modell; jede gespeicherte Konfiguration geht durch den Kern in seine Form (`canonical`), die App legt genau sie ab und gibt sie zurück; eine Änderung nur an Hintergrundbild oder Etikettpunkten fasst das Modell nicht an (0.50.0). |
+| `filter.py` | die Hülle des Kerns (`presence_core.Core`): reicht Konfiguration, Frames, Zeit und Pausen hinein, wandelt um (JSON, Ortsnamen ↔ Indizes), ruft die Listener, rundet für die Anzeige (auch die Abdeckung, 0.50.0); welcher Weg eine neue Konfiguration nimmt, entscheidet der Kern (`presence_core.changes`). Tests und Werkzeuge lesen den Kern direkt (`Tracker.core`: Hypothesen, Verteilungen, „belegt“, Sicht …, nur mit dem Feature `testing`), die Hülle hat dafür keine eigenen Hüllen mehr (0.50.0). |
 | `calibration.py` | sammelt die Messzeilen, die der Kern je Frame liefert (`presence_core.Walking`), hält einen Tag, speichert `calibration.npz`, gibt sie dem Kern im Thread (`presence_core.calibrate`, `calibration_status`) und fasst seine Gründe in die Sätze der Oberfläche. |
-| `model.py` | die gespeicherte Konfiguration als Daten mit ihren Standards, Laden und Speichern; was davon das Modell liest (`model_part`/`model_json`: alles außer dem Hintergrundbild); die Prüfung (`presence_core.check_config`, `config_limits`) und was die Oberfläche über das Modell zeigt (`presence_core.derive`) sind des Kerns; hier die deutschen Bezeichnungen und Sätze. |
+| `model.py` | die Konfiguration in der Form des Kerns (`presence_core.canonical`) als Dict, Laden und Speichern genau dieser Form; was davon das Modell liest (`model_part`/`model_json`: alles außer Hintergrundbild und Etikettpunkten der Räume); das Problem des Kerns als Daten für die Oberfläche (`problem`). Keine Standards, keine Prüfung, keine Bezeichnungen (0.50.0: die Bezeichnungen und Sätze stehen in `static/js/util.js`). |
 | `ha.py`, `zones.py` | Home Assistant: Entitäten der Heim-Zonen des Kerns (`plan()["home"]`), Verfügbarkeit, Rundung und Halten der Ausgabe (wann gesendet wird). |
 | `pause.py` | der Schalter „Lernen pausieren“: Nachrichten lesen, Intervalle halten und speichern; ob eine Zeit pausiert ist, sagt der Kern. |
 | `frames.py`, `sources.py`, `util.py`, `__main__.py` | Daten der Anzeige eines Frames; MQTT und Wiedergabe; atomar schreiben, Log drosseln; Start. |
-| `static/js/*` | die Oberfläche, die Bedienung: der Karteneditor (`tools.js`: Zeichnen mit Einrasten und Hilfslinien, mitgehende Wände und Türen, teilen/verbinden, Zonen, Sensor setzen, Hintergrundbild ausrichten und einpassen; `floorplan.js`: Räume aus Wänden; `util.js`: Tür auf ihrer Wand, Längen, Flächen, Etiketten, Grenzen der Bildebenen), das ganze Zeichnen (`view.js`, `panels.js`: Wände wie gezeichnet mit den Türöffnungen, Sicht und Abdeckung als Kacheln, Wolken am Umriss ihres Raums geschnitten, wo eine Spur abbricht). Die Modellgrößen dazu kommen vom Kern als Daten für den gespeicherten Stand (`derived` mit `GET`/`PUT /api/config`, `GET /api/coverage`, die Live-Nachricht); bis eine Änderung gespeichert ist, zeigt die Karte die Sensoren mit ihrem Blickfeld wie eingegeben (0.48.0, 0.49.0). Keine Zahl des Modells steht in JS: „Tür auf der Wand“ (`derived.plan.door_on_wall`), die Länge einer LD2410C-Stufe (`derived.ld2410_gate`), die Sicht, ab der ein Sensor eine Kachel sieht (`coverage.sees`), die Grenzen der Felder (`config_limits`, auch die Breite einer Tür), die Sensoren in Gebrauch (`derived.plan.in_use`). |
+| `static/js/*` | die Oberfläche, die Bedienung: der Karteneditor (`tools.js`: Zeichnen mit Einrasten und Hilfslinien, mitgehende Wände und Türen, teilen/verbinden, Zonen, Sensor setzen, Hintergrundbild ausrichten und einpassen; `floorplan.js`: Räume aus Wänden; `util.js`: Tür auf ihrer Wand, Längen, Flächen, Etiketten, Grenzen der Bildebenen), das ganze Zeichnen (`view.js`, `panels.js`: Wände wie gezeichnet mit den Türöffnungen, Sicht und Abdeckung als Kacheln, Wolken am Umriss ihres Raums geschnitten, wo eine Spur abbricht). Die Modellgrößen dazu kommen vom Kern als Daten für den gespeicherten Stand (`derived` mit `GET`/`PUT /api/config`, `GET /api/coverage`, die Live-Nachricht); bis eine Änderung gespeichert ist, zeigt die Karte die Sensoren mit ihrem Blickfeld wie eingegeben (0.48.0, 0.49.0). Keine Zahl des Modells steht in JS: „Tür auf der Wand“ (`derived.plan.door_on_wall`), die Öffnung jeder Tür (`derived.plan.doors`), die Länge einer LD2410C-Stufe (`derived.ld2410_gate`), die Sicht, ab der ein Sensor eine Kachel sieht (`coverage.sees`), die Grenzen der Felder (`config_limits`, auch die Breite einer Tür), die Sensoren in Gebrauch (`derived.plan.in_use`), die Zonen des Heims (`derived.plan.home`), welche Parameter keinen Neustart brauchen (`derived.output_params`), die Werte neuer Elemente (`defaults`), ob die Kalibrierung die x-Richtung ändert (`apply.mirror`). Die Bezeichnungen der Felder und die Sätze der Probleme des Kerns stehen nur hier (`util.LABELS`, `problemText`, 0.50.0). |
 
 `sim.py` (erzeugt Frames, rechnet) gehört nur zu Tests und Werkzeugen: `tracker/tests/sim.py` (0.47.0).
 
@@ -247,24 +262,29 @@ Core(world)                                  die Welt geht in den Kern
 frame(sid, t, Frame) / step(t) -> events     ("watch" | "track_end" | "branch", ...), ValueError für t ohne Zahl
 recalibrate(changed, world)                  WorldChanged, wenn die Personen nicht in die neue Welt passen: die
                                              Welt bleibt dann ganz, die Hülle baut den neuen Kern damit
-set_outputs(config)                          nur die Ausgabeparameter (OUTPUT_PARAMS): nichts gebaut
+set_outputs(config)                          nur die Ausgabeparameter (params::OUTPUT_FIELDS): nichts gebaut
 adopt(old)                                   was nach einem Neubau weitergeht
 reset_people(places) / reset_tracks()        people_state() -> JSON / restore_people(JSON) -> None | Grund
 set_pauses(intervals) / hold_background(s)   learned() -> Learned (json() ohne den Tracker, im Thread)
 use_ghost_map / use_ld_background / use_dest_map(JSON)
-count_distribution(), place_distribution(), entering(), targets(), occupancy(now), zone_states(now),
-persons(), clouds(), thresholds(), target_above(room), online(id, now), silent(now), seen_last(), watched()
-Sichten: plan(), tiles_view(), tile_near(p), sensor_map(si), sight(si, pts), observed(), detections(si),
-last_frame(si), hypotheses(), tracks(), hyp_weights(), ghost_rates(si, pts), background(si), check()
-Modul: plan(config), check_config(config), config_limits(), derive(config), model_defaults(), forgetting(),
-ld_prior(), ld_expected(...), Frame, SensorClock, TrackStage, OUTPUT_PARAMS, WorldChanged, ConfigError
-(ValueError; args[0] ein ConfigProblem: Teil, Name, Feld, Grund, Grenzen, Wert), PanicException
-nur mit dem Feature "testing" (Tests): build_export, hidden_at, panic_for_test, Geometry(config) (0.49.0)
+zone_states(now), persons(), clouds(), online(id, now), silent(now), seen_last(), watched(), observed_total(),
+regions(), dwell, ld_shown(si)
+Sichten: plan(), tiles_view(), sensor_map(si), detections(si), last_frame(si), coverage()
+Modul: plan(config), check_config(config), canonical(config), config_defaults(), config_limits(), derive(config),
+calibrate, calibration_status, Walking, Frame, SensorClock, WorldChanged, ConfigError (ValueError; args[0] ein
+ConfigProblem: Teil, Name, Feld, Grund, Grenzen, Wert), PanicException, SOURCE_HASH (Fingerabdruck der Quellen
+des Kerns, beim Bauen eingebettet: build.rs, 0.50.0)
+nur mit dem Feature "testing" (Tests und Werkzeuge, nie im Image; 0.50.0 alles, was nur sie lesen):
+build_export, hidden_at, panic_for_test, Geometry(config), model_defaults(), ld_prior(), ld_expected(...);
+Core.normalize/spoil_weights_for_test/ld_last, loglik, hyp_weights(), check(), hypotheses(), tracks() (Spur ->
+Sensor-ID), room_at(pts), tile_near(p), sight(id, pts), observed(), ghost_rates(id, pts), background(id),
+count_distribution() / place_distribution() (nach Raum- bzw. Ortsnamen, "_observed"/"_house"), occupancy()
+(Raum -> Quelle oder None)
 ```
 
 Die Hülle (`filter.py`) führt jeden Zugriff auf den Kern über einen Schutz (`_Guarded`): eine Panik des Kerns wird
-`CoreError`, auch in einem Getter. Die Hooks der Tests (`build_export`, `hidden_at`, `panic_for_test`,
-`Core.normalize/spoil_weights_for_test/ld_last`) gibt es nur mit dem Feature `testing`.
+`CoreError`, auch in einem Getter. Die Hooks der Tests und das, was nur Tests und Werkzeuge lesen (Liste oben), gibt
+es nur mit dem Feature `testing` (eines für beide); Tests und Werkzeuge rufen es über `Tracker.core` auf.
 
 **Entschieden in Phase 7 (Prüfung 28.10.): kein `process_payload`, sondern ein geprüfter `presence_core.Frame`.**
 Die App braucht den Frame auch für die Uhr und die Kalibrierung; eine Nutzlast wird darum genau einmal geprüft:
@@ -337,7 +357,7 @@ der ein stummer Sensor als weg gilt (`silent_after`), ist ein Feld des Modells.
 Fehler: Nicht endliche Gewichte werden in Python ein `FloatingPointError` wie heute (die App beginnt neu).
 
 **`reconfigure` behält seine drei Wege** (`filter.reconfigure`, `_changed_sensors`):
-1. nur Ausgabeparameter (`OUTPUT_PARAMS` des Kerns: `light_cost`, `seen_hold`, `lead_time`, `approach_cost`,
+1. nur Ausgabeparameter (`params::OUTPUT_FIELDS` des Kerns, der Oberfläche als `derived.output_params`: `light_cost`, `seen_hold`, `lead_time`, `approach_cost`,
    `target_threshold`, `target_thresholds`; dazu `ld2410_hold`, das nur die Anzeige der Hülle liest) geändert:
    **kein Neubau** (`Core.set_outputs`), nichts beginnt neu, nur die Parameter und der Ausgabe-Cache;
 2. nur Sensoren oder Namen geändert (gedreht, verschoben, kalibriert, ein/aus; die Namen liest der Plan, z. B. den

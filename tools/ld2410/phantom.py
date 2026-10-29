@@ -47,7 +47,7 @@ def main():
     t0, t1 = (time.mktime(time.strptime(v if " " in v else f"{a.day} {v}", "%Y-%m-%d %H:%M")) for v in (a.t_from, a.t_to))
     tracker = Tracker(config)
     tracker.pauses = pause.load(a.pauses)
-    c = config.params.light_cost / (config.params.light_cost + 1.0)
+    c = config.data["params"]["light_cost"] / (config.data["params"]["light_cost"] + 1.0)
     seen = collections.defaultdict(list)  # room -> times of LD2450 targets in it
 
     def listen(kind, data):
@@ -56,7 +56,7 @@ def main():
             for d in dets:
                 if d.hidden:
                     continue
-                z = tracker.room_at([d.pos])[0]  # the observed room it is in (the core's)
+                z = tracker.core.room_at([tuple(d.pos)])[0]  # the observed room it is in (the core's)
                 if z is not None:
                     seen[z].append(t)
 
@@ -78,7 +78,7 @@ def main():
                 nstep = tt + 0.2
             if tt >= nxt and not tracker.pauses.paused(tt):
                 nxt = tt + a.every
-                counts = tracker.count_distribution()
+                counts = tracker.core.count_distribution()
                 samples.append((tt, {r: 1 - counts[r][0] for r in tracker.rooms}))
     total = collections.Counter()
     empty = collections.Counter()

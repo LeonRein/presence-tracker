@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from presence_tracker.frames import Frame, SensorClock
-from presence_tracker.model import Config, SensorConfig, ZoneConfig
+from presence_tracker.model import Config
 from presence_tracker.filter import Tracker
 from sim import SimSensor, geometry, ld_prior
 
@@ -16,21 +16,21 @@ from fixture import fixture
 
 def local(s, x, y) -> tuple:
     """A point of the house in sensor s's frame, as it measures it (the core's geometry)."""
-    return tuple(geometry(Config(sensors=[s])).to_local(s.id, [(x, y)])[0])
+    return tuple(geometry(Config.from_dict({"sensors": [s]})).to_local(s["id"], [(x, y)])[0])
 
 
 def room_config() -> Config:
-    return Config(
+    return Config.from_dict(dict(
         sensors=[
-            SensorConfig("a", x=0.05, y=0.05, heading=45, placed=True),
-            SensorConfig("b", x=5.95, y=0.05, heading=135, placed=True),
+            dict(id="a", name="", x=0.05, y=0.05, heading=45, placed=True),
+            dict(id="b", name="", x=5.95, y=0.05, heading=135, placed=True),
         ],
-        zones=[ZoneConfig("room", "Raum", kind="room", shape="rect", points=[[0, 0], [6, 5]])],
-    )
+        zones=[{"id": "room", "name": "Raum", "kind": "room", "shape": "rect", "points": [[0, 0], [6, 5]]}],
+    ))
 
 
 def sim_sensors(config: Config, **kw) -> list:
-    return [SimSensor(s, **kw) for s in config.sensors]
+    return [SimSensor(s, **kw) for s in config.data["sensors"]]
 
 
 def walk(*points, start=0.0, speed=1.0, pauses=None):
@@ -50,11 +50,11 @@ def walk(*points, start=0.0, speed=1.0, pauses=None):
     return out
 
 
-def detections(config: Config, s: SensorConfig, frame: dict) -> list:
+def detections(config: Config, s: dict, frame: dict) -> list:
     """The detections of one frame of sensor s as a tracker reads it."""
     tr = Tracker(config, start=0.0)
-    tr.process_frame(s.id, 0.0, Frame.of(frame))
-    return tr.runtime[s.id].detections
+    tr.process_frame(s["id"], 0.0, Frame.of(frame))
+    return tr.runtime[s["id"]].detections
 
 
 def test_sensor_clock_removes_jitter():
@@ -69,17 +69,17 @@ def test_sensor_clock_removes_jitter():
 
 def test_detections_behind_a_wall_are_reflections():
     # concrete wall at x = 3 (door opening y 4.2-5.0); the sensor looks along +x
-    config = Config(
-        sensors=[SensorConfig("a", x=0.0, y=2.0, heading=0, placed=True)],
+    config = Config.from_dict(dict(
+        sensors=[dict(id="a", name="", x=0.0, y=2.0, heading=0, placed=True)],
         walls=[{"points": [[3.0, 0.0], [3.0, 5.0]], "kind": "wall"}],
         doors=[{"id": "d", "x": 3.0, "y": 4.6, "width": 0.8}],
-    )
+    ))
     frame = {"targets": [
         {"slot": 1, "x": 0, "y": 4500, "speed": 0},  # 1.5 m behind the wall
         {"slot": 2, "x": 0, "y": 3200, "speed": 0},  # 0.2 m behind it: noise at the wall, kept
         {"slot": 3, "x": 0, "y": 2000, "speed": 0},  # in front of it
     ]}
-    assert [d.hidden for d in detections(config, config.sensors[0], frame)] == [True, False, False]
+    assert [d.hidden for d in detections(config, config.data["sensors"][0], frame)] == [True, False, False]
 
 
 def test_behind_a_wall_is_measured_across_it_not_along_the_line_of_sight():
@@ -87,8 +87,8 @@ def test_behind_a_wall_is_measured_across_it_not_along_the_line_of_sight():
     # measured a few centimetres beyond it now and then; along the line of sight such a point lies
     # far behind the wall (7.10. 22:10, Bad and Schlafzimmer: 11 % / 20 % of the still targets were
     # thrown away), across it 0.1 m: noise at the wall, kept. 0.6 m beyond it: a reflection.
-    s = SensorConfig("a", x=0.0, y=0.0, heading=60, height=1.0, placed=True)
-    config = Config(sensors=[s], walls=[{"points": [[0.0, -1.0], [0.0, 6.0]], "kind": "wall"}])
+    s = dict(id="a", name="", x=0.0, y=0.0, heading=60, height=1.0, placed=True)
+    config = Config.from_dict({"sensors": [s], "walls": [{"points": [[0.0, -1.0], [0.0, 6.0]], "kind": "wall"}]})
 
     def target(x, y):
         lx, ly = local(s, x, y)
@@ -106,7 +106,7 @@ def _learn_ghosts(tr, name):
 
 
 def _rate(tr, sid, pts) -> np.ndarray:
-    return tr.ghost_rates(sid, np.asarray(pts, dtype=float).reshape(-1, 2))[0]
+    return np.array(tr.core.ghost_rates(sid, np.asarray(pts, dtype=float).reshape(-1, 2))[0])
 
 
 def _prior_rate(tr) -> float:
@@ -132,17 +132,15 @@ def test_a_map_learned_with_another_prior_starts_over():
 
 
 def _changed(**change) -> Config:
-    config = room_config()
-    for k, v in change.items():
-        setattr(config.sensors[0], k, v)
-    config.rebuild()
-    return config
+    d = room_config().to_dict()
+    d["sensors"][0].update(change)
+    return Config.from_dict(d)
 
 
 def _floor(config, raw) -> np.ndarray:
     """Where sensor a's target at raw (m, its frame) is on the floor, as an array of one point."""
     frame = {"targets": [{"slot": 1, "x": round(raw[0] * 1000), "y": round(raw[1] * 1000), "speed": 0}]}
-    return np.array([detections(config, config.sensors[0], frame)[0].pos])
+    return np.array([detections(config, config.data["sensors"][0], frame)[0].pos])
 
 
 def _ghost_source(tr, raw=(0.6, 4.0), n=30):
@@ -169,12 +167,12 @@ def test_a_recalibrated_sensor_keeps_its_ghost_map_in_its_frame():
         new = _changed(**change)
         tr.reconfigure(new)
         assert tr.learned()["ghost_map"]["time"]["a"] == 86400.0, change
-        s = new.sensors[0]
+        s = new.data["sensors"][0]
         moved = _floor(new, raw)
         # the same cell of its frame; per m^2 of the floor as much less as a cell covers more of it
         k0 = prior_rate * 0.16 * prior_time
         area = lambda scale: k0 / prior_rate + (0.4 * scale) ** 2 * 86400.0  # noqa: E731
-        assert _rate(tr, "a", moved)[0] == pytest.approx(before * area(1.0) / area(s.scale), rel=1e-9), change
+        assert _rate(tr, "a", moved)[0] == pytest.approx(before * area(1.0) / area(s["scale"]), rel=1e-9), change
         assert _rate(tr, "b", [[3.0, 2.5]])[0] == b_before  # the other sensor: untouched
     # turned by 10 deg the reflection 4 m away lands 0.7 m off: the map goes along
     tr = Tracker(room_config())
@@ -198,10 +196,9 @@ def test_a_remounted_sensor_starts_its_part_of_the_ghost_map_over():
     # a sensor removed takes its part along; a new one starts from the prior
     tr = Tracker(room_config())
     _ghost_source(tr)
-    config = room_config()
-    config.sensors = [config.sensors[1], SensorConfig("c", x=3.0, y=4.95, heading=270, placed=True)]
-    config.rebuild()
-    tr.reconfigure(config)
+    d = room_config().to_dict()
+    d["sensors"] = [d["sensors"][1], dict(id="c", name="", x=3.0, y=4.95, heading=270, placed=True)]
+    tr.reconfigure(Config.from_dict(d))
     d = tr.learned()["ghost_map"]
     assert set(d["poses"]) == {"b", "c"} and set(d["count"]) == {"b"}
 
@@ -243,8 +240,8 @@ def test_the_ld2410c_background_stays_with_a_recalibration_not_with_a_remount():
         again = Tracker(tr.config)
         assert again.use_ld_background(json.loads(json.dumps(now))) == []
         for sid in ("a", "b"):
-            assert [x.tolist() if hasattr(x, "tolist") else x for x in again.background(sid)] == \
-                [x.tolist() if hasattr(x, "tolist") else x for x in tr.background(sid)]
+            assert [x.tolist() if hasattr(x, "tolist") else x for x in again.core.background(sid)] == \
+                [x.tolist() if hasattr(x, "tolist") else x for x in tr.core.background(sid)]
 
 
 def test_a_background_saved_by_0381_is_read_and_written_alike():
@@ -255,6 +252,6 @@ def test_a_background_saved_by_0381_is_read_and_written_alike():
     tr = Tracker(room_config())
     assert tr.use_ld_background(ld["background"]) == []
     for sid in ("a", "b"):
-        b, rate = tr.background(sid)
+        b, rate = tr.core.background(sid)
         assert np.allclose(b, ld["b"][sid], rtol=1e-12, atol=0) and rate == pytest.approx(ld["rate"][sid], rel=1e-12)
     assert tr.learned()["ld_background"] == ld["background"]

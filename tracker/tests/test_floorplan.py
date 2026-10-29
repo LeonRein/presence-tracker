@@ -28,9 +28,9 @@ ROOMS = [{"id": "l", "name": "Links", "kind": "room", "shape": "polygon", "point
 
 def test_the_server_takes_the_rooms_as_the_editor_made_them():
     c = Config.from_dict({"walls": [*OUTER, wall((3, 0), (3, 4))], "zones": ROOMS})
-    assert [z.to_dict() for z in c.zones] == ROOMS
+    assert c.data["zones"] == ROOMS
     # walls without rooms: none (the editor finds them, not the server)
-    assert Config.from_dict({"walls": OUTER}).zones == []
+    assert Config.from_dict({"walls": OUTER}).data["zones"] == []
 
 
 def test_a_door_opens_its_wall_for_the_radar():
@@ -51,7 +51,7 @@ def test_entry_rooms_are_outside():
     # an entry room (the stairwell) is public space beyond the flat's door: no room of the home and
     # no region without a sensor; the door into it is a door to the outside (MODEL.md 2)
     c = Config.from_dict({"walls": [*OUTER, wall((3, 0), (3, 4))], "zones": ROOMS, "doors": [{"id": "d", "x": 3.0, "y": 2.0}],
-                          "sensors": [{"id": "s", "x": 0.05, "y": 0.05, "heading": 45, "placed": True}]})
+                          "sensors": [{"id": "s", "name": "", "x": 0.05, "y": 0.05, "heading": 45, "placed": True}]})
     assert set(plan(c)["regions"]) == {"r"}
     d = c.to_dict()
     next(z for z in d["zones"] if z["id"] == "r")["entry"] = True

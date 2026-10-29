@@ -28,10 +28,10 @@ def test_a_sitter_no_ld2450_sees_for_a_quarter_of_an_hour_stays():
         s.blind_to, s.blind_after, s.blind_until = (0,), sit + 10, sit + 910
     crowd = Tracker(config, start=0.0)
     on = []
-    c = config.params.light_cost / (config.params.light_cost + 1.0)
+    c = config.data["params"]["light_cost"] / (config.data["params"]["light_cost"] + 1.0)
     for t, sid, frame in simulate([a], sensors, sit + 900, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         if t > sit + 10:
-            on.append(1 - crowd.count_distribution()["wohn"][0] > c)
+            on.append(1 - crowd.core.count_distribution()["wohn"][0] > c)
     assert sum(on) / len(on) > 0.85 and on[-1], sum(on) / len(on)
     assert known(crowd) < 1.1, known(crowd)

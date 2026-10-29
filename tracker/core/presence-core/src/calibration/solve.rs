@@ -47,6 +47,8 @@ pub enum Reason {
 pub struct Apply {
     pub heading: bool,
     pub scale: bool,
+    /// the measurements fit the other x direction better: take `mirror` (with heading and scale)
+    pub mirror: bool,
 }
 
 /// The result for one sensor (calibration.solve of 0.43.0, its reasons as Reason).
@@ -387,6 +389,7 @@ pub fn solve(config: &Config, data: &BTreeMap<String, Vec<Row>>, check_mirror: b
                 apply: Apply {
                     heading: good_heading,
                     scale: good_scale,
+                    mirror: false,
                 },
                 quality: match (good_heading, good_scale) {
                     (true, true) => "ok",
@@ -427,6 +430,7 @@ pub fn solve(config: &Config, data: &BTreeMap<String, Vec<Row>>, check_mirror: b
                 r.apply = Apply {
                     heading: true,
                     scale: true,
+                    mirror: true,
                 };
                 r.reasons.insert(0, Reason::Mirrored { gain });
             }

@@ -94,11 +94,18 @@ def test_doors_stay_on_their_walls_while_walls_move():
 
 
 def test_a_trail_breaks_only_through_a_wall():
-    # the middle wall x = 3 with a door of 0.9 m at y = 1; the outer walls
-    c = {"walls": [*OUTER, wall((3, 0), (3, 4))], "doors": [{"id": "d", "x": 3.0, "y": 1.0, "width": 0.9}]}
-    crosses = js("[[[2.5, 1], [3.5, 1.2]], [[2.5, 3], [3.5, 3]], [[1, 1], [2, 3]], [[5.5, 2], [6.5, 2]]]"
-                 ".map(([a, b]) => util.crossesWall(c, a, b, onWall))", c=c, onWall=on_wall())
-    assert crosses == [False, True, False, True]
+    # the middle wall x = 3 with a door of 0.9 m at y = 1, the outer walls; the door's opening the core's (as the
+    # web UI has it: derived.plan.doors), cut at the wall's end: a door of 0.9 m at y = 3.8 opens 3.35-4 m along
+    # the wall from (3, 0)
+    c = {"walls": [*OUTER, wall((3, 0), (3, 4))], "doors": [{"id": "d", "x": 3.0, "y": 1.0, "width": 0.9},
+                                                            {"id": "e", "x": 3.0, "y": 3.8, "width": 0.9}]}
+    openings = json.loads(presence_core.derive(Config.from_dict(c).model_json()))["plan"]["doors"]
+    assert [o["wall"] for o in openings] == [4, 4]
+    assert abs(openings[1]["t0"] - 3.35) < 1e-12 and openings[1]["t1"] == 4.0
+    crosses = js("[[[2.5, 1], [3.5, 1.2]], [[2.5, 3], [3.5, 3]], [[1, 1], [2, 3]], [[5.5, 2], [6.5, 2]], [[2.9, 3.9], "
+                 "[3.1, 3.9]], [[2.9, 3.2], [3.1, 3.2]]].map(([a, b]) => util.crossesWall(c.walls, openings, a, b))",
+                 c=c, openings=openings)
+    assert crosses == [False, True, False, True, False, True]
 
 
 def test_the_layers_of_the_background_image_are_checked_here():
@@ -107,3 +114,30 @@ def test_the_layers_of_the_background_image_are_checked_here():
     assert "Maßstab des Bildes" in js("util.layersError(bg)", bg={"layers": [{"scale": 11}]})
     assert "Deckkraft" in js("util.layersError(bg)", bg={"layers": [{"opacity": 2}]})
     assert js("util.layersError(bg)", bg={"layers": [5]}) == "Bildebene ist kein Objekt."
+
+
+def test_the_editor_makes_new_elements_from_the_cores_templates():
+    """A new sensor and a new door have the values of the core's templates (GET /api/config "defaults"), none of
+    the editor's own: one source of every value (0.49: the editor's sensors looked along +y, the server's +x)."""
+    defaults = json.loads(presence_core.config_defaults())
+    script = (f"import * as store from {json.dumps((JS / 'store.js').as_uri())};\n"
+              f"import * as tools from {json.dumps((JS / 'tools.js').as_uri())};\n"
+              f"store.state.config = {{sensors: [], zones: [], walls: {json.dumps(OUTER)}, doors: [], ld_view: {{}}, "
+              f"params: {{}}, background: {{layers: []}}}};\n"
+              f"store.state.defaults = {json.dumps(defaults)};\n"
+              "const view = { s: 50, renderOverlay() {} };\n"
+              "const sensor = new tools.PlaceSensorTool('presence-neu'); sensor.view = view;\n"
+              "sensor.down([1.234, 2.345], null, { shiftKey: true });\n"
+              "const door = new tools.DoorTool(); door.view = view;\n"
+              "door.down([3, 0.01], null, {});\n"
+              "console.log(JSON.stringify(store.state.config));")
+    r = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, check=True)
+    c = json.loads(r.stdout)
+    [s] = c["sensors"]
+    assert {k: s[k] for k in defaults["sensor"] if k != "placed"} == \
+        {k: v for k, v in defaults["sensor"].items() if k != "placed"}
+    assert (s["id"], s["name"], s["x"], s["y"], s["placed"]) == ("presence-neu", "neu", 1.234, 2.345, True)
+    [d] = c["doors"]
+    assert d["width"] == defaults["door"]["width"] and d["y"] == 0
+    # and the server takes them as they are (the core's form of them is themselves)
+    assert Config.from_dict(c).data["sensors"][0] == s

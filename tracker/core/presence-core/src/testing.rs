@@ -50,7 +50,7 @@ impl Rng {
     }
 }
 
-use crate::config::Config;
+use crate::config::{Config, SENSOR_TEMPLATE, SensorTemplate};
 use crate::geometry::Point;
 use crate::ld2410::{FLOOR, profile::expected};
 use crate::params::{Params, Shapes};
@@ -117,11 +117,19 @@ fn segment_distance(p: Point, [x0, y0, x1, y1]: [f64; 4]) -> f64 {
     (p[0] - x0 - t * dx).hypot(p[1] - y0 - t * dy)
 }
 
-/// model.TrackerParams' defaults as the shell writes them.
-pub const PARAMS: &str = r#"{"target_height": 1.0, "range_sigma_base": 0.15, "range_sigma_slope": 0.02,
-    "lateral_sigma_base": 0.1, "lateral_sigma_slope": 0.05, "wall_margin": 0.4, "dwell_median": 120.0,
-    "dwell_spread": 1.5, "ld2410_hold": 1.5, "light_cost": 2.0, "seen_hold": 10.0, "lead_time": 2.0,
-    "approach_cost": 0.05, "target_threshold": 0.8, "target_thresholds": {}}"#;
+/// A JSON object written as the shell writes it ("key": value, ...): the tests change it by its text.
+fn written<T: serde::Serialize>(v: &T) -> String {
+    let serde_json::Value::Object(o) = serde_json::to_value(v).expect("JSON") else {
+        panic!("an object")
+    };
+    let fields: Vec<String> = o.iter().map(|(k, v)| format!("\"{k}\": {v}")).collect();
+    format!("{{{}}}", fields.join(", "))
+}
+
+/// The parameters unless set (TrackerParams::default()) as the shell writes them.
+pub fn params_json() -> String {
+    written(&crate::config::TrackerParams::default())
+}
 
 /// A configuration as the shell writes it (every field): these sensors (id, name, where, heading;
 /// placed), the zones, walls and doors as JSON.
@@ -134,15 +142,21 @@ pub fn config_json(sensors: &[(&str, &str, Point, f64)], zones: &str, walls: &st
     let sensors = sensors
         .iter()
         .map(|(id, name, [x, y], heading)| {
+            let rest = written(&SensorTemplate {
+                heading: *heading,
+                placed: true,
+                ..SENSOR_TEMPLATE
+            });
             format!(
-                r#"{{"id": "{id}", "name": "{name}", "x": {x}, "y": {y}, "heading": {heading}, "height": 1.5,
-                "mirror": false, "scale": 1.0, "fov": 120.0, "range": 6.0, "enabled": true, "placed": true}}"#
+                r#"{{"id": "{id}", "name": "{name}", "x": {x}, "y": {y}, {}"#,
+                &rest[1..]
             )
         })
         .collect::<Vec<_>>()
         .join(", ");
+    let params = params_json();
     format!(
-        r#"{{"sensors": [{sensors}], "zones": {zones}, "walls": {walls}, "doors": {doors}, "ld_view": {{}}, "params": {PARAMS}}}"#
+        r#"{{"sensors": [{sensors}], "zones": {zones}, "walls": {walls}, "doors": {doors}, "ld_view": {{}}, "params": {params}}}"#
     )
 }
 

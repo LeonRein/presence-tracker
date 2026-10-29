@@ -1,7 +1,7 @@
 // SVG map: projection, pan/zoom, and drawing of the plan, sensors, zones and live data.
 // Everything is drawn in screen pixels; world coordinates are meters with y pointing up.
-import { api, coverageNow, heldBadges, onWall, state, sensorColor } from './store.js';
-import { PERSON_COLORS, ZONE_KINDS, crossesWall, dist, doorWall, esc, fmt, onSegment, personColor, rad, zoneCenter, zoneOutline } from './util.js';
+import { api, coverageNow, heldBadges, openingsNow, state, sensorColor } from './store.js';
+import { PERSON_COLORS, ZONE_KINDS, crossesWall, dist, esc, fmt, personColor, rad, zoneCenter, zoneOutline } from './util.js';
 
 // coverage: tiles that no sensor, one, two or more see (the core's count per tile); a room the sensors don't
 // see enough of to be observed is drawn as blind
@@ -219,29 +219,34 @@ export class MapView {
       if (state.selectable.includes('wall')) out.push(`<polyline class="wall-hit" points="${pts}" data-kind="wall" data-id="${i}"/>`);
     }
 
-    // doors: the door on its wall (the editor keeps it there): its opening in the wall, with a thin leaf line
-    // at each end
-    for (const door of c.doors || []) {
-      const pl = doorWall(c.walls, door);
+    // doors: the opening the model has in its wall (the core's: derived.plan.doors), with a thin leaf line at
+    // each end; until an edit of the walls or doors is saved, each door where it is entered
+    const openings = openingsNow();
+    (c.doors || []).forEach((door, k) => {
       const selected = sel?.kind === 'door' && sel.id === door.id;
-      if (!pl || !onSegment([door.x, door.y], pl.a, pl.b, onWall())) {
+      const o = openings?.[k];
+      const w = o && c.walls[o.wall]?.points;
+      if (!w) {
         const [x, y] = this.P(door.x, door.y);
-        out.push(`<circle cx="${x}" cy="${y}" r="6" fill="var(--bad)" data-kind="door" data-id="${esc(door.id)}" ${pe('door')}><title>Tür ohne Wand</title></circle>`);
-        continue;
+        out.push(openings
+          ? `<circle cx="${x}" cy="${y}" r="6" fill="var(--bad)" data-kind="door" data-id="${esc(door.id)}" ${pe('door')}><title>Tür ohne Wand</title></circle>`
+          : `<circle class="door-entered${selected ? ' selected' : ''}" cx="${x}" cy="${y}" r="${Math.max(4, door.width * this.s / 2)}" data-kind="door" data-id="${esc(door.id)}" ${pe('door')}/>`);
+        return;
       }
-      const at = t => this.P(pl.a[0] + pl.dir[0] * t, pl.a[1] + pl.dir[1] * t);
-      const [x0, y0] = at(pl.t - door.width / 2), [x1, y1] = at(pl.t + door.width / 2);
-      const nx = -(y1 - y0), ny = x1 - x0, nl = Math.hypot(nx, ny) || 1, k = 5 / nl;
+      const [a, b] = w, len = dist(a, b);
+      const at = t => this.P(a[0] + (b[0] - a[0]) * t / len, a[1] + (b[1] - a[1]) * t / len);
+      const [x0, y0] = at(o.t0), [x1, y1] = at(o.t1);
+      const nx = -(y1 - y0), ny = x1 - x0, nl = Math.hypot(nx, ny) || 1, k5 = 5 / nl;
       out.push(`<g class="door${selected ? ' selected' : ''}" pointer-events="none">
           <line class="opening" x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}"/>
           <line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}"/>
-          <line x1="${x0 - nx * k}" y1="${y0 - ny * k}" x2="${x0 + nx * k}" y2="${y0 + ny * k}"/>
-          <line x1="${x1 - nx * k}" y1="${y1 - ny * k}" x2="${x1 + nx * k}" y2="${y1 + ny * k}"/>
+          <line x1="${x0 - nx * k5}" y1="${y0 - ny * k5}" x2="${x0 + nx * k5}" y2="${y0 + ny * k5}"/>
+          <line x1="${x1 - nx * k5}" y1="${y1 - ny * k5}" x2="${x1 + nx * k5}" y2="${y1 + ny * k5}"/>
         </g>`);
       if (state.selectable.includes('door')) {
         out.push(`<line class="wall-hit" x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" data-kind="door" data-id="${esc(door.id)}"/>`);
       }
-    }
+    });
 
     // zone labels on top of walls. A room without a sensor that shares its group with others has no
     // count of its own: the model only knows "somewhere in the group"
@@ -344,16 +349,17 @@ export class MapView {
     // the uncertainty: only the cloud (cut off at the outline of its room); a circle around the dot would
     // claim "maybe next door" through the wall
     out.push(this.clouds(live));
-    // trails, broken where the shown position jumped (more than TRAIL_JUMP or through a wall since the point
-    // before): a line there would draw a path nobody walked
+    // trails, broken where the shown position jumped (more than TRAIL_JUMP or through a wall outside the doors'
+    // openings since the point before): a line there would draw a path nobody walked
     const now = live.t;
+    const openings = openingsNow() || [];
     for (const tr of live.tracks || []) {
       if (tr.x == null) continue;
       const trail = this.trails.get(tr.id) || [];
       const last = trail[trail.length - 1];
       const at = [tr.x, tr.y];
       if (!last || last[2] < now - 0.05) {
-        const breaks = !!last && (dist(last, at) > TRAIL_JUMP || crossesWall(c, last, at, onWall()));
+        const breaks = !!last && (dist(last, at) > TRAIL_JUMP || crossesWall(c.walls, openings, last, at));
         trail.push([tr.x, tr.y, now, breaks]);
       }
       while (trail.length && trail[0][2] < now - 6) trail.shift();

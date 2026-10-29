@@ -1,11 +1,11 @@
-// Application state, server API, auto-save and undo.
+// Application state, server API, saving and undo.
 import { syncRooms } from './floorplan.js';
-import { debounce, layersError, rebase, toast } from './util.js';
+import { layersError, problemText, rebase, toast } from './util.js';
 
 const listeners = new Set();
 
 export const state = {
-  config: null,         // tracker.json as edited
+  config: null,         // tracker.json as edited: a draft until it is saved (save), then the server's answer
   sensorsSeen: [],
   replay: false,
   haAvailable: false,
@@ -20,13 +20,17 @@ export const state = {
   holds: {},            // zone id -> {approach, target}: badges held for HOLD_MS after they went off
   calibResult: null,
   limits: {},           // allowed values of the number fields the model reads (the core's, presence_core.config_limits)
+  defaults: {},         // what a configuration may leave out (the core's, config_defaults): a new sensor's values
   // the model's quantities of the saved configuration (the core's, with every save): the plan, the thresholds,
   // the numbers the editor reads (door_on_wall, ld2410_gate); of the world the model runs in (api/coverage,
   // after every save that changed the model): per tile how many sensors see it and each sensor's sight.
-  // derivedVersion: the edit (state.version) that was saved; the map shows them only for that one
+  // derivedVersion: the edit (state.version) that was saved; the map shows them only for that one.
+  // derivedMap: the walls and doors they are of (the doors' openings hold while these are the same)
   derived: null,
+  derivedMap: null,
   coverage: null,
   version: 0,           // counts the edits
+  savedVersion: 0,      // the edit that is saved (state.config as the server has it)
   derivedVersion: -1,
   coverageVersion: -1,
 };
@@ -68,9 +72,11 @@ export async function api(path, options = {}) {
   });
   const ctype = r.headers.get('Content-Type') || '';
   const data = ctype.includes('json') ? await r.json() : await r.text();
-  // silent: the server has nothing to say about it (an edit of the editor that changes nothing)
+  // silent: the server has nothing to say about it (an edit of the editor that changes nothing); problem: the
+  // core's problem with a configuration, worded here
   if (!r.ok) {
-    throw Object.assign(new Error(typeof data === 'string' ? data : (data.error || r.statusText)),
+    const text = typeof data === 'string' ? data : (data.error || (data.problem && problemText(data.problem)) || r.statusText);
+    throw Object.assign(new Error(text),
       { status: r.status, code: data?.code, silent: data?.error === null });
   }
   return data;
@@ -85,15 +91,24 @@ export async function loadConfig() {
   state.replay = data.replay;
   state.haAvailable = data.ha;
   state.limits = data.limits || {};
+  state.defaults = data.defaults || {};
   state.version++;
+  state.savedVersion = state.version;
   state.derived = data.derived;
   state.derivedVersion = state.version;
+  state.derivedMap = mapOf(data.config);
   emit('config');
   refreshCoverage();
 }
 
 // m: a door this close to a wall is on it (the core's plan::DOOR_ON_WALL; util.onSegment)
 export const onWall = () => state.derived.plan.door_on_wall;
+
+const mapOf = c => JSON.stringify([c.walls, c.doors]);
+
+// per door (in the configuration's order) its opening in its wall as the model has it (the core's:
+// derived.plan.doors, {wall, t0, t1}), or null while an edit of the walls or doors is not saved yet
+export const openingsNow = () => (state.derived && state.derivedMap === mapOf(state.config) ? state.derived.plan.doors : null);
 
 // ---- the model of the saved configuration (the core's; it never sees a draft)
 
@@ -116,18 +131,24 @@ export async function refreshCoverage() {
   }
 }
 
-// ---- edits: every change goes through edit() for undo and auto-save
+// ---- edits: every change goes through edit() for undo; the edits are a draft until they are saved
 
 const undoStack = [];
 const redoStack = [];
-const saveSoon = debounce(save, 500);
 
 let saving = Promise.resolve();
 let saveNote = '';  // what the toast after the next save says first
 
+// edits not saved yet
+export const unsaved = () => state.version !== state.savedVersion;
+
+// Save the draft: the server stores it in the core's form (checked, what it leaves out filled in) and answers
+// with exactly that form, which the editor goes on with: one version of the configuration. Refused (a value
+// the model can't run with): the draft stays, with the reason.
 async function save() {
   // one request at a time, so that an older answer never overwrites a newer state
   saving = saving.then(async () => {
+    if (!unsaved()) return;
     // the background image is the web UI's: its layers are checked here, never by the model
     const bad = layersError(state.config.background);
     if (bad) { toast(`Nicht gespeichert: ${bad}`, 8000); return; }
@@ -135,39 +156,32 @@ async function save() {
     const version = state.version;
     try {
       const r = await api('api/config', { method: 'PUT', body });
+      // the saved form; what was edited while the request was under way stays on top of it
+      const now = state.config;
+      state.config = JSON.stringify(now) === body ? r.config : rebase(r.config, JSON.parse(body), now);
+      state.config.background ??= {};
+      state.config.background.layers ??= [];
+      if (state.version === version) state.savedVersion = version;
+      else state.version++;
       // the model of what was saved (null: the model's part did not change)
       if (r.derived) state.derived = r.derived;
       else if (state.coverageVersion === state.derivedVersion) state.coverageVersion = version;
       state.derivedVersion = version;
-      emit('derived');
+      state.derivedMap = mapOf(r.config);
+      emit('config');
       if (r.derived) refreshCoverage();
       // the model starts over for most edits (walls, rooms, parameters): say so, it changes the live view
       toast([saveNote, 'Gespeichert', r.restarted ? 'Modell neu gestartet' : ''].filter(Boolean).join(' · '));
       saveNote = '';
     } catch (e) {
-      // refused (a value out of its limits): back to what the server has, so that the next edit
-      // doesn't send the refused value again; what was edited meanwhile is kept and saved
-      toast('Nicht gespeichert: ' + e.message + ' Es gilt der zuletzt gespeicherte Stand.', 8000);
-      if (e.status === 400) {
-        if (JSON.stringify(state.config) === body) await loadConfig().catch(() => {});
-        else await keepEditsOnRefusal(JSON.parse(body)).catch(() => {});
-      }
+      toast('Nicht gespeichert: ' + e.message + ' Der Entwurf bleibt.', 8000);
     }
   });
   return saving;
 }
 
-// save now (not after the debounce) and wait for it, e.g. before reloading the page
+// save the draft and wait for it (the "Speichern" button, Ctrl+S, before reloading the page)
 export function saveNow() { return save(); }
-
-async function keepEditsOnRefusal(sent) {
-  const before = state.config;
-  await loadConfig();  // what the server holds
-  state.config = rebase(state.config, sent, before);
-  state.config.background ??= {};
-  state.config.background.layers ??= [];
-  changed();
-}
 
 export const TAB_NAMES = { live: 'Live', plan: 'Grundriss', sensors: 'Sensoren', zones: 'Zonen', calibration: 'Kalibrierung', settings: 'Einstellungen' };
 
@@ -188,10 +202,9 @@ export function edit(fn, { merge = null } = {}) {
   changed();
 }
 
-// the configuration changed: save it soon; what the model makes of it comes with the answer
+// the draft changed; what the model makes of it comes with the answer to its saving
 function changed() {
   state.version++;
-  saveSoon();
   emit('config');
 }
 

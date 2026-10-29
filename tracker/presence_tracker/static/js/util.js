@@ -87,6 +87,88 @@ export function fmt(v, digits = 2) {
   return Number.isFinite(v) ? v.toFixed(digits).replace('.', ',') : '–';
 }
 
+// The words of the numbers of the configuration the model reads (the fields of the core's limits,
+// config_limits): the settings, the sensor's and the door's fields, the problems the core finds (problemText)
+export const LABELS = {
+  params: {
+    target_height: 'Höhe des Oberkörpers',
+    range_sigma_base: 'Messfehler in Blickrichtung, Grundwert',
+    range_sigma_slope: 'Messfehler in Blickrichtung, Anstieg',
+    lateral_sigma_base: 'Messfehler seitlich, Grundwert',
+    lateral_sigma_slope: 'Messfehler seitlich, Anstieg',
+    wall_margin: 'Toleranz an Wänden',
+    dwell_median: 'Typischer Aufenthalt',
+    dwell_spread: 'Streuung des Aufenthalts',
+    ld2410_hold: 'Haltezeit LD2410C (Anzeige)',
+    light_cost: 'Kosten: Licht ohne Person',
+    seen_hold: 'Haltezeit eigener LD2450',
+    lead_time: 'Vorausschau „wird betreten“',
+    approach_cost: 'Kosten: Einschalten auf Verdacht',
+    target_threshold: 'Schwelle „Ziel“',
+  },
+  sensor: { x: 'x', y: 'y', heading: 'Blickrichtung', height: 'Montagehöhe', fov: 'Öffnungswinkel', range: 'Reichweite', scale: 'Maßstab' },
+  door: { width: 'Breite der Tür' },
+};
+LABELS.threshold = LABELS.params;
+
+// A problem the core found with a configuration (the server's 400: part, name, field, reason, limits, value) in
+// words. "part|reason|field", "part|reason", "|reason": the most special one there is; {where} the part with its
+// name, {label} the field's words, {value} the value as a number is written here, {raw} as it is, {low}/{high}
+// the limits
+const SENTENCES = {
+  '|empty': '{where}{label}: leer, eine Zahl fehlt.',
+  '|not_a_number': '{where}{label}: keine Zahl ({value}).',
+  '|out_of_range': '{where}{label} muss {low} und {high} sein, nicht {value}.',
+  '|not_an_object': 'Konfiguration: „{field}“ ist kein Objekt.',
+  '|not_a_list': 'Konfiguration: „{field}“ ist keine Liste.',
+  '|unreadable': 'Konfiguration unvollständig oder falsch: {raw}',
+  'config|not_an_object': 'Konfiguration ist kein Objekt.',
+  'config|too_many_sensors': 'Höchstens {value} Sensoren.',
+  'config|too_large': 'Der Grundriss ist zu groß (höchstens 100 × 100 m).',
+  'params|not_an_object': 'Einstellungen sind kein Objekt.',
+  'params|not_an_object|target_thresholds': 'Schwelle „Ziel“ je Raum ist kein Objekt.',
+  'sensor|no_id': 'Sensor ohne ID.',
+  'sensor|id_chars': '{where}Die ID darf kein /, + oder # enthalten (sie ist Teil des MQTT-Topics).',
+  'sensor|id_twice': 'Sensor-ID {raw} doppelt.',
+  'sensor|not_a_bool': '{where}{field} ist nicht ja/nein.',
+  'wall|not_points': 'Wand {name}: Punkte sind keine endlichen Koordinaten.',
+  'wall|not_a_segment': 'Wand {name}: braucht genau zwei verschiedene Punkte.',
+  'wall|unknown_kind': 'Wand {name}: unbekannte Art {value}.',
+  'door|no_position': 'Tür ohne endliche Position.',
+  'door|not_on_wall': 'Eine Tür liegt auf keiner Wand (Türen sitzen auf Wänden, nicht auf Raumgrenzen).',
+  'zone|not_an_object': 'Zone ist kein Objekt.',
+  'zone|no_id': 'Zone ohne ID.',
+  'zone|id_twice': 'Zonen-ID {raw} doppelt.',
+  'zone|unknown_kind': 'Zone {name}: unbekannte Art {value}.',
+  'zone|unknown_shape': 'Zone {name}: unbekannte Form {value}.',
+  'zone|not_points': 'Zone {name}: Punkte sind keine endlichen Koordinaten.',
+  'zone|rect_corners': 'Zone {name}: ein Rechteck braucht zwei Ecken.',
+  'zone|polygon_corners': 'Zone {name}: eine Fläche braucht mindestens drei Eckpunkte.',
+  'zone|no_centre': 'Zone {name}: ein Kreis braucht einen Mittelpunkt.',
+  'zone|not_at_least_0': 'Zone {name}: Radius ist keine Zahl ≥ 0.',
+  'ld_view|not_an_object': 'Blick des LD2410C ist kein Objekt.',
+  'ld_view|not_at_least_0': 'Blick des LD2410C {name}: keine Zahl ≥ 0 ({value}).',
+};
+const WHERE = { threshold: 'Raum {name}: ', sensor: 'Sensor {name}: ' };
+
+// a number as the problems write it (6 places, decimal comma), anything else as JSON
+const problemNumber = v => (typeof v === 'number' ? String(+v.toPrecision(6)).replace('.', ',') : JSON.stringify(v));
+
+export function problemText(p) {
+  const text = SENTENCES[`${p.part}|${p.reason}|${p.field}`] ?? SENTENCES[`${p.part}|${p.reason}`] ?? SENTENCES[`|${p.reason}`]
+    ?? `Konfiguration: ${p.reason}`;
+  const fill = t => t.replace(/\{(\w+)\}/g, (_, k) => words[k] ?? '');
+  const words = { name: p.name ?? '', field: p.field ?? '', raw: String(p.value ?? ''), value: problemNumber(p.value),
+    label: LABELS[p.part]?.[p.field] ?? p.field ?? '' };
+  words.where = fill(WHERE[p.part] ?? '');
+  if (p.reason === 'out_of_range' && p.limits) {
+    const [lo, hi, loOpen, hiOpen] = p.limits;
+    words.low = `${loOpen ? 'größer als' : 'mindestens'} ${problemNumber(lo)}`;
+    words.high = `${hiOpen ? 'kleiner als' : 'höchstens'} ${problemNumber(hi)}`;
+  }
+  return fill(text);
+}
+
 // A number from an input field against its limits [low, high, low excluded, high excluded] (from the
 // server: the core's, presence_core.config_limits): the error text, or '' if it is fine. Empty is an error: "" became 0
 // before, and light_cost 0 switched every light on.
@@ -210,12 +292,11 @@ export function doorsOnWalls(c, onWall) {
   return out;
 }
 
-// Whether the line a-b crosses a real wall (not through a door on it): a trail drawn there would draw a way
-// through the wall (view.js)
-export function crossesWall(c, a, b, onWall) {
-  const doors = (c.doors || []).map(d => ({ d, pl: doorWall(c.walls, d) }))
-    .filter(({ d, pl }) => pl && onSegment([d.x, d.y], pl.a, pl.b, onWall));
-  for (const [p, q, , wi] of wallPieces(c.walls, 'wall')) {
+// Whether the line a-b crosses a real wall outside the doors' openings (the core's, of the saved map:
+// derived.plan.doors, per door its wall and where its opening begins and ends along it): a trail drawn there
+// would draw a way through the wall (view.js)
+export function crossesWall(walls, openings, a, b) {
+  for (const [p, q, , wi] of wallPieces(walls, 'wall')) {
     const r = [b[0] - a[0], b[1] - a[1]], e = [q[0] - p[0], q[1] - p[1]];
     const den = r[0] * e[1] - r[1] * e[0];
     if (Math.abs(den) < 1e-12) continue;
@@ -223,7 +304,7 @@ export function crossesWall(c, a, b, onWall) {
     const s = (w[0] * e[1] - w[1] * e[0]) / den, u = (w[0] * r[1] - w[1] * r[0]) / den;
     if (s < 0 || s > 1 || u < 0 || u > 1) continue;
     const along = u * Math.hypot(e[0], e[1]);
-    if (!doors.some(({ d, pl }) => pl.wi === wi && Math.abs(along - pl.t) <= d.width / 2)) return true;
+    if (!openings.some(o => o && o.wall === wi && along >= o.t0 && along <= o.t1)) return true;
   }
   return false;
 }

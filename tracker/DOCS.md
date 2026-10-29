@@ -81,7 +81,7 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
 - **Fehler melden** (Tab *Live*): Wenn etwas nicht stimmt (Licht fälschlich an oder aus, Licht zu spät,
   Person verloren, Geist, Person am falschen Ort, ungenaues Tracking, hohe Latenz), den Raum (keine
   Vorauswahl) und die Art des Fehlers wählen. Die App
-  speichert dazu die Sensordaten der letzten 15 Minuten mit der Konfiguration, dem Gelernten
+  speichert dazu die Sensordaten der letzten 15 Minuten (der Dialog nennt die Zeit) mit der Konfiguration, dem Gelernten
   (Geisterkarte, LD2410C-Hintergrund), dem Stand des Codes und dem, was sie in dieser Zeit sekündlich
   angezeigt hat (unter `/data/reports`, je Meldung etwa 0,2–0,7 MB, in der Liste herunterladbar und
   löschbar, etwa eine Meldung, die nur kam, weil Sensoren ausgefallen waren). Daraus
@@ -150,11 +150,15 @@ Wie viel der LD2410C eines Raums von einer Person in einem anderen Raum mitbekom
 Die Oberfläche zeigt es nicht; *Alle auf Standard* lässt es stehen. Eine `tracker.json` von 0.39 oder älter bekommt
 beim ersten Start einmal die Messung von 6.–10.10. eingetragen, für die Paare ihrer Räume (gleiche Raum-IDs).
 
-Alles wird sofort gespeichert (`/data/tracker.json`); eine kurze Meldung sagt *Gespeichert* und, wenn
-das Modell dabei neu startet, *Modell neu gestartet* (bei fast jeder Änderung an Grundriss, Zonen und
+Änderungen sind ein Entwurf, bis *Speichern* (Knopf unten rechts auf der Karte, hervorgehoben, solange etwas
+nicht gespeichert ist, oder Strg+S) gedrückt wird; erst dann rechnet das Modell damit. Der Server bringt die
+Konfiguration dabei in die eine Form des Modells (was fehlt, mit seinen Standards; neue Sensoren und Türen
+bekommen im Editor schon dieselben Werte), legt genau diese in `/data/tracker.json` ab und schickt sie zurück; die
+Oberfläche arbeitet damit weiter. Eine kurze Meldung sagt *Gespeichert* und, wenn das Modell dabei neu startet,
+*Modell neu gestartet* (bei fast jeder Änderung an Grundriss, Zonen und
 Einstellungen; nicht, wenn nur Sensoren kalibriert oder verschoben wurden, nicht bei Einstellungen, die nur
 die Ausgaben betreffen: *Kosten: Licht ohne Person*, *Haltezeit eigener LD2450*, *Kosten: Einschalten auf Verdacht*, *Vorausschau*,
-*Haltezeit LD2410C*, die Schwellen „Ziel“, und nicht beim Umbenennen). Rückgängig und Wiederholen mit den Knöpfen ↶ ↷ unten
+*Haltezeit LD2410C (Anzeige)*, die Schwellen „Ziel“, und nicht beim Umbenennen). Rückgängig und Wiederholen mit den Knöpfen ↶ ↷ unten
 rechts auf der Karte oder mit Strg+Z / Strg+Y. Sie wirken nur auf Änderungen im aktuellen Tab; liegt die
 letzte Änderung in einem anderen Tab, sagt die App, in welchem, statt sie unsichtbar zurückzunehmen.
 Löschen mit Entf oder Rücktaste, *Von Karte nehmen*, *Neu sammeln* (Kalibrierung) und *Neu beginnen*
@@ -167,8 +171,9 @@ gespeichert: Der alte Wert bleibt, das Feld wird rot markiert und sagt, was erla
 des Modells: Sein Kern prüft jede Konfiguration, und die Felder lesen ihre Grenzen von dort. Der Server lehnt
 eine Änderung außerhalb mit einer Meldung ab, ebenso doppelte IDs von Sensoren oder
 Zonen, Wände ohne genau zwei Punkte, unbekannte Zonenarten und -formen und Kreise ohne Mittelpunkt; eine
-Konfiguration, mit der das Modell nicht läuft, gilt gar nicht erst (die vorige bleibt). Was während einer
-abgelehnten Speicherung schon weiter geändert wurde, bleibt erhalten und wird danach gespeichert. Ein
+Konfiguration, mit der das Modell nicht läuft, gilt gar nicht erst (die vorige bleibt). Nach einer Ablehnung
+bleibt der Entwurf, wie er ist, mit dem Grund; eine `tracker.json`, die das Modell ablehnt, hält die App beim Start
+mit dem Grund im Log an. Ein
 Hintergrundbild darf bis 10 m je Pixel haben (ein SVG-Plan in Metern).
 
 ## Entitäten in Home Assistant

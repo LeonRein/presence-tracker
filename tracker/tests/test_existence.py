@@ -16,14 +16,14 @@ from fixture import fixture
 
 def in_house(crowd) -> float:
     """E[people in the house]."""
-    d = crowd.place_distribution()["_house"]
+    d = crowd.core.place_distribution()["_house"]
     return float(sum(k * p for k, p in enumerate(d)))
 
 
 def known(crowd) -> float:
     """E[known people that exist]."""
-    w = crowd.hyp_weights()
-    return float(sum(wi * sum(h["known"]) for wi, h in zip(w, crowd.hypotheses())))
+    w = crowd.core.hyp_weights()
+    return float(sum(wi * sum(h.known) for wi, h in zip(w, crowd.core.hypotheses())))
 
 
 def test_a_reflection_leaves_nobody_behind():
@@ -37,10 +37,10 @@ def test_a_reflection_leaves_nobody_behind():
     before = None
     for t, sid, frame in simulate([], sensors, 450, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
-        crowd.check()
+        crowd.core.check()
         if before is None and t > 50:
             before = in_house(crowd)
-    assert 1 - crowd.count_distribution()["wohn"][0] < 0.05
+    assert 1 - crowd.core.count_distribution()["wohn"][0] < 0.05
     assert in_house(crowd) < before + 0.05, (before, in_house(crowd))
 
 
@@ -51,11 +51,11 @@ def test_somebody_back_from_the_balcony_is_who_went_there():
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3.0, 2.5), (3.05, 2.5), BALCONY_DOOR, (7.0, 2.0), (7.05, 2.0),
                     BALCONY_DOOR, (4.0, 1.5), (4.05, 1.5), start=5, pauses={3: 60, 6: 120, 9: 60}))
     crowd = Tracker(config, start=0.0)
-    before = 1 - crowd.place_distribution()["balkon"][0]  # unknown people out there (nothing known)
+    before = 1 - crowd.core.place_distribution()["balkon"][0]  # unknown people out there (nothing known)
     for t, sid, frame in simulate([a], sim_sensors(config), a.waypoints[-1][0] - 1, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
-    after = 1 - crowd.place_distribution()["balkon"][0]
-    assert 1 - crowd.count_distribution()["wohn"][0] > 0.95
+    after = 1 - crowd.core.place_distribution()["balkon"][0]
+    assert 1 - crowd.core.count_distribution()["wohn"][0] > 0.95
     assert after < before + 0.02, (before, after)
     assert known(crowd) < 1.1, known(crowd)
 
@@ -76,8 +76,8 @@ def test_a_sitter_no_ld2450_sees_for_a_while_stays():
     for t, sid, frame in simulate([a], sensors, sit + 160, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         if t > sit + 10:
-            low = min(low, 1 - crowd.count_distribution()["wohn"][0])
-    assert low > config.params.light_cost / (config.params.light_cost + 1.0), low  # the light stays on
+            low = min(low, 1 - crowd.core.count_distribution()["wohn"][0])
+    assert low > config.data["params"]["light_cost"] / (config.data["params"]["light_cost"] + 1.0), low  # the light stays on
     assert known(crowd) < 1.1, known(crowd)
 
 
@@ -88,7 +88,7 @@ def test_a_person_in_a_walls_shadow_is_partly_seen():
     d = flat_config().to_dict()
     d["walls"].append({"points": [[3.0, 2.5], [3.0, 5.0]], "kind": "wall"})
     crowd = Tracker(Config.from_dict(d), start=0.0)
-    g = crowd.sight("a", np.array([[2.5, 4.0], [3.15, 3.0], [4.5, 4.5], [7.0, 2.0]]))
+    g = crowd.core.sight("a", np.array([[2.5, 4.0], [3.15, 3.0], [4.5, 4.5], [7.0, 2.0]]))
     assert g[0] > 0.9  # in plain sight
     assert 0.1 < g[1] < 0.9  # just inside the shadow
     assert g[2] < 0.05  # far inside
@@ -104,17 +104,17 @@ def _nook_config():
 
 
 def _nook(crowd):
-    return [crowd.tile_near((x, 4.5)) for x in (4.5, 5.0, 5.5, 5.8)]
+    return [crowd.core.tile_near((x, 4.5)) for x in (4.5, 5.0, 5.5, 5.8)]
 
 
 def test_the_nook_is_unobserved():
     # how well the best sensor sees a person in each tile (MODEL.md 5.5): 0 in the nook, 1 in
     # plain view, in between at the nook's opening
     crowd = Tracker(_nook_config(), start=0.0, people=["outside"])
-    o = crowd.observed()
+    o = crowd.core.observed()
     assert all(o[c] < 0.02 for c in _nook(crowd)), [o[c] for c in _nook(crowd)]
-    assert o[crowd.tile_near((3.0, 2.0))] > 0.95 and o[crowd.tile_near((1.0, 4.5))] > 0.95
-    assert 0.1 < o[crowd.tile_near((3.6, 4.5))] < 0.9
+    assert o[crowd.core.tile_near((3.0, 2.0))] > 0.95 and o[crowd.core.tile_near((1.0, 4.5))] > 0.95
+    assert 0.1 < o[crowd.core.tile_near((3.6, 4.5))] < 0.9
 
 
 def _hold_in_nook(minutes):
@@ -126,7 +126,7 @@ def _hold_in_nook(minutes):
     assert crowd.restore_people(fixture("people.json")["nook"])
     for t, sid, frame in simulate([], sim_sensors(config), 60 * minutes, rate=2.0, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
-    return 1 - crowd.count_distribution()["wohn"][0]
+    return 1 - crowd.core.count_distribution()["wohn"][0]
 
 
 def test_nobody_stays_in_a_blind_spot_without_support():
@@ -154,8 +154,8 @@ def test_a_sitter_nothing_supports_for_two_minutes_stays():
     for t, sid, frame in simulate([a], sensors, sit + 150, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         if t > sit + 30:
-            low = min(low, 1 - crowd.count_distribution()["wohn"][0])
-    assert low > config.params.light_cost / (config.params.light_cost + 1.0), low
+            low = min(low, 1 - crowd.core.count_distribution()["wohn"][0])
+    assert low > config.data["params"]["light_cost"] / (config.data["params"]["light_cost"] + 1.0), low
 
 
 def test_a_ghost_beside_a_blind_spot_leaves_nobody_behind():
@@ -174,9 +174,9 @@ def test_a_ghost_beside_a_blind_spot_leaves_nobody_behind():
         if before is None and t > 50:
             before = in_house(crowd)
         if t > 150 + 300:
-            worst = max(worst, 1 - crowd.count_distribution()["wohn"][0])
-    c = config.params.light_cost / (config.params.light_cost + 1.0)
+            worst = max(worst, 1 - crowd.core.count_distribution()["wohn"][0])
+    c = config.data["params"]["light_cost"] / (config.data["params"]["light_cost"] + 1.0)
     assert worst < c, worst  # dark five minutes after the reflection
-    assert 1 - crowd.count_distribution()["wohn"][0] < 0.05
+    assert 1 - crowd.core.count_distribution()["wohn"][0] < 0.05
     assert in_house(crowd) < before + 0.05, (before, in_house(crowd))
 

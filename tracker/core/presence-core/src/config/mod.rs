@@ -1,9 +1,12 @@
-//! The configuration as the app stores it (model.Config.model_dict(): sensors, zones, walls, doors, the
-//! LD2410Cs' measured view and the tracker's parameters; the background image is the web UI's and never
-//! comes here), read with serde. Lengths in metres, angles in degrees, in the house frame. The map comes
-//! finished: the rooms are the faces between the walls and every door lies on a wall (the web UI's editor
-//! makes them so, static/js/floorplan.js; the check refuses a door on no wall). Every field the shell always
-//! writes is required: no defaults here that could hide a renamed field. Before it is read it is checked
+//! The configuration as the app stores it (tracker.json in its canonical form: sensors, zones, walls, doors, the
+//! LD2410Cs' measured view and the tracker's parameters; the background image and the rooms' label points are
+//! the web UI's and never come here), read with serde. Lengths in metres, angles in degrees, in the house frame.
+//! The map comes finished: the rooms are the faces between the walls and every door lies on a wall (the web
+//! UI's editor makes them so, static/js/floorplan.js; the check refuses a door on no wall). Every field the
+//! shell always writes is required: no serde defaults that could hide a renamed field. The one form a
+//! configuration is stored in is the core's (`canonical`: checked, what it leaves out filled in from
+//! `defaults`, the one table of the values unless set, which the web UI's editor also gives every new element);
+//! the shell stores exactly that and hands it back. Before it is read it is checked
 //! (check.rs: the limits of every number, also the ones of the web UI's fields). The sensors' geometry here
 //! is the only one: the simulation of the tests uses it too (presence_core.Geometry, feature "testing").
 //!
@@ -13,8 +16,8 @@ mod check;
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 pub use check::{
     ConfigError, DOOR, Limits, MAX_CELLS, MAX_RANGE, MAX_SENSORS, PARAMS, Part, Problem, SENSOR, TARGET_THRESHOLD,
@@ -40,8 +43,8 @@ pub struct Config {
     pub params: TrackerParams,
 }
 
-/// A sensor (model.SensorConfig): where it hangs, where it looks, how its measurements are read.
-#[derive(Debug, Deserialize)]
+/// A sensor: where it hangs, where it looks, how its measurements are read.
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SensorConfig {
     pub id: String,
     pub name: String,
@@ -112,7 +115,7 @@ impl SensorConfig {
     }
 }
 
-/// How a sensor hangs (model.SensorConfig): what turns its targets into floor positions.
+/// How a sensor hangs: what turns its targets into floor positions.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Mount {
     pub at: Point,
@@ -183,7 +186,7 @@ impl Mount {
     }
 }
 
-/// What a zone is (model.ZoneConfig.kind with its flag entry).
+/// What a zone is (its kind with the flag entry).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoneKind {
     /// a room of the home (from the walls)
@@ -196,7 +199,7 @@ pub enum ZoneKind {
     Entry,
 }
 
-/// A zone (model.ZoneConfig).
+/// A zone.
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "ZoneRaw")]
 pub struct ZoneConfig {
@@ -277,7 +280,7 @@ impl TryFrom<ZoneRaw> for ZoneConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WallKind {
     /// a real wall: blocks the radar's sight and the people
@@ -313,7 +316,7 @@ impl TryFrom<WallRaw> for WallConfig {
 }
 
 /// A door on a wall: its centre and width.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct DoorConfig {
     pub id: String,
     pub x: f64,
@@ -321,34 +324,46 @@ pub struct DoorConfig {
     pub width: f64,
 }
 
-/// The tracker's parameters of the configuration (model.TrackerParams) that the core reads.
-#[derive(Debug, Deserialize)]
+/// The tracker's parameters of the configuration (its "params"), all of them read by the core; their values
+/// unless set are `TrackerParams::default()`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct TrackerParams {
     /// m: height of the reflecting body (chest), for the slant correction
     pub target_height: f64,
-    /// m: the LD2450's error (1 sigma) = base + slope x distance, along and across the line of sight
+    /// m: the LD2450's error (1 sigma) = base + slope x distance on the floor, along and across the line of
+    /// sight
     pub range_sigma_base: f64,
     pub range_sigma_slope: f64,
     pub lateral_sigma_base: f64,
     pub lateral_sigma_slope: f64,
     /// m: detections farther behind a wall or outside all rooms are reflections
     pub wall_margin: f64,
-    /// s, and the spread of ln(duration): stays in rooms without a sensor
+    /// s, and the spread of ln(duration): stays in rooms without a sensor (MODEL.md 3.3, assumed)
     pub dwell_median: f64,
     pub dwell_spread: f64,
     /// s: gaps in the LD2410C presence up to this long are bridged (display)
     pub ld2410_hold: f64,
+    /// a second of light without anybody costs as much as this many seconds dark with somebody there
     pub light_cost: f64,
+    /// s: "Belegt" (MODEL.md 6) also while the room's own LD2450 measured somebody in it within this long
+    /// (room_seen.rs); 0: the filter alone
     pub seen_hold: f64,
+    /// s and the cost of a light switched on in vain against an entry into a dark room: "wird betreten"
+    /// (MODEL.md 6) is P(a walker enters within lead_time) above approach_cost / (approach_cost + 1)
     pub lead_time: f64,
     pub approach_cost: f64,
+    /// "Ziel" (MODEL.md 6): on at P >= this threshold c = K_false / (K_false + K_late), per room where it
+    /// differs (room id -> threshold)
     pub target_threshold: f64,
     pub target_thresholds: BTreeMap<String, f64>,
 }
 
-/// model.TrackerParams' defaults, for the tests' configurations.
-#[cfg(test)]
 impl Default for TrackerParams {
+    /// The parameters unless set: the LD2450's error from a sweep over the 2026-10-03 recordings; the stays
+    /// assumed, wide so that long ones stay possible; light without a person is the worst (Leon: twice a
+    /// second dark with somebody there); seen_hold 10 s measured on the truth of 6.-8.10.; lead_time 2 s and
+    /// approach_cost 0.05 measured 6./7.10. (light >= 1 s / 1 m before 60 / 62 % of the entries, 4.0 vain
+    /// 30-s lights per hour); target_threshold 0.8: a vain light costs as much as 4 late ones.
     fn default() -> Self {
         Self {
             target_height: 1.0,
@@ -370,8 +385,163 @@ impl Default for TrackerParams {
     }
 }
 
+/// A sensor unless its configuration says otherwise, and every new one the editor puts on the map: the LD2450's
+/// field of view and range, the mounting height assumed, looking along +y until turned, read as measured (not
+/// mirrored, scale 1), in use once placed. Its id (its MQTT name), name and place have none: they are its own.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct SensorTemplate {
+    pub heading: f64,
+    pub height: f64,
+    pub fov: f64,
+    pub range: f64,
+    pub mirror: bool,
+    pub scale: f64,
+    pub enabled: bool,
+    pub placed: bool,
+}
+
+pub const SENSOR_TEMPLATE: SensorTemplate = SensorTemplate {
+    heading: 90.0,
+    height: 1.5,
+    fov: 120.0,
+    range: 6.0,
+    mirror: false,
+    scale: 1.0,
+    enabled: true,
+    placed: false,
+};
+
+/// A door unless set, and every new one (at most as wide as its wall): an ordinary inner door.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct DoorTemplate {
+    pub width: f64,
+}
+
+pub const DOOR_TEMPLATE: DoorTemplate = DoorTemplate { width: 0.9 };
+
+/// A wall unless set: a real wall.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct WallTemplate {
+    pub kind: WallKind,
+}
+
+pub const WALL_TEMPLATE: WallTemplate = WallTemplate { kind: WallKind::Wall };
+
+/// What a configuration may leave out, with the values the model takes then (`canonical` fills them in), and
+/// what the web UI's editor gives every new element: {"params", "sensor", "door", "wall"}.
+#[derive(Debug, Serialize)]
+pub struct Defaults {
+    pub params: TrackerParams,
+    pub sensor: SensorTemplate,
+    pub door: DoorTemplate,
+    pub wall: WallTemplate,
+}
+
+pub fn defaults() -> Defaults {
+    Defaults {
+        params: TrackerParams::default(),
+        sensor: SENSOR_TEMPLATE,
+        door: DOOR_TEMPLATE,
+        wall: WALL_TEMPLATE,
+    }
+}
+
+/// An object's fields, those of `template` it leaves out filled in from it.
+fn filled<T: Serialize>(given: &Map<String, Value>, template: &T) -> Map<String, Value> {
+    let Ok(Value::Object(mut out)) = serde_json::to_value(template) else {
+        unreachable!("a template is an object")
+    };
+    out.extend(given.iter().map(|(k, v)| (k.clone(), v.clone())));
+    out
+}
+
+/// A value as the model reads it, written back (its fields, numbers as numbers of the model).
+fn as_read<T: Serialize + for<'de> Deserialize<'de>>(v: Map<String, Value>) -> Result<Value, ConfigError> {
+    let read: T = serde_json::from_value(Value::Object(v)).map_err(ConfigError::unreadable)?;
+    serde_json::to_value(read).map_err(ConfigError::unreadable)
+}
+
+/// The keys of a zone the model reads, by its shape and kind, and the room's label point (the editor's, as it
+/// came: the model never reads it).
+fn zone_canonical(z: &Map<String, Value>) -> Value {
+    let mut out = Map::new();
+    for key in ["id", "name", "kind", "shape", "points"] {
+        if let Some(v) = z.get(key) {
+            out.insert(key.into(), v.clone());
+        }
+    }
+    if z.get("shape").and_then(Value::as_str) == Some("circle") {
+        out.insert("center".into(), z.get("center").cloned().unwrap_or(Value::Null));
+        out.insert("radius".into(), z.get("radius").cloned().unwrap_or(0.0.into()));
+    }
+    if z.get("kind").and_then(Value::as_str) == Some("room") {
+        out.insert("entry".into(), z.get("entry").cloned().unwrap_or(false.into()));
+        if let Some(anchor) = z.get("anchor") {
+            out.insert("anchor".into(), anchor.clone());
+        }
+    }
+    Value::Object(out)
+}
+
+/// The one form of a configuration (JSON) the app stores and the web UI edits: checked (ConfigError names the
+/// first problem), what it leaves out filled in from `defaults`, the parameters, sensors and doors with exactly
+/// the fields the model reads and their numbers as it reads them, a zone with the keys of its shape and kind;
+/// the web UI's own parts (the background image, a room's label point) as they came, never read. Whatever
+/// else it holds is dropped.
+pub fn canonical(json: &str) -> Result<Value, ConfigError> {
+    let value: Value = serde_json::from_str(json).map_err(ConfigError::unreadable)?;
+    check(&value)?;
+    let empty = Map::new();
+    let o = value.as_object().unwrap_or(&empty);
+    let objects = |key: &str| -> Vec<&Map<String, Value>> {
+        o.get(key)
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_object).collect())
+            .unwrap_or_default()
+    };
+    let mut out = Map::new();
+    let sensors = objects("sensors")
+        .into_iter()
+        .map(|s| as_read::<SensorConfig>(filled(s, &SENSOR_TEMPLATE)))
+        .collect::<Result<Vec<_>, _>>()?;
+    out.insert("sensors".into(), Value::Array(sensors));
+    out.insert(
+        "zones".into(),
+        Value::Array(objects("zones").into_iter().map(zone_canonical).collect()),
+    );
+    let walls = objects("walls")
+        .into_iter()
+        .map(|w| {
+            let w = filled(w, &WALL_TEMPLATE);
+            Value::Object(w.into_iter().filter(|(k, _)| k == "points" || k == "kind").collect())
+        })
+        .collect();
+    out.insert("walls".into(), Value::Array(walls));
+    let doors = objects("doors")
+        .into_iter()
+        .map(|d| as_read::<DoorConfig>(filled(d, &DOOR_TEMPLATE)))
+        .collect::<Result<Vec<_>, _>>()?;
+    out.insert("doors".into(), Value::Array(doors));
+    out.insert(
+        "ld_view".into(),
+        o.get("ld_view")
+            .filter(|v| v.is_object())
+            .cloned()
+            .unwrap_or_else(|| Value::Object(Map::new())),
+    );
+    let params = o.get("params").and_then(Value::as_object).unwrap_or(&empty);
+    let params = filled(params, &TrackerParams::default());
+    out.insert("params".into(), as_read::<TrackerParams>(params)?);
+    if let Some(background) = o.get("background") {
+        out.insert("background".into(), background.clone());
+    }
+    let out = Value::Object(out);
+    Config::deserialize(&out).map_err(ConfigError::unreadable)?;
+    Ok(out)
+}
+
 impl Config {
-    /// The configuration of the JSON of model.Config.to_dict(), checked field by field (check.rs; the
+    /// The configuration of its JSON (the model's part of `canonical`), checked field by field (check.rs; the
     /// error names the first problem).
     pub fn from_json(json: &str) -> Result<Self, ConfigError> {
         let value: Value = serde_json::from_str(json).map_err(ConfigError::unreadable)?;
@@ -413,6 +583,46 @@ mod tests {
         let k = 0.75_f64.sqrt();
         assert!(close(mount(false).on_floor([0.6, 0.8], 1.0), [0.6 * k, 0.8 * k]));
         assert!(close(mount(true).on_floor([0.6, 0.8], 1.0), [-0.6 * k, 0.8 * k]));
+    }
+
+    #[test]
+    fn the_canonical_form_fills_in_what_is_left_out_and_keeps_the_web_uis_parts() {
+        let given = r#"{"sensors": [{"id": "s", "name": "S", "x": 1, "y": 2, "fov": 90, "old": 1}],
+            "zones": [{"id": "r", "name": "R", "kind": "room", "shape": "rect", "points": [[0, 0], [4, 4]],
+                       "anchor": [2, 2], "radius": 3}],
+            "walls": [{"points": [[0, 0], [4, 0]]}], "doors": [{"id": "d", "x": 1, "y": 0}],
+            "params": {"light_cost": 3, "gone": 1}, "background": {"layers": [{"x": 5}]}, "other": 1}"#;
+        let c = canonical(given).expect("fits");
+        let t = SENSOR_TEMPLATE;
+        assert_eq!(
+            c["sensors"][0],
+            serde_json::json!({"id": "s", "name": "S", "x": 1.0, "y": 2.0, "heading": t.heading, "height": t.height,
+                "mirror": t.mirror, "scale": t.scale, "fov": 90.0, "range": t.range, "enabled": t.enabled,
+                "placed": t.placed})
+        );
+        assert_eq!(
+            c["zones"][0],
+            serde_json::json!({"id": "r", "name": "R", "kind": "room", "shape": "rect", "points": [[0, 0], [4, 4]],
+                "entry": false, "anchor": [2, 2]})
+        );
+        assert_eq!(c["walls"][0]["kind"], "wall");
+        assert_eq!(c["doors"][0]["width"], DOOR_TEMPLATE.width);
+        let mut params = serde_json::to_value(TrackerParams::default()).expect("JSON");
+        params["light_cost"] = 3.0.into();
+        assert_eq!(c["params"], params);
+        assert_eq!(c["background"], serde_json::json!({"layers": [{"x": 5}]}));
+        assert!(c.get("other").is_none() && c["ld_view"] == serde_json::json!({}));
+        // the canonical form is its own canonical form, and the model reads it
+        assert_eq!(canonical(&c.to_string()).expect("fits"), c);
+        Config::from_json(&c.to_string()).expect("read");
+        // what has no value unless given, and what does not fit, is refused
+        let unnamed = given.replace(r#""name": "S", "#, "");
+        assert!(matches!(
+            canonical(&unnamed).expect_err("refused").problem,
+            Problem::Unreadable(_)
+        ));
+        let far = given.replace(r#""fov": 90"#, r#""fov": 200"#);
+        assert_eq!(canonical(&far).expect_err("refused").field, Some("fov"));
     }
 
     #[test]

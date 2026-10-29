@@ -26,7 +26,7 @@ def test_two_standing_together_stay_two():
     end = b.waypoints[3][0] + 300
     for t, sid, frame in simulate([a, b], sim_sensors(config, resolution=0.6), end, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
-    d = crowd.count_distribution()["wohn"]
+    d = crowd.core.count_distribution()["wohn"]
     assert d[2] > 0.9, d
     assert abs(in_house(crowd) - 2) < 0.1, in_house(crowd)
 
@@ -43,7 +43,7 @@ def test_two_lying_together_stay_two_for_long():
     end = b.waypoints[3][0] + 1800
     for t, sid, frame in simulate([a, b], sim_sensors(config, resolution=0.6), end, rate=4.0, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
-    d = crowd.count_distribution()["wohn"]
+    d = crowd.core.count_distribution()["wohn"]
     assert d[2] > 0.9, d
     assert abs(in_house(crowd) - 2) < 0.1, in_house(crowd)
 
@@ -65,7 +65,7 @@ def test_a_copy_beside_a_walker_does_not_walk_along():
     for t, sid, frame in simulate([a, copy], sensors, a.waypoints[-1][0] - 1, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         if t > t1 + 60:
-            most = max(most, mean(crowd.count_distribution()["wohn"]))
+            most = max(most, mean(crowd.core.count_distribution()["wohn"]))
     assert most < 1.1, most
     assert known(crowd) < 1.05, known(crowd)
 
@@ -78,12 +78,12 @@ def test_somebody_walking_in_alone_is_a_person_within_seconds():
     crowd = Tracker(config, start=0.0, people=["outside"])
     seen = None
     late = []
-    c = config.params.light_cost / (config.params.light_cost + 1.0)
+    c = config.data["params"]["light_cost"] / (config.data["params"]["light_cost"] + 1.0)
     for t, sid, frame in simulate([a], sim_sensors(config), a.waypoints[-1][0] - 1, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         if seen is None and frame.get("targets") and t > a.waypoints[1][0]:
             seen = t
         if seen is not None and t > seen + 5:
-            late.append(1 - crowd.count_distribution()["wohn"][0])
+            late.append(1 - crowd.core.count_distribution()["wohn"][0])
     assert late and min(late) > c, min(late)
     assert abs(in_house(crowd) - 1) < 0.05, in_house(crowd)

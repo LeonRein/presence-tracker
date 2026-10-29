@@ -21,10 +21,6 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<frames::PyClock>()?;
     m.add_class::<calibration::PyWalking>()?;
     m.add_class::<frames::PyFrame>()?;
-    m.add_function(wrap_pyfunction!(core::model_defaults, m)?)?;
-    m.add_function(wrap_pyfunction!(core::ld_expected, m)?)?;
-    m.add_function(wrap_pyfunction!(core::forgetting, m)?)?;
-    m.add_function(wrap_pyfunction!(core::ld_prior, m)?)?;
     m.add_function(wrap_pyfunction!(views::plan, m)?)?;
     m.add_function(wrap_pyfunction!(views::derive, m)?)?;
     m.add_function(wrap_pyfunction!(calibration::calibrate, m)?)?;
@@ -32,17 +28,22 @@ fn presence_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(config::check_config, m)?)?;
     m.add_function(wrap_pyfunction!(config::changes, m)?)?;
     m.add_function(wrap_pyfunction!(config::config_limits, m)?)?;
+    m.add_function(wrap_pyfunction!(config::config_defaults, m)?)?;
+    m.add_function(wrap_pyfunction!(config::canonical, m)?)?;
     m.add_class::<config::ConfigProblem>()?;
-    // the hooks of the shell's tests (feature "testing"; maturin develop --features testing)
+    // the hooks of the shell's tests and the tools (feature "testing"; maturin develop --features testing)
     #[cfg(feature = "testing")]
     {
+        m.add_function(wrap_pyfunction!(core::model_defaults, m)?)?;
+        m.add_function(wrap_pyfunction!(core::ld_expected, m)?)?;
+        m.add_function(wrap_pyfunction!(core::ld_prior, m)?)?;
         m.add_function(wrap_pyfunction!(testing::build_export, m)?)?;
         m.add_function(wrap_pyfunction!(testing::hidden_at, m)?)?;
         m.add_function(wrap_pyfunction!(testing::panic_for_test, m)?)?;
         m.add_class::<geometry::PyGeometry>()?;
     }
-    // what only the outputs read: a change of them alone builds nothing (Core.set_outputs)
-    m.add("OUTPUT_PARAMS", ::presence_core::params::OUTPUT_FIELDS)?; // the crate, not this function
+    // the fingerprint of the core's sources this module was built of (build.rs): a report names its code
+    m.add("SOURCE_HASH", env!("PRESENCE_CORE_SOURCE_HASH"))?;
     m.add("WorldChanged", m.py().get_type::<core::WorldChanged>())?;
     m.add("ConfigError", m.py().get_type::<config::PyConfigError>())?;
     // a panic of the core is a BaseException in Python: the shell turns it into an Exception

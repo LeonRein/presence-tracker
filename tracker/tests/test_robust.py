@@ -330,11 +330,11 @@ def test_a_nan_is_a_model_failure_never_nobody_there(tmp_path, caplog):
     run_a_while(app, 20.0)
     assert app.zone_states["wohn"].occupied
     tracker = app.tracker
-    tracker._c.spoil_weights_for_test()  # every hypothesis' weight NaN in the core
+    tracker.core.spoil_weights_for_test()  # every hypothesis' weight NaN in the core
     assert not app.tick(1000.0 + 20.5)  # no raise
     assert app.tracker is not tracker and "not finite" in caplog.text
     with pytest.raises(FloatingPointError):
-        tracker._c.normalize(0.0)  # the core normalizing the weights
+        tracker.core.normalize(0.0)  # the core normalizing the weights
     st = ZoneState(probability=math.nan, p_enter=math.nan, eta=math.inf, approaching=True)
     assert not st.finite() and st.to_dict()["probability"] is None  # never raises
 
@@ -366,7 +366,7 @@ def test_a_panic_of_the_rust_core_is_a_model_failure(tmp_path, monkeypatch, capl
             if where == "step":
                 core.panic_for_test("a bug in the core")
             return self.inner.step(*args)
-    monkeypatch.setattr(tracker._c, "core", Panicking(tracker._c.core))
+    monkeypatch.setattr(tracker.core, "core", Panicking(tracker.core.core))
     assert not app.tick(1000.0 + 20.5)  # no raise
     assert app.tracker is not tracker and "the Rust core failed: a bug in the core" in caplog.text
     with pytest.raises(filter_module.CoreError):
@@ -547,21 +547,21 @@ def test_reset_tracks_sees_whoever_sits_there_again(tmp_path):
     config = flat_config(entry=True)
     config.save(tmp_path / "tracker.json")
     app = App(tmp_path, publish=False)
-    c = config.params.light_cost / (config.params.light_cost + 1.0)
+    c = config.data["params"]["light_cost"] / (config.data["params"]["light_cost"] + 1.0)
     sit = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.52, 1.0), start=1, pauses={2: 600}))
     p, done, bg = {}, False, None
     for t, sid, frame in simulate([sit], sim_sensors(config), 300.0, plan=config):
         if t >= 60.0 and not done:
             asyncio.run(app.h_reset_tracks(None))
             done = True
-            assert not app.tracker.tracks()
+            assert not app.tracker.core.tracks()
             bg = app.tracker.learned()["ld_background"]
             assert set(bg["held"]) == {"a", "b"}
         app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
         app.tick(1000.0 + t)
         p.setdefault(int(t), app.zone_states["wohn"].probability)
     assert all(p[t] > c for t in p if 70 <= t), {t: v for t, v in p.items() if t >= 70 and v <= c}
-    assert app.tracker.tracks()
+    assert app.tracker.core.tracks()
     now = app.tracker.learned()["ld_background"]
     assert now["num"] == bg["num"] and now["den"] == bg["den"]  # learned nothing since the reset
     assert app.start_learned["ld_background"]["held"] == bg["held"]  # in a report: the replay holds too

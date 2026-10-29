@@ -16,9 +16,13 @@ pyo3 = { version = "0.30", features = ["extension-module", "abi3-py313"] }
 numpy = { version = "0.30", optional = true }
 serde_json = "1"
 
+[build-dependencies]
+sha1_smol = "1"
+
 [features]
-# hooks for the shell's tests only (normalize, spoil_weights_for_test, ld_last, panic_for_test, build_export,
-# hidden_at): never in the image
+# the hooks of the shell's tests and the tools (docs/rust-core.md 4: Core.normalize, spoil_weights_for_test,
+# ld_last, the readings of the filter's state and outputs, model_defaults, ld_prior, ld_expected,
+# panic_for_test, build_export, hidden_at, Geometry): never in the image
 testing = ["presence-core/testing", "dep:numpy"]
 
 [lints]

@@ -54,7 +54,7 @@ def _run(tr, person, until, config):
         tr.process_frame(sid, t, Frame.of(frame))
         if t >= nxt:
             tr.step(t)
-            out.append(tr.count_distribution())
+            out.append(tr.core.count_distribution())
             nxt = t + 0.2
     return out
 

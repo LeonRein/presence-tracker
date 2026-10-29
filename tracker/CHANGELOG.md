@@ -2,6 +2,64 @@
 
 ## Unveröffentlicht
 
+## 0.50.0 (Branch `rust-core`, eine Fassung der Konfiguration, die letzten Verstöße gegen die Grenzregel; nicht live)
+
+Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.49.0 (presence-replay und `trace.py` über die
+Hülle). Abgearbeitet: die Prüfung der Grenzregel von 0.49.0 (V1–V3, V5–V8 und der Fingerabdruck des Codes; V4, der
+Umzug `LD_VIEW_0_39`, bleibt bis nach einem Release) und der Nachtrag des Besitzers zu V1.
+- **Eine Fassung der Konfiguration, ihre Bedeutung legt der Kern fest (V1, Nachtrag des Besitzers):** Standards nur
+  noch im Kern, `config::defaults()` (`presence_core.config_defaults()`, in `GET /api/config` als `defaults`): die
+  Parameter (`TrackerParams::default()`, bisher in `model.TrackerParams` und als Testkopie in `config/mod.rs` und
+  `testing.rs`), die Vorlage eines Sensors (Blickrichtung 90°, Höhe 1,5 m, Öffnungswinkel 120°, Reichweite 6 m, nicht
+  gespiegelt, Maßstab 1, an, nicht platziert; bisher Python mit Blickrichtung 0°, JS mit 90°), einer Tür (Breite 0,9 m;
+  bisher Python und JS) und einer Wand (Art „wall“). Der Editor legt neue Sensoren und Türen nur aus diesen Vorlagen an
+  (eine Tür höchstens so breit wie ihre Wand). Neu `config::canonical` (`presence_core.canonical`): prüft und bringt
+  eine Konfiguration in ihre eine Form – Fehlendes aus den Standards, Parameter, Sensoren und Türen mit genau den
+  Feldern, die das Modell liest, Zahlen, wie es sie liest, Zonen mit den Schlüsseln ihrer Form und Art, Hintergrundbild
+  und Etikettpunkte der Räume unverändert, Unbekanntes (alte Parameter) weg. Die Testkopien in Rust lesen die eine
+  Quelle (`testing::params_json`, `SENSOR_TEMPLATE`).
+- **Speichern als Rundweg:** Der Editor arbeitet an einem Entwurf, bis „Speichern“ gedrückt wird (Knopf unten rechts
+  auf der Karte, hervorgehoben, solange etwas offen ist; Strg+S; beim Verlassen der Seite mit offenem Entwurf fragt
+  der Browser). `PUT /api/config` → Form des Kerns (Ablehnung mit dem Problem des Kerns, der Entwurf bleibt) → Python
+  schreibt genau sie in `tracker.json` und gibt sie als `config` zurück → die Oberfläche arbeitet damit weiter (was
+  während der Anfrage weiter bearbeitet wurde, bleibt obenauf). `GET /api/config` und der Start lesen die Datei durch
+  den Kern; eine Datei, die er ablehnt, hält den Start mit dem Grund an (vorher scheiterte der Start am Weltbau).
+  „Alle auf Standard“ speichert und zeigt die Antwort (kein Neuladen der Seite mehr). Bisher Autospeichern nach 0,5 s.
+- **Python ohne eigenes Modell der Konfiguration:** `model.py` hält sie als Dict in der Form des Kerns (`Config.data`),
+  lädt und speichert genau diese Form; `SensorConfig`, `ZoneConfig`, `TrackerParams`, `check`, die Standards in
+  `from_dict` (Tür 0,9, Wandart) und `sensor_by_id` sind weg. Python liest nur die IDs der Sensoren (`sensor_ids`). Der
+  Listener „frame“ bekommt die Sensor-ID statt des Sensors.
+- **Tür → Wand → Öffnung nur im Kern (V2):** `derived.plan.doors` je Tür `{wall, t0, t1}` (Index in die Wände der
+  Konfiguration, Öffnung entlang der Wand, an den Wandenden gekappt: `plan::door_openings`, dieselbe Rechnung, mit der
+  der Kern die Sicht schneidet). Die Karte zeichnet die Öffnungen damit, `util.crossesWall(walls, openings, a, b)` prüft
+  den Spurbruch damit; `view.js` nutzt `doorWall`/`onSegment` nicht mehr. Solange Wände oder Türen im Entwurf geändert
+  sind, zeigt die Karte jede Tür, wo sie eingegeben ist (gestrichelter Kreis ihrer Breite). Das Halten einer Tür auf
+  ihrer Wand beim Bearbeiten bleibt Bedienung (`tools.js`, mit `door_on_wall` des Kerns).
+- **Nur für Tests und Werkzeuge hinter „testing“ (V3), ein Feature für beide:** `model_defaults`, `ld_prior`,
+  `ld_expected`; `Core.loglik`, `hyp_weights`, `check`, `hypotheses`, `tracks`, `room_at`, `tile_near`, `sight`,
+  `observed`, `ghost_rates`, `background`, `count_distribution`, `place_distribution`, `occupancy`. Sie liefern jetzt
+  benannt, was die Hülle bisher zuordnete (Verteilungen nach Raum/Ort mit `_observed`/`_house`, Spuren → Sensor-ID,
+  `occupancy` Raum → Quelle; Sensor per ID). Weg: `forgetting`, `OUTPUT_PARAMS` (die Oberfläche liest
+  `derived.output_params`), die Hüllen in `filter.py` (`loglik`, `hyp_weights`, `hypotheses`, `tracks`, `check`,
+  `tile_near`, `sight`, `observed`, `room_at`, `background`, `ghost_rates`, `count_distribution`, `place_distribution`,
+  `occupancy`) und `Tracker.p`. Tests und Werkzeuge (`report_eval.py`, `replay.py`, `ld2410/phantom.py`) rufen den Kern
+  über `Tracker.core`. Tests, die das lesen, ohne zu simulieren, sind von Hand „hooks“.
+- **Modellwissen aus JS (V5):** Zonen des Heims aus `derived.plan.home` (Zeile „Besetzt“ im Live-Tab); ob die
+  Kalibrierung die x-Richtung ändert, sagt der Kern (`apply.mirror`); welche Parameter keinen Neustart brauchen, aus
+  `derived.output_params` (der Satz in den Einstellungen nennt sie mit ihren Bezeichnungen).
+- **Berichtsfenster (V6):** „15 Minuten“ und das Maximum des Minutenfelds aus `window_min` von `GET /api/reports`.
+- **Bezeichnungen nur in JS (V7):** `util.LABELS` (Parameter, Sensorfelder, Tür) für Einstellungen, Sensorformular und
+  die Probleme des Kerns; die Sätze der Probleme (bisher `model._SENTENCES`) als `util.problemText`. Der Server schickt
+  bei einer Ablehnung das Problem als Daten (`problem`: part, name, field, reason, limits, value). Die
+  Abweichung „Haltezeit (Anzeige)“/„Haltezeit LD2410C“ ist jetzt „Haltezeit LD2410C (Anzeige)“.
+- **Keine Rundung im Kern, Etikettpunkte nicht im Kern (V8):** `derived.rs` gibt die Zahlen, wie sie sind; die Hülle
+  rundet die Abdeckung für die Übertragung (`Tracker.coverage`: mm, Sicht auf zwei Stellen, wie bisher). `model_part`
+  lässt die Etikettpunkte der Räume (`anchor`) weg; eine Änderung nur daran oder am Hintergrundbild fasst das Modell
+  nicht an.
+- **Fingerabdruck des Codes:** `build.rs` der Bindung bettet den Hash der Quellen des Kerns und der Bindung samt
+  Manifesten und `Cargo.lock` ein (`presence_core.SOURCE_HASH`, auch im Release-Wheel ohne Quellen); `code_hash()`
+  nimmt ihn mit.
+
 ## 0.49.0 (Branch `rust-core`, der Kern liefert nur Modellgrößen, die Oberfläche zeichnet; nicht live)
 
 Modell unverändert. Spuren der drei Referenzstunden byte-gleich mit 0.48.0 (presence-replay und `trace.py` über die

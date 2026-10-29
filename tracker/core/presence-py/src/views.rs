@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::config::config_from;
+#[cfg(feature = "testing")]
 use presence_core::filter;
 use presence_core::frames::Detection;
 use presence_core::geometry::Point;
@@ -14,8 +15,9 @@ use presence_core::world::World;
 use presence_core::world::sight::SensorMap;
 use presence_core::world::tiles::SIZE;
 
-/// A hypothesis for reading (tests, tools): per person with tracks their track ids, the ghost tracks,
-/// per known person how probably they exist, the mass of the unknown ones outside.
+/// A hypothesis for reading (tests, tools; feature "testing"): per person with tracks their track ids, the
+/// ghost tracks, per known person how probably they exist, the mass of the unknown ones outside.
+#[cfg(feature = "testing")]
 #[pyclass(module = "presence_core", frozen, get_all)]
 pub struct HypView {
     logw: f64,
@@ -25,6 +27,7 @@ pub struct HypView {
     unknown_out: f64,
 }
 
+#[cfg(feature = "testing")]
 impl HypView {
     pub(crate) fn of(h: filter::HypView) -> Self {
         let ids = |segs: Vec<filter::mixture::SegId>| segs.into_iter().map(|s| s.0).collect();

@@ -1,6 +1,8 @@
 """The model must not depend on how time is cut into frames (MODEL.md 4.4): a heartbeat gap of 5 s
 weighs like the 56 empty frames it stands for."""
 
+import pytest
+
 from presence_tracker.filter import Tracker
 from presence_tracker.frames import Frame
 
@@ -18,9 +20,10 @@ def place_mass(gaps):
         t += g
         for sid in ("a", "b"):
             tr.process_frame(sid, t, Frame.of(empty))
-    return 1 - tr.place_distribution()["observed"][0]
+    return 1 - tr.core.place_distribution()["observed"][0]
 
 
+@pytest.mark.hooks  # reads the core's outputs directly (feature "testing")
 def test_a_heartbeat_gap_weighs_like_the_empty_frames_in_it():
     one = place_mass([0.089] + [5.0] * 6)
     many = place_mass([0.089] + [5.0 / 56] * 56 * 6)

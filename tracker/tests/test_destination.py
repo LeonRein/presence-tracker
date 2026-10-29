@@ -56,7 +56,7 @@ def run(person, until, tracker=None):
         if t >= nxt:
             tr.step(t)
             states = tr.zone_states()
-            out.append((t, states["b"], tr.count_distribution(), tr.loglik))
+            out.append((t, states["b"], tr.core.count_distribution(), tr.core.loglik[0]))
             nxt = t + 0.2
     return tr, out
 

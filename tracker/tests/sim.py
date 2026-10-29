@@ -8,6 +8,7 @@ flags the firmware's thresholds on them. Like the firmware, a sensor with nothin
 target, both flags off) sends only a heartbeat every 5 s (MODEL.md 4.4).
 """
 
+import functools
 import json
 import math
 import random
@@ -17,11 +18,16 @@ import numpy as np
 
 import presence_core
 
-from presence_tracker.model import Config, SensorConfig
+from presence_tracker.model import Config
 
 CELLS = 16  # the LD2410C's: 9 moving gates, 7 still ones (2-8)
-# the model's numbers (the core's defaults): the LD2410C is simulated as the filter models it
-MODEL = json.loads(presence_core.model_defaults())
+
+
+@functools.cache
+def model() -> dict:
+    """The model's numbers (the core's defaults, feature "testing"): the LD2410C is simulated as the filter
+    models it."""
+    return json.loads(presence_core.model_defaults())
 
 
 def _cells(moving: float, still: float) -> np.ndarray:
@@ -60,7 +66,7 @@ class Person:
 
 @dataclass
 class SimSensor:
-    config: SensorConfig
+    config: dict  # the sensor as the configuration has it (the core's form)
     noise: float = 0.07
     speed_noise: float = 0.03  # m/s: the reported speed varies from frame to frame (three equal ones mean coasting)
     bias: float = 0.0  # m: per person, where this sensor's target sits on them wanders by about this much
@@ -100,8 +106,8 @@ def simulate(people: list, sensors: list, duration: float, rate: float = 11.0, s
     """Yield (t, sensor_id, frame) in time order, as the firmware sends them (SimSensor.idle). plan: the
     configuration whose walls and doors block the sensors' sight (None: nothing blocks it); what a sensor sees
     is the core's (geometry), with the simulated sensors as they are configured."""
-    geo = geometry(Config(sensors=[s.config for s in sensors], walls=plan.walls if plan else [],
-                          doors=plan.doors if plan else []))
+    geo = geometry(Config.from_dict({"sensors": [s.config for s in sensors], "walls": plan.data["walls"] if plan else [],
+                                     "doors": plan.data["doors"] if plan else []}))
     rng = random.Random(seed)
     dt = 1 / rate
     t = 0.0
@@ -116,7 +122,7 @@ def simulate(people: list, sensors: list, duration: float, rate: float = 11.0, s
             s._sent = (ts, empty)
             frame["seq"] = s.seq
             s.seq += 1
-            yield ts, s.config.id, frame
+            yield ts, s.config["id"], frame
         t += dt
 
 
@@ -124,10 +130,10 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
     c = s.config
 
     def sees(p) -> bool:
-        return geometry.sees(c.id, [p])[0]
+        return geometry.sees(c["id"], [p])[0]
 
     def to_local(x, y) -> tuple:
-        return tuple(geometry.to_local(c.id, [(x, y)])[0])
+        return tuple(geometry.to_local(c["id"], [(x, y)])[0])
     targets = []
     for i, person in enumerate(people):
         if i in s.blind_to and s.blind_after <= t < s.blind_until:
@@ -163,9 +169,9 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
             s._bias[i] = (bx, by)
             lx, ly = lx + bx, ly + by
         ground = math.hypot(lx, ly)
-        slant = math.hypot(ground, c.height - person.height)
+        slant = math.hypot(ground, c["height"] - person.height)
         k = slant / ground
-        ux, uy = (pos[0] - c.x) / ground, (pos[1] - c.y) / ground
+        ux, uy = (pos[0] - c["x"]) / ground, (pos[1] - c["y"]) / ground
         radial = vx * ux + vy * uy
         tgt = {
             "x": round((lx * k + rng.gauss(0, s.noise)) * 1000),
@@ -207,7 +213,7 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
     # LD2410C (MODEL.md 4.3): energy = (background + what the people in its beam put in) x a Gamma
     # factor (mean 1, shape alpha) correlated over the time tau: a chi-square with 2 alpha degrees
     # of freedom from as many Ornstein-Uhlenbeck processes (their squares decorrelate with 2 / tau)
-    m = MODEL
+    m = model()
     put = np.zeros(CELLS)
     for person in people:
         p = person.position(t)
@@ -217,7 +223,7 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
         if ly <= 0:
             continue
         angle = math.degrees(math.atan2(abs(lx), ly))
-        slant = math.hypot(math.hypot(lx, ly) * c.scale, c.height - person.height)
+        slant = math.hypot(math.hypot(lx, ly) * c["scale"], c["height"] - person.height)
         walking = math.hypot(*person.velocity(t)) > 0.3
         s_still, s_walk = presence_core.ld_expected(angle, slant)
         put = put + np.array(s_walk if walking else s_still)

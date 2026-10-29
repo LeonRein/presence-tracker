@@ -28,8 +28,8 @@ def flat_config(entry: bool = False) -> Config:
         return {"points": [list(a), list(b)], "kind": "wall"}
     return Config.from_dict({
         "sensors": [
-            {"id": "a", "x": 0.05, "y": 0.05, "heading": 45, "placed": True},
-            {"id": "b", "x": 5.95, "y": 0.05, "heading": 135, "placed": True},
+            {"id": "a", "name": "", "x": 0.05, "y": 0.05, "heading": 45, "placed": True},
+            {"id": "b", "name": "", "x": 5.95, "y": 0.05, "heading": 135, "placed": True},
         ],
         "zones": [rect("wohn", 0, 0, 6, 5), rect("balkon", 6, 1, 7.5, 3), rect("flur", -2, 3, 0, 5, entry)],
         "walls": [w((0, 0), (6, 0)), w((6, 0), (6, 5)), w((6, 5), (0, 5)), w((0, 5), (0, 0)),
@@ -46,9 +46,9 @@ def run(config, people, duration, start_places, every=0.5, check=False, **kw):
     for t, sid, frame in simulate(people, sim_sensors(config, **kw), duration, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         if check:
-            crowd.check()
+            crowd.core.check()
         if t >= next_sample:
-            samples.append((t, crowd.place_distribution(), int(np.argmax(crowd.count_distribution()["_observed"]))))
+            samples.append((t, crowd.core.place_distribution(), int(np.argmax(crowd.core.count_distribution()["_observed"]))))
             next_sample = t + every
     return crowd, samples
 
@@ -67,7 +67,7 @@ def test_the_world_knows_rooms_regions_and_walls():
     # the_places_of_a_plan_worked_out_by_hand, geometry.rs a_move_across_a_wall_is_mirrored)
     crowd = Tracker(flat_config(), start=0.0, people=["flur"])
     assert set(crowd.places) == {"observed", "balkon", "flur", "outside"} and crowd.rooms == ["wohn"]
-    assert crowd.place_distribution()["flur"][1] == 1.0
+    assert crowd.core.place_distribution()["flur"][1] == 1.0
 
 
 def test_one_person_comes_in_goes_to_the_balcony_and_comes_back():
@@ -132,13 +132,13 @@ def test_a_recalibrated_sensor_keeps_the_people():
     for t, sid, frame in simulate([a, b], sim_sensors(config), end, plan=config):
         if t >= 100 and not done:
             crowd.reconfigure(turned)
-            crowd.check()
+            crowd.core.check()
             done = True
         crowd.process_frame(sid, t, Frame.of(frame))
         if t >= 90 and int(t * 2) != int((t - 0.1) * 2):
-            dist = crowd.count_distribution()["wohn"]
+            dist = crowd.core.count_distribution()["wohn"]
             samples.append((t, float(dist[2]) if len(dist) > 2 else 0.0))
-    assert crowd.config.sensors[0].heading == 46.5
+    assert crowd.config.data["sensors"][0]["heading"] == 46.5
     assert all(p > 0.9 for t, p in samples), [(round(t), round(p, 3)) for t, p in samples if p <= 0.9]
     # what only the outputs read (the light's cost, "wird betreten", the display) and the names of
     # zones and sensors: nothing of the model changes, the tracks and hypotheses stay
@@ -146,16 +146,18 @@ def test_a_recalibrated_sensor_keeps_the_people():
     d["params"].update(light_cost=3.0, approach_cost=0.1, lead_time=3.0, ld2410_hold=5.0, target_threshold=0.7)
     d["zones"][0]["name"] = "Wohnzimmer"
     d["sensors"][1]["name"] = "Ecke"
-    tracks, hyps = crowd.tracks(), [(hy["logw"], hy["key"]) for hy in crowd.hypotheses()]
-    assert not crowd.reconfigure(Config.from_dict(d)) and crowd.tracks() == tracks
-    assert [(hy["logw"], hy["key"]) for hy in crowd.hypotheses()] == hyps
+    # per hypothesis its weight and what it says about the live tracks
+    hyps = lambda: [(h.logw, frozenset(map(frozenset, h.people)), frozenset(h.ghosts)) for h in crowd.core.hypotheses()]  # noqa: E731
+    tracks, before = crowd.core.tracks(), hyps()
+    assert not crowd.reconfigure(Config.from_dict(d)) and crowd.core.tracks() == tracks
+    assert hyps() == before
     c = 3.0 / 4.0
     assert crowd.zone_states()["wohn"].decided == (crowd.zone_states()["wohn"].probability > c)
     # a parameter of the model: it starts over as after a restart, from what it knew (the tracks
     # end, the people go to the tiles, MODEL.md 5.3): both are still there
     other = Config.from_dict({**d, "params": {**d["params"], "range_sigma_base": 0.2}})
-    assert crowd.reconfigure(other) and not crowd.tracks() and crowd.started_from is not None
-    dist = crowd.count_distribution()["wohn"]
+    assert crowd.reconfigure(other) and not crowd.core.tracks() and crowd.started_from is not None
+    dist = crowd.core.count_distribution()["wohn"]
     assert len(dist) > 2 and dist[2] > 0.9, dist
 
 
@@ -209,7 +211,7 @@ def test_occupied_is_the_cheaper_decision_on_the_probability():
     # nothing known: P(somebody in the room) lies between the thresholds of the two costs
     config = flat_config()
     crowd = Tracker(config, start=0.0)
-    p = 1 - crowd.count_distribution()["wohn"][0]
+    p = 1 - crowd.core.count_distribution()["wohn"][0]
     assert 0.2 < p < 0.8
     for cost, occupied in ((0.1, True), (10.0, False)):
         d = crowd.config.to_dict()
@@ -259,7 +261,7 @@ def test_a_sitter_taken_for_ghosts_does_not_become_a_ghost_source():
         crowd.process_frame(sid, t, Frame.of(frame))
     prior_rate = crowd.learned()["ghost_map"]["prior_rate"]
     assert sum(p for _, p in learned) > 2, learned  # the case: some of them were taken for ghosts
-    assert all(crowd.ghost_rates(s, np.array([seat]))[0][0] < 2 * prior_rate for s in ("a", "b"))
+    assert all(crowd.core.ghost_rates(s, np.array([seat]))[0][0] < 2 * prior_rate for s in ("a", "b"))
 
 
 def test_a_ghost_in_an_empty_house_is_learned_as_one():
@@ -285,7 +287,7 @@ def test_a_sitter_the_ld2450_loses_stays_while_the_ld2410c_sees_them():
     for t, sid, frame in simulate([a], sensors, a.waypoints[-1][0] - 1, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
         if t > a.waypoints[2][0] + 180 and not samples:
-            samples.append(1 - crowd.count_distribution()["wohn"][0])
+            samples.append(1 - crowd.core.count_distribution()["wohn"][0])
     assert samples[0] > 0.9, samples
 
 
@@ -304,7 +306,7 @@ def test_the_tracks_of_a_sensor_that_died_end():
     goes to the tiles, and where no live sensor sees them their record expires (MODEL.md 5.5),
     instead of holding the room occupied for hours after they left (until 0.18)."""
     config = flat_config(entry=True)
-    c = config.params.light_cost / (config.params.light_cost + 1.0)
+    c = config.data["params"]["light_cost"] / (config.data["params"]["light_cost"] + 1.0)
     # walks in, sits at (4.5, 1) until about 130 s, then walks out through the flat's door
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), FLUR_DOOR, (-1.0, 4.0), start=1, pauses={2: 120}))
     frames = list(simulate([a], sim_sensors(config), 300, plan=config))
@@ -316,15 +318,15 @@ def test_the_tracks_of_a_sensor_that_died_end():
                 crowd.step(t)  # the others' frames, or the app's ticks, go on
             else:
                 crowd.process_frame(sid, t, Frame.of(frame))
-            crowd.check()
-            p.setdefault(int(t), 1 - crowd.count_distribution()["wohn"][0])
+            crowd.core.check()
+            p.setdefault(int(t), 1 - crowd.core.count_distribution()["wohn"][0])
             if 50.0 <= t < 60.0:
-                assert "a" in crowd.tracks().values()
+                assert "a" in crowd.core.tracks().values()
             if t >= 67.0:  # its last frame + LOST: no track of a dead sensor is left
-                assert not set(crowd.tracks().values()) & set(dead), (t, dead)
+                assert not set(crowd.core.tracks().values()) & set(dead), (t, dead)
         for t in (600.0, 1800.0, 3600.0):
             crowd.step(t)
-            p[int(t)] = 1 - crowd.count_distribution()["wohn"][0]
+            p[int(t)] = 1 - crowd.core.count_distribution()["wohn"][0]
         assert p[55] > 0.99
         assert all(p[t] < c for t in p if t >= 200), (dead, {t: round(v, 3) for t, v in p.items() if t >= 200 and v >= c})
 

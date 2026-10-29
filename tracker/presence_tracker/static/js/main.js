@@ -1,5 +1,5 @@
 import { renderPanel, seenTotal, updateDerived, updateLive } from './panels.js';
-import { TAB_NAMES, emit, loadConfig, onChange, redo, redoState, select, setTool, state, undo, undoState, updateHolds, heldBadges } from './store.js';
+import { TAB_NAMES, emit, loadConfig, onChange, redo, redoState, saveNow, select, setTool, state, undo, undoState, unsaved, updateHolds, heldBadges } from './store.js';
 import { AlignTool, DoorTool, PlaceSensorTool, SelectTool, WallTool, ZoneTool } from './tools.js';
 import { fmt, sensorsOnline, toast } from './util.js';
 import { MapView } from './view.js';
@@ -45,8 +45,16 @@ const undoBtn = document.getElementById('undo');
 const redoBtn = document.getElementById('redo');
 undoBtn.onclick = () => undo();
 redoBtn.onclick = () => redo();
+// the edits are a draft until "Speichern": shown in the tabs that edit, and in any while there is a draft
+const saveBtn = document.getElementById('save');
+saveBtn.onclick = () => saveNow();
+window.addEventListener('beforeunload', ev => { if (unsaved()) ev.preventDefault(); });
 function updateUndo() {
   const editing = state.tab !== 'live';
+  saveBtn.hidden = !editing && !unsaved();
+  saveBtn.disabled = !unsaved();
+  saveBtn.classList.toggle('unsaved', unsaved());
+  saveBtn.title = unsaved() ? 'Änderungen speichern (Strg+S): Erst dann rechnet das Modell damit.' : 'Alles gespeichert';
   undoBtn.hidden = redoBtn.hidden = !editing;
   for (const [btn, st, verb] of [[undoBtn, undoState(), 'Rückgängig'], [redoBtn, redoState(), 'Wiederholen']]) {
     btn.disabled = !st.can;
@@ -88,6 +96,7 @@ document.getElementById('zoom-in').onclick = () => view.zoom(1.4);
 document.getElementById('zoom-out').onclick = () => view.zoom(1 / 1.4);
 
 window.addEventListener('keydown', ev => {
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') { ev.preventDefault(); saveNow(); return; }
   if (ev.target.matches?.('input, select, textarea')) return;
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') { ev.preventDefault(); ev.shiftKey ? redo() : undo(); return; }
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'y') { ev.preventDefault(); redo(); return; }

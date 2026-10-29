@@ -87,7 +87,7 @@ def main():
     if a.people and not crowd.restore_people(json.load(open(a.people))):
         print("--people does not fit the floor plan: starting with nothing known")
     rooms = crowd.rooms
-    names = {z.id: z.name for z in config.zones}
+    names = {z["id"]: z["name"] for z in config.data["zones"]}
     if a.report:
         first = min(m["t"] for m in messages if m["topic"].endswith("/frame"))
         start = parse_time(a.start) if a.start else max(first, rep.get("model_start") or first)
@@ -153,8 +153,8 @@ def main():
             st = crowd.zone_states()
             line = time.strftime("%H:%M:%S", time.localtime(tt)) + " " + " ".join(
                 f"{names.get(z, z)}={st[z].count}{'*' if st[z].occupied else ''}" for z in rooms if z in st)
-            dist = crowd.count_distribution()
-            line += " [" + " ".join(f"{names.get(z, z)[:4]} " + "/".join(f"{q:.2f}" for q in dist[z]) for z in rooms) + f"] H{len(crowd.hyp_weights())}"
+            dist = crowd.core.count_distribution()
+            line += " [" + " ".join(f"{names.get(z, z)[:4]} " + "/".join(f"{q:.2f}" for q in dist[z]) for z in rooms) + f"] H{len(crowd.core.hyp_weights())}"
             for d in crowd.persons():
                 where = max(d["places"].items(), key=lambda kv: kv[1])
                 pos = "" if d["x"] is None else f" ({d['x']:.1f},{d['y']:.1f}){' unseen' if d['lost'] else ''}"

@@ -16,7 +16,7 @@ create_exception!(
     "A configuration the model cannot run with: args[0] is the ConfigProblem (where, what, the limits)."
 );
 
-/// The configuration (the JSON of model.Config.to_dict()), checked; ConfigError names the first problem.
+/// The configuration (the JSON of model.Config.model_json()), checked; ConfigError names the first problem.
 pub(crate) fn config_from(json: &str) -> PyResult<Config> {
     Config::from_json(json).map_err(config_error)
 }
@@ -157,6 +157,20 @@ pub fn config_limits(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
         out.set_item(group, fields)?;
     }
     Ok(out)
+}
+
+/// What a configuration may leave out, with the values the model takes then, and what the web UI's editor gives
+/// every new element (JSON; presence_core::config::defaults): {"params", "sensor", "door", "wall"}.
+#[pyfunction]
+pub fn config_defaults() -> String {
+    serde_json::to_string(&config::defaults()).expect("the defaults are finite numbers")
+}
+
+/// The one form of a configuration (JSON) the app stores (presence_core::config::canonical), as JSON:
+/// ConfigError with the first problem.
+#[pyfunction]
+pub fn canonical(json: &str) -> PyResult<String> {
+    Ok(config::canonical(json).map_err(config_error)?.to_string())
 }
 
 /// Which way a new configuration takes while the model runs (presence_core::reconfigure, both JSON):

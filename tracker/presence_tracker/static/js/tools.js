@@ -793,7 +793,8 @@ export class DoorTool {
   down(world) {
     const w = nearestWall(state.config, world, 2 * SNAP_PX / this.view.s);
     if (!w) { toast('Türen sitzen auf einer Wand (keine Raumgrenze).'); return true; }
-    const width = Math.min(0.9, +w.len.toFixed(3));
+    // a new door: the core's (state.defaults.door), at most as wide as its wall
+    const width = Math.min(state.defaults.door.width, +w.len.toFixed(3));
     const [x, y] = along(w, clampDoor(w, w.t, width));
     const door = { id: uid('d'), x, y, width };
     edit(c => { c.doors ??= []; c.doors.push(door); });
@@ -819,8 +820,9 @@ export class PlaceSensorTool {
     edit(c => {
       let s = c.sensors.find(s => s.id === this.id);
       if (!s) {
-        s = { id: this.id, name: this.id.replace(/^presence-/, ''), x: 0, y: 0, heading: 90, height: 1.5, mirror: false, scale: 1,
-              fov: 120, range: 6, enabled: true, placed: false };
+        // a new sensor: the core's (state.defaults.sensor: where it looks until turned at its grip, how it
+        // hangs and reads); its id, name and place its own
+        s = { ...state.defaults.sensor, id: this.id, name: this.id.replace(/^presence-/, ''), x: 0, y: 0 };
         c.sensors.push(s);
       }
       s.x = +p[0].toFixed(3); s.y = +p[1].toFixed(3); s.placed = true;

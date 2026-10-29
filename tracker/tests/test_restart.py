@@ -38,14 +38,14 @@ def test_the_people_survive_a_restart():
         if t >= 100:
             break
         crowd.process_frame(sid, t, Frame.of(frame))
-    before = crowd.count_distribution()["wohn"]
+    before = crowd.core.count_distribution()["wohn"]
     state = json.loads(json.dumps(crowd.people_state()))
     assert len(json.dumps(state)) < 200_000
     # restored as it was saved: the same people, now on the tiles
     again = Tracker(config)
     assert again.restore_people(state)
-    again.check()
-    assert two_in_the_room(before) > 0.99 and two_in_the_room(again.count_distribution()["wohn"]) > 0.99
+    again.core.check()
+    assert two_in_the_room(before) > 0.99 and two_in_the_room(again.core.count_distribution()["wohn"]) > 0.99
     # and on from the first frame after the gap
     later = Tracker(config)
     assert later.restore_people(state)
@@ -54,9 +54,9 @@ def test_the_people_survive_a_restart():
         if t < 130:
             continue
         later.process_frame(sid, t, Frame.of(frame))
-        later.check()
+        later.core.check()
         if int(t * 2) != int((t - 0.1) * 2):
-            samples.append((t, two_in_the_room(later.count_distribution()["wohn"])))
+            samples.append((t, two_in_the_room(later.core.count_distribution()["wohn"])))
     assert all(p > 0.9 for t, p in samples), [(round(t), round(p, 3)) for t, p in samples if p <= 0.9]
 
 
@@ -66,13 +66,13 @@ def test_the_saved_state_round_trips_and_needs_the_same_tiles():
     state = json.loads(json.dumps(crowd.people_state()))
     again = Tracker(config)
     assert again.restore_people(state)
-    a, b = crowd.place_distribution(), again.place_distribution()
+    a, b = crowd.core.place_distribution(), again.core.place_distribution()
     assert all(np.allclose(a[k], b[k], atol=1e-3) for k in a)  # float16
     assert crowd.people_state()["densities"] == state["densities"]
     # another floor plan (the hallway a room of the flat with a sensor, no longer the stairwell): the
     # densities do not fit, nothing is restored; nor from a broken file
     d = config.to_dict()
-    d["sensors"].append({"id": "c", "x": -1.95, "y": 3.05, "heading": 45, "placed": True})
+    d["sensors"].append({"id": "c", "name": "", "x": -1.95, "y": 3.05, "heading": 45, "placed": True})
     d["zones"] = [{**z, "entry": False} for z in d["zones"]]
     other = Tracker(Config.from_dict(d))
     assert len(other.tiles()["squares"]) > len(again.tiles()["squares"])
@@ -100,7 +100,7 @@ def test_a_gap_moves_everybody_on():
         tr = Tracker(config, model=model)
         tr.restore_people(state)
         tr.process_frame("a", gap, Frame.of({"targets": []}))
-        return np.array([1 - d[0] for place, d in tr.place_distribution().items() if place != "_house"])
+        return np.array([1 - d[0] for place, d in tr.core.place_distribution().items() if place != "_house"])
 
     short, day = after(60.0), after(86400.0)
     assert short[0] > 0.99
@@ -115,12 +115,12 @@ def test_nothing_known_invents_nobody_in_view():
     config = flat_config(entry=True)
     crowd = Tracker(config)
     assert crowd.started_from is None
-    c = config.params.light_cost / (config.params.light_cost + 1.0)
+    c = config.data["params"]["light_cost"] / (config.data["params"]["light_cost"] + 1.0)
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.6, 1.0), start=150, pauses={2: 200}))
     occupied = []
     for t, sid, frame in simulate([a], sim_sensors(config, ghost_rate=4), 300, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
-        occupied.append((t, 1 - crowd.count_distribution()["wohn"][0]))
+        occupied.append((t, 1 - crowd.core.count_distribution()["wohn"][0]))
     # a ghost of up to a second may be somebody stepping out of the hallway and back for a moment
     # (a second of light, as with the start of 0.10); nobody stays
     stretches, start, last = [], None, None
@@ -144,7 +144,7 @@ def test_nothing_known_finds_who_sits_in_view_at_the_start():
     occupied = []
     for t, sid, frame in simulate([a], sim_sensors(config), 200, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
-        occupied.append((t, 1 - crowd.count_distribution()["wohn"][0]))
+        occupied.append((t, 1 - crowd.core.count_distribution()["wohn"][0]))
     assert min(p for t, p in occupied if t > 60) > 0.9, [(round(t), round(p, 2)) for t, p in occupied[::50]]
 
 
@@ -168,8 +168,8 @@ def test_saving_the_people_changes_nothing():
     plain, _ = run(False)
     assert all("amp" in d for d in states[-1]["densities"][:2])  # still measured
     assert states[-1] == saving.people_state() == plain.people_state()
-    assert np.array_equal(saving.hyp_weights(), plain.hyp_weights())
-    assert saving.count_distribution() == plain.count_distribution()
+    assert np.array_equal(saving.core.hyp_weights(), plain.core.hyp_weights())
+    assert saving.core.count_distribution() == plain.core.count_distribution()
 
 
 def test_a_state_saved_by_0381_is_read_and_written_alike():

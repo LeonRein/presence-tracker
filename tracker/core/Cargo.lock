@@ -583,6 +583,7 @@ dependencies = [
  "presence-core",
  "pyo3",
  "serde_json",
+ "sha1_smol",
 ]
 
 [[package]]

@@ -96,7 +96,7 @@ def test_a_report_replays_to_what_the_app_showed(tmp_path):
         replay.process_frame(sid, t, Frame.of(m["payload"]))
         replay.step(t)
         while k < len(shown) and shown[k][0] <= t:
-            diff = max(diff, abs(1 - replay.count_distribution()["wohn"][0] - shown[k][1]["zones"]["wohn"][1]))
+            diff = max(diff, abs(1 - replay.core.count_distribution()["wohn"][0] - shown[k][1]["zones"]["wohn"][1]))
             k += 1
     assert k >= len(shown) - 1
     assert shown[-1][1]["zones"]["wohn"][2] and shown[-1][1]["persons"][0][1] == "observed"
@@ -150,7 +150,7 @@ def test_a_restarted_app_keeps_the_people_and_reports_from_where(tmp_path):
             continue
         again.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
         assert again.tick(1000.0 + t)
-        assert 1 - again.tracker.count_distribution()["wohn"][0] > 0.9
+        assert 1 - again.tracker.core.count_distribution()["wohn"][0] > 0.9
 
     class Request:
         async def json(self):
@@ -176,7 +176,7 @@ def test_a_restarted_app_keeps_the_people_and_reports_from_where(tmp_path):
         replay.process_frame(sid, t, Frame.of(m["payload"]))
         replay.step(t)
         while k < len(shown) and shown[k][0] <= t:
-            diff = max(diff, abs(1 - replay.count_distribution()["wohn"][0] - shown[k][1]["zones"]["wohn"][1]))
+            diff = max(diff, abs(1 - replay.core.count_distribution()["wohn"][0] - shown[k][1]["zones"]["wohn"][1]))
             k += 1
     assert k >= len(shown) - 1 and diff < 0.002, diff
 
@@ -240,7 +240,7 @@ def test_a_report_after_a_live_recalibration_replays_to_what_the_app_showed(tmp_
         replay.process_frame(sid, t, Frame.of(m["payload"]))
         replay.step(t)
         while k < len(shown) and shown[k][0] <= t:
-            diff = max(diff, abs(1 - replay.count_distribution()["wohn"][0] - shown[k][1]["zones"]["wohn"][1]))
+            diff = max(diff, abs(1 - replay.core.count_distribution()["wohn"][0] - shown[k][1]["zones"]["wohn"][1]))
             k += 1
     assert not changes and k >= len(shown) - 1
     assert diff < 0.002, diff  # what the app showed is rounded to 0.001
@@ -395,7 +395,7 @@ def test_a_refused_floor_plan_keeps_the_people(tmp_path, monkeypatch):
         app.tick(1000.0 + t)
     fingerprint = app.tracker.tiles()["id"]
     d = config.to_dict()
-    d["sensors"].append({"id": "c", "x": -1.95, "y": 3.05, "heading": 45, "placed": True})
+    d["sensors"].append({"id": "c", "name": "", "x": -1.95, "y": 3.05, "heading": 45, "placed": True})
     d["zones"] = [{**z, "entry": False} for z in d["zones"]]
     real = Tracker.restore_people
 
