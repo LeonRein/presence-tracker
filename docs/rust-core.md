@@ -210,7 +210,7 @@ Module von `presence-core`, nach MODEL.md:
 |---|---|---|
 | `config/` (`mod.rs`, `check.rs`) | – | serde-Typen der Konfiguration (das JSON von `Config.to_dict()`), ihre Prüfung mit der einen Grenztabelle (auch der Eingabefelder der Oberfläche), die Sensorgeometrie (`SensorConfig`, `Mount`) |
 | `plan.rs`, `geometry.rs` | 2 | Orte, beobachtete Räume, Bereiche, Wandstücke, Sichtstücke, Formen (Rechteck/Kreis/Polygon), Schnitt von Strecken, Spiegeln |
-| `world/raster.rs`, `world/sight.rs` | 2, 4.1, 4.3 | Raster, Sicht je Sensor (`SensorModel.pd`), `_spread_sight`, LD2410C-Sicht und Blick in andere Räume (`ld_view`) |
+| `world/raster.rs`, `world/sight.rs` | 2, 4.1, 4.3 | Raster, Sicht je Sensor (`SensorModel.pd`), `_spread_sight`, LD2410C-Sicht |
 | `world/tiles.rs`, `linalg.rs` | 5.3 | Kacheln, Gehmatrix (`expm`), `walk_end`, `observed`, `gauss_points`, `near_doors` |
 | `params.rs` | 3, 4 | `filtermodel.Model`/`Shapes`, Aufenthalt in Bereichen (`Dwell`) |
 | `frames.rs` | 4.1, 4.4 | Nutzlast prüfen, Bildzeit (`SensorClock`), Detektionen |
@@ -271,7 +271,7 @@ zone_states(now), persons(), clouds(), online(id, now), silent(now), seen_last()
 regions(), dwell, ld_shown(si)
 Sichten: plan(), tiles_view(), detections(si), last_frame(si), coverage(), learned_view() (0.54.0; sensor_map(si) weg)
 Modul: plan(config), check_config(config), canonical(config), config_defaults(), config_limits(), derive(config),
-geometry_key(config), forget_measured(config) (0.51.0),
+geometry_key(config),
 calibrate, calibration_status, Walking, Frame, SensorClock, WorldChanged, ConfigError (ValueError; args[0] ein
 ConfigProblem: Teil, Name, Feld, Grund, Grenzen, Wert), PanicException, SOURCE_HASH (Fingerabdruck der Quellen
 des Kerns, beim Bauen eingebettet: build.rs, 0.50.0)
@@ -315,7 +315,7 @@ behält `WorldExport` für seine eigenen Tests. Was die Python-Orakel sagten, st
 **Aufräumrunde (0.40.0, 28.10.):** Das Abgeleitete aus `model.py` ist weg: Orte, Regionen, beobachtete und geschlossene
 Räume liest jeder aus dem Plan des Kerns (`presence_core.plan(config)`, `Tracker.plan`). Die Sichten der Bindung sind
 benannte Typen (`HypView`, `TilesView`, `PersonView`). Der gemessene Blick des LD2410C (`ld_view`) ist eine Angabe der
-Konfiguration, kein Standard des Modells mehr.
+Konfiguration, kein Standard des Modells mehr (entfernt 30.10., MODEL.md 4.3).
 
 **Keine doppelte Logik (0.43.0, 29.10.):** Die Sensorgeometrie (Sensorrahmen, Blickfeld, Sicht durch Türen, Bodenpunkt)
 gibt es nur im Kern; die Simulation der Tests fragt `presence_core.Geometry` (über Punktlisten; seit 0.49.0 nur mit
@@ -375,16 +375,15 @@ bitgleich weiter wie ohne die Änderung (bis auf die geänderten Ausgaben).
 Geometrie, unter der es gesammelt wurde. Eine Quelle: `Config::geometry_key` (Bindung `presence_core.geometry_key`,
 sha1 16 Hex) über Lage, Blickrichtung, Höhe, Spiegelung, Maßstab, Öffnungswinkel, Reichweite, `placed` und ID jedes
 Sensors, Wände (Strecke, Art), Türen (ID, Mitte, Breite) und Zonen (ID, Art, Form), Zahlen nach Wert; nicht: Namen,
-`enabled`, Parameter, `ld_view`. Öffnungswinkel und Reichweite gehören dazu, weil aus ihnen die Sicht je Kachel, die
+`enabled`, Parameter. Öffnungswinkel und Reichweite gehören dazu, weil aus ihnen die Sicht je Kachel, die
 beobachteten Räume und das „außerhalb der Sicht“ der Kalibrierung folgen. Die `World` trägt den Schlüssel
 (`World::geometry`), `Learned` den, unter dem es lernt: `Learned::follow` beginnt bei einem anderen ganz neu (alle
 Sensoren, alle drei Teile), sonst bleibt es; `Pose::remounted` (0,5 m / 30°) und das Folgen je Sensor sind weg.
 `reconfigure::change` bleibt nur der Weg des Modells (er definiert keine Geometrie). Die Hülle führt aus: Jede Datei
 des Gesammelten trägt den Schlüssel (`ghostmap.json`, `ld2410.json`, `destinations.json` als
 `{"geometry", "learned"}`, `calibration.npz` mit `geometry`); passt er beim Start nicht, wird sie gelöscht
-(`App._discard`). PUT mit einem anderen Schlüssel: `presence_core.forget_measured` leert `ld_view` (gemessen unter der
-alten Geometrie; gibt die Zahl der Raumpaare zurück, Python liest das Feld nicht) vor dem Rekonfigurieren, danach `App._forget` (Kalibrierdaten zurückgesetzt, die vier Dateien
-gelöscht) und `"discarded": {"calibration": Messungen, "ld_view": Raumpaare}` in der Antwort; die Oberfläche sagt es
+(`App._discard`). PUT mit einem anderen Schlüssel: nach dem Rekonfigurieren `App._forget` (Kalibrierdaten
+zurückgesetzt, die vier Dateien gelöscht) und `"discarded": {"calibration": Messungen}` in der Antwort; die Oberfläche sagt es
 (`util.discardedText`). Die Sonderfälle bleiben, was sie prüfen: die Geisterkarte ihren Prior (Modellparameter, keine
 Geometrie), die Zielkarte ihr Raster (`fingerprint`, hängt auch am Code); „andere Räume oder Türen“ fängt jetzt der
 Schlüssel vorher ab.

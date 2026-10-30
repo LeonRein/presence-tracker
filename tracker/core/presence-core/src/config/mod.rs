@@ -38,9 +38,6 @@ pub struct Config {
     pub zones: Vec<ZoneConfig>,
     pub walls: Vec<WallConfig>,
     pub doors: Vec<DoorConfig>,
-    /// per "own<-room" (room ids) how much of what the geometric sight expects an LD2410C in its own
-    /// room gets from a person in the other one (measured, MODEL.md 4.3 "Blick des LD2410C"); missing: 1
-    pub ld_view: BTreeMap<String, f64>,
     pub params: TrackerParams,
 }
 
@@ -523,13 +520,6 @@ pub fn canonical(json: &str) -> Result<Value, ConfigError> {
         .map(|d| as_read::<DoorConfig>(filled(d, &DOOR_TEMPLATE)))
         .collect::<Result<Vec<_>, _>>()?;
     out.insert("doors".into(), Value::Array(doors));
-    out.insert(
-        "ld_view".into(),
-        o.get("ld_view")
-            .filter(|v| v.is_object())
-            .cloned()
-            .unwrap_or_else(|| Value::Object(Map::new())),
-    );
     let params = o.get("params").and_then(Value::as_object).unwrap_or(&empty);
     let params = filled(params, &TrackerParams::default());
     out.insert("params".into(), as_read::<TrackerParams>(params)?);
@@ -539,20 +529,6 @@ pub fn canonical(json: &str) -> Result<Value, ConfigError> {
     let out = Value::Object(out);
     Config::deserialize(&out).map_err(ConfigError::unreadable)?;
     Ok(out)
-}
-
-/// The configuration (JSON, the canonical form) without what was measured with the sensors where they hung and
-/// the plan as it was: the LD2410Cs' view of the other rooms (ld_view, MODEL.md 4.3), and how many room pairs of
-/// it went. The shell takes it in place of a new configuration of another geometry (`Config::geometry_key`), as
-/// it discards what was collected and learned under the old one.
-pub fn forget_measured(json: &str) -> Result<(Value, usize), ConfigError> {
-    let mut value: Value = serde_json::from_str(json).map_err(ConfigError::unreadable)?;
-    let gone = value
-        .as_object_mut()
-        .and_then(|o| o.insert("ld_view".into(), Value::Object(Map::new())))
-        .and_then(|v| v.as_object().map(Map::len))
-        .unwrap_or(0);
-    Ok((value, gone))
 }
 
 impl Config {
@@ -568,8 +544,8 @@ impl Config {
     /// mirror, scale, field of view, range, placed or not), the walls, the doors and the zones' shapes and kinds:
     /// the one definition of "the sensors or the floor plan changed". What was collected or learned holds only
     /// under the key it was collected under (the calibration's measurements, the ghost map, the LD2410C
-    /// background, the destination map, the measured ld_view): a sensor's sight, its frame and the rooms are
-    /// all read from these. Not in it: names, a sensor switched on or off, the parameters, ld_view itself.
+    /// background, the destination map): a sensor's sight, its frame and the rooms are all read from these.
+    /// Not in it: names, a sensor switched on or off, the parameters.
     /// The numbers by value (1 is 1.0, -0 is 0), in the order of the configuration; sha1, 16 hex digits.
     pub fn geometry_key(&self) -> String {
         let mut h = Fingerprint::default();
@@ -674,7 +650,7 @@ mod tests {
         params["light_cost"] = 3.0.into();
         assert_eq!(c["params"], params);
         assert_eq!(c["background"], serde_json::json!({"layers": [{"x": 5}]}));
-        assert!(c.get("other").is_none() && c["ld_view"] == serde_json::json!({}));
+        assert!(c.get("other").is_none());
         // the canonical form is its own canonical form, and the model reads it
         assert_eq!(canonical(&c.to_string()).expect("fits"), c);
         Config::from_json(&c.to_string()).expect("read");
@@ -708,7 +684,6 @@ mod tests {
             (r#""enabled": true"#, r#""enabled": false"#),
             (r#""light_cost": 2.0"#, r#""light_cost": 3"#),
             (r#""wall_margin": 0.4"#, r#""wall_margin": 0.5"#),
-            (r#""ld_view": {}"#, r#""ld_view": {"r<-r": 0.5}"#),
             (r#""x": 0.5"#, r#""x": 0.50"#),
             (r#""heading": 0.0"#, r#""heading": -0.0"#),
             (r#"[[0, 0], [4, 4]]"#, r#"[[0.0, 0], [4, 4.0]]"#),
@@ -746,10 +721,6 @@ mod tests {
         assert_ne!(key(&more), k);
         let divided = more.replacen(r#""kind": "wall""#, r#""kind": "divider""#, 1);
         assert_ne!(key(&divided), key(&more));
-        // what was measured under a geometry goes with it, the rest stays as it was
-        let measured = old.replace(r#""ld_view": {}"#, r#""ld_view": {"r<-r": 0.5}"#);
-        let forgotten = forget_measured(&measured).expect("JSON");
-        assert_eq!(forgotten, (serde_json::from_str::<Value>(&old).expect("JSON"), 1));
     }
 
     #[test]
@@ -759,7 +730,7 @@ mod tests {
         let err = Config::from_json(&far).expect_err("refused");
         assert_eq!((err.part, err.field), (Part::Sensor(Some("s".into())), Some("range")));
         // a field the shell always writes is required (what the check lets pass as missing)
-        let missing = config_json(&one, "[]", "[]", "[]").replace(r#""ld_view": {}, "#, "");
+        let missing = config_json(&one, "[]", "[]", "[]").replace(r#""doors": [], "#, "");
         assert!(matches!(
             Config::from_json(&missing).expect_err("refused").problem,
             Problem::Unreadable(_)

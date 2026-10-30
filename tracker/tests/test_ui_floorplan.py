@@ -122,7 +122,7 @@ def test_the_editor_makes_new_elements_from_the_cores_templates():
     defaults = json.loads(presence_core.config_defaults())
     script = (f"import * as store from {json.dumps((JS / 'store.js').as_uri())};\n"
               f"import * as tools from {json.dumps((JS / 'tools.js').as_uri())};\n"
-              f"store.state.config = {{sensors: [], zones: [], walls: {json.dumps(OUTER)}, doors: [], ld_view: {{}}, "
+              f"store.state.config = {{sensors: [], zones: [], walls: {json.dumps(OUTER)}, doors: [], "
               f"params: {{}}, background: {{layers: []}}}};\n"
               f"store.state.defaults = {json.dumps(defaults)};\n"
               "const view = { s: 50, renderOverlay() {} };\n"

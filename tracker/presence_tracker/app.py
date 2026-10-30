@@ -430,16 +430,15 @@ class App:
             (self.data_dir / name).unlink(missing_ok=True)
         log.info("%s: collected under another geometry (a sensor's place or the floor plan), discarded", ", ".join(names))
 
-    def _forget(self, measured: int) -> dict:
+    def _forget(self) -> dict:
         """A configuration of another geometry is in use (h_put_config): everything collected and learned under the
         old one is discarded, for every sensor - the calibration's measurements and the files of what was learned
-        (the tracker started its parts over itself, the core's Learned::follow; the measured view of the
-        LD2410Cs went with the configuration, presence_core.forget_measured: its room pairs, measured). What it
-        was, for the web UI: the measurements and those room pairs."""
+        (the tracker started its parts over itself, the core's Learned::follow). What it was, for the web UI: the
+        measurements."""
         rows = self.calibrator.count()
         self.calibrator.reset()
         self._discard(list(COLLECTED))
-        return {"calibration": rows, "ld_view": measured}
+        return {"calibration": rows}
 
     def _load_learned(self, name: str, use, what: str, not_used: str | None = None):
         """A learned part from its file in the data directory, if there is one: used by the tracker (it
@@ -686,7 +685,7 @@ class App:
         label points) is only stored: the model never reads it. A configuration of another geometry (the core's
         key: a sensor placed, moved, turned, read otherwise, its view; the walls, doors, zones; also a
         calibration taken over) discards everything collected and learned under the old one, for every sensor
-        (_forget), with the measured view of the LD2410Cs in it; "discarded" says what (None: nothing)."""
+        (_forget); "discarded" says what (None: nothing)."""
         try:
             data = await request.json()
         except ValueError:
@@ -706,9 +705,6 @@ class App:
             return web.json_response({"ok": True, "restarted": False, "derived": None, "config": config.to_dict(),
                                       "discarded": None})
         moved = presence_core.geometry_key(config.model_json()) != self.geometry
-        if moved:  # what was measured under the old geometry goes with it, before the model runs with the new one
-            forgotten, measured = presence_core.forget_measured(json.dumps(config.data))
-            config = Config.from_dict(json.loads(forgotten))
         # only sensors recalibrated: the people stay; else the model starts over as after a restart (MODEL.md 5.3)
         try:
             restarted = self.tracker.reconfigure(config)
@@ -720,7 +716,7 @@ class App:
                                people=getattr(self.tracker, "reconfigured_from", None))
             return web.json_response({"error": "model_refused", "detail": repr(e)}, status=400)
         self.config = config
-        discarded = self._forget(measured) if moved else None
+        discarded = self._forget() if moved else None
         if restarted:
             self._model_started(self.tracker.now)
         else:
@@ -796,7 +792,7 @@ class App:
 
     async def h_learned(self, request):
         """What the running model learned (the core's, computed only when asked; the model is only read): per sensor
-        in use its ghost map, its LD2410C's background and the measured view of the rooms, the destination map."""
+        in use its ghost map and its LD2410C's background, the destination map."""
         try:
             return web.json_response(self.tracker.learned_view())
         except Exception as e:  # noqa: BLE001 - the model is down (restarting after an error)

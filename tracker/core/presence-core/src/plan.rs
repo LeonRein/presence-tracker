@@ -25,7 +25,6 @@ pub struct ZoneIdx(pub usize);
 
 /// An observed room (an index into Plan::rooms, the rooms of the outputs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct RoomIdx(pub usize);
 
 /// A region without a sensor (an index into Plan::regions).
@@ -808,56 +807,43 @@ mod tests {
     fn a_configuration_that_does_not_fit_is_refused_by_name() {
         let good = crate::testing::config(&[("w", "w", [0.0, 0.0], 0.0)], "[]", "[]", "[]");
         assert_eq!(good.sensors.len(), 1);
-        let json = |sensor: &str, params: &str, zones: &str, view: &str| {
-            format!(
-                r#"{{"sensors": [{sensor}], "zones": {zones}, "walls": [], "doors": [], "ld_view": {view}, "params": {params}}}"#
-            )
+        let json = |sensor: &str, params: &str, zones: &str| {
+            format!(r#"{{"sensors": [{sensor}], "zones": {zones}, "walls": [], "doors": [], "params": {params}}}"#)
         };
         let params = &crate::testing::params_json();
-        for (sensor, params, zones, view, name) in [
+        for (sensor, params, zones, name) in [
             (
                 r#"{"id": "s", "name": "", "x": 0, "y": 0, "heading": 0, "height": 1.5, "mirror": false, "scale": 1, "fov": 120, "range": 0, "enabled": true, "placed": true}"#,
                 params.to_string(),
                 "[]",
-                "{}",
                 "range",
             ),
             (
                 r#"{"id": "s", "name": "", "x": 0, "y": 0, "heading": 0, "height": 1.5, "mirror": false, "scale": 1, "fov": 120, "range": 6, "enabled": true, "placed": true}"#,
                 params.replace(r#""range_sigma_base": 0.15"#, r#""range_sigma_base": 0"#),
                 "[]",
-                "{}",
                 "range_sigma_base",
             ),
             (
                 r#"{"id": "s", "name": "", "x": 0, "y": 0, "heading": 0, "height": 1.5, "mirror": false, "scale": 1, "fov": 120, "range": 6, "enabled": true, "placed": true}"#,
                 params.replace(r#""target_threshold": 0.8"#, r#""target_threshold": 1.0"#),
                 "[]",
-                "{}",
                 "target_threshold",
             ),
             (
                 r#"{"id": "s", "name": "", "x": 0, "y": 0, "heading": 0, "height": 1.5, "mirror": false, "scale": 1, "fov": 120, "range": 6, "enabled": true, "placed": true}"#,
                 params.to_string(),
                 r#"[{"id": "r", "name": "R", "kind": "room", "shape": "rect", "points": [[0, 0], [1000000, 5]]}]"#,
-                "{}",
                 "extent",
             ),
-            (
-                r#"{"id": "s", "name": "", "x": 0, "y": 0, "heading": 0, "height": 1.5, "mirror": false, "scale": 1, "fov": 120, "range": 6, "enabled": true, "placed": true}"#,
-                params.to_string(),
-                "[]",
-                r#"{"a<-b": -0.5}"#,
-                "ld_view",
-            ),
         ] {
-            let err = Config::from_json(&json(sensor, &params, zones, view))
+            let err = Config::from_json(&json(sensor, &params, zones))
                 .expect_err(name)
                 .to_string();
             assert!(err.contains(name), "{err}");
         }
         // a field the shell always writes is required
-        let missing = json(r#"{"id": "s", "x": 0}"#, params, "[]", "{}");
+        let missing = json(r#"{"id": "s", "x": 0}"#, params, "[]");
         assert!(Config::from_json(&missing).is_err());
     }
 }

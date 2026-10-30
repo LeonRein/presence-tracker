@@ -69,8 +69,7 @@ def defaults() -> dict:
 
 class Config:
     """A configuration in the core's form (from_dict), as the dict `data`: "sensors", "zones", "walls", "doors",
-    "ld_view", "params" (and "background", the web UI's). Nothing here gives or reads a value of it but the
-    sensors' ids."""
+    "params" (and "background", the web UI's). Nothing here gives or reads a value of it but the sensors' ids."""
 
     def __init__(self, data: dict):
         self.data = data

@@ -95,7 +95,6 @@ pub fn build_export<'py>(py: Python<'py>, config: &str, model: &str) -> PyResult
         e.set_item("grid", a(s.grid.values())?)?;
         e.set_item("observed", a(&s.observed)?)?;
         e.set_item("ld_los", a(ld.los.values())?)?;
-        e.set_item("ld_view", ld.view.as_ref().map(|v| a(v)).transpose()?)?;
         e.set_item("ld_idx", ld.tiles.idx.clone())?;
         e.set_item(
             "ld_still",

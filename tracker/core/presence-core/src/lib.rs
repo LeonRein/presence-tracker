@@ -26,6 +26,4 @@ pub(crate) mod vmath;
 pub mod world;
 
 #[cfg(test)]
-mod ld_reference;
-#[cfg(test)]
 pub mod testing;

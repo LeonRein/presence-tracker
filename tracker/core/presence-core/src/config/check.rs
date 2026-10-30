@@ -133,8 +133,6 @@ pub enum Part {
     Door,
     /// a zone: its name, else its id (None: it has none)
     Zone(Option<String>),
-    /// the LD2410Cs' measured view: the pair "own<-other" (None: the table)
-    LdView(Option<String>),
 }
 
 /// What is wrong.
@@ -216,7 +214,6 @@ impl fmt::Display for Part {
             Self::Wall(k) => write!(f, "wall {k}"),
             Self::Door => write!(f, "a door"),
             Self::Zone(name) => write!(f, "zone {}", some(name)),
-            Self::LdView(pair) => write!(f, "ld_view {}", pair.as_deref().unwrap_or("")),
         }
     }
 }
@@ -331,7 +328,7 @@ fn text(v: Option<&Value>) -> Option<&str> {
 }
 
 /// Checks a configuration (its JSON as a value) for what the model reads: the first problem, in the order
-/// params, sensors, walls, doors, zones, ld_view, the number of sensors, the plan's extent.
+/// params, sensors, walls, doors, zones, the number of sensors, the plan's extent.
 pub fn check(config: &Value) -> Result<(), ConfigError> {
     let Some(d) = config.as_object() else {
         return Err(ConfigError::at(Part::Config, None, Problem::NotAnObject));
@@ -380,11 +377,6 @@ pub fn check(config: &Value) -> Result<(), ConfigError> {
     }
     let zones = list(d, "zones")?;
     check_zones(zones)?;
-    if let Some(view) = object(d, "ld_view", Part::LdView(None))? {
-        for (pair, v) in view {
-            at_least_0(v).map_err(|p| ConfigError::at(Part::LdView(Some(pair.clone())), None, p))?;
-        }
-    }
     if sensors.len() > MAX_SENSORS {
         return Err(ConfigError::at(
             Part::Config,
@@ -621,15 +613,6 @@ mod tests {
         assert_eq!(area(json!({"kind": "foo"})).0, Part::Zone(Some("Z".into())));
         let twice = json!({"id": "z", "name": "Z", "points": [[1, 1], [2, 2]]});
         assert_eq!(refused(json!({"zones": [twice, twice]})), Problem::IdTwice("z".into()));
-        let view = problem(json!({"ld_view": {"a<-b": -0.5}}));
-        assert_eq!(
-            view,
-            (
-                Part::LdView(Some("a<-b".into())),
-                None,
-                Problem::NotAtLeast0(json!(-0.5))
-            )
-        );
     }
 
     #[test]

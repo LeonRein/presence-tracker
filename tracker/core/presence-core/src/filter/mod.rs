@@ -12,9 +12,6 @@ pub(crate) mod holders;
 pub mod hyp;
 mod ld_weigh;
 pub(crate) mod merge;
-#[cfg(test)]
-#[cfg(test)]
-pub mod mirror;
 pub mod mixture;
 pub(crate) mod objects;
 pub mod pool;

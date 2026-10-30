@@ -58,8 +58,8 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   beginnt neu mit dem, was es über die Personen wusste. Ein geänderter Grundriss (Wände, Räume, Türen):
   Es beginnt ohne Wissen (siehe *Personen*).
 - **Gespeicherte Änderung von Sensorlage oder Grundriss verwirft alles Gesammelte und Gelernte**, für alle
-  Sensoren: die Messungen der Kalibrierung, die Geisterkarte, den LD2410C-Hintergrund, die Zielkarte und den
-  gemessenen Blick des LD2410C (`ld_view`). Das gilt für Position, Blickrichtung, Höhe, x-Richtung, Maßstab,
+  Sensoren: die Messungen der Kalibrierung, die Geisterkarte, den LD2410C-Hintergrund und die Zielkarte. Das gilt
+  für Position, Blickrichtung, Höhe, x-Richtung, Maßstab,
   Öffnungswinkel und Reichweite eines Sensors, für *platziert* / *Von Karte nehmen*, für einen neuen oder
   entfernten Sensor, für Wände, Türen und Zonen, und auch, wenn ein Kalibrierergebnis übernommen und
   gespeichert wird (es ändert Richtung und Maßstab). All das wurde unter der alten Lage gesammelt und passt
@@ -173,12 +173,6 @@ zurück; nochmal klicken oder ein Klick ins Leere: alle gleich. Verschieben läs
   der Zahl der Gänge); auf Wunsch die Zellen in der Farbe des häufigsten Ziels der Gänge von dort (Raum hinter der
   ersten Tür, Bereich ohne Sensor, außer Haus; kräftiger, je größer sein Anteil, ohne Farbe, wo alle stehen
   blieben). Sie dient nur der Ausgabe *Ziel* und ändert den Filter nicht.
-- *Blick des LD2410C*: wie viel der LD2410C eines Sensors von einer Person in einem anderen Raum mitbekommt; ohne
-  Wahl je Sensor die Räume, die er weniger als ganz sieht, mit Wahl die Räume nach dem Anteil dieses Sensors gefärbt. Er ist **gemessen, nicht gelernt** (MODEL.md 4.3 „Blick des LD2410C“,
-  `tools/ld2410/footprint.py`) und steht in `tracker.json` unter `ld_view` („eigener Raum<-anderer Raum“ → Anteil,
-  fehlt: 1); ohne Messung zeigt der Tab „nicht gemessen (Anteil 1)“. *Alle auf Standard* lässt ihn stehen, eine
-  gespeicherte Änderung von Sensorlage oder Grundriss leert ihn (gemessen unter der alten Lage). Eine `tracker.json`
-  ohne `ld_view` (0.39 oder älter) bleibt ohne: Die Messung von 6.–10.10. galt nur für die Sensorlage von damals.
 
 Einen gelernten Messfehler nach Abstand gibt es nicht: Wie stark ein Messpunkt in Blickrichtung und seitlich streut,
 sind feste Einstellungen (*Messfehler …*, Tab *Einstellungen*).
@@ -189,8 +183,7 @@ Konfiguration dabei in die eine Form des Modells (was fehlt, mit seinen Standard
 bekommen im Editor schon dieselben Werte), legt genau diese in `/data/tracker.json` ab und schickt sie zurück; die
 Oberfläche arbeitet damit weiter. Eine kurze Meldung sagt *Gespeichert* und, wenn das Modell dabei neu startet,
 *Modell neu gestartet* (bei fast jeder Änderung an Grundriss, Zonen und
-Einstellungen; nicht, wenn nur Sensoren kalibriert oder verschoben wurden – außer wenn dabei ein gemessener Blick
-der LD2410C verworfen wird –, nicht bei Einstellungen, die nur
+Einstellungen; nicht, wenn nur Sensoren kalibriert oder verschoben wurden, nicht bei Einstellungen, die nur
 die Ausgaben betreffen: *Kosten: Licht ohne Person*, *Haltezeit eigener LD2450*, *Kosten: Einschalten auf Verdacht*, *Vorausschau*,
 *Haltezeit LD2410C (Anzeige)*, die Schwellen „Ziel“, und nicht beim Umbenennen), und, wenn sich Sensorlage oder
 Grundriss geändert haben, was dabei verworfen wurde. Rückgängig und Wiederholen mit den Knöpfen ↶ ↷ unten

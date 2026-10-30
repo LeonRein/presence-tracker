@@ -22,14 +22,11 @@ from test_robust import run_a_while
 pytestmark = pytest.mark.hooks  # run_a_while simulates frames (sim.simulate), which conftest sees only in its own module
 
 UTIL = pathlib.Path(__file__).parents[1] / "presence_tracker" / "static" / "js" / "util.js"
-VIEW = {"wohn<-balkon": 0.5}  # a measured view of the LD2410C, as tools/ld2410/footprint.py measures it
 
 
 def learned_app(tmp_path):
     """An app that collected calibration data and learned for a while, all of it saved."""
-    data = flat_config(entry=True).to_dict()
-    data["ld_view"] = dict(VIEW)
-    (tmp_path / "tracker.json").write_text(json.dumps(data))
+    (tmp_path / "tracker.json").write_text(json.dumps(flat_config(entry=True).to_dict()))
     app = App(tmp_path, publish=False)
     run_a_while(app)
     app._save_learned()
@@ -71,13 +68,12 @@ def test_a_save_of_another_geometry_discards_everything_collected_and_learned(tm
     change(data)
     [(status, put)] = call(app, ("PUT", "/api/config", data))
     assert status == 200
-    assert put["discarded"] == {"calibration": rows, "ld_view": len(VIEW)}
+    assert put["discarded"] == {"calibration": rows}
     # the calibration tab: nothing collected
     assert app.calibrator.count() == 0 and app.calibrator.status()["frames"] == {}
     # the files are gone, the model has nothing learned, the measured view went with the old geometry
     assert not any((tmp_path / name).exists() for name in COLLECTED)
     assert learned(app) == nothing_learned(app)
-    assert put["config"]["ld_view"] == {} == json.loads((tmp_path / "tracker.json").read_text())["ld_view"]
     # what is saved from now on is of the new geometry: a restart takes it
     run_a_while(app, 20.0)
     app._save_learned()
@@ -97,7 +93,7 @@ def test_a_save_of_the_same_geometry_keeps_everything(tmp_path):
     [(status, put)] = call(app, ("PUT", "/api/config", data))
     assert status == 200 and put["discarded"] is None
     assert app.calibrator.count() == rows and all((tmp_path / name).exists() for name in COLLECTED)
-    assert learned(app) == before and put["config"]["ld_view"] == VIEW
+    assert learned(app) == before
 
 
 def test_a_start_with_another_geometry_discards_the_files_of_the_old_one(tmp_path, caplog):
@@ -138,11 +134,10 @@ def test_the_web_ui_says_what_was_discarded(tmp_path):
     [(_, put)] = call(app, ("PUT", "/api/config", data))
     script = (f"import {{ discardedText }} from {json.dumps(UTIL.as_uri())};\n"
               f"console.log(JSON.stringify([discardedText({json.dumps(put['discarded'])}), discardedText(null),"
-              f" discardedText({{calibration: 0, ld_view: 0}})]));")
+              f" discardedText({{calibration: 0}})]));")
     r = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, check=True)
     said, nothing, empty = json.loads(r.stdout)
     rows = f"{put['discarded']['calibration']:,}".replace(",", ".")
     assert said == (f"Sensorlage oder Grundriss geändert, verworfen: {rows} Kalibriermessungen aller Sensoren, alles "
-                    "Gelernte (Geisterkarte, LD2410C-Hintergrund, Zielkarte), gemessener Blick der LD2410C "
-                    "(1 Raumpaar).")
-    assert nothing == "" and "verworfen: 0 Kalibriermessungen" in empty and "Blick" not in empty
+                    "Gelernte (Geisterkarte, LD2410C-Hintergrund, Zielkarte).")
+    assert nothing == "" and "verworfen: 0 Kalibriermessungen" in empty

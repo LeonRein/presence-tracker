@@ -1,7 +1,7 @@
 // SVG map: projection, pan/zoom, and drawing of the plan, sensors, zones and live data.
 // Everything is drawn in screen pixels; world coordinates are meters with y pointing up.
 import { api, coverageNow, heldBadges, learnedSelected, openingsNow, state, sensorColor, unsaved } from './store.js';
-import { PERSON_COLORS, ZONE_KINDS, crossesWall, dist, esc, fmt, outcomeColor, personColor, rad, sharePct, zoneCenter, zoneOutline } from './util.js';
+import { PERSON_COLORS, ZONE_KINDS, crossesWall, dist, esc, fmt, outcomeColor, personColor, rad, zoneCenter, zoneOutline } from './util.js';
 
 // coverage: tiles that no sensor, one, two or more see (the core's count per tile); a room the sensors don't
 // see enough of to be observed is drawn as blind
@@ -541,15 +541,6 @@ MapView.prototype._learned = function (L) {
       const head = sgn => `${(x1 - k * (ux - sgn * 0.5 * uy)).toFixed(1)},${(y1 - k * (uy + sgn * 0.5 * ux)).toFixed(1)}`;
       out.push(`<path d="M${x0.toFixed(1)},${y0.toFixed(1)}L${x1.toFixed(1)},${y1.toFixed(1)}M${head(1)}L${x1.toFixed(1)},${y1.toFixed(1)}L${head(-1)}"
         fill="none" stroke="var(--text)" stroke-opacity="${(0.15 + 0.85 * w).toFixed(3)}" stroke-width="1.4" stroke-linecap="round" pointer-events="none"/>`);
-    }
-  } else if (state.learnedLayer === 'ld_view' && sel && L.sensors[sel].ld_view) {
-    const color = sensorColor(sel);
-    for (const [id, share] of Object.entries(L.sensors[sel].ld_view)) {
-      const z = zones.get(id);
-      if (!z) continue;
-      const [x, y] = this.P(...zoneCenter(z));
-      out.push(`<polygon points="${this.pts(zoneOutline(z))}" fill="${color}" fill-opacity="${(0.05 + 0.5 * Math.min(1, share)).toFixed(3)}" pointer-events="none"/>
-        <text class="zone-label" x="${x}" y="${y + 16}" text-anchor="middle" fill="${color}" pointer-events="none">${sharePct(share)}</text>`);
     }
   }
   return out.join('');
