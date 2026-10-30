@@ -15,7 +15,6 @@ use crate::geometry::Point;
 use crate::ld2410::{CELLS, MOVING};
 use crate::learn::Learned;
 use crate::learn::destination::DestShown;
-use crate::learn::ghost_map::WATCHED;
 use crate::params::{OUTPUT_FIELDS, OutputParams, Params};
 use crate::plan::{DOOR_ON_WALL, OBSERVED_SHARE, Opening, Plan, RoomIdx, ZoneRole, door_openings};
 use crate::world::World;
@@ -249,56 +248,30 @@ pub struct BackgroundShown {
     pub echo_prior: f64,
 }
 
-/// What a sensor's part of the ghost map learned (MODEL.md 4.2): per tile of LearnedShown::tiles the rate of
-/// ghost tracks per m^2 and hour at its centre where the sensor watches it (sight above WATCHED; None
-/// elsewhere), the prior's rate, the hours it watched (faded like the counts) and how long they last.
-#[derive(Debug, Serialize)]
-pub struct GhostsShown {
-    pub rate: Vec<Option<f64>>,
-    pub prior: f64,
-    pub hours: f64,
-    pub forget_hours: f64,
-}
-
 #[derive(Debug, Serialize)]
 pub struct SensorLearned {
-    pub ghosts: GhostsShown,
     pub background: BackgroundShown,
     /// per observed room (id) the share of its geometric sight the LD2410C gets from a person there: measured
     /// (the configuration's ld_view), not learned; None: nothing measured for this sensor (all of it)
     pub ld_view: Option<BTreeMap<String, f64>>,
 }
 
-/// What the running model learned, for the web UI: per sensor in use its ghost map, its LD2410C's background
-/// and its measured view; the destination map ("Ziel": an output only). The tiles in a room (lower left
-/// corner of the square of side `size`, the room, which cuts it) carry the ghost map's rates.
+/// What the running model learned, for the web UI: per sensor in use its LD2410C's background and its
+/// measured view; the destination map ("Ziel": an output only).
 #[derive(Debug, Serialize)]
 pub struct LearnedShown {
-    pub size: f64,
-    pub tiles: Vec<(Point, String)>,
     pub sensors: BTreeMap<String, SensorLearned>,
     pub destinations: DestShown,
 }
 
 /// What `learned` learned in `world`, as LearnedShown (computed when asked; nothing changes).
 pub fn learned(world: &World, learned: &Learned) -> LearnedShown {
-    let (plan, tiles, p) = (&world.plan, &world.tiles, &world.params);
-    let in_room: Vec<usize> = (0..tiles.n).filter(|&t| tiles.room[t].is_some()).collect();
+    let (plan, p) = (&world.plan, &world.params);
     let hours = |s: f64| s / 3600.0;
     let sensors = (0..plan.sensors.len())
         .filter(|&si| plan.sensors[si].in_use)
         .map(|si| {
-            let (g, bg) = (&learned.ghosts, &learned.background);
-            let sight = &world.sights[si].tiles;
-            let ghosts = GhostsShown {
-                rate: in_room
-                    .iter()
-                    .map(|&t| (sight[t] > WATCHED).then(|| g.rate(si, tiles.centers[t]) * 3600.0))
-                    .collect(),
-                prior: g.prior_rate() * 3600.0,
-                hours: hours(g.watched(si)),
-                forget_hours: hours(crate::learn::ghost_map::FORGET),
-            };
+            let bg = &learned.background;
             let [level, anchor] = bg.learned_for(si);
             let background = BackgroundShown {
                 now: Gates::of(&bg.b(si, p)),
@@ -315,25 +288,10 @@ pub fn learned(world: &World, learned: &Learned) -> LearnedShown {
                     .map(|k| (plan.room(RoomIdx(k)).id.clone(), v[k]))
                     .collect()
             });
-            let shown = SensorLearned {
-                ghosts,
-                background,
-                ld_view,
-            };
-            (plan.sensors[si].id.clone(), shown)
+            (plan.sensors[si].id.clone(), SensorLearned { background, ld_view })
         })
         .collect();
     LearnedShown {
-        size: SIZE,
-        tiles: in_room
-            .iter()
-            .map(|&t| {
-                (
-                    tiles.squares[t],
-                    plan.room(tiles.room[t].expect("in a room")).id.clone(),
-                )
-            })
-            .collect(),
         sensors,
         destinations: learned.destinations.map().shown(&world.destinations),
     }
@@ -402,30 +360,10 @@ mod tests {
     #[test]
     fn what_was_learned_is_shown_per_sensor_in_use_as_the_filter_reads_it() {
         let w = World::build(&flat_config(), Params::default()).expect("the flat world");
-        let mut l = Learned::new(&w);
-        l.ghosts.add_watch(0, 3600.0);
-        l.ghosts.add_birth(0, [3.0, 2.5], 1.0);
+        let l = Learned::new(&w);
         let shown = learned(&w, &l);
-        assert!(shown.tiles.iter().all(|t| t.1 == "wohn") && !shown.tiles.is_empty());
         assert_eq!(shown.sensors.keys().collect::<Vec<_>>(), ["b", "wohn"]);
-        let (s, other) = (&shown.sensors["wohn"], &shown.sensors["b"]);
-        // the ghost map: where it began above the prior (per m^2 and hour), an hour watched; the other one the prior
-        let g = &s.ghosts;
-        assert_eq!(g.rate.len(), shown.tiles.len());
-        assert!((g.hours - 1.0).abs() < 1e-12 && (g.prior - l.ghosts.prior_rate() * 3600.0).abs() < 1e-12);
-        let near = shown
-            .tiles
-            .iter()
-            .position(|(c, _)| (c[0] - 2.8).abs() < 0.3 && (c[1] - 2.3).abs() < 0.3);
-        assert!(g.rate[near.expect("a tile there")].expect("watched") > g.prior);
-        assert!(
-            other
-                .ghosts
-                .rate
-                .iter()
-                .flatten()
-                .all(|&r| (r - g.prior).abs() < 1e-9 * g.prior)
-        );
+        let s = &shown.sensors["wohn"];
         // the LD2410C: nothing learned yet, the prior per gate, no still energy in gates 0 and 1
         let bg = &s.background;
         let prior = crate::ld2410::background::prior(&w.params);

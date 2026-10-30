@@ -150,7 +150,12 @@ fn hyp(h: &Value) -> MirrorHyp {
 
 /// The tracker in the fixture's world with its state at the start.
 fn start(fx: &Value) -> Tracker {
-    let mut export: WorldExport = serde_json::from_value(fx["world"].clone()).expect("the world");
+    let mut world = fx["world"].clone();
+    // numbers of the model of 0.38.1 gone since; the LD2410C's weighing never read them
+    for gone in ["ghost_echo", "ghost_prior_ghosts"] {
+        world["params"].as_object_mut().expect("params").remove(gone);
+    }
+    let mut export: WorldExport = serde_json::from_value(world).expect("the world");
     // a plan without rooms: the outputs count nobody in a room
     export.tiles.room = vec![None; export.tiles.n];
     export.tiles.region_start = vec![0.0; export.tiles.regions * export.tiles.ages];
@@ -169,7 +174,6 @@ fn start(fx: &Value) -> Tracker {
             z0: pt(&t["z0"]),
             born: f(&t["born"]),
             lost: None,
-            map_odds: f(&t["map_odds"]),
         };
         tracker
             .filter_mut()

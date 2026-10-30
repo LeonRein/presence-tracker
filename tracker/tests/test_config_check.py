@@ -281,6 +281,6 @@ def test_the_release_wheel_has_no_test_hooks():
     hooks = ["build_export", "hidden_at", "panic_for_test", "Geometry", "model_defaults", "ld_prior", "ld_expected"]
     assert [h for h in hooks if hasattr(presence_core, h)] == []
     readings = ["normalize", "spoil_weights_for_test", "ld_last", "loglik", "hyp_weights", "check", "hypotheses",
-                "tracks", "room_at", "tile_near", "sight", "observed", "ghost_rates", "background", "count_distribution",
+                "tracks", "room_at", "tile_near", "sight", "observed", "background", "count_distribution",
                 "place_distribution", "occupancy"]
     assert [h for h in readings if hasattr(presence_core.Core, h)] == []

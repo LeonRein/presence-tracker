@@ -306,14 +306,13 @@ def replay(a, configs, starts, rooms):
     for t_rec, sid, payload in frames(a.recordings, t0, t1, None if a.no_pauses else pauses):
         if tracker is None or t_rec >= starts[nxt_start]:
             if tracker is not None:
-                learned = (tracker.ghost_map, tracker.ld_background, tracker.dest_map)
+                learned = (tracker.ld_background, tracker.dest_map)
                 people = json.loads(json.dumps(tracker.people_state()))
                 nxt_start += 1
             tracker = Tracker(cfg_of(t_rec))
             if learned is not None:
-                tracker.use_ghost_map(learned[0])
-                tracker.use_ld_background(learned[1])
-                tracker.use_dest_map(learned[2])
+                tracker.use_ld_background(learned[0])
+                tracker.use_dest_map(learned[1])
             elif a.learned:
                 tracker.load_learned(json.load(open(a.learned)))
             if people is not None:

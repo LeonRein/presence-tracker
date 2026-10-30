@@ -1,5 +1,5 @@
 """Lernen pausieren (pause.py, MODEL.md 10 "Hintergrundaktivität"): while the switch is on, nothing is
-learned - ghost map, LD2410C background and echo rate, destination map, calibration data - and the
+learned - LD2410C background and echo rate, destination map, calibration data - and the
 tracking goes on as with learning off; after it, learning goes on. The switch survives a restart, and
 an error report replays with the same pauses."""
 
@@ -61,7 +61,7 @@ def _run(tr, person, until, config):
 
 def _learned(tr) -> tuple:
     d = tr.learned()
-    return (sum(d["ghost_map"]["time"].values()), sum(d["ld_background"]["den"].values()), d["dest_map"]["walks"])
+    return (sum(d["ld_background"]["den"].values()), d["dest_map"]["walks"])
 
 
 def test_nothing_is_learned_while_paused_and_the_tracking_is_that_without_learning():
@@ -70,7 +70,7 @@ def test_nothing_is_learned_while_paused_and_the_tracking_is_that_without_learni
     until = a.waypoints[-1][0] + 1
     free = Tracker(config, start=0.0, people=["observed"])
     out_free = _run(free, a, until, config)
-    assert all(x > 0 for x in _learned(free))  # the run teaches all three
+    assert all(x > 0 for x in _learned(free))  # the run teaches both
     paused = Tracker(config, start=0.0, people=["observed"])
     paused.pauses = Pauses([[0.0, None]])
     births = []
@@ -94,10 +94,10 @@ def test_learning_goes_on_after_the_pause():
     later = Tracker(config, start=0.0, people=["observed"])
     later.pauses = Pauses([[0.0, half]])
     _run(later, a, until, config)
-    watched, background, walks = _learned(later)
-    w0, b0, k0 = _learned(free)
-    # the sensors watched only after the pause; walks counted only after it
-    assert 0.3 * w0 < watched < 0.7 * w0 and 0.3 * b0 < background < 0.7 * b0
+    background, walks = _learned(later)
+    b0, k0 = _learned(free)
+    # the background learned only after the pause; walks counted only after it
+    assert 0.3 * b0 < background < 0.7 * b0
     assert 0 < walks < k0
 
 
@@ -116,7 +116,7 @@ def test_the_switch_pauses_the_app_and_survives_a_restart(tmp_path):
     for t, sid, frame in _frames(config, 30.0):
         app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
         app.tick(1000.0 + t)
-    assert _learned(app.tracker) == (0.0, 0.0, 0.0)
+    assert _learned(app.tracker) == (0.0, 0.0)
     assert not any(len(a) for a in app.calibrator.data().values())  # no calibration data
     app.calibrator.status_due = lambda: False  # (no count in a thread here)
     assert json.loads(app.live_message())["learning_paused"] == {"on": True, "since": 1000.0}

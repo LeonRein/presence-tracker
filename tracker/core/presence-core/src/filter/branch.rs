@@ -8,7 +8,7 @@
 //! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 use crate::filter::densities::{TileFactors, TileFactorsBuf};
-use crate::filter::evidence::{count_walkers, expect, mixture_rates, near_mixture, near_tiles, no_find};
+use crate::filter::evidence::{expect, mixture_rates, near_mixture, near_tiles, no_find};
 use crate::filter::holders::Obj;
 use crate::filter::hyp::{Ghost, GroupId, Hyp, Owner};
 use crate::filter::mixture::{Mixture, MixtureId, NewTrack, SegId, from_tiles, ghost_source};
@@ -54,16 +54,8 @@ impl Category {
     }
 }
 
-/// A track of this frame to branch on, with the ghost map's rate at its start (a new one only; a
-/// track found again keeps its own variance).
-#[derive(Debug, Clone, Copy)]
-pub struct Found {
-    pub track: NewTrack,
-    pub map_rate: f64,
-}
-
 /// What a frame's branches share: the sensor, the time, how long the sensor watched (last), whether
-/// it saw nothing before (censored), the tracks begun in this frame (skip), the ghost map's prior.
+/// it saw nothing before (censored), the tracks begun in this frame (skip).
 #[derive(Debug, Clone, Copy)]
 pub struct Frame<'a> {
     pub si: usize,
@@ -71,17 +63,15 @@ pub struct Frame<'a> {
     pub last: f64,
     pub censored: bool,
     pub skip: &'a [SegId],
-    pub prior_rate: f64,
 }
 
 /// How the track's start or its finding again weighs a person.
 enum Chance<'a> {
-    /// a new track: the rates of its start (or, censored, of its being there) per tile, the
-    /// expected walkers in view per hypothesis, and the tracks the rates of its start on a person
-    /// with tracks see (the frame's others without those skipped and itself)
+    /// a new track: the rates of its start (or, censored, of its being there) per tile, and the
+    /// tracks the rates of its start on a person with tracks see (the frame's others without those
+    /// skipped and itself)
     New {
         start: TileFactors<'a>,
-        walkers: &'a [f64],
         skip: Vec<SegId>,
         spots: Vec<Vec<TrackSpot>>,
     },
@@ -117,14 +107,11 @@ struct Branching<'a> {
     made: Made,
 }
 
-/// The children of all hypotheses, what each says, and for a new track the ghost children's
-/// weights with the map and with the prior at its start.
+/// The children of all hypotheses and what each says.
 #[derive(Default)]
 struct Children {
     hyps: Vec<Hyp>,
     cats: Vec<Category>,
-    ghost_map: Vec<f64>,
-    ghost_prior: Vec<f64>,
 }
 
 impl Children {
@@ -141,7 +128,7 @@ impl Filter {
         &mut self,
         world: &World,
         frame: &Frame,
-        found: &[Found],
+        found: &[NewTrack],
     ) -> Result<Vec<Vec<(f64, Category)>>, NotFinite> {
         let p = &world.params;
         let kappa = &world.shapes.kappa;
@@ -166,7 +153,7 @@ impl Filter {
         };
         found
             .iter()
-            .map(|f| self.branch(world, frame, f, start.view()))
+            .map(|&f| self.branch(world, frame, f, start.view()))
             .collect()
     }
 
@@ -174,41 +161,24 @@ impl Filter {
         &mut self,
         world: &World,
         frame: &Frame,
-        found: &Found,
+        found: NewTrack,
         start: TileFactors,
     ) -> Result<Vec<(f64, Category)>, NotFinite> {
-        let seg = found.track.seg;
+        let seg = found.seg;
         let refind = self.tracks.get(seg).copied();
         let Filter {
             hyps,
             objects,
-            holders,
             tracks,
-            walkers,
             next_group,
             ..
         } = self;
         let (track, chance) = match refind {
-            Some(info) => (
-                NewTrack {
-                    var: info.var,
-                    ..found.track
-                },
-                found_again(world, frame, &info),
-            ),
+            Some(info) => (NewTrack { var: info.var, ..found }, found_again(world, frame, &info)),
             None => {
-                let walkers = walkers.get(frame.si, || count_walkers(hyps, objects, holders, world, frame.si));
-                let skip: Vec<SegId> = frame.skip.iter().copied().chain([found.track.seg]).collect();
+                let skip: Vec<SegId> = frame.skip.iter().copied().chain([found.seg]).collect();
                 let spots = tracks.spots_without(&skip);
-                (
-                    found.track,
-                    Chance::New {
-                        start,
-                        walkers,
-                        skip,
-                        spots,
-                    },
-                )
+                (found, Chance::New { start, skip, spots })
             }
         };
         let mut b = Branching {
@@ -222,8 +192,8 @@ impl Filter {
             made: Made::default(),
         };
         let mut children = Children::default();
-        for (h, hy) in hyps.iter().enumerate() {
-            b.children_of(h, hy, found.map_rate, refind.is_some(), &mut children);
+        for hy in hyps.iter() {
+            b.children_of(hy, refind.is_some(), &mut children);
         }
         if children.hyps.is_empty() {
             return Ok(Vec::new());
@@ -236,13 +206,6 @@ impl Filter {
                 (i.t, i.zt, i.gt, i.z) = (t, t, Some(t), track.z);
             }),
             None => {
-                // the factor by which the map at z moved the odds of "ghost" (for what the map
-                // learns when the track ends)
-                let map_odds = if children.ghost_map.is_empty() {
-                    0.0
-                } else {
-                    logsumexp(&children.ghost_map) - logsumexp(&children.ghost_prior)
-                };
                 let info = TrackInfo {
                     si: frame.si,
                     t,
@@ -253,7 +216,6 @@ impl Filter {
                     z0: track.z,
                     born: t,
                     lost: None,
-                    map_odds,
                 };
                 self.tracks.begin(seg, info);
             }
@@ -290,8 +252,8 @@ fn found_again<'a>(world: &World, frame: &Frame, info: &TrackInfo) -> Chance<'a>
 }
 
 impl Branching<'_> {
-    /// The children of one hypothesis (h its index).
-    fn children_of(&mut self, h: usize, hy: &Hyp, map_rate: f64, refind: bool, out: &mut Children) {
+    /// The children of one hypothesis.
+    fn children_of(&mut self, hy: &Hyp, refind: bool, out: &mut Children) {
         let (world, p) = (self.world, &self.world.params);
         let seg = self.track.seg;
         let ghost_rates: Vec<f64> = p.ghost_types.iter().map(|&[rate, _]| rate).collect();
@@ -351,27 +313,16 @@ impl Branching<'_> {
                 }
                 pf
             }
-            Chance::New { walkers, .. } => {
-                let echo = p.ghost_echo * walkers[h];
-                let mut lam: Vec<f64> = ghost_rates.iter().map(|r| r * (map_rate / rate_sum)).collect();
-                let mut prior: Vec<f64> = ghost_rates
-                    .iter()
-                    .map(|r| r * (self.frame.prior_rate / rate_sum))
-                    .collect();
-                lam[0] += echo;
-                prior[0] += echo;
+            Chance::New { .. } => {
+                let mut lam = ghost_rates;
                 if self.frame.censored {
                     // ghosts there now: born at any time before
                     for (k, &[_, life]) in p.ghost_types.iter().enumerate() {
                         lam[k] = lam[k] * life / FRAME;
-                        prior[k] = prior[k] * life / FRAME;
                     }
                 }
                 let total = lam.iter().fold(0.0, |s, x| s + x);
-                let prior_total = prior.iter().fold(0.0, |s, x| s + x);
                 let mut ch = hy.child(hy.logw + (total * self.frame.last).ln());
-                out.ghost_map.push(ch.logw);
-                out.ghost_prior.push(ch.logw + (prior_total / total).ln());
                 ch.tracks.insert(seg, Owner::Ghost);
                 let life = lam.iter().map(|l| (l / total).ln()).collect();
                 let source = self.source();

@@ -79,7 +79,7 @@ def main():
     # Lernen pausieren: in a report the app's intervals, else the recorded switch and --pauses
     crowd.pauses = pause.Pauses(meta.get("pauses")) if a.report else pause.load(a.pauses)
     if a.report:
-        crowd.load_learned(meta)  # its ghost map and LD2410C background when its model started
+        crowd.load_learned(meta)  # its LD2410C background and destination map when its model started
         if meta.get("people") and not crowd.restore_people(meta["people"]):  # and what it knew about the people
             print("the people's state in the report does not fit its floor plan: starting with nothing known")
     if a.learned:

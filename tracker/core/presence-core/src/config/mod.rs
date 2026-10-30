@@ -567,7 +567,7 @@ impl Config {
     /// The key of the geometry: where every sensor hangs and how it sees and is read (place, heading, height,
     /// mirror, scale, field of view, range, placed or not), the walls, the doors and the zones' shapes and kinds:
     /// the one definition of "the sensors or the floor plan changed". What was collected or learned holds only
-    /// under the key it was collected under (the calibration's measurements, the ghost map, the LD2410C
+    /// under the key it was collected under (the calibration's measurements, the LD2410C
     /// background, the destination map, the measured ld_view): a sensor's sight, its frame and the rooms are
     /// all read from these. Not in it: names, a sensor switched on or off, the parameters, ld_view itself.
     /// The numbers by value (1 is 1.0, -0 is 0), in the order of the configuration; sha1, 16 hex digits.

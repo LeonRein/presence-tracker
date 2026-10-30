@@ -37,8 +37,6 @@ pub struct TrackInfo {
     pub z0: Point,
     pub born: f64,
     pub lost: Option<Lost>,
-    /// the factor by which the ghost map at its birth moved the odds of "ghost" (log)
-    pub map_odds: f64,
 }
 
 impl TrackInfo {

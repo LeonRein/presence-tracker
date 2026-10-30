@@ -130,7 +130,7 @@ pub struct PyLearned(Learned);
 
 #[pymethods]
 impl PyLearned {
-    /// {"ghost_map", "ld_background", "dest_map"} as JSON.
+    /// {"ld_background", "dest_map"} as JSON.
     fn json(&self, py: Python<'_>) -> String {
         py.detach(|| self.0.to_json().to_string())
     }
@@ -280,14 +280,6 @@ impl Core {
         let pauses = Pauses::new(pauses).map_err(|e| PyValueError::new_err(e.to_string()))?;
         self.tracker.set_pauses(pauses);
         Ok(())
-    }
-
-    /// Use a saved ghost map (its JSON; None: the prior's): whether it is used (learned with this prior).
-    #[pyo3(signature = (saved=None))]
-    fn use_ghost_map(&mut self, saved: Option<&str>) -> PyResult<bool> {
-        let saved = saved.map(json_of).transpose()?;
-        let used = self.tracker.use_ghost_map(saved.as_ref()).map_err(learned_error)?;
-        Ok(used)
     }
 
     /// Use a saved LD2410C background (its JSON; None: nothing learned): why the parts not taken were
@@ -557,12 +549,6 @@ impl Core {
         w.observed((0..w.sights.len()).collect())
     }
 
-    /// The ghost map's rate (per m^2 and s) of the sensor with this id at the points, and the s it watched.
-    #[cfg(feature = "testing")]
-    fn ghost_rates(&self, id: &str, points: Vec<Point>) -> PyResult<(Vec<f64>, f64)> {
-        Ok(self.tracker.ghost_rates(self.sensor_of(id)?, &points))
-    }
-
     /// The background of the LD2410C of the sensor with this id (16 cells, MODEL.md 4.3) and its echo sources'
     /// rate (per s), as the next weighing reads them.
     #[cfg(feature = "testing")]
@@ -638,15 +624,12 @@ pub fn model_defaults() -> String {
         .to_string()
 }
 
-/// s: how long what the ghost map and the destination map learned lasts (each fades with it; the tools that
-/// compose learned states, fast_eval).
+/// s: how long what the destination map learned lasts (it fades with it; the tools that compose learned
+/// states, fast_eval).
 #[cfg(feature = "testing")]
 #[pyfunction]
-pub fn forgetting() -> (f64, f64) {
-    (
-        presence_core::learn::ghost_map::FORGET,
-        presence_core::learn::destination::FORGET,
-    )
+pub fn forgetting() -> f64 {
+    presence_core::learn::destination::FORGET
 }
 
 /// The LD2410C's background (16 cells) before anything is learned, with the default model.

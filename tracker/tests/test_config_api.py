@@ -124,13 +124,10 @@ def test_what_was_learned_comes_whole_from_the_core_and_changes_nothing(tmp_path
     before = app.tracker.learned()
     [(status, got)] = call(app, ("GET", "/api/learned", None))
     assert status == 200 and app.tracker.learned() == before  # only read
-    assert set(got) == {"size", "tiles", "sensors", "destinations"} and {t[1] for t in got["tiles"]} == {"wohn"}
+    assert set(got) == {"sensors", "destinations"}
     assert set(got["sensors"]) == {"a", "b"}
     for s in got["sensors"].values():
-        g, bg = s["ghosts"], s["background"]
-        # the ghost map per tile where the sensor watches (nothing learned: the prior's rate), its hours
-        assert len(g["rate"]) == len(got["tiles"]) and {x for x in g["rate"] if x is not None} == {g["prior"]}
-        assert g["hours"] == 0 and g["forget_hours"] == 14 * 24
+        bg = s["background"]
         # the LD2410C per gate: what the filter weighs with now and its anchor, 9 moving, 9 still (none in 0, 1)
         for gates in (bg["now"], bg["anchor"]):
             assert len(gates["moving"]) == 9 and gates["still"][:2] == [None, None] and None not in gates["still"][2:]

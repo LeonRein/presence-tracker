@@ -27,7 +27,7 @@ ersetzen darf, wenn etwas Besseres belegt ist.
    Vergleich etwas anderes zeigt.
 6. **Wahrheitsdaten nur zum Bewerten**, nie zum Einstellen oder Lernen.
 7. **Läuft als Home-Assistant-App**: wenig Rechenzeit (nicht mehr als 0.6.21), reproduzierbare
-   Ergebnisse. Was gelernt wird (Geisterkarte), lernt die App selbst.
+   Ergebnisse. Was gelernt wird (LD2410C-Hintergrund), lernt die App selbst.
 
 Leon, 7.10.: „Die Annahme einer festen Personenzahl ist schlichtweg falsch und führt zu anderen schweren
 Fehlern. […] Eine neue Person darf nur entstehen, wenn es dafür harte Evidenz gibt. Wenn es erst 5
@@ -251,16 +251,11 @@ des Sensors (5.3): Seine Spuren enden ohne Information, sein nächster Frame ist
 
 ### 4.2 Geister
 Eine Spur, die zu keiner Person gehört.
-- **Entstehen** je Sensor mit `λ_s(x) + λ_e · (erwartete Gehende im Blickfeld)` je m² und s.
-  - `λ_s(x)`: **Geisterkarte** (`learn/ghost_map.rs`), je Sensor und Zelle (0,4 m) ein Poisson-Prozess mit
-    Gamma-Prior (J_Luber2014 Kap. 6, Gl. 6.8–6.13). Prior-Mittel 1,8·10⁻⁵ /m²/s (geschätzt 6.10. per
-    EM auf 21 h), Gewicht ein Geist je Zelle (die Form α = 1 der Gamma-Verteilung wie J_Luber2014
-    Gl. 6.13; bei dieser Rate entspricht das 96 h Beobachtung, bis 0.12.0 waren es 4 h = 0,04 Geister,
-    10). Zählungen mit 0,3 m verschmiert (Versatz des Sensors; J_Park2020 Abschn. 1).
-  - `λ_e` = 3·10⁻⁴: Mehrwegeechos laufen mit Gehenden mit (angenommen).
+- **Entstehen** je Sensor mit einer festen Rate `λ` = 1,8·10⁻⁵ je m² und s, überall in seinem Blick (Sicht
+  über 0,05), für alle Sensoren gleich, unabhängig davon, wo Personen sind. Das ist die gemessene mittlere Rate:
+  692 Geister in 437 Sensorstunden, 1,6 je Sensorstunde, bei 17–26 m² Blick. Keine Karte, nichts wird gelernt.
 - **Lebensdauer:** Mischung zweier Exponentialverteilungen, 40 % mit 3 s, 60 % mit 39 s (geschätzt
-  per EM 6.10. offline, `tools/ghostmap.py`). Fest: Die App lernt sie nicht weiter (bis 0.12.0 tat
-  sie das mit der Karte, 10). Die Lebensdauer ist, was Geister von Sitzenden trennt; aus dem eigenen
+  per EM 6.10. offline). Fest: Die App lernt sie nicht weiter (bis 0.12.0 tat sie das, 10). Die Lebensdauer ist, was Geister von Sitzenden trennt; aus dem eigenen
   Urteil gelernt, folgte sie den Personen, die der Filter für Geister hielt.
 - **Ende der Spur** (`Tracker._ghost_end`): Der Sensor gibt eine gehaltene Spur auf, wenn er sie nicht
   wiederfindet (4.1). Bei einer Person ist das „u s nicht wiedergefunden“, S(u). Beim Geist ist die
@@ -273,44 +268,30 @@ Eine Spur, die zu keiner Person gehört.
 - **Quelle:** bewegt sich wie eine Person (3.1, 3.2), mit demselben Versatz. Geist und Person
   unterscheiden sich durch Entstehungsort, Lebensdauer und Verhalten der Spur, nicht durch ein anderes
   Rauschen.
-- **Lernen in der App** (online-EM, I_Kantas2015 Abschn. 5): Endet eine Spur, zählt sie an ihrem
-  Startpunkt mit P(Geist) des Filters; die Beobachtungszeit jedes Sensors ist die Belichtung.
-  P(Geist) wird am Ende der Spur beurteilt (Bewegung, andere Sensoren, Lebensdauer zählen mit), aber
-  ohne das, was die Karte selbst an dieser Stelle sagte: Ihr Faktor bei der Geburt wird aus den Odds
-  herausgerechnet, als hätte dort die Prior-Rate gegolten (J_Park2020 Gl. 37–41:
-  Clutter-Wahrscheinlichkeit ohne die Clutter-Schätzung). Sonst bestätigt sich die Karte selbst
-  (Simulation: Sitzplatz mit vorgegebener Karte, alt bis 0,34 je Spur gelernt, jetzt < 0,01).
-  Grenze dieser Korrektur: Am Ende einer Spur ist P(Geist) oft genau 1, weil die Hypothesen, in
-  denen sie einer Person gehörte, unter die Schwelle 10⁻⁷ gefallen sind (6.10. am Sitzplatz der
-  zweiten Person 15 von 20 Spuren); was abgeschnitten ist, rechnet keine Korrektur zurück, die
-  Zählung ist dann ein hartes Urteil. Deshalb wiegt der Prior einen Geist je Zelle: Wenige solche
-  Urteile machen eine Stelle nicht zur Quelle (Test: drei Geister in 2,5 h 1,8-mal statt 13-mal die
-  Prior-Rate; eine Reflexion mit 30 Spuren an einem Tag 7,6-mal statt 29-mal). Vergessen mit
-  Zeitkonstante 14 Tage. Die Oberfläche zeigt sie je
-  Sensor. `tools/ghostmap.py` rechnet dasselbe
-  offline auf gewählten Zeitfenstern.
-- **Im Rahmen des Sensors** (`learn/ghost_map.rs`, nach 0.27): Jeder Sensor hat seinen Teil der Karte in seinem
-  eigenen Rahmen, auf dem Boden, Maßstab herausgerechnet, x-Achse wie der LD2450 sie meldet
-  (`SensorConfig::to_local` des Kerns; Zellen 0,4 m, bis 8 m seitlich und nach vorn). Wo ein Sensor Geister sieht,
-  ist eine Eigenschaft seines Blicks: Reflexionen an Wänden und Möbeln, wie er sie sieht, Mehrwege am
-  eigenen Gehäuse. Im Hausrahmen folgt die Karte der Lage, die der Sensor hat; eine Zelle seines Rahmens
-  deckt (0,4 m · Maßstab)² Boden. **Seit 0.51 (Leon, 29.10.) gilt die Karte nur unter der Geometrie, unter
-  der sie gelernt wurde** (`Config::geometry_key`: Lage, Blickrichtung, Höhe, Spiegelung, Maßstab,
-  Öffnungswinkel, Reichweite und „platziert“ jedes Sensors, Wände, Türen, Zonen): Jede gespeicherte Änderung
-  daran, auch das Übernehmen einer Kalibrierung, lässt die ganze Karte aller Sensoren neu beginnen, ebenso
-  alles andere Gelernte und die Messungen der Kalibrierung (9, „Gelerntes und Geometrie“). Eine mit einem
-  anderen Prior gelernte Karte beginnt ganz neu. 0.28–0.50 behielt ein Sensor seinen Teil bei einer neuen
-  Kalibrierung und begann ihn nur „anders montiert“ neu (Ort oder Höhe um mehr als 0,5 m, Richtung um mehr
-  als 30°, `remounted`, angenommen). Bis 0.27 lag die Karte im Hausrahmen, und jede Änderung
-  der Lage irgendeines Sensors um mehr als 5 cm, 2° oder 2 % Maßstab ließ die ganze Karte neu beginnen (10,
-  „Gelerntes bleibt bei neuer Kalibrierung“). 0.28 rechnete eine gespeicherte Karte von 0.27 beim Laden
-  einmal um (jede Zelle des Hausrahmens in die Zelle des Sensorrahmens, in der ihre Mitte liegt, mit der
-  Lage, mit der sie gelernt wurde); seitdem ist der Umrechner weg, eine Karte von 0.27 gilt als unlesbar.
-- Begründung: Wiederkehrende Reflexionen (Möbel, Ladestation des Saugroboters) stehen an festen
-  Stellen. Mit gleichverteilter Dichte erklärt das Modell sie als Person.
-- Solange der Schalter *Lernen pausieren* an ist (Hintergrundaktivität, 10), lernt die Karte nichts:
-  keine Beobachtungszeit, und keine Spur, deren Leben in die Pause reicht. Ebenso der Hintergrund und
-  die Echorate des LD2410C (4.3), die Zielkarte (6) und die Kalibrierdaten (10); das Verfolgen bleibt.
+- **Warum keine Karte** (Leon 29.10., gemessen 30.10.): Bis 0.54 lernte jeder
+  Sensor je Zelle (0,4 m) eine Rate aus dem Urteil des Filters (J_Luber2014 Kap. 6, J_Park2020 Gl. 37–41). Sie
+  bildete ab, wo Menschen sind, nicht wo Reflexionen stehen: Hält der Filter zwei dicht Sitzende für eine Person,
+  ist jede zweite Spur daneben ein „Geist“, am Bett bis 46-mal die Prior-Rate. J_Luber2014 Kap. 5.3.2 und 6.6 lernt
+  seine Karte deshalb aus annotierten Daten ohne Personen und getrennt vom Filter; die Korrektur nach J_Park2020
+  bremst die Rückkopplung nur. Ohne Lernen gibt es keine Rückkopplung und keinen Bias, und gemessen brachte das
+  Lernen nichts: Die feste Rate gegen die Karte auf den Aufnahmen 6.–14.10.: Wahrheit, leere Nacht und leeres Haus
+  gleich, 44 min Licht anders in 96 h (Rauschboden 34–56), je 1,5–1,7 min „Person wahrscheinlich“ in beide Richtungen.
+- **Geister hängen an Personen, das Modell nutzt es nicht:** Im leeren Haus (6,2 h, 7 Sensoren) beginnen überhaupt
+  nur 2 Spuren, 0,05 je Sensorstunde, also etwa 3 % der Rate; 62 % der Geistermasse liegen ≤ 1 m neben einem
+  gemessenen Ziel (Zufall 9 %). Dieses Ziel misst aber fast immer ein *anderer* Sensor (0,49; derselbe 0,08, wie der
+  Zufall): Geburten neben einer Person, die der Sensor noch nicht hat, nimmt schon „die Spur gehört ihr“ auf
+  (`ρ·N(z; x)` gegen `λ`, um Größenordnungen mehr), ein Kern um Personen ändert dort nichts. Geprüft auf den
+  Aufnahmen, keine Form war messbar besser als die feste Rate:
+  ein Kern `ν Σ r_i N(x; x_i, (0,4 m)²)` mit ν = 1,7 /h (J_Park2020 Gl. 16), mit `λ` wie oben oder dem Wert des
+  leeren Hauses; `ρ_f · (erwartete Personen im Blick)` mit der Rate des leeren Hauses (je Person gleichmäßig);
+  dasselbe je Person im Haus. Mit der Rate des leeren Hauses für Blicke ohne Person wird ein Geist in einem leeren
+  Raum zur Person (Wahrheit, Esszimmer 7.10. 22:20: 6,3 min Licht leer, beide Telefone im Schlafzimmer); „jemand im
+  Haus“ als Bedingung hält das, bringt aber nichts gegenüber der festen Rate. Die bis 0.54 mitgeführten
+  Mehrwegeechos je Gehendem (`λ_e` = 3·10⁻⁴, angenommen, gemessen eine Größenordnung zu hoch) ändern ebenfalls nichts
+  Messbares und sind weg.
+- **Offen:** Sitzende gewinnt die feste Rate nicht. Die verlorenen Sitzenden sind Spuren von Minuten, die „Geist“
+  bleiben, weil die zweite Person nicht durch eine Tür kam (9, „Ein Sitzplatz“); ohne Geister wären es etwa 30 min
+  weniger, dafür 85 min mehr Licht ohne Person.
 
 ### 4.3 LD2410C
 Gemessen wird seine **Energie je Entfernungsring** (0,75 m Schrägentfernung, `ld2410/`): bewegt in Ring
@@ -439,7 +420,7 @@ Das Modell, je Sensor:
   den Pegel (`Stats._mu_part`), eine kleine Abweichung vom Modell.
   Ohne ihn erklärte eine gleichmäßig erhöhte Energie aller Ringe (nachts im Arbeitszimmer ruhig
   doppelt so hoch wie gelernt, Schübe) eine Person am Rand des Strahls.
-- **Hintergrund b je Sensor, Ring und Art: von der App gelernt** (wie die Geisterkarte): Online-EM der
+- **Hintergrund b je Sensor, Ring und Art: von der App gelernt**: Online-EM der
   Überlagerung, der Anteil des Hintergrunds an einer Energie ist im Mittel `e · b/μ` (Richardson 1972;
   Shepp & Vardi 1982), μ aus dem Stand vor diesen Frames (die Energien lernen nicht ihr eigenes Urteil,
   J_Park2020). Eine gekappte Energie (100) zählt mit dem, was sie war: `b · Q(α+1, x) / Q(α, x)`,
@@ -465,7 +446,7 @@ Das Modell, je Sensor:
   auseinander unterscheiden sich je Sensor um höchstens 7 %, aber mit 1 Tag Log-Evidenz bis 6.10. −2530, 10):
   Der Hintergrund des Flurs hing morgens stundenlang beim Nachtwert, und eine Person mit kleinem g erklärte
   den Überschuss (10 „Sitzende im Bad und auf dem Sofa“). Seine Zellen sind Entfernungen vom Sensor. Er gilt
-  wie die Geisterkarte nur unter der Geometrie, unter der er gelernt wurde (4.2; seit 0.51 beginnt er bei jeder
+  nur unter der Geometrie, unter der er gelernt wurde (9, „Gelerntes und Geometrie“; seit 0.51 beginnt er bei jeder
   gespeicherten Änderung von Sensorlage oder Grundriss für alle Sensoren neu, 0.28–0.50 nur für einen anders
   montierten, bis 0.27 bei jeder Änderung der Lage). Gespeichert mit dem Schlüssel der Geometrie.
   **Anker (seit 0.28):** Vergessen wird nicht mehr zum Prior hin (ruhig 5), sondern zum eigenen Niveau des
@@ -505,7 +486,7 @@ Das Modell, je Sensor:
   begonnener Quellen je Beobachtungszeit; Prior 1 je 3 h mit dem Gewicht von 3 h, angenommen). Gezählt
   wird nur, wo niemand im Blick ist (beides, Zahl und Zeit, gewichtet mit P(niemand im Blick) vor den
   Frames: Echoquellen sind Energie von niemandem, und neben einer Person zählte, was ihr Profil nicht
-  erklärt, als Quelle), und jede Zählung wie bei der Geisterkarte ohne die gelernte Rate beurteilt: die
+  erklärt, als Quelle), und jede Zählung ohne die gelernte Rate beurteilt: die
   Odds „eine Quelle begann“ mit ρ_Prior/ρ statt ρ (J_Park2020 Gl. 37–41). Sonst wäre, was die Rate
   sagt, Beleg für sie selbst (bis 0.20: Simulation, eine Sitzende 1,8 m vor dem Sensor, 0,33 → 0,73
   je Stunde in einer Stunde; jetzt 0,34, 10 „Lernschleifen“).
@@ -912,7 +893,7 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
     (dort pendelt man, ZIEL-Untersuchung 3.1; Wohn- und Esszimmer sind eine Lichtgruppe). Ein Gang über
     den Raumteiler geht weiter, sein Ausgang ist die nächste Tür; die Karte sagt dort für den Raum
     jenseits des Teilers 0.
-  - *Gelernt in der App aus den eigenen Gehenden* (wie die Geisterkarte 4.2): je Hypothese und Person mit
+  - *Gelernt in der App aus den eigenen Gehenden*: je Hypothese und Person mit
     Spur, gewichtet mit dem Gewicht der Hypothese und P(geht) (weiche Zählungen über alle behaltenen
     Hypothesen, 10 „Geisterkarte“). Weich sind nur die Schritte: Der Ausgang eines Gangs (wo die Person
     nach der Tür ist) kommt aus der schwersten Hypothese, die sie hält (`learn/destination.rs`, `observe`). Eine Person ist ihre früheste laufende Spur; endet sie, übernimmt den
@@ -928,7 +909,7 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
   **Die Mischung ist ein Dirichlet-Posterior mit der Bewegung als Prior.** Je Gehendem k mit
   den Gängen n_k an seiner Stelle und Geschwindigkeit, davon der Anteil f_k(R) in den Raum R:
   `P_k(R) = (n_k f_k(R) + α q(R)) / (n_k + α)` mit dem Gewicht α des Priors in Gängen
-  (`dest_prior_walks` = 1, wie der Prior der Geisterkarte einen Geist je Zelle wiegt: ein Gang allein
+  (`dest_prior_walks` = 1: ein Gang allein
   macht keine Stelle zum Ziel, wenige gleiche tun es). Für den Raum, über die Gehenden und Hypothesen:
 
   `P(R) = (1 − λ) q_move(R) + λ q_map(R)`, `λ = n / (n + α)`,
@@ -1005,7 +986,7 @@ Geister geschätzt (4.2).
 - **Geplant:** simulationsbasierte Kalibrierung (0_Talts2018 Alg. 1): Welten aus diesem Modell
   erzeugen; der Rang der wahren Zahl unter der Filterverteilung muss gleichverteilt sein.
 - Werkzeuge: `tools/record.py` (Aufnahme), `tools/replay.py` (Aufnahmen durch den Tracker),
-  `tools/ghostmap.py` (Geisterkarte offline), `tools/calibrate_offline.py` (Kalibrierung aus
+  `tools/calibrate_offline.py` (Kalibrierung aus
   Aufnahmen mit dem Modell der App, dazu Block-Bootstrap, Spiegel- und Maßstabsprofile und freie Positionen;
   10; seit 0.45.0 rechnet der Kern den Schätzer, `presence-core/src/calibration/`, die Analysen des Werkzeugs
   laufen auf einem Baum von 0.43.0).
@@ -1051,10 +1032,8 @@ Näherungen, die man prüfen oder ersetzen kann:
 - Versatzvarianz je Achse gemittelt, obwohl entlang/quer verschieden gemessen.
 - Jenseits von 7 m zählt die Entfernung zweimal: in `g_s` (Abfall ab Reichweite + 1 m, aus 0.6.17)
   und in `P_m(r)`. Gegen welches `g_s` ρ und r₅₀ gefittet wurden, ist nicht festgehalten.
-- Erkennbarkeit nur für Stehende; α, Wechselrate, Ankunft/Weggang, Aufenthalts-Prior und λ_e sind
+- Erkennbarkeit nur für Stehende; α, Wechselrate, Ankunft/Weggang, und Aufenthalts-Prior sind
   angenommen, nicht über die Evidenz geschätzt. Das Kostenverhältnis `light_cost` ist zu klären.
-- Die Geisterkarte lernt weiter aus dem Urteil des Filters, nur ohne ihren eigenen Beitrag an der
-  Stelle. Ein reines Urteil bei der Geburt war zu früh (Hereinkommende an der Tür: P(Geist) 0,56).
 - Höchstens 12 Hypothesen; Paarung beim Zusammenlegen bis 6 Personen (darüber in der Reihenfolge,
   „niemand“ am Ende). Jede neue Spur kann auch „unbekannt“ sein:
   Solange Spuren laufen, gibt es mehr Hypothesen (Simulation, zwei kommen herein: etwa doppelte
@@ -1089,9 +1068,7 @@ Näherungen, die man prüfen oder ersetzen kann:
   der Karte (mit der Prior-Rate überall ebenso 0,46), sondern daran, dass ihre bekannte Person
   verblasste, bevor die neue Spur dort begann; seit 8.10. läuft in Sicht nichts ab (5.5), und es ist
   richtig (0,47 → 1,00; aus 1,50 → 1,00 von 15). Offen: das Messmodell des LD2410C an diesem Platz
-  (4.3); solange der Filter ihre Spuren für Geister hält, zählt die Karte sie auch. Der Prior bremst
-  das nur: Säße sie jeden Abend so, stünde die Stelle im Gleichgewicht mit 14 Tagen Vergessen bei
-  etwa 7-mal der Prior-Rate (mit dem alten Prior etwa 10-mal; nach einem Abend 2,8- statt 17,6-mal).
+  (4.3).
 - **Doppelte Personen bleiben möglich** (10, Fälle 2 und 5): Bekommt eine Spur die „falsche“ bekannte
   Person (eine überzählige, die näher an der Tür ist, als die wirkliche ungesehen hätte gehen können),
   ist dieselbe Person zweimal da. In Sicht widerlegen die Messungen die überzählige; wo kein Sensor
@@ -1109,7 +1086,7 @@ Näherungen, die man prüfen oder ersetzen kann:
   „irgendwo“ statt der Intensität; 5 % statt 1 % beim Zurückgeben 26 s, 5.5).
 - **Gelerntes und Geometrie** (seit 0.51, Leon 29.10., ohne Ausnahme): Ändert der Nutzer Lage oder Sicht eines
   Sensors (Ort, Blickrichtung, Höhe, Spiegelung, Maßstab, Öffnungswinkel, Reichweite, platziert oder nicht) oder
-  den Grundriss (Wände, Türen, Zonen) und speichert, werden alle Messungen der Kalibrierung, die Geisterkarte, der
+  den Grundriss (Wände, Türen, Zonen) und speichert, werden alle Messungen der Kalibrierung, der
   LD2410C-Hintergrund, die Zielkarte (aller Sensoren) und der gemessene Blick des LD2410C (`ld_view`) verworfen;
   ebenso, wenn ein Kalibrierergebnis übernommen wird (es ändert Richtung und Maßstab). Eine Quelle: der Schlüssel
   der Geometrie (`Config::geometry_key`), den jede Datei des Gesammelten trägt; passt er beim Start nicht, wird
@@ -1123,8 +1100,7 @@ Näherungen, die man prüfen oder ersetzen kann:
   Gehäuse ihn nicht sieht und keine Echoquelle seine Energie hält. Die Schlafenden im Schlafzimmer
   7./8.10. verlor der Filter um 00:25 an eine Echoquelle, die bis zum Morgen an blieb: Eine ungesehene
   Person zählt im Blick nur mit P(keine Quelle), die Quelle selbst wird aber gegen sie gewogen, als
-  wäre sie da (4.3; oben und 10 „Energie aufteilen“). Ihre Spuren im Bett endeten als Geister und zählen in
-  die Geisterkarte (das Bett 3,5-mal die Prior-Rate nach einer Nacht).
+  wäre sie da (4.3; oben und 10 „Energie aufteilen“). Ihre Spuren im Bett endeten als Geister.
 
 - **Kalibrierung (10, „Kalibrierung der App neu“):** Beim Flur widersprechen sich Grundriss (36–41°)
   und Paare (50° mit Ess- und Wohnzimmer durch die Tür, 29° beim Gang im Flur selbst); frei gefittet
@@ -1229,7 +1205,7 @@ Näherungen, die man prüfen oder ersetzen kann:
 
 Nicht geprüft (Ablationen ausstehend): λ_d = 0,85 gegen langsamere Richtungswechsel; OU-Näherung
 gegen weißes Rauschen in der Beschleunigung; Swerling-I gegen logistisch; Form der Erkennbarkeit.
-(Geisterkarte gegen globale Rate: 10.)
+(Geisterkarte gegen globale Rate: gemessen 30.10., 4.2.)
 
 ## 10. Erfahrungen
 Was frühere Versionen gezeigt haben. Die Zahlen stammen von gelöschten Wahrheitsdaten oder anderen
@@ -1244,8 +1220,8 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Wiederfinden passte die Messung ~9× besser zu einem Geist.
 - **Ohne Erkennbarkeit κ** ist eine Sitzende, die minutenlang nicht erfasst wird, extrem
   unwahrscheinlich, und das Modell schickt sie zur Tür.
-- **Ohne Geisterkarte** werden wiederkehrende Reflexionen (Ecken, Ladestation, Küchentür) zu Personen
-  (0.6.x und 0.8-Entwicklung).
+- **Ohne Geisterkarte** wurden wiederkehrende Reflexionen (Ecken, Ladestation, Küchentür) zu Personen
+  (0.6.x und 0.8-Entwicklung). Mit dem heutigen Filter nicht mehr messbar, die Karte ist seit 30.10. weg (4.2).
 - **Zeitbasierte Leckraten** („nach x s ungesehen ist sie weg“) schicken Sitzende in Sekunden zur
   Tür. Masse darf nur durch Gehen wandern.
 - **Wiener-Prozess für die Geschwindigkeit** (bis 0.6.21): Gehende behalten ihre Richtung viel zu

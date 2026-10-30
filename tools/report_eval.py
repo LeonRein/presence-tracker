@@ -1,5 +1,5 @@
 """Score the tracker against the truth taken from error reports (MODEL.md 8): the recordings replayed
-the way the app ran them (a fresh model at every start of the app, the ghost map, the LD2410C
+the way the app ran them (a fresh model at every start of the app, the LD2410C
 background and the destination map learned on from the first one, the people's state saved when the app stopped and restored at
 its start, MODEL.md 5.3), and per reported moment and room P(somebody there) and P(the reported
 number) against what the report

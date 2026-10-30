@@ -88,7 +88,7 @@ def test_a_report_replays_to_what_the_app_showed(tmp_path):
     assert meta["report"]["learned_at"] == meta["report"]["model_start"]
     assert meta["ld_background"]["echoes"]["a"] > 0
     # what was learned at the model's start, not at the report: it learned on since
-    assert meta["ghost_map"] != json.loads(json.dumps(app.tracker.learned()["ghost_map"]))
+    assert meta["ld_background"] != json.loads(json.dumps(app.tracker.learned()["ld_background"]))
     shown = [(m["t"], m["payload"]) for m in messages if m["topic"] == "app/shown"]
     assert len(shown) >= 55 and all(t1 > t0 for (t0, _), (t1, _) in zip(shown, shown[1:]))
 
@@ -136,7 +136,7 @@ def test_a_report_without_the_model_start_has_what_was_learned_at_the_report(tmp
     meta = json.loads(gzip.open(path, "rt").readline())
     assert meta["report"]["model_start"] < 1001 and meta["report"]["learned_at"] == 1040.0
     learned = json.loads(json.dumps(app.tracker.learned()))
-    assert meta["ghost_map"] == learned["ghost_map"] != app.start_learned["ghost_map"]
+    assert meta["ld_background"] == learned["ld_background"] != app.start_learned["ld_background"]
 
 
 def test_a_restarted_app_keeps_the_people_and_reports_from_where(tmp_path):

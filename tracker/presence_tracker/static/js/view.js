@@ -489,11 +489,8 @@ MapView.prototype._sight = function (cv, selected) {
   return out.join('');
 };
 
-// What the model learned (the core's, api/learned), the layer chosen in the tab "Gelerntes", for all sensors at once in
-// their colours (as their sight: all alike, or the chosen one strong and the others faint): the ghost map per tile
-// (its square cut by its room) as strong as its rate above the prior's (log scale up to the most frequent of all;
-// none where not above); the destination map per cell an arrow in its most frequent velocity, as strong as its
-// walks, and if asked the cell in the colour of where its walks most often went next (the core's), as strong as their
+// What the model learned (the core's, api/learned), the layer chosen in the tab "Gelerntes": the destination map
+// per cell an arrow in its most frequent velocity, as strong as its walks, and if asked the cell in the colour of where its walks most often went next (the core's), as strong as their
 // share; the chosen sensor's measured LD2410C view per room in its colour as strong as the share it gets. The
 // LD2410C's background has no map: its bars are in the panel.
 MapView.prototype._learned = function (L) {
@@ -507,22 +504,7 @@ MapView.prototype._learned = function (L) {
       ${attrs} clip-path="url(#lrn-${esc(room)})" pointer-events="none"/>`;
   };
   const sel = learnedSelected();
-  const strength = id => (!sel ? 0.7 : id === sel ? 1 : 0.15);
-  if (state.learnedLayer === 'ghosts') {
-    const ratios = Object.values(L.sensors).flatMap(s => s.ghosts.rate.filter(v => v != null).map(v => v / s.ghosts.prior));
-    const top = Math.log(Math.max(2, ...ratios));
-    out.push(clips(L.tiles.map(t => t[1])));
-    // the chosen one last: on top
-    for (const [id, s] of Object.entries(L.sensors).sort(([a], [b]) => (a === sel) - (b === sel))) {
-      const g = s.ghosts, color = sensorColor(id);
-      L.tiles.forEach(([corner, room], t) => {
-        const v = g.rate[t];
-        if (v == null || !(v > g.prior)) return;
-        const a = strength(id) * (0.08 + 0.6 * Math.min(1, Math.log(v / g.prior) / top));
-        out.push(square(corner, L.size, room, `fill="${color}" fill-opacity="${a.toFixed(3)}"`));
-      });
-    }
-  } else if (state.learnedLayer === 'destinations') {
+  if (state.learnedLayer === 'destinations') {
     const d = L.destinations;
     const top = Math.max(1e-9, ...d.cells.map(c => c.walks));
     if (state.learnedColors) {

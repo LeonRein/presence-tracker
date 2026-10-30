@@ -838,7 +838,7 @@ function calibrationResult(el, r) {
 
 // What the running model learned (the core's, api/learned: fetched when the tab opens and on "Aktualisieren"), one
 // layer at a time on the map for all sensors (view.js _learned); per layer what it is for and its numbers here
-const LEARNED_LAYERS = { ghosts: 'Geister', background: 'LD2410C-Hintergrund', destinations: 'Ziele', ld_view: 'Blick des LD2410C' };
+const LEARNED_LAYERS = { background: 'LD2410C-Hintergrund', destinations: 'Ziele', ld_view: 'Blick des LD2410C' };
 
 async function refreshLearned() {
   try {
@@ -863,7 +863,7 @@ function placeName(id) {
 function learnedPanel(panel) {
   const L = state.learned;
   if (!L) refreshLearned();
-  const layer = LEARNED_LAYERS[state.learnedLayer] ? state.learnedLayer : 'ghosts';
+  const layer = LEARNED_LAYERS[state.learnedLayer] ? state.learnedLayer : 'background';
   panel.append(h(`<div>
     <h2>Gelerntes</h2>
     <p class="note">Was die App im Betrieb lernt, so wie das Modell es gerade verwendet. Nur zum Anschauen. Eine gespeicherte Änderung von Sensorlage oder Grundriss verwirft alles Gelernte; solange „Lernen pausieren“ an ist, lernt nichts davon.</p>
@@ -886,14 +886,6 @@ function learnedPanel(panel) {
   const row = (id, body) => `<div class="item ${id === sel ? 'selected' : ''}" data-sid="${esc(id)}" style="flex-wrap:wrap${sel && id !== sel ? ';opacity:.55' : ''}">
     <span class="swatch" style="background:${sensorColor(id)}"></span><span class="grow">${esc(sensorById(id)?.name || id)}</span>${body}</div>`;
   text.innerHTML = {
-    ghosts: () => {
-      const top = id => Math.max(...L.sensors[id].ghosts.rate.filter(v => v != null), 0) / L.sensors[id].ghosts.prior;
-      const g = L.sensors[ids[0]]?.ghosts;
-      return `<p class="note">Wo ein Sensor Spuren beginnt, die der Filter für Geister hält (Reflexionen an Fenstern, Spiegeln, Heizkörpern): Gezählt wird jede beginnende Spur mit der Wahrscheinlichkeit, mit der der Filter sie für einen Geist hält. Das ist sein eigenes Urteil, keine Wahrheit: Hält er eine Person für einen Geist, lernt er ihren Platz als Geisterquelle. Je Sensor in seiner Farbe, umso kräftiger, je öfter gegenüber dem Vorwissen; wo nicht öfter als angenommen, ohne Farbe. Der Filter liest daraus, wie wahrscheinlich eine neue Spur dort ein Geist ist.</p>
-        <p class="note">${choose}</p>
-        <div class="list">${ids.map(id => row(id, `<span class="meta">bis ${fmt(top(id), 1)}-mal · ${span(L.sensors[id].ghosts.hours)}</span>`)).join('')}</div>
-        ${g ? `<p class="note">Vorwissen ${fmt(g.prior, 3)} Geister je m² und Stunde; Stunden: wie lange der Sensor beobachtet hat, Älteres verblasst (Zeitkonstante ${span(g.forget_hours)}).</p>` : ''}`;
-    },
     background: () => {
       const b = L.sensors[ids[0]]?.background;
       return `<p class="note">Die Energie, die ein LD2410C ohne Person misst, je Entfernungsstufe. Der Filter wiegt jede gemessene Energie gegen diesen Hintergrund ab: Was deutlich darüber liegt, kann eine Person sein. Gelernt wird laufend aus den Zeiten, in denen niemand im Blick ist; ohne neue Daten geht er zum Langzeitwert des Sensors zurück.</p>
