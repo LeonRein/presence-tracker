@@ -88,6 +88,8 @@ def test_a_sitter_the_model_starts_with_is_found_and_not_learned():
         if t > 600:
             found.append(1 - tr.core.count_distribution()["wohn"][0])
     assert min(found) > 2 / 3, min(found)
+    tr.step(t)
+    assert tr.zone_states()["wohn"].occupied  # a person of the display: the light follows them, not the mass
     prior = ld_prior()
     for s in ("a", "b"):
         assert np.all(np.abs(tr.core.background(s)[0] / prior - 1) < 0.4), (s, tr.core.background(s)[0])

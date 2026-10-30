@@ -2793,6 +2793,46 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Nachlaufs, den Node-RED nicht ersetzt, wenn der Filter jemanden verliert, den der eigene LD2450 noch misst (9).
   Die Zählung selbst ändert daran nichts: Die Filter-Spuren, P(belegt), *wird betreten* und *Ziel* sind in den drei
   Stunden unverändert.
+- **Alles zusammen: 0.55.0** (30.10.; Liste Punkte 1–3, 10–14). `ld_view` weg, Geisterkarte weg, Echoquellen als
+  Alternative mit `M' ≤ 1`, eine Zuordnung ohne `seen_hold`. Die Frage dabei: Die Echoquellen holten ihr Ergebnis mit der
+  alten Regel (P je Raum > 2/3, mit den Unbekannten); die neue fragt nur nach Personen der Anzeige. Eine Sitzende, die das
+  Modell nur als Energie führt, bliebe dunkel. Gemessen tut sie das nicht: Derselbe Filter, zweite Stufe noch einmal
+  mit der alten Regel (`ov_all_oldrule`): Wahrheit 5,12 / 0 statt 4,35 / 0, leere Nacht und leeres Haus 0, Licht anders
+  20,9 min in 96,4 h (unter dem Rauschboden von 34–56), nur die alte an: Person 2,1 (Wohnzimmer 10.10. 14:55 87 s, 9.10.
+  16:54 17 s), unklar 4,2, keine Person 0,9 min; nur die neue an: 0,8 / 2,7 / 4,4. Wer sitzt, hatte eine Spur und ist
+  eine bekannte Person ohne Spur; die trägt jetzt die Energie (`ℓ(Person)` im Blick, 4.3), die vorher die Quelle hielt.
+  Reine Masse der Unbekannten ohne je eine Spur kommt nur im Kaltstart vor; auch dort wird die Sitzende der Simulation
+  mit dem ersten Ziel eine Person. Am Modell ist deshalb nichts ergänzt.
+
+  `fast_eval` zwei Stufen, 96,4 h, je mit und ohne 2 min Nachlauf wie Node-RED (`occupied` nachträglich: aus erst nach
+  120 s, ein neues An hebt es auf):
+
+  | Lauf | Wahrheit an, leer / aus, besetzt | gewichtet | leeres Haus | mit 2 min Nachlauf | leeres Haus |
+  |---|---|---|---|---|---|
+  | `seen_hold` 10 (0.54, live) | 5,33 / 0,28 | 6,75 | 5,38 | 75,75 / 0,00 | 7,70 |
+  | 0.53 (`seen_hold` 0) | 0,48 / 3,28 | 16,90 | 0 | 63,98 / 1,28 | 0 |
+  | nur Zuordnung | 0,48 / 3,28 | 16,90 | 0 | 64,18 / 1,28 | 0 |
+  | nur Echoquellen | 5,35 / 0 | 5,35 | 0 | 67,13 / 0,00 | 0 |
+  | **0.55.0** | **4,35 / 0** | **4,35** | **0** | **66,05 / 0,00** | **0** |
+
+  Leere Nacht überall 0. Indizien (`proxy_seated`) Person / unklar / keine Person, „neu an“ gegen „neu aus“, *netto* wie oben:
+
+  | gegen | Licht anders | neu an | neu aus | netto |
+  |---|---|---|---|---|
+  | live | 295,9 | 4,3 / 34,6 / 27,0 | 17,5 / 65,4 / 81,8 | +11,0 |
+  | live, beide mit 2 min | 300,0 | 2,8 / 26,3 / 32,5 | 12,9 / 59,3 / 86,9 | −3,9 |
+  | 0.53 | 212,8 | 30,4 / 79,6 / 33,4 | 9,9 / 3,6 / 9,6 | −78,6 |
+  | nur Echoquellen | 90,0 | 5,8 / 32,6 / 9,7 | 7,3 / 11,6 / 7,2 | +10,0 |
+
+  Die Wahrheit bleibt 0 dunkel mit Person (das Sofa 8.10. 19:06 hält das Modell jetzt selbst, nicht mehr `seen_hold`),
+  Licht in leeren Räumen bleibt 7.10. 22:22 (Balkontür, Esszimmer 1,80, Arbeitszimmer 2,07). Gegen live fehlen ohne
+  Nachlauf 17,5 min „Person“ dunkel (Küche 6,2, die Strecke 10.10. 12:47 ohne gemessenes Ziel; Arbeitszimmer 4,4, Wohnzimmer
+  3,3, Esszimmer 2,7), mit 2 min 12,9 bei 54 min weniger Licht ohne Person. Kaltstart (`trace` alle 5 s, höchste erwartete
+  Personenzahl im Haus): 10.10. 10:00 21,9 → 6,1, 8.10. 19:00 44,6 → 5,5, 8.10. 08:00 (leeres Haus) 1,3 → 0,8; was bleibt,
+  sind LD2450-Spuren, die im Kaltstart Personen sind; im Mittel liegt 10.10. 10:00 höher (3,3 → 3,9, über 3,5: 31 → 93
+  min). CPU gegen 0.54.4 (`presence-replay prof`, eine Stunde): 10.10. 12 Uhr 2,73 → 2,66 % eines Kerns, 8.10. 19 Uhr 0,94
+  → 1,16 %. Gespeichertes bleibt: `tracker.json` mit `seen_hold` und `ld_view` startet, gleicher Geometrieschlüssel,
+  Hintergrund und Zielkarte gleich übernommen.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

@@ -1,8 +1,8 @@
 """The tab "Gelerntes" (static/js: view.js _learned, panels.js learnedBars): the web UI draws what the core says was
 learned (GET /api/learned), all sensors at once in their colours, the one chosen on the map strong and the others
 faint, and knows no number of the model - the destination cells'
-colour the outcome the core names likeliest, the gates' distances the core's gate length, the measured view of the
-chosen sensor as sent (none chosen or none measured: nothing drawn). Runs the modules in Node; skipped without it."""
+colour the outcome the core names likeliest, the gates' distances the core's gate length. Runs the modules in Node;
+skipped without it."""
 
 import json
 import pathlib

@@ -64,13 +64,12 @@ Wandenden gekappt (`derived.plan.doors`: `{wall, t0, t1}`, 0.50.0); die Oberflä
 | LD2450-Spuren: Verknüpfen, gehalten/eingefroren, Ende bei Datenverlust | 4.1 | `sensortracks.py` |
 | Hypothesen, Gauß-Mischungen, Kacheldichten, Unbekannte; Bewegen, Evidenz, Verzweigen, Zusammenlegen, Abschneiden, Zurückgeben, Ablauf, Datenlücken | 3, 4.1, 4.2, 5, 7 | `filter.py`, `gauss.py`, `hidden.py`, `kernels.py` |
 | LD2410C: Sammeln, Likelihood, Echoquellen, Verrechnung; **Hintergrund, Anker und Echorate lernen** | 4.3 | `ld2410.py`, `filter.py` |
-| **Geisterkarte** (lernen, vergessen, Rate je Ort) | 4.2 | `ghostmap.py` |
 | **Zielkarte** (Geometrie, Lernen der Gänge, Abfrage) | 6 „Ziel“ | `destination.py` |
 | Ausgaben: Zähl- und Ortsverteilungen, Belegt und „stumm“, *wird betreten*, *Ziel*, Personen der Anzeige, Snapshot | 6 | `filter.py`, `roomseen.py` |
 | Pausen als **Eingabe** (Intervalle; was in eine Pause fällt, lernt nichts) | 4.2 | `pause.Pauses.paused` |
-| Gespeicherte Formate lesen und schreiben, **unverändert**: `people_state`, Geisterkarte, LD2410C-Hintergrund, Zielkarte (als Zeichenketten/Dicts; Dateien schreibt Python) | 5.3, 4.2, 4.3, 6 | `to_dict`/`from_dict` der Klassen |
+| Gespeicherte Formate lesen und schreiben, **unverändert**: `people_state`, LD2410C-Hintergrund, Zielkarte (als Zeichenketten/Dicts; Dateien schreibt Python) | 5.3, 4.2, 4.3, 6 | `to_dict`/`from_dict` der Klassen |
 | Kalibrierung: Messzeilen je Frame, Schätzer (Paare, Übergaben, Grundriss, Maßstäbe; EM, Gauß-Newton, robuste Kovarianz, Jackknife), Vorschlag mit Gründen, Fortschritt (`calibration/`, 0.45.0) | 10 | `calibration.py` |
-| Was die Anzeige ableitet: Raum und wahrscheinlichster Ort einer Person, Regionen (Zahl, P, Aufenthalt), Karte eines Sensors mit Geisterrate, LD2410C-Anzeige mit Haltezeit, „belegt“ und Schwellen je Zone, Heim-Zonen für HA; der Weg einer neuen Konfiguration (`reconfigure.rs`) (0.46.0) | 6 | `filter.py`, `zones.py`, `ha.py`, `geometry.py` |
+| Was die Anzeige ableitet: Raum und wahrscheinlichster Ort einer Person, Regionen (Zahl, P, Aufenthalt), LD2410C-Anzeige mit Haltezeit, „belegt“ und Schwellen je Zone, Heim-Zonen für HA; der Weg einer neuen Konfiguration (`reconfigure.rs`) (0.46.0) | 6 | `filter.py`, `zones.py`, `ha.py`, `geometry.py` |
 | Die Modellgrößen, die die Oberfläche zeigt (`derived.rs`), nur Daten, keine Geometrie zum Zeichnen (0.49.0): der Plan mit dem Anteil der 60-%-Regel, die Schwellen, die Zahlen, die der Editor liest (Tür auf der Wand, Länge einer LD2410C-Stufe); aus der laufenden Welt je Kachel die Zahl der Sensoren, die sie sehen, und die Sicht jedes Sensors (`Core.coverage`); je Person Mittel und Streuung ihrer Gauß-Anteile mit dem Raum des Mittels, Masse je Kachel, „bewegt“; Gesamtzahl im beobachteten Bereich; das Gelernte, wie Filter und „Ziel“ es lesen (`derived::learned`, `Core.learned_view`, 0.54.0): je Sensor in Gebrauch die Geisterkarte je Kachel, der LD2410C-Hintergrund je Stufe mit Anker, Stunden und Echorate, der gemessene Blick `ld_view`; die Zielkarte je Zelle (häufigste Geschwindigkeit, ihre Gänge, Anteile der Ausgänge, der häufigste) | 2, 4.1, 4.2, 4.3, 5.3, 6 | `static/js` (util, view, panels, coverage.js); die Polygone (Sichtfläche, Wolkenschnitt, Wände mit Türlücken) und der Spurbruch von 0.47.0/0.48.0 sind wieder Zeichnen (JS) |
 
 | Python (Hülle): Modul | was es tut (nach dem Grundsatz oben, Stand 0.48.0) |
@@ -87,7 +86,7 @@ Wandenden gekappt (`derived.plan.doors`: `{wall, t0, t1}`, 0.50.0); die Oberflä
 `sim.py` (erzeugt Frames, rechnet) gehört nur zu Tests und Werkzeugen: `tracker/tests/sim.py` (0.47.0).
 
 Was dabei aus Python verschwindet: `kernels.py`, `gauss.py`, `hidden.py`, `filter.py` (bis auf die Hülle),
-`tiling.py`, `world.py`, `sensormodel.py`, `sensortracks.py`, `frames.detections`, `ghostmap.py`, `destination.py`,
+`tiling.py`, `world.py`, `sensormodel.py`, `sensortracks.py`, `frames.detections`, `destination.py`,
 `roomseen.py`, `filtermodel.py`, `unobserved.py`, `ld2410.py`, das Abgeleitete aus `model.py` – zusammen etwa
 8000 Zeilen, dazu numba/llvmlite.
 
@@ -107,27 +106,26 @@ Tracker (Rust, presence_core::Tracker)       besitzt alles
 │   ├── densities: Densities      Kacheldichten (Personen ohne Spur, Unbekannte, Teile hinter der Tür)
 │   ├── holders: Holders          Objekt → Hypothesen (CSR), neu nach jedem Ereignis
 │   └── tracks: Tracks            laufende Spuren im Filter (heute segs, _live_by_sensor)
-├── learned: Learned            Geisterkarte, LD2410C-Hintergrund und Echorate, Zielkarte
+├── learned: Learned            LD2410C-Hintergrund und Echorate, Zielkarte
 ├── pauses: Pauses              Eingabe
 └── clock: Clock, loglik, Ausgabe-Cache
 ```
 
 **Geliehen wird nach der Vorgabe:** Jede Schritt-Funktion bekommt `&World` und `&mut` genau auf das, was sie ändert,
 z. B. `motion::move_densities(&world.tiles, &mut densities, dt)`, `imm::step(&world, &mut mixture, …) -> f64`,
-`ghost_map.add_birth(&mut self, …)`. Funktionen, die Objekte gewichten, **geben die Log-Faktoren je Objekt
+`ld_background.learn(&mut self, …)`. Funktionen, die Objekte gewichten, **geben die Log-Faktoren je Objekt
 zurück**; eine eigene Funktion verteilt sie über die Halter auf `hyp.logw`. So braucht nie etwas gleichzeitig
 `&mut` auf Hypothesen und Pools.
 
 ### 2.0 Lernen in der Reihenfolge von heute
 
-Die Lerner (`learned.ghost_map`, `learned.ld_background`, `learned.destinations`) sind eigene Felder neben `filter`.
-Ein Schritt, der lernt, leiht beide **getrennt** aus (`&mut Filter` und `&mut GhostMap` usw., disjunkte Felder von
+Die Lerner (`learned.ld_background`, `learned.destinations`) sind eigene Felder neben `filter`.
+Ein Schritt, der lernt, leiht beide **getrennt** aus (`&mut Filter` und `&mut Background` usw., disjunkte Felder von
 `Tracker`) und lernt an derselben Stelle wie der Python-Code – keine Lernsätze, die erst nach dem Frame angewandt
 werden. Belegt im Code von 0.31.1 (`filter.py`):
 
 | Lerner | wo gelernt | wo gelesen, danach im selben Ablauf |
 |---|---|---|
-| Geisterkarte | `_evidence` Schritt 1: `add_watch(delta)`, dann `fade(t)` (verwirft bei `True` die Summen `_ghost_total`); Schritt 2: `_end` → `add_birth(z0, P(Geist))`, verwirft `_ghost_total[si]` | Schritt 4: `_branch` liest `_ghost_rate(si, z)` (Karte an der Geburt) – nach Beobachtungszeit, Vergessen und den Geburten der in diesem Frame beendeten Spuren. Schritt 1 liest `_ghost_rate_total(si)` **vor** `add_watch`. |
 | LD2410C-Hintergrund, Anker | `_ld_weigh` am Ende: `learn(sid, b, mus, prior_w, …)` mit `b` und `mus` vom **Anfang** dieser Bewertung (Stand vor den Frames, J_Park2020), vor `_normalize` | die nächste Bewertung dieses Sensors (`b(sid)` am Anfang); die Sensoren eines Flush nacheinander in `sorted(si)` |
 | Echorate | `_ld_weigh` direkt nach `learn`: `learn_echoes(sid, began, rate, nobody, time)` mit der Rate, die **vor** `echo.predict` gelesen wurde | die nächste Bewertung (`rate(sid)` vor `predict`) |
 | Zielkarte | `step` nach `_flush` und `_recycle`, höchstens alle `MAX_STEP`: `Learner.observe` → `fade(t)`, dann Gänge vorrücken, `add` | die Ausgaben (`targets`) danach |
@@ -301,8 +299,8 @@ Abstände, Gates), die Uhr `Frame.uptime_ms`.
 und `Tracker::step(t)` tun alles, was `process_frame`/`step` taten, und geben die Ereignisse für die Listener zurück
 (`Watch`, `TrackEnd`, `Branch`); die Hülle ruft die Listener damit (der Listener „frame“ hört nach den Schritten). Das
 Gelernte gibt `learned()` als Kopie (`presence_core.Learned`, `json()` packt ohne den Tracker, im Thread der App);
-`use_ld_background/use_dest_map` nehmen das gespeicherte JSON. Die Python-Lerner (`ghostmap.py`,
-`destination.py`, `ld2410.Background`) bleiben bis Phase 9 als Orakel der Formate in den Tests.
+`use_ld_background/use_dest_map` nehmen das gespeicherte JSON. Die Python-Lerner (`destination.py`,
+`ld2410.Background`) bleiben bis Phase 9 als Orakel der Formate in den Tests.
 
 **Umgesetzt in Phase 9 (28.10.):** Der Python-Kern ist gelöscht (Liste im CHANGELOG 0.39.0). Das Modell sind die
 Standards des Kerns (`Params::default`, `presence_core.model_defaults()`); `Tracker(config, model=dict)` nimmt nur, was
@@ -314,8 +312,7 @@ behält `WorldExport` für seine eigenen Tests. Was die Python-Orakel sagten, st
 
 **Aufräumrunde (0.40.0, 28.10.):** Das Abgeleitete aus `model.py` ist weg: Orte, Regionen, beobachtete und geschlossene
 Räume liest jeder aus dem Plan des Kerns (`presence_core.plan(config)`, `Tracker.plan`). Die Sichten der Bindung sind
-benannte Typen (`HypView`, `TilesView`, `PersonView`). Der gemessene Blick des LD2410C (`ld_view`) ist eine Angabe der
-Konfiguration, kein Standard des Modells mehr (entfernt 30.10., MODEL.md 4.3).
+benannte Typen (`HypView`, `TilesView`, `PersonView`).
 
 **Keine doppelte Logik (0.43.0, 29.10.):** Die Sensorgeometrie (Sensorrahmen, Blickfeld, Sicht durch Türen, Bodenpunkt)
 gibt es nur im Kern; die Simulation der Tests fragt `presence_core.Geometry` (über Punktlisten; seit 0.49.0 nur mit
@@ -380,13 +377,12 @@ beobachteten Räume und das „außerhalb der Sicht“ der Kalibrierung folgen. 
 (`World::geometry`), `Learned` den, unter dem es lernt: `Learned::follow` beginnt bei einem anderen ganz neu (alle
 Sensoren, alle drei Teile), sonst bleibt es; `Pose::remounted` (0,5 m / 30°) und das Folgen je Sensor sind weg.
 `reconfigure::change` bleibt nur der Weg des Modells (er definiert keine Geometrie). Die Hülle führt aus: Jede Datei
-des Gesammelten trägt den Schlüssel (`ghostmap.json`, `ld2410.json`, `destinations.json` als
+des Gesammelten trägt den Schlüssel (`ld2410.json`, `destinations.json` als
 `{"geometry", "learned"}`, `calibration.npz` mit `geometry`); passt er beim Start nicht, wird sie gelöscht
 (`App._discard`). PUT mit einem anderen Schlüssel: nach dem Rekonfigurieren `App._forget` (Kalibrierdaten
-zurückgesetzt, die vier Dateien gelöscht) und `"discarded": {"calibration": Messungen}` in der Antwort; die Oberfläche sagt es
-(`util.discardedText`). Die Sonderfälle bleiben, was sie prüfen: die Geisterkarte ihren Prior (Modellparameter, keine
-Geometrie), die Zielkarte ihr Raster (`fingerprint`, hängt auch am Code); „andere Räume oder Türen“ fängt jetzt der
-Schlüssel vorher ab.
+zurückgesetzt, die drei Dateien gelöscht) und `"discarded": {"calibration": Messungen}` in der Antwort; die Oberfläche sagt es
+(`util.discardedText`). Der Sonderfall bleibt, was er prüft: die Zielkarte ihr Raster (`fingerprint`, hängt auch am Code); „andere Räume oder Türen“ fängt jetzt der
+Schlüssel vorher ab. Eine `ghostmap.json` von früher liest niemand mehr.
 
 ## 5. Build
 

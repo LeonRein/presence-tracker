@@ -2,6 +2,46 @@
 
 ## Unveröffentlicht
 
+## 0.55.0 (Branch `ov-all`, Modell-Überarbeitung: Löschen, Geister, Echoquellen, Anzeige; nicht live, kein Tag)
+
+Vier Branches ab 0.54.4 zusammengeführt (`ov-delete`, `ov-ghost`, `ov-echo`, `ov-count`). Modell, Ausgabe und Anzeige ändern sich.
+Licht folgt jetzt der Anzeige; die Sitzenden gehen dabei nicht verloren (unten). Gespeichertes: eine `tracker.json` von
+0.54.4 startet (`seen_hold` und `ld_view` fallen weg, `occupied_off` hat seinen Standard, der Geometrieschlüssel bleibt),
+Hintergrund und Zielkarte werden übernommen, eine alte `ghostmap.json` liest niemand mehr (sie bleibt liegen).
+- **Eine Zuordnung Personen → Orte** (Leon 30.10.: „Ich will, dass das Licht dem folgt, was angezeigt wird“). Zahl, Karte,
+  Liste, Kopfzeile, `*_count` und `*_occupancy` kommen aus den Personen der Anzeige (wahrscheinlichste Hypothese, r ≥ 0,5),
+  jede an ihrem wahrscheinlichsten Ort, im Raum ihres Punkts. Ein Raum geht an, wenn eine ihm zugeordnete Person dort
+  mit P(dort über alle Hypothesen) ≥ 2/3 ist, und aus, wenn keine `occupied_off` = 1/3 erreicht (neu, *Besetzt bis
+  Wahrscheinlichkeit*). Wer nicht zählt, ist nur eine Wolke ohne Punkt. **`seen_hold` und `room_seen.rs` sind weg**: Das
+  verzögerte Ausschalten macht Node-RED; „stumm“ steht in `silent.rs`. `report_eval.py` wertet Berichte danach aus.
+- **Echoquellen als Alternative statt Faktor** (B_GarciaFernandez2018 Gl. 45): Zwei sitzen, der Filter führt eine Person; geht
+  sie, hielt eine Quelle die Energie der Gebliebenen 4–9 min bei 20 s Lebensdauer, und jede Person ohne Spur bekam im
+  Blick P(keine Quelle) ≈ 0,01 je Sekunde. Jetzt im Blick `ℓ(Person)`, außerhalb `Z = max(1, P(aus) + Σ P(s) ℓ(s))`; die Quelle
+  ist, was die bekannten Personen nicht erklären, die Unbekannten zählen dabei nicht; `Z ≥ 1`, das Ende einer Quelle ist
+  kein Beleg für jemanden.
+- **Die Unbekannten im Blick sind ein Bernoulli, `M' ≤ 1`** (Formelfehler, Agent E): Der Faktor erlaubte bis zu eine Person
+  mehr je Block ohne Halt; warm lag Λ im Wohnzimmer bei 12–34, kalt bei 18–44. Kaltstart höchste erwartete Personenzahl:
+  10.10. 10:00 21,9 → 6,1, 8.10. 19:00 44,6 → 5,5.
+- **Geisterkarte weg, eine feste Rate** 1,8·10⁻⁵ je m² und s je Sensor (gemessen 692 Geister in 437 Sensorstunden). Die Karte
+  bildete ab, wo Menschen sind, und brachte nichts Messbares. Weg: `learn/ghost_map.rs`, `ghostmap.json`, `POST
+  /api/learned`, `tools/ghostmap.py`, `λ_e`, Ebene *Geister*.
+- **`ld_view` weg** (bringt nachweislich nichts; ein Wert je Raumpaar kam nur von gemessenen Blicken durch Öffnungen): Konfiguration,
+  `LdSight.view`, Prüfung, Ebene *Blick des LD2410C*, `discarded.ld_view`. Dazu die Testmodule `filter/mirror.rs`,
+  `ld_reference.rs` samt Fixture, die nur noch mit gelöschtem Python verglichen; was nur dort geprüft wurde, steht in
+  `filter::tests`.
+- Tab *Gelerntes*: nur noch *LD2410C-Hintergrund* und *Ziele*; eine im Browser gemerkte Ebene, die es nicht mehr gibt, fällt
+  auf die erste zurück.
+- **Zahlen** (`fast_eval` zwei Stufen, 96,4 h, an,leer / aus,besetzt): gegen live (`seen_hold` 10) 5,33 / 0,28 → **4,35 / 0,00**,
+  gewichtet 6,75 → 4,35, leeres Haus 5,38 → 0; mit 2 min Nachlauf wie Node-RED 75,75 / 0,00 → **66,05 / 0,00**, leeres Haus
+  7,70 → 0; gegen 0.53 0,48 / 3,28, gewichtet 16,90. Leere Nacht überall 0. Indizien gegen live: Person 4,3 / 17,5 neu an / neu
+  aus, keine Person 27,0 / 81,8, netto +11,0, mit 2 min −3,9; gegen 0.53 netto −78,6; Licht anders gegen live 296 min.
+  Die alte Lichtregel auf demselben Filter: 5,12 / 0,00, nur 20,9 min anders, Person 2,1 / 0,8: Die Sitzenden sind Personen
+  der Anzeige, die Echoquellen verlieren nichts an der neuen Regel. Alles in MODEL.md 10 „Alles zusammen: 0.55.0“. CPU gegen 0.54.4
+  je Stunde 2,73 → 2,66 % (10.10. 12 Uhr), 0,94 → 1,16 % (8.10. 19 Uhr).
+- Tests: fmt, clippy -D warnings ohne/mit allen Features, cargo test, pytest mit Hooks und `PT_CONFIGS`, Release-Wheel.
+  Die Digests der 17 privaten Konfigurationen mit `ld_view` neu (Bau sonst gleich, ohne `ld_view` byte-gleich).
+  `test_a_sitter_the_model_starts_with…` fragt jetzt auch, ob der Raum besetzt ist.
+
 ## 0.54.4 (Branch `rust-core`, kleine Reste der Grenzregel; nicht live, kein Tag)
 
 Modell unverändert; Spuren der drei Referenzstunden byte-gleich mit 0.54.3 (own und rs).
