@@ -1,4 +1,4 @@
-//! The world built from the plan (world.World, filter.Tracker._grid, _spread_sight, _ld_view,
+//! The world built from the plan (world.World, filter.Tracker._grid, _spread_sight,
 //! _ld_tiles, sensormodel.SensorModel, tiling.Tiling.observed): the 0.1 m raster of places and rooms,
 //! the distance to the walls, and per sensor its sight of a person and its LD2410C's - in steps, each a
 //! function of what is built before.
@@ -295,7 +295,6 @@ pub(super) struct Built<'a> {
     pub plan: &'a Plan,
     pub raster: Raster,
     pub labels: &'a [Option<Place>],
-    pub rooms: &'a RoomGrid,
     pub walls: &'a Walls,
     pub tiles: &'a Tiles,
 }
@@ -314,7 +313,6 @@ pub(super) fn sensor(b: &Built, s: &SensorConfig) -> (Sight, LdSight) {
         axis: s.axis(),
         dh2: dh * dh,
         los,
-        view: ld_view(b, s),
         tiles: LdTiles::default(),
     };
     ld.tiles = ld_tiles(b, &ld);
@@ -367,7 +365,7 @@ fn ld_tiles(b: &Built, ld: &LdSight) -> LdTiles {
     let mut still = vec![[0.0; CELLS]; tiles.n];
     let mut walk = vec![[0.0; CELLS]; tiles.n];
     for (&q, &t) in tiles.points.iter().zip(&tiles.point_tile) {
-        let at = ld.place(q, b.rooms);
+        let at = ld.place(q);
         let (es, ew) = (
             expected(b.params, STILL, at.angle, at.slant, at.sight),
             expected(b.params, WALK, at.angle, at.slant, at.sight),
@@ -404,7 +402,7 @@ fn observed(b: &Built, grid: &Grid, ld: &LdSight) -> Vec<f64> {
         .points
         .iter()
         .map(|&q| {
-            let at = ld.place(q, b.rooms);
+            let at = ld.place(q);
             let near = if at.slant <= 9.0 * GATE { 1.0 } else { 0.0 };
             ((none - at.angle) / (none - full)).clamp(0.0, 1.0) * at.sight * near
         })
@@ -416,28 +414,4 @@ fn observed(b: &Built, grid: &Grid, ld: &LdSight) -> Vec<f64> {
         .zip(&seen)
         .map(|(&a, &g)| f64::max(0.0, g.max(a)).clamp(0.0, 1.0))
         .collect()
-}
-
-/// Per observed room how much of what the geometric sight expects the sensor's LD2410C gets from a
-/// person there, against its own room (measured: ld_view); None if nothing is
-/// measured for it.
-fn ld_view(b: &Built, s: &SensorConfig) -> Option<Vec<f64>> {
-    if b.config.ld_view.is_empty() {
-        return None;
-    }
-    let RoomIdx(own) = b.rooms.at(s.sight_origin())?;
-    let own_id = &b.plan.room(RoomIdx(own)).id;
-    let mut v: Vec<f64> = b
-        .plan
-        .observed()
-        .map(|r| {
-            b.config
-                .ld_view
-                .get(&format!("{own_id}<-{}", r.id))
-                .copied()
-                .unwrap_or(1.0)
-        })
-        .collect();
-    v[own] = 1.0;
-    v.iter().any(|&x| x != 1.0).then_some(v)
 }

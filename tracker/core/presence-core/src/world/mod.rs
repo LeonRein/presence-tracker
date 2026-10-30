@@ -66,7 +66,6 @@ pub struct World {
 /// What the Python tracker of 0.38.1 built (docs/rust-core.md 6): a world given as arrays, for the core's
 /// tests (their fixtures of the Python build and the small test worlds).
 #[derive(Debug)]
-#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct WorldExport {
     pub params: Params,
     pub shapes: Shapes,
@@ -83,7 +82,6 @@ pub struct WorldExport {
 /// A sensor as the Python tracker built it: where it is, where its sight lines start, its sight per
 /// cell and how well it can test a person per tile.
 #[derive(Debug)]
-#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct SensorExport {
     pub at: Point,
     pub origin: Point,
@@ -95,19 +93,17 @@ pub struct SensorExport {
 #[cfg(test)]
 /// A sensor's LD2410C as the Python tracker built it (LdSight with its line of sight per cell).
 #[derive(Debug)]
-#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct LdExport {
     pub axis: Point,
     pub dh2: f64,
     pub los: Vec<f64>,
-    pub view: Option<Vec<f64>>,
     pub tiles: LdTiles,
 }
 
 #[cfg(test)]
 impl WorldExport {
     /// Whether the export fits together: the model's numbers, the arrays' lengths, the indices in
-    /// range, each cell's room one of the rooms of a sensor's view (Err names what does not).
+    /// range (Err names what does not).
     pub fn check(&self) -> Result<(), String> {
         self.params.validate().map_err(|e| e.to_string())?;
         let cells = self.raster.nx * self.raster.ny;
@@ -167,11 +163,7 @@ impl WorldExport {
                 && ld.los.len() == cells
                 && below(&tiles.idx, n)
                 && tiles.still.len() == tiles.idx.len()
-                && tiles.walk.len() == tiles.idx.len()
-                && ld
-                    .view
-                    .as_ref()
-                    .is_none_or(|v| self.rooms.iter().all(|&x| (x as usize) < v.len()));
+                && tiles.walk.len() == tiles.idx.len();
             if !ok {
                 bad.push(format!("sensor {si}"));
             }
@@ -205,7 +197,6 @@ impl World {
             plan: &plan,
             raster,
             labels: &labels,
-            rooms: &rooms,
             walls: &walls,
             tiles: &tiles,
         };
@@ -274,8 +265,6 @@ impl World {
                     axis: sensor.ld.axis,
                     dh2: sensor.ld.dh2,
                     los: Grid::new(raster, sensor.ld.los),
-                    // the export's view has a last entry for no room
-                    view: sensor.ld.view.map(|v| v[..observed].to_vec()),
                     tiles: sensor.ld.tiles,
                 };
                 (s, ld)

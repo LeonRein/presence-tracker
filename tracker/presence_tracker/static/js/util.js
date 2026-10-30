@@ -90,9 +90,6 @@ export function uid(prefix = 'z') {
   return prefix + Math.random().toString(36).slice(2, 8);
 }
 
-// a share in percent; just under 1 with a decimal, so that it does not read as all of it
-export const sharePct = x => `${x < 1 && x >= 0.995 ? fmt(100 * x, 1) : Math.round(100 * x)}\u00a0%`;
-
 export function fmt(v, digits = 2) {
   return Number.isFinite(v) ? v.toFixed(digits).replace('.', ',') : '–';
 }
@@ -156,8 +153,6 @@ const SENTENCES = {
   'zone|polygon_corners': 'Zone {name}: eine Fläche braucht mindestens drei Eckpunkte.',
   'zone|no_centre': 'Zone {name}: ein Kreis braucht einen Mittelpunkt.',
   'zone|not_at_least_0': 'Zone {name}: Radius ist keine Zahl ≥ 0.',
-  'ld_view|not_an_object': 'Blick des LD2410C ist kein Objekt.',
-  'ld_view|not_at_least_0': 'Blick des LD2410C {name}: keine Zahl ≥ 0 ({value}).',
 };
 const WHERE = { threshold: 'Raum {name}: ', sensor: 'Sensor {name}: ' };
 
@@ -275,14 +270,12 @@ const REASONS = {
 export const reasonText = r => REASONS[r.kind]?.(r) ?? r.kind;
 
 // What a save of another geometry (a sensor's place or view, the walls, doors, zones; the server's "discarded":
-// the calibration's measurements and the room pairs of the LD2410Cs' measured view) discarded, as a sentence;
-// '' for nothing
+// the calibration's measurements) discarded, as a sentence; '' for nothing
 export function discardedText(d) {
   if (!d) return '';
   const n = d.calibration.toLocaleString('de-DE');
-  const view = d.ld_view ? `, gemessener Blick der LD2410C (${d.ld_view} ${d.ld_view === 1 ? 'Raumpaar' : 'Raumpaare'})` : '';
   return `Sensorlage oder Grundriss geändert, verworfen: ${n} Kalibriermessungen aller Sensoren, alles Gelernte `
-    + `(Geisterkarte, LD2410C-Hintergrund, Zielkarte)${view}.`;
+    + '(Geisterkarte, LD2410C-Hintergrund, Zielkarte).';
 }
 
 export function toast(text, ms = 2500) {

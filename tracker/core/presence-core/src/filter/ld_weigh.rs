@@ -169,7 +169,7 @@ fn tile_points(world: &World, ld: &LdSight, densities: &Densities, amp: &[f64], 
 /// part gone through a door as a density.
 fn mixture_points(world: &World, ld: &LdSight, densities: &Densities, amp: &[f64], mix: &Mixture) -> Points {
     let w = mix.weights();
-    let place = |mode: usize| ld.place(mix.modes[mode].pos(), &world.rooms);
+    let place = |mode: usize| ld.place(mix.modes[mode].pos());
     let (ps, pw) = (place(STILL), place(WALK));
     let row_s = expected(&world.params, STILL, ps.angle, ps.slant, ps.sight);
     let row_w = expected(&world.params, WALK, pw.angle, pw.slant, pw.sight);

@@ -374,28 +374,13 @@ Das Modell, je Sensor:
   mal Strahl mal Sicht (Wände wie beim LD2450: der Anteil der Person, den der LD2450 im selben Gehäuse
   ohne Wand dazwischen sehen könnte, über ihren Versatz gemittelt wie in 4.1; bis 0.10.0 ja/nein). Ruhig zählt das Verzögerte: M ist, was die Personen
   zuletzt hineingaben (geglättet mit 2 s), w_m sein Anteil im Block; bewegt w_m = 0.
-- **Blick des LD2410C in einen anderen Raum** (gemessen; seit 0.40 eine Angabe des Hauses in `tracker.json`, `ld_view`, wie Wände und Türen; vorher `Model.ld_view`; seit 0.51 mit jeder gespeicherten Änderung von Sensorlage oder Grundriss geleert, 9 „Gelerntes und Geometrie“): Die Sicht durch eine
-  Türöffnung oder über den Raumteiler ist geometrisch, was dort ankommt, nicht: Je Paar „Sensor ← Raum“ trägt
-  die Sicht einen gemessenen Faktor v ≤ 1, S(x) = v_{s,Raum(x)} · Profil · Strahl · Sicht; im eigenen Raum und
-  wo nichts gemessen ist v = 1. Gemessen (`tools/ld2410/footprint.py`) mit Bezeichnungen, die nicht vom Filter
-  kommen: Sitzende oder Stehende, die der LD2450 ihres Raums als einziges Ziel misst (|v| ≤ 0,1 m/s, dieselbe
-  Spur ≥ 10 s davor und danach), während der beurteilte Sensor in seinem eigenen Raum ±30 s niemanden hat;
-  Gewinn = Ruhig-Energien (Ringe 2–8) über dem Leer-Pegel des Boards, summiert über die Zellen, in denen das
-  Profil ≥ 1 erwartet, durch die erwartete Summe; geteilt durch den Gewinn desselben LD2410C auf Personen im
-  eigenen Raum. Je Aufenthalt (Sekunden mit Lücken ≤ 10 s) der Median, die Aufenthalte nach Minuten gewichtet
-  (höchstens 5 je Aufenthalt, ihre Sekunden sind nicht unabhängig), ihr gewichteter Median (die Gewinne haben
-  schwere Ränder: andere bewegen sich, die Energien streuen) zur geometrischen Erwartung 1 gezogen mit einem
-  Prior, der 5 min Aufenthalte wiegt (Mittel des Posteriors, Schrumpfung wie Efron & Morris 1975), höchstens 1
-  (das Profil ist das der Sicht; eine Öffnung nimmt nur weg). Das ist eine Antwortkarte des Sensors, gelernt
-  aus Referenzdetektionen eines zweiten Sensors am selben Ort (wie die Signalkarte aus Referenzorten bei Bahl &
-  Padmanabhan 2000, RADAR) und ein ortsabhängiges Profil der Entdeckung, das man schätzt statt annimmt (Mahler,
-  Vo & Vo 2011: CPHD mit unbekanntem Entdeckungsprofil). Weil v die Sicht skaliert, gilt das Übrige von selbst:
-  Was mit v dem LD2410C nicht mehr als `FLOOR` gibt, ist außerhalb seines Blicks und wird nicht gewogen
-  (Faktor 1, neutral) statt „mit null Energie gesehen“, und die Beobachtbarkeit der Kacheln (5.5, Ablauf
-  ungesehener Masse) sinkt mit v. Die Tabelle ist derzeit vorab gerechnet (6.–10.10.); das Ziel ist sie online
-  zu lernen: dieselben Summen (gewichteter Median → laufende Quantilschätzung, Minuten) je Sensor und Raum,
-  wenn die Bedingung oben gilt, im lokalen Rahmen des Sensors gespeichert wie die gelernte Lage (Zweig
-  `learned-pose`). Je Raum statt je Kachel, weil die Daten nicht mehr tragen (Paare mit 0,6–105 min).
+- **Blick in einen anderen Raum:** Die Sicht durch eine Türöffnung oder über den Raumteiler ist die geometrische.
+  Was dem LD2410C nicht mehr als `FLOOR` gibt, ist außerhalb seines Blicks und wird nicht gewogen (Faktor 1, neutral)
+  statt „mit null Energie gesehen“. Ein gemessener Faktor je Paar „Sensor ← Raum“ (`ld_view`, 0.30–0.54) ist entfernt
+  (30.10.): `fast_eval` über die 94 h ohne ihn: Wahrheit 0,48 / 3,28 gleich, leere Nacht und leeres Haus 0, Bad-Fenster
+  gleich, Licht in 55,7 min anders, netto 4,3 min mehr „dunkel mit Person“ (Rauschboden 4–7 min). Er galt nur für die
+  Sensorlage der Messung, stand live seit 29.10. leer, und ein Wert je Wand erklärt die Raumpaare nicht besser als
+  undurchsichtige Wände; gemessen lässt eine Wand (alle Innenwände gemauert) etwa 4 % durch, sie bleiben undurchsichtig.
 - **Amplitude je Aufenthalt** (Swerling III: langsam, fest über einen Aufenthalt): Eine Stehende mit
   Spur gibt g·S ab, g ~ Gamma(6, 6) (gemessen β 5–16, s. o.). Der Filter führt den Posterior von g,
   nicht seine Momente: ein Gitter von 9 Zellen gleichen Abstands in log g zwischen dem 0,1-%- und dem
@@ -1110,7 +1095,7 @@ Näherungen, die man prüfen oder ersetzen kann:
 - **Gelerntes und Geometrie** (seit 0.51, Leon 29.10., ohne Ausnahme): Ändert der Nutzer Lage oder Sicht eines
   Sensors (Ort, Blickrichtung, Höhe, Spiegelung, Maßstab, Öffnungswinkel, Reichweite, platziert oder nicht) oder
   den Grundriss (Wände, Türen, Zonen) und speichert, werden alle Messungen der Kalibrierung, die Geisterkarte, der
-  LD2410C-Hintergrund, die Zielkarte (aller Sensoren) und der gemessene Blick des LD2410C (`ld_view`) verworfen;
+  LD2410C-Hintergrund und die Zielkarte (aller Sensoren) verworfen;
   ebenso, wenn ein Kalibrierergebnis übernommen wird (es ändert Richtung und Maßstab). Eine Quelle: der Schlüssel
   der Geometrie (`Config::geometry_key`), den jede Datei des Gesammelten trägt; passt er beim Start nicht, wird
   sie verworfen. Öffnungswinkel und Reichweite gehören dazu: Aus ihnen folgt die Sicht jedes Sensors je Kachel,
@@ -2690,7 +2675,7 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
     gedrehtes verteilt; einmalig).
   - *Grenze:* Die Wahrheit hat nach dem Wechsel nur die Fenster des 8.10. Ob ein anders montierter Sensor die
     Geister der anderen ändert (gegenseitige Störung), ist nicht gemessen.
-- **Blick des LD2410C je Raum** (12.10. früh; 4.3 „Blick des LD2410C in einen anderen Raum“). Statt eines
+- **Blick des LD2410C je Raum** (12.10. früh; 4.3 „Blick in einen anderen Raum“). Statt eines
   Faktors für alle Öffnungen je Paar Sensor ← Raum gemessen (`tools/ld2410/footprint.py`, Bezeichnungen vom
   LD2450 des Raums der Person, nie vom Filter). Gewinn des eigenen Raums (Bezug): Schlafzimmer 0,36, Bad 1,08,
   Arbeitszimmer 0,64, Flur 0,90, Wohnzimmer 1,75, Esszimmer 0,50, Küche 0,89. Blick (Rohwert → geschrumpft,
@@ -2720,6 +2705,7 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   51,5 von 5784 min von 0.29 ab. Die 23 min im leeren Schlafzimmer am 10.10. treten mit dem Anker nicht mehr auf.
   *Ergebnis:* übernommen in 0.30.0. Den Fall der Meldung 13.10. 21:46 (die zweite Person im Bad verloren: eine
   Echoquelle nimmt ihre Energie) löst der Blick nicht: Es gibt kein gemessenes Paar „Bad ← Flur“.
+  *Entfernt* 30.10. (4.3 „Blick in einen anderen Raum“).
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

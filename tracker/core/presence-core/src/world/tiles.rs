@@ -16,7 +16,6 @@ use crate::world::raster::{CELL, Raster, RoomGrid};
 /// A tile next to a door into a region or out of the house: as its small Gaussian (centre, spread
 /// per axis, area) with its rates of walking through each door.
 #[derive(Debug)]
-#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct DoorTile {
     pub center: Point,
     pub var: Point,
@@ -29,7 +28,6 @@ pub struct DoorTile {
 pub const POINT: f64 = 0.2;
 
 #[derive(Debug)]
-#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct Tiles {
     /// number of tiles
     pub n: usize,
@@ -66,20 +64,15 @@ pub struct Tiles {
     pub point_tile: Vec<usize>,
     pub point_count: Vec<f64>,
     /// per tile its observed room (None: in none)
-    #[cfg_attr(test, serde(default))]
     pub room: Vec<Option<RoomIdx>>,
     /// per tile the lower left corner of its square of SIZE m, which its room cuts (for the display)
-    #[cfg_attr(test, serde(default))]
     pub squares: Vec<Point>,
     /// R x A: per region the age distribution of a stay seen at a random time
-    #[cfg_attr(test, serde(default))]
     pub region_start: Vec<f64>,
     /// the generator of walking (n + R + 1)^2, [to][from], for walk_end
-    #[cfg_attr(test, serde(default))]
     pub generator: Vec<f64>,
     /// walk_end, filled once when it is first asked for (a OnceLock is set only once: the tiles stay
     /// as built)
-    #[cfg_attr(test, serde(skip))]
     pub walk_end: OnceLock<Vec<f64>>,
 }
 

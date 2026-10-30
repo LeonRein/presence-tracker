@@ -6,9 +6,11 @@
 use super::branch::{Category, Found, Frame};
 use super::densities::{DensityData, DensityId, Kind};
 use super::hyp::{Ghost, GroupId, Hyp, Owner};
-use super::mixture::{NewTrack, SegId, ghost_source};
+use super::mixture::{MixtureId, NewTrack, SegId, ghost_source};
 use super::tracks::TrackInfo;
 use super::*;
+use crate::ld2410::CELLS;
+use crate::ld2410::sensor::LdSensor;
 use crate::params::LostKind;
 use crate::sensors::SensorState;
 use crate::testing;
@@ -272,13 +274,9 @@ fn the_same_events_give_the_same_bits() {
     assert_eq!(first, second);
 }
 
-#[test]
-fn saving_the_people_changes_nothing() {
-    // people_state works on copies: reading a stored amplitude settles it, mixing in a
-    // part gone through a door does too (0.28: the live run went another way after every save)
-    let world = testing::flat();
-    let mut f = filter(&world, 1).0;
-    // a person with a track and a measured part gone through a door, its mixing deferred
+/// A filter with a person with a track and a measured part gone through a door, its mixing deferred.
+fn a_person_partly_through_a_door(world: &World) -> (Filter, MixtureId) {
+    let mut f = filter(world, 1).0;
     let world_shape = world.density_shape();
     f.set_flushed(1.0);
     let found = Found {
@@ -289,8 +287,7 @@ fn saving_the_people_changes_nothing() {
         },
         map_rate: 1.8e-5,
     };
-    f.branch_all(&world, &frame(1.0, &[SegId(1)]), &[found])
-        .expect("finite");
+    f.branch_all(world, &frame(1.0, &[SegId(1)]), &[found]).expect("finite");
     let objects = f.objects_mut();
     let person = objects
         .mixtures
@@ -302,7 +299,7 @@ fn saving_the_people_changes_nothing() {
         levels[world_shape.amp_row(k, 0)].fill(1.0);
         levels[world_shape.amp_row(k, world_shape.amps)].fill(0.0);
     }
-    let mut away = anywhere(&world, Kind::Person, 1.0);
+    let mut away = anywhere(world, Kind::Person, 1.0);
     away.amp = Some(super::densities::Amp {
         levels,
         keep: Some(vec![0.5; world_shape.levels * world_shape.tiles]),
@@ -311,6 +308,15 @@ fn saving_the_people_changes_nothing() {
     let mix = objects.mixtures.get_mut(person);
     (mix.a, mix.away) = (0.3, Some(away));
     f.check().expect("a person with a part gone through a door");
+    (f, person)
+}
+
+#[test]
+fn saving_the_people_changes_nothing() {
+    // people_state works on copies: reading a stored amplitude settles it, mixing in a
+    // part gone through a door does too (0.28: the live run went another way after every save)
+    let world = testing::flat();
+    let mut f = a_person_partly_through_a_door(&world).0;
     let before = snapshot(&f);
     let first = f.people_state(&world);
     assert_eq!(snapshot(&f), before);
@@ -323,6 +329,28 @@ fn saving_the_people_changes_nothing() {
             .iter()
             .any(|d| d.amp.as_ref().is_some_and(|a| a.keep.is_none()))
     );
+}
+
+#[test]
+fn the_ld2410c_weighs_a_track_and_the_part_gone_through_a_door_together() {
+    // somebody the LD2410C sees: the person's track and their measured part through the door are one object,
+    // weighed by the same energies, and the share of that part moves with them
+    let world = testing::flat();
+    let (mut f, person) = a_person_partly_through_a_door(&world);
+    let away = f.objects().mixtures().get(person).away.expect("the part");
+    let before = f.objects().densities().data(away).still;
+    let mut sensor = LdSensor::new(&world.params);
+    let b = [5.0; CELLS];
+    let e: [f64; CELLS] = std::array::from_fn(|c| (b[c] + world.ld[0].tiles.still[0][c]).round());
+    for _ in 0..12 {
+        sensor.stats.add(&e, 0.089, false);
+    }
+    let learned = f.ld_weigh(&world, 0, &mut sensor, &b, 1.0 / 10800.0).expect("finite");
+    assert!(learned.is_some());
+    let a = f.objects().mixtures().get(person).a;
+    assert!(a > 0.0 && a < 1.0 && a != 0.3, "{a}");
+    assert_ne!(f.objects().densities().data(away).still, before, "the part is weighed");
+    f.check().expect("after weighing");
 }
 
 #[test]

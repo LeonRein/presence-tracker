@@ -135,7 +135,6 @@ def test_what_was_learned_comes_whole_from_the_core_and_changes_nothing(tmp_path
         for gates in (bg["now"], bg["anchor"]):
             assert len(gates["moving"]) == 9 and gates["still"][:2] == [None, None] and None not in gates["still"][2:]
         assert bg["hours"] == bg["anchor_hours"] == 0 and bg["echo_rate"] == bg["echo_prior"] > 0
-        assert s["ld_view"] is None  # measured, not learned: nothing measured here
     d = got["destinations"]
     assert d["walks"] == 0 and d["cells"] == [] and d["outcomes"][0] == "wohn" and d["outcomes"][-2:] == ["outside", "stays"]
     assert d["cell"] == 0.3 and d["forget_hours"] == 14 * 24

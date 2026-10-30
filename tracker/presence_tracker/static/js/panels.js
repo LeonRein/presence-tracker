@@ -1,7 +1,7 @@
 // Side panel per tab.
 import { api, coverageNow, edit, emit, heldBadges, learnedSelected, onWall, refreshCoverage, savePref, saveNow, select, sensorById, sensorColor, setTool, state } from './store.js';
 import { autoFitImage, deleteSelection, fitFromCalibration } from './tools.js';
-import { LABELS, LAYER_LIMITS, REPORT_KINDS, ZONE_KINDS, bindNumber, dist, errorText, esc, fmt, h, onSegment, outcomeColor, personColor, reasonText, regionOfRoom, roomsWithSensor, sharePct, toast, uid, zoneArea } from './util.js';
+import { LABELS, LAYER_LIMITS, REPORT_KINDS, ZONE_KINDS, bindNumber, dist, errorText, esc, fmt, h, onSegment, outcomeColor, personColor, reasonText, regionOfRoom, roomsWithSensor, toast, uid, zoneArea } from './util.js';
 import { loadSize } from './view.js';
 
 let skipRender = false;
@@ -838,7 +838,7 @@ function calibrationResult(el, r) {
 
 // What the running model learned (the core's, api/learned: fetched when the tab opens and on "Aktualisieren"), one
 // layer at a time on the map for all sensors (view.js _learned); per layer what it is for and its numbers here
-const LEARNED_LAYERS = { ghosts: 'Geister', background: 'LD2410C-Hintergrund', destinations: 'Ziele', ld_view: 'Blick des LD2410C' };
+const LEARNED_LAYERS = { ghosts: 'Geister', background: 'LD2410C-Hintergrund', destinations: 'Ziele' };
 
 async function refreshLearned() {
   try {
@@ -920,14 +920,6 @@ function learnedPanel(panel) {
         <dl class="kv"><dt>gezählt</dt><dd>${d.cells.length ? `${fmt(d.walks, 0)} Gänge` : 'noch keine Gänge'}; Älteres verblasst (Zeitkonstante ${span(d.forget_hours)})</dd>
         <dt>am meisten</dt><dd>${fmt(Math.max(0, ...d.cells.map(c => c.walks)), 1)} Gänge durch eine Zelle in ihrer häufigsten Richtung</dd></dl>`;
     },
-    ld_view: () => `<p class="note">Wie viel der LD2410C eines Sensors von einer Person in einem anderen Raum mitbekommt, als Anteil dessen, was Sichtlinie und Wände erwarten lassen. Gemessen (tools/ld2410/footprint.py aus Aufnahmen), nicht gelernt; steht in tracker.json unter ld_view. Eine gespeicherte Änderung von Sensorlage oder Grundriss leert ihn. Je Sensor die Räume, die er weniger als ganz sieht; alle anderen mit Anteil 1. Ist ein Sensor gewählt, zeigt die Karte seine Räume nach dem Anteil.</p>
-      <p class="note">${choose}</p>
-      <div class="list">${ids.map(id => {
-        const v = L.sensors[id].ld_view;
-        const less = Object.entries(v || {}).filter(([, x]) => x < 1).sort((a, b) => a[1] - b[1]);
-        return row(id, `<div class="meta sub" style="white-space:normal">${!v ? 'nicht gemessen (Anteil 1)'
-          : less.length ? less.map(([room, x]) => `${esc(placeName(room))} ${sharePct(x)}`).join(', ') : 'alle Räume ganz (Anteil 1)'}</div>`);
-      }).join('')}</div>`,
   }[layer]();
   for (const r of text.querySelectorAll('[data-sid]')) {
     clickable(r, () => select(r.dataset.sid === sel ? null : { kind: 'sensor', id: r.dataset.sid }));

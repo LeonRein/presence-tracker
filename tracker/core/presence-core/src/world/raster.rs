@@ -9,7 +9,6 @@ use crate::plan::RoomIdx;
 pub const CELL: f64 = 0.1;
 
 #[derive(Debug, Clone, Copy)]
-#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct Raster {
     pub x0: f64,
     pub y0: f64,

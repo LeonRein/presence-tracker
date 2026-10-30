@@ -27,9 +27,9 @@ pub(crate) fn config_error(e: ConfigError) -> PyErr {
 }
 
 /// A problem of a configuration, for the shell to word: part ("config", "params", "threshold", "sensor",
-/// "wall", "door", "zone", "ld_view"), name (the sensor's or zone's name, else its id; the room
-/// of a threshold, the wall's number, the pair of ld_view), field, reason, limits ((low, high, low
-/// excluded, high excluded)) and the value given (or the id twice, the most allowed, why unreadable).
+/// "wall", "door", "zone"), name (the sensor's or zone's name, else its id; the room of a threshold,
+/// the wall's number), field, reason, limits ((low, high, low excluded, high excluded)) and the value given
+/// (or the id twice, the most allowed, why unreadable).
 #[pyclass(module = "presence_core", frozen)]
 pub struct ConfigProblem(ConfigError);
 
@@ -45,7 +45,6 @@ impl ConfigProblem {
             Part::Wall(_) => "wall",
             Part::Door => "door",
             Part::Zone(_) => "zone",
-            Part::LdView(_) => "ld_view",
         }
     }
 
@@ -53,7 +52,7 @@ impl ConfigProblem {
     fn name(&self) -> Option<String> {
         match &self.0.part {
             Part::Threshold(room) => Some(room.clone()),
-            Part::Sensor(name) | Part::Zone(name) | Part::LdView(name) => name.clone(),
+            Part::Sensor(name) | Part::Zone(name) => name.clone(),
             Part::Wall(k) => Some(k.to_string()),
             Part::Config | Part::Params | Part::Door => None,
         }
@@ -192,13 +191,4 @@ pub fn changes(old: &str, new: &str) -> PyResult<(&'static str, Vec<String>)> {
 #[pyfunction]
 pub fn geometry_key(json: &str) -> PyResult<String> {
     Ok(config_from(json)?.geometry_key())
-}
-
-/// The configuration (JSON, the canonical form) without what was measured under its geometry: the LD2410Cs' view
-/// of the other rooms (presence_core::config::forget_measured), as JSON, and how many room pairs of it went.
-/// ConfigError if it is no JSON.
-#[pyfunction]
-pub fn forget_measured(json: &str) -> PyResult<(String, usize)> {
-    let (value, gone) = config::forget_measured(json).map_err(config_error)?;
-    Ok((value.to_string(), gone))
 }

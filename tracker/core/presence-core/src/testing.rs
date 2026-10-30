@@ -57,9 +57,7 @@ use crate::params::{Params, Shapes};
 use crate::params::{STILL, WALK};
 use crate::plan::RoomIdx;
 use crate::vmath::py_hypot;
-use crate::world::{
-    CELL, Grid, LdExport, LdPlace, LdSight, LdTiles, Raster, RoomGrid, SensorExport, Tiles, World, WorldExport,
-};
+use crate::world::{CELL, Grid, LdExport, LdPlace, LdSight, LdTiles, Raster, SensorExport, Tiles, World, WorldExport};
 
 /// What a person at each tile's centre puts into an LD2410C at `at` looking along `axis` (1.5 m
 /// above a person's height: dh2 0.64), the tiles it sees.
@@ -71,13 +69,11 @@ fn ld_tiles(raster: Raster, at: Point, axis: Point, centers: &[Point]) -> LdTile
         axis,
         dh2: 0.64,
         los: everywhere(1.0),
-        view: None,
         tiles: LdTiles::default(),
     };
-    let rooms = RoomGrid::new(raster, vec![Some(RoomIdx(0)); raster.cells()]);
     let mut out = LdTiles::default();
     for (c, &q) in centers.iter().enumerate() {
-        let LdPlace { angle, slant, sight } = ld.place(q, &rooms);
+        let LdPlace { angle, slant, sight } = ld.place(q);
         let (still, walk) = (
             expected(&p, STILL, angle, slant, sight),
             expected(&p, WALK, angle, slant, sight),
@@ -156,22 +152,12 @@ pub fn config_json(sensors: &[(&str, &str, Point, f64)], zones: &str, walls: &st
         .collect::<Vec<_>>()
         .join(", ");
     let params = params_json();
-    format!(
-        r#"{{"sensors": [{sensors}], "zones": {zones}, "walls": {walls}, "doors": {doors}, "ld_view": {{}}, "params": {params}}}"#
-    )
+    format!(r#"{{"sensors": [{sensors}], "zones": {zones}, "walls": {walls}, "doors": {doors}, "params": {params}}}"#)
 }
 
 /// A wall (JSON) from a to b.
 pub fn wall(a: Point, b: Point) -> String {
     format!(r#"{{"points": [{a:?}, {b:?}], "kind": "wall"}}"#)
-}
-
-/// A configuration of these sensors (ids s0, s1, ...), placed, and nothing else (for worlds of
-/// fixtures: the outputs count nobody in a room).
-pub fn config_of_sensors(sensors: usize) -> Config {
-    let ids: Vec<String> = (0..sensors).map(|si| format!("s{si}")).collect();
-    let specs: Vec<(&str, &str, Point, f64)> = ids.iter().map(|id| (id.as_str(), "", [0.0, 0.0], 0.0)).collect();
-    config(&specs, "[]", "[]", "[]")
 }
 
 /// The configuration of the flat test world: the room "wohn" (6 x 5 m) with walls around, an area
@@ -307,7 +293,6 @@ pub fn flat_export() -> WorldExport {
                     axis,
                     dh2: 0.8f64.powi(2),
                     los: sight.clone(), // as the LD2450's
-                    view: None,
                     tiles: ld_tiles(raster, at, axis, &tile_centers),
                 },
             }

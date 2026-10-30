@@ -264,13 +264,10 @@ pub struct GhostsShown {
 pub struct SensorLearned {
     pub ghosts: GhostsShown,
     pub background: BackgroundShown,
-    /// per observed room (id) the share of its geometric sight the LD2410C gets from a person there: measured
-    /// (the configuration's ld_view), not learned; None: nothing measured for this sensor (all of it)
-    pub ld_view: Option<BTreeMap<String, f64>>,
 }
 
-/// What the running model learned, for the web UI: per sensor in use its ghost map, its LD2410C's background
-/// and its measured view; the destination map ("Ziel": an output only). The tiles in a room (lower left
+/// What the running model learned, for the web UI: per sensor in use its ghost map and its LD2410C's background;
+/// the destination map ("Ziel": an output only). The tiles in a room (lower left
 /// corner of the square of side `size`, the room, which cuts it) carry the ghost map's rates.
 #[derive(Debug, Serialize)]
 pub struct LearnedShown {
@@ -310,17 +307,7 @@ pub fn learned(world: &World, learned: &Learned) -> LearnedShown {
                 echo_rate: bg.rate(si, p) * 3600.0,
                 echo_prior: p.ld_echo_rate * 3600.0,
             };
-            let ld_view = world.ld[si].view.as_ref().map(|v| {
-                (0..plan.rooms.len())
-                    .map(|k| (plan.room(RoomIdx(k)).id.clone(), v[k]))
-                    .collect()
-            });
-            let shown = SensorLearned {
-                ghosts,
-                background,
-                ld_view,
-            };
-            (plan.sensors[si].id.clone(), shown)
+            (plan.sensors[si].id.clone(), SensorLearned { ghosts, background })
         })
         .collect();
     LearnedShown {
@@ -436,8 +423,8 @@ mod tests {
             (0.0, 0.0, 9, 9)
         );
         assert!((bg.echo_rate - bg.echo_prior).abs() < 1e-12);
-        // nothing measured of the view, no walks
-        assert!(s.ld_view.is_none() && shown.destinations.cells.is_empty() && shown.destinations.walks == 0.0);
+        // no walks
+        assert!(shown.destinations.cells.is_empty() && shown.destinations.walks == 0.0);
     }
 
     #[test]

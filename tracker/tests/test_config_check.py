@@ -130,7 +130,6 @@ def _area(**kw):
     (lambda d: d["zones"].append(_area(points=[[1, 1]])), "rect_corners"),
     (lambda d: d["zones"].append(_area(id=None)), "no_id"),
     (lambda d: d["zones"].append(dict(d["zones"][0])), "id_twice"),
-    (lambda d: d.update(ld_view={"a<-b": -0.5}), "not_at_least_0"),
 ])
 def test_what_the_model_cannot_run_with_is_refused_with_400(app, tmp_path, change, reason):
     """Until 0.18 a one-point wall gave a 500, and a circle without a center was saved: every tick
@@ -205,13 +204,13 @@ def _sensor(**kw):
 
 # every reason the core gives (ConfigProblem.reason), each with a configuration that has it
 _PROBLEMS = {
-    "not_an_object": [5, {"params": 5}, {"params": {"target_thresholds": 5}}, {"zones": [5]}, {"ld_view": 5}],
+    "not_an_object": [5, {"params": 5}, {"params": {"target_thresholds": 5}}, {"zones": [5]}],
     "not_a_list": [{"zones": 5}],
     "empty": [{"params": {"light_cost": None}}],
     "not_a_number": [{"params": {"light_cost": "x"}}],
     "out_of_range": [{"params": {"light_cost": 0}}, {"params": {"target_thresholds": {"wohn": 1}}},
                      {"sensors": [_sensor(range=50)]}, {"doors": [{"x": 1, "y": 1, "width": 0}]}],
-    "not_at_least_0": [{"zones": [_area(radius=-1)]}, {"ld_view": {"a<-b": "x"}}],
+    "not_at_least_0": [{"zones": [_area(radius=-1)]}],
     "not_a_bool": [{"sensors": [_sensor(mirror=1)]}],
     "no_id": [{"sensors": [{"name": "x"}]}, {"zones": [_area(id=None)]}],
     "id_chars": [{"sensors": [_sensor(id="a#b")]}],

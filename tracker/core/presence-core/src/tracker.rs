@@ -896,39 +896,6 @@ impl Tracker {
         self.filter.hyp_weights()
     }
 
-    /// What the LD2410C of sensor si gathered (the reference test sets it).
-    #[cfg(test)]
-    pub(crate) fn set_ld_collect(&mut self, si: usize, collect: LdCollect) {
-        self.sensors[si].ld.collect = collect;
-    }
-
-    /// The sensors whose LD2410C has gathered long enough to be weighed (the reference test).
-    #[cfg(test)]
-    pub(crate) fn ld_due(&self) -> Vec<usize> {
-        let every = self.world.params.ld_every;
-        (0..self.sensors.len())
-            .filter(|&si| self.sensors[si].ld.due(every))
-            .collect()
-    }
-
-    /// The weighing of sensor si's LD2410C alone, with a given background and echo rate (the
-    /// reference test against Python's numbers).
-    #[cfg(test)]
-    pub(crate) fn weigh_ld_with(
-        &mut self,
-        si: usize,
-        b: &[f64; crate::ld2410::CELLS],
-        rate: f64,
-    ) -> Result<Option<crate::filter::LdLearn>, NotFinite> {
-        self.filter.ld_weigh(&self.world, si, &mut self.sensors[si].ld, b, rate)
-    }
-
-    /// The hypotheses from a mirror of them (tests: Filter::load).
-    #[cfg(test)]
-    pub fn load(&mut self, state: crate::filter::mirror::MirrorState) -> Result<(), String> {
-        self.filter.load(state)
-    }
-
     /// Spoils every hypothesis' weight (NaN): what the app does then (the shell's test).
     #[cfg(any(test, feature = "testing"))]
     pub fn spoil_weights_for_test(&mut self) {

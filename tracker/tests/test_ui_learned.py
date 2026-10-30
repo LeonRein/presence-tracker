@@ -91,15 +91,6 @@ def test_the_learned_layers_are_drawn_from_the_cores_numbers_only(tmp_path):
     assert opacities(svg)[0] < 0.3  # as strong as its share (0.1)
     assert "<rect" not in draw(learned, config, "destinations", colors=False)
 
-    # the measured view: none (Anteil 1) draws nothing; a measured one per room as sent, for the chosen sensor only
-    assert draw(learned, config, "ld_view", "a") == ""
-    learned["sensors"]["a"]["ld_view"] = {"wohn": 0.25}
-    svg = draw(learned, config, "ld_view", "a")
-    assert svg.count("<polygon") == 1 and "25 %" in svg
-    assert draw(learned, config, "ld_view") == "" == draw(learned, config, "ld_view", "b")
-    learned["sensors"]["a"]["ld_view"] = {"wohn": 0.998}  # not all of it: not "100 %"
-    assert "99,8 %" in draw(learned, config, "ld_view", "a")
-
 
 def test_the_learned_background_is_drawn_per_gate_of_the_cores_length(tmp_path):
     b = an_app(tmp_path).tracker.learned_view()["sensors"]["a"]["background"]

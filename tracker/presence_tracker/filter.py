@@ -454,7 +454,7 @@ class Tracker:
     def learned_view(self) -> dict:
         """What the running model learned, for the web UI (the core's, computed when asked): per sensor in use its
         ghost map per tile (ghost tracks per m^2 and hour, None where it does not watch), its LD2410C's background
-        per gate and the measured view of the rooms; the destination map per cell. Rounded for the web UI:
+        per gate; the destination map per cell. Rounded for the web UI:
         positions to mm, rates and energies to two or four places, shares to three."""
         v = json.loads(self.core.learned_view())
         r = round
@@ -469,8 +469,6 @@ class Tracker:
                 gates["still"] = [None if x is None else r(x, 2) for x in gates["still"]]
             b.update({k: r(b[k], 4) for k in ("hours", "forget_hours", "anchor_hours", "anchor_forget_hours",
                                               "echo_rate", "echo_prior")})
-            if s["ld_view"] is not None:
-                s["ld_view"] = {k: r(x, 3) for k, x in s["ld_view"].items()}
         d = v["destinations"]
         d.update(cell=r(d["cell"], 3), walks=r(d["walks"], 2), forget_hours=r(d["forget_hours"], 2))
         for c in d["cells"]:
