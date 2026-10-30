@@ -21,13 +21,12 @@ use crate::learn::ghost_map::GhostMap;
 use crate::learn::pauses::Pauses;
 use crate::learn::{Learned, LearnedError};
 use crate::outputs::{
-    self, Cloud, Distributions, Entering, HouseNumbers, OutputCache, Person, RegionShown, Source, ZoneNumbers,
-    ZoneState,
+    self, Cloud, Distributions, Entering, HouseNumbers, Occupied, OutputCache, Person, ZoneNumbers, ZoneState,
 };
 use crate::params::{FRAME, IDLE, OutputParams};
 use crate::plan::Place;
-use crate::room_seen::RoomSeen;
 use crate::sensors::{LdShown, SensorFrame, SensorSet, SensorState};
+use crate::silent::Heard;
 use crate::vmath::py_hypot;
 use crate::world::World;
 
@@ -175,8 +174,9 @@ pub struct Tracker {
     world: World,
     filter: Filter,
     sensors: Vec<SensorState>,
-    seen: RoomSeen,
+    heard: Heard,
     outputs: OutputCache,
+    occupied: Occupied,
     seg_ids: SegIds,
     clock: Clock,
     learned: Learned,
@@ -193,8 +193,9 @@ impl Tracker {
             world,
             filter,
             sensors,
-            seen: RoomSeen::default(),
+            heard: Heard::default(),
             outputs: OutputCache::default(),
+            occupied: Occupied::default(),
             seg_ids: SegIds::default(),
             clock: Clock::default(),
             pauses: Pauses::default(),
@@ -249,7 +250,6 @@ impl Tracker {
         for (s, plan) in self.sensors.iter_mut().zip(&self.world.plan.sensors) {
             s.active = plan.in_use;
         }
-        self.seen.follow(&self.world.plan);
         self.learned.follow(&self.world);
         self.filter.void_cache();
         self.outputs = OutputCache::default();
@@ -263,12 +263,11 @@ impl Tracker {
             && new.sights.len() == old.sights.len()
     }
 
-    /// What goes on from an earlier tracker (the shell's rebuild): what its rooms' own LD2450s saw,
+    /// What goes on from an earlier tracker (the shell's rebuild): when its sensors were heard,
     /// the ids of new tracks, the model's time and evidence, what was learned (for this world) and the
     /// pauses, what its sensors' LD2410Cs gathered (by sensor id).
     pub fn adopt(&mut self, old: &mut Tracker) {
-        self.seen = std::mem::take(&mut old.seen);
-        self.seen.follow(&self.world.plan);
+        self.heard = std::mem::take(&mut old.heard);
         self.seg_ids = old.seg_ids;
         self.clock = old.clock;
         self.filter.set_loglik(old.filter.loglik());
@@ -392,7 +391,7 @@ impl Tracker {
         if self.clock.start.is_none() {
             self.start_at(t);
         }
-        self.seen.heard_from(id, t); // its room is not silent (output only)
+        self.heard.heard_from(id, t); // its room is not silent (output only)
         let Some(si) = self.world.plan.sensors.iter().position(|s| s.id == id) else {
             return Ok(Vec::new());
         };
@@ -427,8 +426,7 @@ impl Tracker {
     }
 
     /// Reads a frame of sensor si: its targets in the house frame, what they say about its LD2450's
-    /// tracks; its room is seen if it measured somebody in it (output only). Kept as the sensor's last
-    /// frame for the steps of its evidence.
+    /// tracks. Kept as the sensor's last frame for the steps of its evidence.
     fn read(&mut self, si: usize, t: f64, frame: &frames::Frame) {
         let detections = frames::detections(&self.world, si, frame);
         let seen: Vec<Sighting> = detections
@@ -447,8 +445,6 @@ impl Tracker {
             events,
             ld2410: frame.ld2410,
         };
-        let measured: Vec<Point> = sensor.frame.measured().map(|d| d.pos).collect();
-        self.seen.frame(&self.world.plan, si, t, &measured);
     }
 
     /// Time goes on to t (Tracker.step, MODEL.md 3): everybody is moved and weighed by the tracks not
@@ -878,11 +874,9 @@ impl Tracker {
         self.pauses.paused(t0, t1)
     }
 
-    /// Per region without a sensor its most probable number of people and P(somebody there); once per
-    /// epoch.
-    pub fn regions_shown(&mut self) -> Vec<RegionShown> {
-        let regions = self.world.plan.regions.len();
-        outputs::regions_shown(self.place_distribution(), regions)
+    /// Per region without a sensor the people of the display in it.
+    pub fn regions_shown(&mut self) -> Vec<usize> {
+        outputs::regions_shown(&self.persons(), self.world.plan.regions.len())
     }
 
     // ------------------------------------------------------------------ the filter's bookkeeping
@@ -970,40 +964,27 @@ impl Tracker {
             .targets(filter, world, learned.destinations.map())
     }
 
-    /// Per observed room whether it is occupied at `now` and by what (Tracker.occupancy): the
-    /// filter by the cost of the light, or its own LD2450 within the last seen_hold s.
-    pub fn occupancy(&mut self, now: f64) -> Vec<Option<Source>> {
-        let (above, hold) = (self.world.outputs.occupied_above(), self.world.outputs.seen_hold);
-        let seen = self.seen.seen(&self.world.plan, now, hold);
-        outputs::occupancy(self.count_distribution(), &seen, above)
+    /// Per observed room whether it is on (Tracker.occupancy, MODEL.md 6).
+    pub fn occupancy(&mut self) -> Vec<bool> {
+        self.persons();
+        self.occupied.rooms(self.world.plan.rooms.len())
     }
 
-    /// The known people of the most probable hypothesis for the display (Tracker.persons).
-    pub fn persons(&self) -> Vec<Person> {
-        outputs::persons(&self.filter, &self.world)
-    }
-
-    /// The people in the observed rooms (MODEL.md 6): their most probable number (of the distribution over the
-    /// whole observed area) and of the people shown in an observed room how many move and how many do not
-    /// (each at most the number).
-    pub fn observed_total(&mut self) -> HouseNumbers {
-        let count = outputs::argmax(self.count_distribution().last().map_or(&[1.0][..], Vec::as_slice));
-        let mut total = HouseNumbers {
-            count,
-            ..HouseNumbers::default()
-        };
-        for p in self.persons() {
-            if p.shown.is_some_and(|s| self.world.plan.room_at(s.at).is_some()) {
-                if p.moving() {
-                    total.moving += 1;
-                } else {
-                    total.still += 1;
-                }
-            }
-        }
-        total.moving = total.moving.min(total.count);
-        total.still = total.still.min(total.count - total.moving);
-        total
+    /// The known people of the most probable hypothesis for the display (Tracker.persons), who counts by the
+    /// rule of the rooms (Occupied).
+    pub fn persons(&mut self) -> Vec<Person> {
+        let Self {
+            outputs,
+            filter,
+            world,
+            occupied,
+            ..
+        } = self;
+        let in_rooms = outputs.at(filter.epoch()).in_rooms(filter, world);
+        let mut persons = outputs::persons(filter, world, in_rooms);
+        let (rooms, regions) = (world.plan.rooms.len(), world.plan.regions.len());
+        occupied.update(&mut persons, rooms + regions, &world.outputs);
+        persons
     }
 
     /// Where they may be, for the map.
@@ -1014,9 +995,9 @@ impl Tracker {
     /// The numbers of the zones of the home and of the house at `now` (Tracker.zone_states); `start`
     /// the model's (None: not started, nothing silent).
     pub fn zone_numbers(&mut self, now: f64) -> (Vec<ZoneNumbers>, HouseNumbers) {
-        let occupancy = self.occupancy(now);
+        let persons = self.persons();
         let silent = self.silent(now);
-        outputs::zones_of(&mut self.outputs, &self.filter, &self.world, &occupancy, &silent)
+        outputs::zones_of(&mut self.outputs, &self.filter, &self.world, &persons, &silent)
     }
 
     /// The zones' states at `now` (Tracker.zone_states; outputs::zone_states): the numbers, then "Ziel".
@@ -1035,27 +1016,22 @@ impl Tracker {
         outputs::zone_states(world, &numbers, &house, targets)
     }
 
-    /// What the rooms' own LD2450s saw (RoomSeen).
-    pub fn seen(&self) -> &RoomSeen {
-        &self.seen
-    }
-
     /// Per observed room whether its own sensors all went silent (the world's silent_after), counted
     /// from the start for one that sent nothing.
     pub fn silent(&self, now: f64) -> Vec<bool> {
-        self.seen
+        self.heard
             .silent(&self.world.plan, now, self.clock.start, self.world.outputs.silent_after)
     }
 
     /// Whether the sensor with this id sent a frame lately (the world's silent_after).
     pub fn online(&self, id: &str, now: f64) -> bool {
-        self.seen
+        self.heard
             .online(id, now, self.clock.start, self.world.outputs.silent_after)
     }
 
     /// Per observed room whether it has an own sensor in use.
     pub fn watched(&self) -> Vec<bool> {
-        RoomSeen::watched(&self.world.plan)
+        Heard::watched(&self.world.plan)
     }
 }
 
@@ -1198,7 +1174,7 @@ mod frame_tests {
     }
 
     #[test]
-    fn a_frame_starts_the_model_is_read_and_its_room_seen() {
+    fn a_frame_starts_the_model_and_is_read() {
         let mut tr = Tracker::new(testing::flat());
         tr.reset_people(Some(&[Start::Anywhere])).expect("a start");
         assert_eq!(
@@ -1218,7 +1194,6 @@ mod frame_tests {
             "the steps took them out"
         );
         assert_eq!(tr.last_frame(0), 1.5);
-        assert_eq!(tr.seen().seen(&tr.world().plan, 1.5, 10.0), vec![true]);
     }
 
     #[test]

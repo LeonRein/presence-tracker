@@ -35,14 +35,11 @@ class ZoneState:
     target_distance: float | None = None  # m from them to the door
     target_eta: float | None = None  # s at their speed
     target_person: int | None = None  # their id in the display
-    probability: float | None = None  # P(somebody is in there), where the filter knows it
-    decided: bool | None = None  # occupied by the decision (MODEL.md 6): the probability, or the room's own LD2450
-    source: str | None = None  # what decided "occupied": "filter", "ld2450" (the core's room_seen.rs) or "beide"
-    # False: the room's own sensors all went silent (the core's room_seen.rs), Home Assistant gets "unavailable"
+    probability: float | None = None  # P(somebody is in there) over all hypotheses, where the filter knows it
+    # False: the room's own sensors all went silent (the core's silent.rs), Home Assistant gets "unavailable"
     # (ha.py); not in to_dict, the state goes out as always
     available: bool = True
-    occupied: bool = False  # as decided; without a decision (areas, the house) somebody counted there
-    c_occupied: float | None = None  # the decision's threshold of probability, where one is made
+    occupied: bool = False  # somebody counted there (MODEL.md 6)
     target_source: str | None = None  # "Ziel": "karte" (the learned map decided) or "bewegung" (the motion)
 
     def finite(self) -> bool:
@@ -59,8 +56,7 @@ class ZoneState:
         tgt = self.p_target is not None and (self.target or self.p_target >= 0.5 * (self.c_target or 0.0)
                                               and self.p_target >= 0.01)
         return {"count": self.count, "occupied": self.occupied,
-                "source": self.source if self.occupied else None, "moving": self.moving,
-                "still": self.still, "approaching": self.approaching,
+                "moving": self.moving, "still": self.still, "approaching": self.approaching,
                 "p_enter": None if self.p_enter is None else _p(self.p_enter) if enter else 0.0,
                 "eta": _q(self.eta, 0.5) if enter else None,
                 "distance": _q(self.distance, 0.5) if enter else None,
@@ -74,5 +70,4 @@ class ZoneState:
                 "target_walks": round(self.target_walks) if tgt else None,
                 "target_source": self.target_source if tgt else None,
                 "target_weight": _q(self.target_weight, 0.1) if tgt else None,
-                **({} if self.probability is None else {"probability": _p(self.probability)}),
-                **({} if self.c_occupied is None else {"c_occupied": round(self.c_occupied, 3)})}
+                **({} if self.probability is None else {"probability": _p(self.probability)})}

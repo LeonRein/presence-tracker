@@ -66,7 +66,7 @@ Wandenden gekappt (`derived.plan.doors`: `{wall, t0, t1}`, 0.50.0); die Oberflä
 | LD2410C: Sammeln, Likelihood, Echoquellen, Verrechnung; **Hintergrund, Anker und Echorate lernen** | 4.3 | `ld2410.py`, `filter.py` |
 | **Geisterkarte** (lernen, vergessen, Rate je Ort) | 4.2 | `ghostmap.py` |
 | **Zielkarte** (Geometrie, Lernen der Gänge, Abfrage) | 6 „Ziel“ | `destination.py` |
-| Ausgaben: Zähl- und Ortsverteilungen, Belegt mit der **RoomSeen-Regel** und „stumm“, *wird betreten*, *Ziel*, Personen der Anzeige, Snapshot | 6 | `filter.py`, `roomseen.py` |
+| Ausgaben: Zähl- und Ortsverteilungen, Belegt und „stumm“, *wird betreten*, *Ziel*, Personen der Anzeige, Snapshot | 6 | `filter.py`, `roomseen.py` |
 | Pausen als **Eingabe** (Intervalle; was in eine Pause fällt, lernt nichts) | 4.2 | `pause.Pauses.paused` |
 | Gespeicherte Formate lesen und schreiben, **unverändert**: `people_state`, Geisterkarte, LD2410C-Hintergrund, Zielkarte (als Zeichenketten/Dicts; Dateien schreibt Python) | 5.3, 4.2, 4.3, 6 | `to_dict`/`from_dict` der Klassen |
 | Kalibrierung: Messzeilen je Frame, Schätzer (Paare, Übergaben, Grundriss, Maßstäbe; EM, Gauß-Newton, robuste Kovarianz, Jackknife), Vorschlag mit Gründen, Fortschritt (`calibration/`, 0.45.0) | 10 | `calibration.py` |
@@ -100,7 +100,7 @@ Tracker (Rust, presence_core::Tracker)       besitzt alles
 │   ├── plan: Plan          Orte, Räume, Bereiche, Wände, Türen, Sensoren (aus der Konfiguration abgeleitet)
 │   ├── raster: Raster      0,1-m-Raster: Ort je Zelle, Raum je Zelle, Sicht je Sensor (LD2450, LD2410C)
 │   └── tiles: Tiles        Kacheln, Gehmatrix, Türraten, Regionen, Raten und Sicht je Kachel
-├── sensors: Vec<SensorState>   je Sensor: Uhr, LD2450-Spuren, Laufzeitstand, LD2410C-Sammlung/Gedächtnis/Echoquellen, RoomSeen-Stand
+├── sensors: Vec<SensorState>   je Sensor: Uhr, LD2450-Spuren, Laufzeitstand, LD2410C-Sammlung/Gedächtnis/Echoquellen
 ├── filter: Filter              Hypothesen und Objekte
 │   ├── hyps: Vec<Hyp>
 │   ├── mixtures: Pool<Mixture>   Gauß-Mischungen (Personen mit Spur, Quellen von Geistern)
@@ -222,7 +222,7 @@ Module von `presence-core`, nach MODEL.md:
 | `filter/{pool,densities,mixture,hyp}.rs` | 5.2–5.6 | Pools, `Hidden`/`Undetected`, `Gauss`, Hypothesen und ihr Schlüssel |
 | `filter/{step,evidence,branch,merge,ld_weigh}.rs` | 4, 5, 7 | Takt und Flush, Evidenz je Frame, Verzweigen, Zusammenlegen/Abschneiden, LD2410C-Verrechnung |
 | `learn/{ghost_map,destination}.rs` | 4.2, 6 | Geisterkarte, Zielkarte samt Geometrie und Lernen der Gänge |
-| `outputs.rs`, `room_seen.rs` | 6 | Zähl-/Ortsverteilungen, Belegt (Filter oder LD2450 des Raums, stumm), *wird betreten*, *Ziel*, Anzeige |
+| `outputs.rs`, `silent.rs` | 6 | Zähl-/Ortsverteilungen, Personen der Anzeige und Belegt (eine Zuordnung, `Occupied`), stumm, *wird betreten*, *Ziel*, Anzeige |
 | `formats.rs` | 4.2, 4.3, 5.3, 6 | die gespeicherten Formate (base64/zlib, float16/float32), byte-kompatibel lesbar |
 | `tracker.rs` | – | `Tracker`: die öffentliche Rust-API, die Python-Bindung und Wiedergabe gemeinsam nutzen |
 
@@ -267,7 +267,7 @@ adopt(old)                                   was nach einem Neubau weitergeht
 reset_people(places) / reset_tracks()        people_state() -> JSON / restore_people(JSON) -> None | Grund
 set_pauses(intervals) / hold_background(s)   learned() -> Learned (json() ohne den Tracker, im Thread)
 use_ghost_map / use_ld_background / use_dest_map(JSON)
-zone_states(now), persons(), clouds(), online(id, now), silent(now), seen_last(), watched(), observed_total(),
+zone_states(now), persons(), clouds(), online(id, now), silent(now), watched(),
 regions(), dwell, ld_shown(si)
 Sichten: plan(), tiles_view(), detections(si), last_frame(si), coverage(), learned_view() (0.54.0; sensor_map(si) weg)
 Modul: plan(config), check_config(config), canonical(config), config_defaults(), config_limits(), derive(config),
@@ -339,7 +339,7 @@ der ein stummer Sensor als weg gilt (`silent_after`), ist ein Feld des Modells.
 |---|---|---|
 | `tracker.ghost_map`, `ld_background`, `dest_map` als Python-Objekte (`to_dict`, `load`, `use`, `snapshot`, `add_birth`, `count`, `num`/`den` …); `use_ghost_map/use_dest_map/use_ld_background(obj)` | App (Dateien `ghostmap.json`, `ld2410.json`, `destinations.json`), `report_eval`, `baseline_eval`, `entries` (reichen Objekte von Tracker zu Tracker) | über `learned()`/`load_learned()` als Dicts in den heutigen Formaten; die App schreibt die drei Abschnitte in dieselben Dateien |
 | `tracker.tracks[sid] = SensorTracks(…)`, `runtime[*].last_frame = -inf`, `ld_background.pause(…)` | App `h_reset_tracks` | `reset_tracks()`, `ld_pause(s)` |
-| `runtime[sid].detections` (`hidden`, `stale`, `pos`), `sensor_model.maps(…)`, `tiles.squares/square/room`, `seen.watched()` | App (Oberfläche), `report_eval` | `runtime()`, `sensor_maps(sid)`, `plan()`, `outputs()` |
+| `runtime[sid].detections` (`hidden`, `stale`, `pos`), `sensor_model.maps(…)`, `tiles.squares/square/room`, `heard.watched()` | App (Oberfläche), `report_eval` | `runtime()`, `sensor_maps(sid)`, `plan()`, `outputs()` |
 | `persons()[i]["obj"]` (lebendes Objekt) | `replay.py`, `report_eval.py` | Mittel/Kovarianz bzw. Dichte als Arrays |
 | `tracker.hyps` (Anzahl, Gruppen, Gauß-Felder) | `report_eval`, `replay` | `hypotheses()` (lesend) |
 | `config.observed_rooms()`, `closed_rooms`, `zones_of`, Orte | App, HA, Kalibrierung | Abgeleitetes nur aus dem Kern (`plan()`); `model.py` behält Daten, Prüfung, Speichern |
@@ -352,13 +352,13 @@ der ein stummer Sensor als weg gilt (`silent_after`), ist ein Feld des Modells.
 `test_sight`, `test_tools`, `test_config_check` und die Verhaltensteile der gemischten Dateien; Patches von
 `zone_states`, `process_frame`, `use_dest_map` treffen die Python-Hülle). Was Innereien liest oder schreibt
 (`test_kernels`, `test_gauss`, `test_hypotheses`, `test_sensortracks`, `test_unobserved`, die Kernteile von
-`test_ld2410`, `test_frames`, `test_learning`, `test_roomseen`, `test_filter`, `test_existence`, `test_restart`,
+`test_ld2410`, `test_frames`, `test_learning`, `test_silent`, `test_filter`, `test_existence`, `test_restart`,
 `test_robust`), wird ein Rust-Test mit denselben Fällen. Die Liste „was wohin“ kommt in die Übergabe.
 
 Fehler: Nicht endliche Gewichte werden in Python ein `FloatingPointError` wie heute (die App beginnt neu).
 
 **`reconfigure` behält seine drei Wege** (`filter.reconfigure`, `_changed_sensors`):
-1. nur Ausgabeparameter (`params::OUTPUT_FIELDS` des Kerns, der Oberfläche als `derived.output_params`: `light_cost`, `seen_hold`, `lead_time`, `approach_cost`,
+1. nur Ausgabeparameter (`params::OUTPUT_FIELDS` des Kerns, der Oberfläche als `derived.output_params`: `light_cost`, `occupied_off`, `lead_time`, `approach_cost`,
    `target_threshold`, `target_thresholds`; dazu `ld2410_hold`, das nur die Anzeige der Hülle liest) geändert:
    **kein Neubau** (`Core.set_outputs`), nichts beginnt neu, nur die Parameter und der Ausgabe-Cache;
 2. nur Sensoren oder Namen geändert (gedreht, verschoben, kalibriert, ein/aus; die Namen liest der Plan, z. B. den

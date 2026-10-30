@@ -92,7 +92,7 @@ pub const PARAMS: [(&str, Limits); 14] = [
     ("dwell_spread", Limits::above(0.0, 10.0)),          // divides
     ("ld2410_hold", Limits::closed(0.0, 60.0)),
     ("light_cost", Limits::above(0.0, 1000.0)), // the threshold c / (c + 1) > 0
-    ("seen_hold", Limits::closed(0.0, 120.0)),  // 0: the filter alone
+    ("occupied_off", Limits::closed(0.0, 1.0)),
     ("lead_time", Limits::above(0.0, 5.0)),
     ("approach_cost", Limits::above(0.0, 1000.0)),
     ("target_threshold", TARGET_THRESHOLD),
@@ -549,7 +549,7 @@ mod tests {
             problem(json!({"params": {"target_threshold": 1.0}})).2,
             Problem::OutOfRange { .. }
         ));
-        check(&json!({"params": {"target_height": 0.0, "seen_hold": 120}})).expect("closed ends");
+        check(&json!({"params": {"target_height": 0.0, "occupied_off": 1}})).expect("closed ends");
         let room = problem(json!({"params": {"target_thresholds": {"wohn": 0}}}));
         assert_eq!(
             (room.0, room.1),

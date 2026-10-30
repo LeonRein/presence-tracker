@@ -54,7 +54,7 @@ def test_somebody_at_the_wall_the_sensor_hangs_on_is_measured_in_the_room():
         crowd.process_frame(bad["id"], t, Frame.of({"targets": [target(bad, x, y)]}))
         crowd.process_frame(buero["id"], t + 0.05, Frame.of({"targets": []}))
     assert 1 - crowd.core.count_distribution()["bad"][0] > 0.9
-    assert crowd.core.occupancy()["bad"] is not None
+    assert crowd.core.occupancy()["bad"]
     (p,) = [p for p in crowd.persons() if p.get("x") is not None]
     assert 0.0 <= p["x"] < 0.5 and 1.5 < p["y"] < 2.5
 
@@ -88,8 +88,8 @@ def test_a_track_at_the_wall_never_puts_somebody_behind_it():
                 prior = 1 - counts["buero"][0]
             worst = max(worst, 1 - counts["buero"][0])
             occ = crowd.core.occupancy()
-            assert occ["buero"] is None, (t, occ["buero"])
-            measured_bad |= occ["bad"] is not None
+            assert not occ["buero"], t
+            measured_bad |= occ["bad"]
     assert worst < prior + 0.01  # 0.25.0: 0.67, the study's light on
     assert measured_bad
     assert 1 - crowd.core.count_distribution()["bad"][0] > 0.9

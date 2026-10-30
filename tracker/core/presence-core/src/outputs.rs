@@ -1,6 +1,6 @@
 //! What the filter tells (MODEL.md 6; the outputs of filter.Tracker): per observed room and per place
-//! the distribution of the number of people, occupied (the filter's probability, or the room's own
-//! LD2450), "wird betreten", and the people of the most probable hypothesis for the display. They only
+//! the distribution of the number of people, "wird betreten", and the people of the most probable
+//! hypothesis for the display: all numbers of people, and with them occupied. They only
 //! read the filter. The sums run in numpy's order (vmath), the numbers are those of the Python filter;
 //! nothing is rounded for the display here (the shell does).
 //!
@@ -9,12 +9,13 @@
 use crate::filter::Filter;
 use crate::filter::densities::{DensityRef, DensityShape};
 use crate::filter::holders::Obj;
-use crate::filter::mixture::Mixture;
+use crate::filter::hyp::Owner;
+use crate::filter::mixture::{Mixture, SegId};
 use crate::filter::objects::Objects;
 use crate::geometry::Point;
 use crate::learn::destination::{self, DestMap, Target};
 use crate::motion::imm::walk_ahead;
-use crate::params::WALK;
+use crate::params::{OutputParams, WALK};
 use crate::plan::{Place, RoomIdx, Zone, ZoneRole};
 use crate::vmath::{log_factorials, pairwise_sum};
 use crate::vmath::{max2, py_hypot};
@@ -34,6 +35,7 @@ pub type Distributions = Vec<Vec<f64>>;
 #[derive(Debug, Default)]
 pub struct OutputCache {
     epoch: Option<u64>,
+    in_rooms: Option<PerObject>,
     counts: Option<Distributions>,
     places: Option<Distributions>,
     entering: Option<Vec<Entering>>,
@@ -52,8 +54,19 @@ impl OutputCache {
         self
     }
 
+    pub fn in_rooms(&mut self, filter: &Filter, world: &World) -> &PerObject {
+        self.in_rooms.get_or_insert_with(|| {
+            let objects = filter.objects();
+            per_object(filter, |obj| room_probs(world, &in_view(world, objects, obj)))
+        })
+    }
+
     pub fn counts(&mut self, filter: &Filter, world: &World) -> &Distributions {
-        self.counts.get_or_insert_with(|| count_distribution(filter, world))
+        if self.counts.is_none() {
+            let counts = counts(filter, self.in_rooms(filter, world));
+            self.counts = Some(counts);
+        }
+        self.counts.as_ref().expect("just computed")
     }
 
     pub fn places(&mut self, filter: &Filter) -> &Distributions {
@@ -256,15 +269,23 @@ fn poisson_cut(mean: f64) -> usize {
     (mean + 10.0 * mean.max(0.0).sqrt() + 6.0).min(1e4) as usize
 }
 
-/// The distributions of the number of people per column of per_object - for a known person the
-/// probabilities, for the unknown ones the expected numbers - mixed over the hypotheses
-///. Each object once, in the order of the holders.
-fn counts(filter: &Filter, per_object: impl Fn(Obj) -> Vec<f64>) -> Distributions {
+/// Per entry of the holders what it is worth to a column of counts: for a known person probabilities, for the
+/// unknown ones expected numbers; the sources of ghost tracks nothing.
+pub type PerObject = Vec<Vec<f64>>;
+
+fn per_object(filter: &Filter, value: impl Fn(Obj) -> Vec<f64>) -> PerObject {
     let holders = filter.holders();
-    let mut values: Vec<Vec<f64>> = vec![Vec::new(); holders.len()];
+    let mut values: PerObject = vec![Vec::new(); holders.len()];
     for (e, obj) in holders.people() {
-        values[e] = per_object(obj);
+        values[e] = value(obj);
     }
+    values
+}
+
+/// The distributions of the number of people per column of the values, mixed over the hypotheses. Each object
+/// once, in the order of the holders.
+fn counts(filter: &Filter, values: &PerObject) -> Distributions {
+    let holders = filter.holders();
     let unknown = |hy: &crate::filter::hyp::Hyp| &values[holders.entry(Obj::Density(hy.unknown))];
     let top = filter
         .hyps()
@@ -297,59 +318,17 @@ fn counts(filter: &Filter, per_object: impl Fn(Obj) -> Vec<f64>) -> Distribution
     out
 }
 
-/// Per observed room the distribution of the number of people in it, then of those in view at all
-/// (Tracker.count_distribution).
-pub fn count_distribution(filter: &Filter, world: &World) -> Distributions {
-    let objects = filter.objects();
-    counts(filter, |obj| room_probs(world, &in_view(world, objects, obj)))
-}
-
 /// Per place (observed, regions..., outside) the distribution of the number of people there, then of
 /// those anywhere but outside (Tracker.place_distribution).
 pub fn place_distribution(filter: &Filter) -> Distributions {
     let objects = filter.objects();
-    counts(filter, |obj| {
+    let values = per_object(filter, |obj| {
         let mut p = places_of(objects, obj);
         let house = pairwise_sum(&p[..p.len() - 1]);
         p.push(house);
         p
-    })
-}
-
-/// What decided that an observed room is occupied (MODEL.md 6 "Belegt").
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Source {
-    Filter,
-    Ld2450,
-    Both,
-}
-
-impl Source {
-    /// Its name in the outputs (Home Assistant's attribute "source").
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Filter => "filter",
-            Self::Ld2450 => "ld2450",
-            Self::Both => "beide",
-        }
-    }
-}
-
-/// Per observed room whether it is occupied and by what (Tracker.occupancy): P(somebody there) above
-/// `above` (OutputParams::occupied_above, the threshold with the least expected cost of the light), or its
-/// own LD2450 measured somebody in it lately (`seen`).
-pub fn occupancy(counts: &Distributions, seen: &[bool], above: f64) -> Vec<Option<Source>> {
-    // the rooms' rows (the last row is in view at all)
-    counts[..seen.len()]
-        .iter()
-        .zip(seen)
-        .map(|(dist, &s)| match (1.0 - dist[0] > above, s) {
-            (true, true) => Some(Source::Both),
-            (true, false) => Some(Source::Filter),
-            (false, true) => Some(Source::Ld2450),
-            (false, false) => None,
-        })
-        .collect()
+    });
+    counts(filter, &values)
 }
 
 // ------------------------------------------------------------------ the display
@@ -404,6 +383,15 @@ pub struct Person {
     pub r: f64,
     /// where to draw them, if they are most probably in view
     pub shown: Option<Shown>,
+    /// the observed room of their most probable place, if they are drawn: the room there (drawn in none,
+    /// in a wall say: that of the nearest tile)
+    pub room: Option<RoomIdx>,
+    /// where they are assigned: an observed room, then the regions (`Occupied`); None: outside
+    pub target: Option<usize>,
+    /// the probability that they are there, over all hypotheses (`sure_at`)
+    pub sure: f64,
+    /// they count: what the display shows of them and what the lights follow (`Occupied::update`)
+    pub counted: bool,
 }
 
 /// Where to draw a person: with a track the mean of the mixture (it moves as smoothly as the estimate
@@ -422,6 +410,11 @@ const MOVING_WALK: f64 = 0.5;
 const MOVING_SPEED: f64 = 0.15;
 
 impl Person {
+    /// Their most probable place, the index of `places`: where they count (MODEL.md 6).
+    pub fn place(&self) -> usize {
+        argmax(&self.places)
+    }
+
     /// Shown as moving: with a measuring track, walking and fast enough (the zones' moving / still).
     pub fn moving(&self) -> bool {
         self.shown.is_some_and(|s| {
@@ -430,15 +423,88 @@ impl Person {
     }
 }
 
+/// How probably this person of the most probable hypothesis is at target t, over all hypotheses: the person
+/// with a track in each hypothesis that gives any of their live tracks to a person (a label of a group
+/// holds in one hypothesis only), the one without in each that holds their density; `in_rooms` the cached
+/// room probabilities of the objects.
+fn sure_at(filter: &Filter, in_rooms: &PerObject, obj: Obj, t: usize) -> f64 {
+    let (objects, holders) = (filter.objects(), filter.holders());
+    let rooms = in_rooms.iter().map(Vec::len).max().map_or(0, |n| n - 1);
+    let at = |o: Obj| {
+        if t < rooms {
+            in_rooms[holders.entry(o)][t]
+        } else {
+            places_of(objects, o)[t - rooms + 1]
+        }
+    };
+    let best = &filter.hyps()[most_probable(filter)];
+    let live: Vec<SegId> = match obj {
+        Obj::Density(_) => Vec::new(),
+        Obj::Mixture(m) => best
+            .tracks
+            .iter()
+            .filter(|&(_, owner)| matches!(owner, Owner::Person(g) if best.people.get(g) == Some(&m)))
+            .map(|(&seg, _)| seg)
+            .collect(),
+    };
+    let sure: Vec<f64> = filter
+        .hyp_weights()
+        .iter()
+        .zip(filter.hyps())
+        .map(|(&w, h)| {
+            let held = match obj {
+                Obj::Density(d) => h.hidden.contains(&d).then_some(obj),
+                Obj::Mixture(m) if h.people.values().any(|&x| x == m) => Some(obj),
+                Obj::Mixture(_) => live.iter().find_map(|seg| match h.tracks.get(seg) {
+                    Some(Owner::Person(g)) => h.people.get(g).map(|&x| Obj::Mixture(x)),
+                    _ => None,
+                }),
+            };
+            held.map_or(0.0, |o| w * at(o))
+        })
+        .collect();
+    pairwise_sum(&sure)
+}
+
+/// Which rooms and regions are on (MODEL.md 6): what the rule keeps from one moment to the next. Only output,
+/// starts empty and builds up from the rule.
+#[derive(Debug, Default)]
+pub struct Occupied(Vec<bool>);
+
+impl Occupied {
+    /// The rule: a room (or region) goes on when a person assigned to it is there with occupied_above, and
+    /// off when none is with occupied_below. Who counts is those there with that, in a room that is on: the
+    /// rest does not exist for the display, so that the numbers and the lights are the same. Applied twice it
+    /// changes nothing more.
+    pub fn update(&mut self, persons: &mut [Person], places: usize, o: &OutputParams) {
+        self.0.resize(places, false);
+        let (high, low) = (o.occupied_above(), o.occupied_below());
+        for (t, on) in self.0.iter_mut().enumerate() {
+            let needed = if *on { low } else { high };
+            *on = persons.iter().any(|p| p.target == Some(t) && p.sure >= needed);
+        }
+        for p in persons {
+            p.counted = p.sure >= low && p.target.is_some_and(|t| self.0[t]);
+        }
+    }
+
+    /// Per observed room whether it is on (Tracker.occupancy).
+    pub fn rooms(&self, rooms: usize) -> Vec<bool> {
+        (0..rooms).map(|k| self.0.get(k).copied().unwrap_or(false)).collect()
+    }
+}
+
 /// The known people of the most probable hypothesis that more probably exist than not, for the
-/// display: those with a track first (Tracker.persons).
-pub fn persons(filter: &Filter, world: &World) -> Vec<Person> {
+/// display: those with a track first, nobody counted yet (Tracker.persons, `Occupied`).
+pub fn persons(filter: &Filter, world: &World, in_rooms: &PerObject) -> Vec<Person> {
     let objects = filter.objects();
+    let (rooms, regions) = (world.plan.rooms.len(), world.plan.regions.len());
     shown_people(filter)
         .into_iter()
         .map(|(id, obj)| {
             let places = places_of(objects, obj);
-            let in_view = argmax(&places) == 0;
+            let place = argmax(&places);
+            let in_view = place == 0;
             let (lost, r, shown) = match obj {
                 Obj::Density(d) => {
                     let d = objects.densities().get(d);
@@ -447,12 +513,26 @@ pub fn persons(filter: &Filter, world: &World) -> Vec<Person> {
                 }
                 Obj::Mixture(m) => (false, 1.0, in_view.then(|| mean_of(objects.mixtures().get(m)))),
             };
+            let room = shown.and_then(|s| {
+                let tile = || world.tiles.cell_near(s.at).and_then(|t| world.tiles.room[t]);
+                world.plan.room_at(s.at).or_else(tile)
+            });
+            let target = match place {
+                0 => room.map(|RoomIdx(k)| k),
+                _ if place <= regions => Some(rooms + place - 1),
+                _ => None,
+            };
+            let sure = target.map_or(0.0, |t| sure_at(filter, in_rooms, obj, t));
             Person {
                 id,
                 places,
                 lost,
                 r,
                 shown,
+                room,
+                target,
+                sure,
+                counted: false,
             }
         })
         .collect()
@@ -728,13 +808,12 @@ fn ray_distance(world: &World, z: usize, at: Point, velocity: Point) -> Option<f
 /// What the outputs say of a zone of the home (Tracker.zone_states; the shell forms its ZoneState).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ZoneNumbers {
-    /// the most probable number of people (an area: those of the display in it)
+    /// the people counted in it; occupied is that it has any
     pub count: usize,
-    /// P(somebody there), where the filter knows it (the observed rooms, the rooms of regions)
+    /// P(somebody there) over all hypotheses, where the filter knows it (the observed rooms, the rooms of
+    /// regions); only information
     pub probability: Option<f64>,
-    /// occupied by the decision (MODEL.md 6)
-    pub decided: Decision,
-    /// the people of the display in it, walking or not (at most count)
+    /// of those drawn in it how many walk and how many do not
     pub moving: usize,
     pub still: usize,
     /// "wird betreten" (the observed rooms and the areas), and whether above its threshold
@@ -744,39 +823,7 @@ pub struct ZoneNumbers {
     pub available: bool,
 }
 
-/// Whether a zone is occupied by the decision (MODEL.md 6) and what decided.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Decision {
-    /// none is made (areas, rooms of regions of several rooms)
-    None,
-    Free,
-    Occupied(Source),
-}
-
-impl Decision {
-    fn of(source: Option<Source>) -> Self {
-        source.map_or(Self::Free, Self::Occupied)
-    }
-
-    /// Occupied, free, or None where no decision is made.
-    pub fn occupied(self) -> Option<bool> {
-        match self {
-            Self::None => None,
-            Self::Free => Some(false),
-            Self::Occupied(_) => Some(true),
-        }
-    }
-
-    /// What decided it occupied.
-    pub fn source(self) -> Option<Source> {
-        match self {
-            Self::Occupied(s) => Some(s),
-            Self::None | Self::Free => None,
-        }
-    }
-}
-
-/// The house as a whole: the people in it, and of those in view walking or not.
+/// The house as a whole: the people counted in it, and of those drawn walking or not.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct HouseNumbers {
     pub count: usize,
@@ -784,47 +831,44 @@ pub struct HouseNumbers {
     pub still: usize,
 }
 
-/// What the zone numbers are made of, computed before (the cached outputs and the rule of the rooms'
-/// own LD2450).
+/// What the zone numbers are made of, computed before (the cached outputs).
 pub struct ZoneInputs<'a> {
     pub counts: &'a Distributions,
     pub places: &'a Distributions,
     pub entering: &'a [Entering],
-    pub occupancy: &'a [Option<Source>],
     pub silent: &'a [bool],
     pub persons: &'a [Person],
 }
 
 /// The zone numbers of the filter in this world (Tracker.zone_states) from the cached outputs at the
-/// filter's epoch and the rooms' own LD2450 (occupancy, silent).
+/// filter's epoch, the people as counted and the rooms' sensors (silent).
 pub fn zones_of(
     cache: &mut OutputCache,
     filter: &Filter,
     world: &World,
-    occupancy: &[Option<Source>],
+    persons: &[Person],
     silent: &[bool],
 ) -> (Vec<ZoneNumbers>, HouseNumbers) {
-    let persons = persons(filter, world);
     let (counts, places, entering) = cache.at(filter.epoch()).all(filter, world);
     let inputs = ZoneInputs {
         counts,
         places,
         entering,
-        occupancy,
         silent,
-        persons: &persons,
+        persons,
     };
     zone_numbers(world, &inputs)
 }
 
-/// Per zone of the home (plan.zones) and for the house (Tracker.zone_states): observed rooms by the
-/// count of all hypotheses, occupied by the filter or their own LD2450 (a count raised to 1 then, the
-/// house's too); a region's rooms by the region's distribution, decided only if it is one room; areas
-/// by the people of the display in them. Moving or still from the display's people (walking above 1/2
-/// and faster than 0.15 m/s), "wird betreten" above approach_cost / (approach_cost + 1).
+/// Per zone of the home (plan.zones) and for the house (Tracker.zone_states). The numbers of people are the
+/// counted ones of the display and nothing else: everybody once, at their most probable place, so the observed
+/// rooms and the regions add up to the house, and a zone is occupied if it has anybody. P(somebody there) from
+/// all hypotheses (a region's rooms: from the region's distribution) goes along as information, nothing reads
+/// it. Areas: those drawn in them. Moving or still from those drawn (walking above 1/2 and faster than
+/// 0.15 m/s), "wird betreten" above approach_cost / (approach_cost + 1).
 pub fn zone_numbers(world: &World, x: &ZoneInputs) -> (Vec<ZoneNumbers>, HouseNumbers) {
     let (plan, o) = (&world.plan, &world.outputs);
-    let mut raised = false;
+    let regions = plan.regions.len();
     let home: Vec<&Zone> = plan.home().collect();
     let mut zones: Vec<ZoneNumbers> = home
         .iter()
@@ -832,7 +876,6 @@ pub fn zone_numbers(world: &World, x: &ZoneInputs) -> (Vec<ZoneNumbers>, HouseNu
             let mut n = ZoneNumbers {
                 count: 0,
                 probability: None,
-                decided: Decision::None,
                 moving: 0,
                 still: 0,
                 entering: None,
@@ -841,41 +884,34 @@ pub fn zone_numbers(world: &World, x: &ZoneInputs) -> (Vec<ZoneNumbers>, HouseNu
             };
             match z.role {
                 ZoneRole::Observed(RoomIdx(k)) => {
-                    n.count = argmax(&x.counts[k]);
                     n.probability = Some(1.0 - x.counts[k][0]);
-                    n.decided = Decision::of(x.occupancy[k]);
-                    if matches!(x.occupancy[k], Some(Source::Ld2450 | Source::Both)) && n.count == 0 {
-                        (n.count, raised) = (1, true);
-                    }
                     n.available = !x.silent[k];
                 }
                 ZoneRole::InRegion(r) => {
-                    let dist = &x.places[Place::Region(r).index(plan.regions.len())];
-                    let probability = 1.0 - dist[0];
-                    n.probability = Some(probability);
-                    if plan.regions[r.0].rooms.len() == 1 {
-                        n.count = argmax(dist);
-                        n.decided = Decision::of((probability > o.occupied_above()).then_some(Source::Filter));
-                    }
+                    n.probability = Some(1.0 - x.places[Place::Region(r).index(regions)][0]);
                 }
                 ZoneRole::Area | ZoneRole::OutsideRoom | ZoneRole::Entry => {}
             }
             n
         })
         .collect();
-    let house = x.places.last().map_or(0, |d| argmax(d));
-    let mut total = HouseNumbers {
-        count: house.max(usize::from(raised)),
-        ..HouseNumbers::default()
-    };
-    for p in x.persons {
-        let Some(shown) = p.shown else { continue };
+    let mut total = HouseNumbers::default();
+    for p in x.persons.iter().filter(|p| p.counted) {
         let moving = p.moving();
-        let (m, s) = (usize::from(moving), usize::from(!moving));
+        let (m, s) = (usize::from(moving), usize::from(p.shown.is_some() && !moving));
+        total.count += 1;
         (total.moving, total.still) = (total.moving + m, total.still + s);
         for (z, n) in home.iter().zip(&mut zones) {
-            if z.shape.contains(shown.at, 0.0) {
-                n.count += usize::from(z.role == ZoneRole::Area);
+            let here = match z.role {
+                ZoneRole::Observed(k) => p.room == Some(k),
+                ZoneRole::InRegion(r) => {
+                    plan.regions[r.0].rooms.len() == 1 && p.place() == Place::Region(r).index(regions)
+                }
+                ZoneRole::Area => p.shown.is_some_and(|s| z.shape.contains(s.at, 0.0)),
+                ZoneRole::OutsideRoom | ZoneRole::Entry => false,
+            };
+            if here {
+                n.count += 1;
                 (n.moving, n.still) = (n.moving + m, n.still + s);
             }
         }
@@ -887,12 +923,6 @@ pub fn zone_numbers(world: &World, x: &ZoneInputs) -> (Vec<ZoneNumbers>, HouseNu
         zones[k].entering = Some(*e);
         zones[k].approaching = e.p > o.entering_above();
     }
-    for n in &mut zones {
-        n.moving = n.moving.min(n.count);
-        n.still = n.still.min(n.count - n.moving);
-    }
-    total.moving = total.moving.min(total.count);
-    total.still = total.still.min(total.count - total.moving);
     (zones, total)
 }
 
@@ -902,27 +932,15 @@ pub const HOUSE: &str = "_total";
 /// "Ziel" counts as decided by the learned map where its weight against the motion is at least this.
 const TARGET_MAP: f64 = 0.5;
 
-/// A region without a sensor as the display shows it: the most probable number of people in it and
-/// P(somebody there).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RegionShown {
-    pub count: usize,
-    pub p_any: f64,
-}
-
-/// Per region (the places between observed and outside) from the distribution per place.
-pub fn regions_shown(places: &Distributions, regions: usize) -> Vec<RegionShown> {
-    places[1..=regions]
-        .iter()
-        .map(|d| RegionShown {
-            count: argmax(d),
-            p_any: 1.0 - d[0],
-        })
+/// Per region (the places between observed and outside) the people counted in it.
+pub fn regions_shown(persons: &[Person], regions: usize) -> Vec<usize> {
+    (1..=regions)
+        .map(|place| persons.iter().filter(|p| p.counted && p.place() == place).count())
         .collect()
 }
 
 /// A zone's state as the outputs hand it on (Home Assistant, the display; the shell's zones.ZoneState, field
-/// for field): its numbers, the decision and what made it, "wird betreten" and "Ziel" with their thresholds.
+/// for field): its numbers, "wird betreten" and "Ziel" with their thresholds.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZoneState {
     pub id: String,
@@ -950,13 +968,10 @@ pub struct ZoneState {
     pub target_person: Option<usize>,
     /// P(somebody there), where the filter knows it
     pub probability: Option<f64>,
-    pub decided: Decision,
     /// false: its own sensors all went silent (Home Assistant gets it as unavailable)
     pub available: bool,
-    /// occupied: as decided, without a decision (areas, the house) somebody counted there
+    /// somebody counted there
     pub occupied: bool,
-    /// the threshold of the decision (of probability), where one is made
-    pub c_occupied: Option<f64>,
     /// "Ziel": which part decided, the learned map ("karte", its weight at least 1/2) or the motion
     /// ("bewegung")
     pub target_source: Option<&'static str>,
@@ -986,10 +1001,8 @@ impl ZoneState {
             target_eta: None,
             target_person: None,
             probability: None,
-            decided: Decision::None,
             available: true,
             occupied: count > 0,
-            c_occupied: None,
             target_source: None,
         }
     }
@@ -1008,10 +1021,7 @@ pub fn zone_states(world: &World, numbers: &[ZoneNumbers], house: &HouseNumbers,
         .map(|k| {
             let (z, n) = (home[k], &numbers[k]);
             let mut st = ZoneState::of(&z.id, n.count, n.moving, n.still);
-            (st.probability, st.decided, st.available) = (n.probability, n.decided, n.available);
-            if let Some(occupied) = n.decided.occupied() {
-                (st.occupied, st.c_occupied) = (occupied, Some(o.occupied_above()));
-            }
+            (st.probability, st.available) = (n.probability, n.available);
             if let Some(e) = &n.entering {
                 (st.p_enter, st.distance, st.eta, st.person) = (Some(e.p), e.distance, e.eta, e.person);
                 (st.approaching, st.c_enter) = (n.approaching, Some(o.entering_above()));
@@ -1318,6 +1328,9 @@ mod tests {
         // known one (r 0.4); its cloud the standing Gaussian with 3/4, no tiles (its part is out)
         let shown = tr.persons();
         assert_eq!(shown.iter().map(|p| (p.id, p.lost)).collect::<Vec<_>>(), [(1, false)]);
+        // how sure: only the first hypothesis holds them, and of it 3/4 in the room; not enough to count
+        assert!((shown[0].sure - 0.6 * 0.75).abs() < 1e-12, "{}", shown[0].sure);
+        assert!(!shown[0].counted);
         let clouds = tr.clouds();
         assert_eq!(clouds.len(), 1);
         assert_eq!(clouds[0].gauss.len(), 1);
@@ -1367,11 +1380,7 @@ mod tests {
         let (room, sofa) = (zones[0], zones[1]);
         assert_eq!((room.count, room.moving, room.still), (1, 0, 1));
         assert!((room.probability.expect("the filter's") - 1.0).abs() < 1e-12);
-        assert_eq!(room.decided, Decision::Occupied(Source::Filter));
-        assert_eq!(
-            (sofa.count, sofa.moving, sofa.still, sofa.probability, sofa.decided),
-            (1, 0, 1, None, Decision::None)
-        );
+        assert_eq!((sofa.count, sofa.moving, sofa.still, sofa.probability), (1, 0, 1, None));
         assert!(sofa.entering.is_some() && room.entering.is_some() && !sofa.approaching);
         assert_eq!((house.count, house.moving, house.still), (1, 0, 1));
         // nothing heard from its own sensor for longer than silent_after: not available
@@ -1391,10 +1400,9 @@ mod tests {
         let o = &tr.world().outputs;
         let (room, sofa, all) = (&states[0], &states[1], &states[2]);
         assert_eq!(
-            (room.count, room.probability, room.decided),
-            (numbers[0].count, numbers[0].probability, numbers[0].decided)
+            (room.count, room.probability, room.occupied),
+            (numbers[0].count, numbers[0].probability, true)
         );
-        assert_eq!(room.decided.source().map(Source::name), Some("filter"));
         assert_eq!(
             (room.c_enter, sofa.c_enter),
             (Some(o.entering_above()), Some(o.entering_above()))
@@ -1445,18 +1453,163 @@ mod tests {
         assert_eq!(tr.world().tiles.n, testing::flat_export().tiles.n);
     }
 
+    /// Two rooms next to each other, wohn with its sensor, ess with its, and flur beyond a door without one.
+    fn two_rooms_and_a_region() -> World {
+        let config = testing::config(
+            &[("w", "wohn", [0.05, 0.05], 45.0), ("e", "ess", [9.95, 2.5], 180.0)],
+            r#"[{"id": "wohn", "name": "Wohn", "kind": "room", "shape": "rect", "points": [[0, 0], [5, 5]]},
+                {"id": "ess", "name": "Ess", "kind": "room", "shape": "rect", "points": [[5, 0], [10, 5]]},
+                {"id": "flur", "name": "Flur", "kind": "room", "shape": "rect", "points": [[0, 5], [10, 7]]}]"#,
+            r#"[{"points": [[0, 5], [10, 5]], "kind": "wall"}]"#,
+            r#"[{"id": "d", "x": 2.5, "y": 5, "width": 1}]"#,
+        );
+        World::build(&config, crate::params::Params::default()).expect("a world")
+    }
+
+    /// A tracker of this world holding these densities as its known people.
+    fn holding(world: World, people: impl Fn(&World) -> Vec<DensityData>) -> Tracker {
+        let mine = people(&world);
+        let mut tr = Tracker::new(world);
+        tr.reset_people(Some(&[])).expect("places");
+        let f = tr.filter_mut();
+        let mut hy = f.hyps()[0].clone();
+        hy.hidden = mine.into_iter().map(|d| f.objects_mut().densities.insert(d)).collect();
+        f.set_hyps(vec![hy]);
+        f.void_cache();
+        tr
+    }
+
+    /// A person assigned to this target, so sure of it.
+    fn assigned(target: usize, sure: f64) -> Person {
+        Person {
+            id: 1,
+            places: vec![1.0, 0.0],
+            lost: true,
+            r: 1.0,
+            shown: None,
+            room: None,
+            target: Some(target),
+            sure,
+            counted: false,
+        }
+    }
+
     #[test]
-    fn occupied_by_the_filter_or_the_rooms_own_ld2450() {
-        let rows = vec![vec![0.2, 0.8], vec![0.9, 0.1]];
-        // light_cost 2: above 2/3
+    fn a_room_goes_on_at_the_higher_probability_of_a_person_and_off_at_the_lower() {
+        let o = crate::params::OutputParams::of(&crate::config::TrackerParams::default(), 30.0);
+        let (high, low) = (o.occupied_above(), o.occupied_below());
+        assert!(low < high);
+        let mut occupied = Occupied::default();
+        let mut step = |people: &[(usize, f64)]| {
+            let mut p: Vec<Person> = people.iter().map(|&(t, s)| assigned(t, s)).collect();
+            occupied.update(&mut p, 2, &o);
+            let again = occupied.rooms(2);
+            occupied.update(&mut p, 2, &o);
+            assert_eq!(occupied.rooms(2), again, "the rule applied twice");
+            (again, p.iter().map(|q| q.counted).collect::<Vec<_>>())
+        };
+        // not sure enough: nothing on, and they do not count
+        assert_eq!(step(&[(0, high - 0.01)]), (vec![false, false], vec![false]));
+        // on from the higher one; stays on down to the lower; another one there counts down to it too
+        assert_eq!(step(&[(0, high)]), (vec![true, false], vec![true]));
         assert_eq!(
-            occupancy(&rows, &[false, false], 2.0 / 3.0),
-            [Some(Source::Filter), None]
+            step(&[(0, low), (0, low - 0.01), (1, low)]),
+            (vec![true, false], vec![true, false, false])
         );
+        // off below the lower one, and on only from the higher one again
+        assert_eq!(step(&[(0, low - 0.01)]), (vec![false, false], vec![false]));
+        assert_eq!(step(&[(0, low)]), (vec![false, false], vec![false]));
+        // nobody assigned to it: off at once, however sure they were
+        assert_eq!(step(&[(0, 1.0)]), (vec![true, false], vec![true]));
+        assert_eq!(step(&[(1, 1.0)]), (vec![false, true], vec![true]));
+    }
+
+    #[test]
+    fn a_person_half_in_each_of_two_rooms_lights_neither_and_all_numbers_agree() {
+        let tile = |w: &World, k: usize| {
+            w.tiles
+                .room
+                .iter()
+                .position(|&r| r == Some(RoomIdx(k)))
+                .expect("a tile")
+        };
+        let mut tr = holding(two_rooms_and_a_region(), |w| {
+            vec![standing(w, 1.0, &[(tile(w, 0), 0.5), (tile(w, 1), 0.5)])]
+        });
+        let counts = tr.count_distribution().clone();
+        assert!(close(&counts[0][..2], &[0.5, 0.5], 1e-12) && close(&counts[1][..2], &[0.5, 0.5], 1e-12));
+        let (zones, house) = tr.zone_numbers(0.0);
         assert_eq!(
-            occupancy(&rows, &[true, true], 2.0 / 3.0),
-            [Some(Source::Both), Some(Source::Ld2450)]
+            (zones[0].count, zones[1].count, zones[2].count, house.count),
+            (0, 0, 0, 0)
         );
-        assert_eq!(occupancy(&rows, &[false, false], 1000.0 / 1001.0), [None, None]);
+        // the person is known, at the room of their dot with 1/2, too unsure to count
+        let person = &tr.persons()[0];
+        assert!((person.sure - 0.5).abs() < 1e-12 && !person.counted);
+        assert_eq!(tr.occupancy(), [false, false]);
+        let states = tr.zone_states(0.0);
+        assert!(states.iter().all(|z| z.occupied == (z.count > 0)));
+    }
+
+    #[test]
+    fn a_person_mostly_in_one_of_two_rooms_counts_there_and_only_there() {
+        let tile = |w: &World, k: usize| {
+            w.tiles
+                .room
+                .iter()
+                .position(|&r| r == Some(RoomIdx(k)))
+                .expect("a tile")
+        };
+        let mut tr = holding(two_rooms_and_a_region(), |w| {
+            vec![standing(w, 1.0, &[(tile(w, 0), 0.7), (tile(w, 1), 0.3)])]
+        });
+        let (zones, house) = tr.zone_numbers(0.0);
+        assert_eq!(
+            (zones[0].count, zones[1].count, zones[2].count, house.count),
+            (1, 0, 0, 1)
+        );
+        assert_eq!(tr.occupancy(), [true, false]);
+        assert_eq!(tr.regions_shown(), [0]);
+    }
+
+    #[test]
+    fn the_rooms_and_the_regions_add_up_to_the_house() {
+        let world = two_rooms_and_a_region();
+        let (wohn, ess) = (RoomIdx(0), RoomIdx(1));
+        let tile = |w: &World, room: RoomIdx| w.tiles.room.iter().position(|&r| r == Some(room)).expect("a tile");
+        let in_region = |w: &World, r: f64| {
+            let shape = w.density_shape();
+            let mut region = vec![0.0; shape.region_len()];
+            region[0] = 1.0;
+            DensityData {
+                region,
+                ..standing(w, r, &[])
+            }
+        };
+        let mut tr = holding(world, |w| {
+            vec![
+                standing(w, 1.0, &[(tile(w, wohn), 1.0)]),
+                standing(w, 0.8, &[(tile(w, ess), 1.0)]),
+                in_region(w, 1.0),
+                standing(w, 0.4, &[(tile(w, ess), 1.0)]), // rather not there: not shown, not counted
+            ]
+        });
+        let (zones, house) = tr.zone_numbers(0.0);
+        let counts: Vec<usize> = zones.iter().map(|z| z.count).collect();
+        assert_eq!((counts, house.count), (vec![1, 1, 1], 3));
+        assert_eq!(tr.regions_shown(), [1]);
+        // moving / still of those drawn, the one in the region is neither
+        assert_eq!((house.moving, house.still), (0, 2));
+        assert_eq!(tr.persons().len(), 3);
+    }
+
+    #[test]
+    fn somebody_drawn_in_no_room_counts_in_the_nearest() {
+        // between the rooms' outlines: the mean of a track may be in a wall
+        let mut tr = walking([-0.2, 2.0], [0.0, 0.0]);
+        tr.start_at(0.0);
+        let (zones, house) = tr.zone_numbers(0.0);
+        assert_eq!((zones[0].count, house.count), (1, 1));
+        assert_eq!(tr.persons()[0].room, Some(RoomIdx(0)));
     }
 }

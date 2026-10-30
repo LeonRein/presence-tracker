@@ -8,11 +8,9 @@ says.
 usage: python tools/report_eval.py --config FILE --truth FILE [--recordings DIR] [--patch FILE.py]...
                                    [--only NAME] [--every S] [--trace] [--downtime S] [--forget]
                                    [--config-at "YYYY-mm-dd HH:MM:SS=FILE"]... [--pauses FILE] [--no-pauses]
-                                   [--published] [--json OUT]
+                                   [--json OUT]
 
---published: the light of the observed rooms as the app publishes it (MODEL.md 6 "Belegt": P(somebody there)
-> c or the room's own LD2450 measuring somebody, Core.occupancy); without it P > c alone, the filter.
---json: both scores (the filter alone and published) per report and room, and their sums, into OUT.
+--json: the scores per report and room, and their sums, into OUT.
 
 --downtime: the app did not run for this long before each start (the recorder did: those frames are
 skipped). --forget: every start with nothing known about the people (as before people.json); the truth
@@ -65,10 +63,7 @@ def main():
     ap.add_argument("--config-at", action="append", default=[], help='"YYYY-mm-dd HH:MM:SS=FILE": from then on')
     ap.add_argument("--pauses", help="intervals in which learning was paused (tools/vacuum_history.py)")
     ap.add_argument("--no-pauses", action="store_true", help="learn everywhere, score every window")
-    ap.add_argument("--published", action="store_true",
-                    help="score the observed rooms by what the app publishes as occupied (Core.occupancy: the "
-                         "filter or the room's own LD2450, MODEL.md 6) instead of P(somebody there) > c")
-    ap.add_argument("--json", help="write both scores (filter, published) per report and room to this file")
+    ap.add_argument("--json", help="write the scores per report and room to this file")
     ap.add_argument("--trace", action="store_true", help="print the rooms' P(somebody there) and the people of the "
                                                         "most probable hypothesis in the windows")
     a = ap.parse_args()
@@ -98,7 +93,6 @@ def main():
     fresh = {parse_time(s) for s in truth.get("fresh_starts", [])}
     end = max(parse_time(r["to"]) for r in reports)
     windows = [(parse_time(r["from"]), parse_time(r["to"]), r) for r in reports]
-    c = config.data["params"]["light_cost"] / (config.data["params"]["light_cost"] + 1.0)
     the_plan = plan(config)
     rooms = the_plan["observed"]
     outside = {z["id"] for z in config.data["zones"] if z["kind"] == "room" and z["entry"]}  # entry rooms: counts there are not scored
@@ -172,13 +166,13 @@ def main():
             places = tracker.core.place_distribution()
             p = {z: counts[z] for z in rooms}
             p.update({rid: places[rid] for rid in the_plan["regions"]})
-            # what the app publishes as "besetzt" in the observed rooms (MODEL.md 6 "Belegt"); else P > c
-            pub = {z: v is not None for z, v in tracker.core.occupancy().items()} if a.published or a.json else {}
+            occupied = {z: st.occupied for z, st in tracker.zone_states().items()}  # what the light follows
+            occupied.update({r.id: r.count > 0 for r in tracker.core.regions()})
             for r in inside:
                 q = p
                 if r.get("walks"):  # nobody stays: where an LD2450 measures somebody, they walk through
                     q = {z: v for z, v in p.items() if m["t"] - seen.get(z, -1e9) > r["walks"]}
-                samples[r["name"]].append((m["t"], q, pub))  # (not p: the next window would get the filter too)
+                samples[r["name"]].append((m["t"], q, occupied))
             if a.trace:
                 print(time.strftime("%H:%M:%S", time.localtime(m["t"])) + " "
                       + " ".join(f"{z[:5]} {1 - v[0]:.2f}" for z, v in p.items()) + f" H{len(tracker.core.hyp_weights())}"
@@ -214,13 +208,9 @@ def main():
             right = sum(d[n] if n < len(d) else 0.0 for d in dists) / len(dists)
             observed = room in rooms
 
-            def on(p_, pub_, published=a.published):
-                return pub_[room] if published and room in pub_ else 1 - p_[room][0] > c
-            bad = sum(on(p_, pub_) != (n > 0) for _, p_, pub_ in ss if room in p_) / len(ps)
+            bad = sum(occ[room] != (n > 0) for _, p_, occ in ss if room in p_) / len(ps)
             if a.json:
-                both = [sum(on(p_, pub_, k) != (n > 0) for _, p_, pub_ in ss if room in p_) / len(ps) for k in (False, True)]
-                per.append({"name": r["name"], "room": room, "n": n, "observed": observed, "P": mean,
-                            "filter": both[0], "published": both[1]})
+                per.append({"name": r["name"], "room": room, "n": n, "observed": observed, "P": mean, "wrong": bad})
             if observed:
                 if n > 0:
                     wrong_off += bad
@@ -231,10 +221,10 @@ def main():
             parts.append(f"{room}{'' if observed else '(ohne Sensor)'}={n}: P {mean:.2f} P(={n}) {right:.2f}{' FALSCH %.0f%%' % (100 * bad) if bad > 0 else ''}")
             if r.get("walks") and bad > 0:  # long windows: when the light would have been wrong
                 runs, start, last = [], None, None
-                for tt_, p_, pub_ in ss:
+                for tt_, p_, occ in ss:
                     if room not in p_:
                         continue
-                    wrong = on(p_, pub_) != (n > 0)
+                    wrong = occ[room] != (n > 0)
                     if wrong and start is None:
                         start = tt_
                     if not wrong and start is not None:
@@ -252,8 +242,8 @@ def main():
           f"wrongly off {wrong_off:.2f} of {n_on:.0f} occupied ones; log evidence {loglik:.1f} "
           f"(dropped hypotheses {cut:.1f}); CPU {time.process_time() - t_cpu:.0f} s")
     if a.json:
-        sums = {k: {"on": sum(x[k] for x in per if x["observed"] and x["n"] == 0),
-                    "off": sum(x[k] for x in per if x["observed"] and x["n"] > 0)} for k in ("filter", "published")}
+        sums = {"on": sum(x["wrong"] for x in per if x["observed"] and x["n"] == 0),
+                "off": sum(x["wrong"] for x in per if x["observed"] and x["n"] > 0)}
         json.dump({"per": per, "sums": sums, "empty": sum(1 for x in per if x["observed"] and x["n"] == 0),
                    "occupied": sum(1 for x in per if x["observed"] and x["n"] > 0), "loglik": loglik, "cut": cut,
                    "cpu": time.process_time() - t_cpu}, open(a.json, "w"), indent=1)

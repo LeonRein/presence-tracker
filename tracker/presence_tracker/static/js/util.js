@@ -111,7 +111,7 @@ export const LABELS = {
     dwell_spread: 'Streuung des Aufenthalts',
     ld2410_hold: 'Haltezeit LD2410C (Anzeige)',
     light_cost: 'Kosten: Licht ohne Person',
-    seen_hold: 'Haltezeit eigener LD2450',
+    occupied_off: 'Besetzt bis Wahrscheinlichkeit',
     lead_time: 'Vorausschau „wird betreten“',
     approach_cost: 'Kosten: Einschalten auf Verdacht',
     target_threshold: 'Schwelle „Ziel“',

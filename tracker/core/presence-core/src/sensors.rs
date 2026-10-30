@@ -90,15 +90,6 @@ pub struct SensorFrame {
 }
 
 impl SensorFrame {
-    /// The detections its LD2450 measured (in a track: not hidden, not held), in the frame's order.
-    pub fn measured(&self) -> impl Iterator<Item = &Detection> {
-        self.detections
-            .iter()
-            .zip(&self.measured)
-            .filter(|&(_, &m)| m)
-            .map(|(d, _)| d)
-    }
-
     /// Whether its LD2450 has anything in sight that can be a person (the LD2410C's anchor).
     pub fn target_in_sight(&self) -> bool {
         self.detections.iter().any(|d| !d.hidden)
