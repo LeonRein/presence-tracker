@@ -136,7 +136,7 @@ def main():
                 break
             sid = m["topic"].split("/")[1]
             frame = Frame.of(m["payload"])
-            tt = clocks[sid](m["t"], frame)
+            tt = clocks[sid](m["t"], frame, crowd.now)
             while changes and tt > changes[0][0]:
                 t_c, cfg = changes.pop(0)
                 crowd.step(t_c)

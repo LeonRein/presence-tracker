@@ -281,12 +281,13 @@ class App:
         if kind != "frame":
             return
         start = time.process_time()
-        t = self.clocks[sensor_id](recv, frame)
+        t = self.clocks[sensor_id](recv, frame, self.tracker.now)
         if self.replay and t < self.last_frame_t - 10:
             log.info("replay restarted, resetting tracker")
             self._reset_tracker()
             self.calibrator.reset()
-            t = self.clocks[sensor_id](recv, frame)
+            t = self.clocks[sensor_id](recv, frame, self.tracker.now)
+        self.clock.frame(t, recv)
         try:
             self.calibrator.on_frame(sensor_id, t, frame, learn=not self.tracker.paused(t))
         except Exception:  # noqa: BLE001 - the calibration's data, not the model: logged only

@@ -10,11 +10,29 @@ import time
 log = logging.getLogger(__name__)
 
 
+# s: without a frame of any sensor for this long they are gone (WiFi, power), not held up on the way: the wall
+# clock holds again. Longer than a stall of HA, the broker or inge (18.10.: about 35 s)
+STALL = 60.0
+
+
 class Clock:
-    """Wall clock; the replay replaces it with the recording's time."""
+    """Wall clock, but never past the newest frame (`frame`) while frames come: the model waits for frames held up on
+    the way (HA, the broker or inge hanging, 18.10. about 35 s; they come all at once, at their boards' uptimes,
+    frames.SensorClock) and its outputs keep their last state meanwhile. Until 0.54.3 it stepped on with the wall
+    clock: every sensor seemed silent, its tracks ended for lost data, and the frames that came late started them
+    anew. Without a frame of any sensor for STALL s the wall clock holds again (MODEL.md 4.4). The replay replaces
+    it with the recording's time."""
+
+    def __init__(self):
+        self.newest = -math.inf  # the time of the newest frame
+        self.heard = -math.inf  # when it came (wall clock)
+
+    def frame(self, t: float, recv: float):
+        self.newest, self.heard = max(self.newest, t), recv
 
     def __call__(self) -> float:
-        return time.time()
+        now = time.time()
+        return now if now - self.heard > STALL else min(now, self.newest)
 
 
 class ReplayClock(Clock):
@@ -26,6 +44,7 @@ class ReplayClock(Clock):
     people from 2 within minutes."""
 
     def __init__(self, speed: float):
+        super().__init__()
         self.speed = speed
         self.origin = None  # (recording time, monotonic time)
         self.due = math.inf  # the time of the next message not yet played

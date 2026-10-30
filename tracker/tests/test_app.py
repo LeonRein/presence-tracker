@@ -8,7 +8,7 @@ import json
 
 from aiohttp.test_utils import TestClient, TestServer
 
-from presence_tracker import app as app_module, code_hash
+from presence_tracker import app as app_module, code_hash, sources
 from presence_tracker.app import App
 from presence_tracker.filter import Tracker
 from presence_tracker.frames import Frame, SensorClock
@@ -16,6 +16,17 @@ from presence_tracker.model import Config
 from sim import Person, ld_prior, simulate
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
+
+
+class Fixed(sources.Clock):
+    """The app's clock standing at t (the time of a report)."""
+
+    def __init__(self, t: float):
+        super().__init__()
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
 
 
 def test_model_error_does_not_stop_the_app(tmp_path):
@@ -110,7 +121,7 @@ def test_a_report_without_the_model_start_has_what_was_learned_at_the_report(tmp
     config = flat_config(entry=True)
     config.save(tmp_path / "tracker.json")
     app = App(tmp_path, publish=False)
-    app.clock = lambda: 1040.0
+    app.clock = Fixed(1040.0)
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), start=5, pauses={2: 30}))
     for t, sid, frame in simulate([a], sim_sensors(config), 40.0, plan=config):
         app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
@@ -156,7 +167,7 @@ def test_a_restarted_app_keeps_the_people_and_reports_from_where(tmp_path):
         async def json(self):
             return {"kind": "ghost", "room": "wohn"}
 
-    again.clock = lambda: 1140.0
+    again.clock = Fixed(1140.0)
     asyncio.run(again.h_report(Request()))
     path, = (tmp_path / "reports").glob("*.jsonl.gz")
     lines = [json.loads(x) for x in gzip.open(path, "rt").read().splitlines()]
@@ -212,7 +223,7 @@ def test_a_report_after_a_live_recalibration_replays_to_what_the_app_showed(tmp_
         if t >= next_tick:
             assert app.tick(1000.0 + t)
             next_tick = t + 0.1
-    app.clock = lambda: 1120.0
+    app.clock = Fixed(1120.0)
     asyncio.run(app.h_report(Request({"kind": "ghost", "room": "wohn"})))
     path, = (tmp_path / "reports").glob("*.jsonl.gz")
     lines = [json.loads(x) for x in gzip.open(path, "rt").read().splitlines()]

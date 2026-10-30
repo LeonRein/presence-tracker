@@ -151,7 +151,7 @@ def main():
                 tracker.reconfigure(config_of(m["t"]))
             sid = m["topic"].split("/")[1]
             frame = Frame.of(m["payload"])
-            tt = clocks[sid](m["t"], frame)
+            tt = clocks[sid](m["t"], frame, tracker.now)
             tracker.process_frame(sid, tt, frame)
             rt = tracker.runtime.get(sid)
             for d in (rt.detections if rt is not None else []):

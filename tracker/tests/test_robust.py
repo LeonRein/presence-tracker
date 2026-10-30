@@ -4,6 +4,7 @@ stops it or freezes its outputs leaves a light that is on burning."""
 
 import asyncio
 import base64
+import collections
 import functools
 import json
 import math
@@ -202,6 +203,11 @@ def test_an_overloaded_replay_waits_for_its_frames(tmp_path):
 
     asyncio.run(main())
     assert played == times and ahead == []
+    # and the app takes the frames of a replay (0.54.3 in development: its clock lacked what the live one has)
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False, replay=[rec])
+    app.on_message("presence/a/frame", b'{"uptime_ms": 1000, "targets": [], "ld2410": {}}', 100.0)
+    assert app.tracker.start == 100.0
 
 
 @pytest.mark.parametrize("publish", [True, False])
@@ -458,7 +464,11 @@ def test_a_room_whose_sensors_go_silent_is_unavailable_in_home_assistant(tmp_pat
     """The app as it runs (MQTT, housekeeping): wohn's own sensors (a and b, mounted in it) stop
     sending; after the limit its own availability topic says "offline" (Home Assistant: unavailable),
     the app's stays "online"; with their next frames "online" again. At the connect the room's topic
-    goes out before the app says "online"."""
+    goes out before the app says "online". (No sensor of the house sends: the model holds STALL s, then goes on
+    with the wall clock, sources.Clock.)"""
+    from presence_tracker import sources
+
+    monkeypatch.setattr(sources, "STALL", 0.2)
     monkeypatch.setattr(app_module, "Tracker", functools.partial(Tracker, model={"silent_after": 0.5}))
     flat_config(entry=True).save(tmp_path / "tracker.json")
     app = App(tmp_path, publish=True)
@@ -618,3 +628,78 @@ def test_an_uploaded_svg_runs_no_script(tmp_path):
     csp = headers["Content-Security-Policy"]
     assert "default-src 'none'" in csp and "sandbox" in csp and "script-src" not in csp
     assert headers["X-Content-Type-Options"] == "nosniff"
+
+
+def _live(tmp_path, monkeypatch, stalled=(), lost=(), stall=(20.0, 55.0), duration=90.0):
+    """The app live (its wall clock faked) with two people in the flat: one sits, one walks about. Within `stall` the
+    frames of the sensors `stalled` pile up on the way (HA, the broker or inge hanging) and come all at once at its end,
+    those of the sensors `lost` never come (a board that failed); the app's ticks go on. What the app showed after
+    the stall (people known, the house's count), the tracks that ended for lost data (by sensor) and, within the
+    stall, how far the model was behind the wall clock and what it showed for the house."""
+    from types import SimpleNamespace
+
+    from presence_tracker import sources
+
+    wall = [0.0]
+    monkeypatch.setattr(sources, "time", SimpleNamespace(time=lambda: wall[0]))
+    tmp_path.mkdir(exist_ok=True)
+    config = flat_config(entry=True)
+    config.save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False)
+    ended = []
+    app.tracker.listeners.append(lambda kind, p: kind == "track_end" and p[4] and ended.append(p[0]))
+    sitting = Person([(0.0, 2.0, 2.5), (duration, 2.0, 2.5)])
+    walking = Person(walk((1.0, 1.0), (5.0, 1.0), (5.0, 4.0), (1.0, 4.0), (1.0, 1.0), (5.0, 1.0), (5.0, 4.0),
+                          (1.0, 4.0), (1.0, 1.0), start=0.0, speed=0.6, pauses={4: 10}))
+    held, shown, in_stall = [], [], []
+    next_tick = 0.0
+
+    def tick_to(t):
+        nonlocal next_tick
+        while next_tick <= t:
+            wall[0] = 1000.0 + next_tick
+            assert app.tick(app.clock())
+            if stall[0] < next_tick < stall[1]:
+                in_stall.append((app.tracker.now - wall[0], app.zone_states["_total"].count))
+            elif next_tick >= stall[1]:
+                shown.append((len(app.tracker.persons()), app.zone_states["_total"].count))
+            next_tick = round(next_tick + 0.1, 6)
+
+    for t, sid, frame in simulate([sitting, walking], sim_sensors(config), duration, plan=config):
+        tick_to(t)
+        if stall[0] <= t < stall[1] and sid in lost:
+            continue
+        if stall[0] <= t < stall[1] and sid in stalled:
+            held.append((sid, frame))
+            continue
+        if held and t >= stall[1]:  # the stall ends: everything it held comes now, as fast as the app reads it
+            for k, (s, f) in enumerate(held):
+                app.on_message(f"presence/{s}/frame", json.dumps(f).encode(), 1000.0 + stall[1] + 1e-4 * k)
+            held.clear()
+        wall[0] = 1000.0 + t
+        app.on_message(f"presence/{sid}/frame", json.dumps(frame).encode(), 1000.0 + t)
+    return shown, collections.Counter(ended), in_stall
+
+
+def test_frames_held_up_on_the_way_come_at_their_time(tmp_path, monkeypatch):
+    """HA, the broker or inge hung (18.10., about 35 s of IO): the frames of all sensors piled up and came all at
+    once. Until 0.54.3 the clock of each board put every frame more than 2 s late at its receive time - 35 s of
+    movement in a few ms - and the model stepped on with the wall clock meanwhile: every sensor seemed silent, its
+    tracks ended for lost data and began anew (simulated on 10.10.: 10-14 people for a while instead of 2-4). Now
+    the model waits for them (no frame from any sensor: it holds), and the frames come at their boards' uptimes: as
+    if nothing had been held up."""
+    shown, ended, in_stall = _live(tmp_path / "stall", monkeypatch, stalled=("a", "b"))
+    plain, plain_ended, _ = _live(tmp_path / "plain", monkeypatch)
+    assert not ended and not plain_ended
+    assert max(n for n, _ in shown) <= max(n for n, _ in plain)
+    assert [c for _, c in shown[1:]] == [c for _, c in plain[1:]]  # (the first: before the held frames came)
+    # meanwhile the model held at the last frame before the stall, its outputs at their last state
+    assert min(behind for behind, _ in in_stall) < -34.0 and len({c for _, c in in_stall}) == 1
+
+
+def test_a_sensor_that_fails_is_silent_while_the_others_go_on(tmp_path, monkeypatch):
+    """One board fails (no frame for 35 s) while the other sends: the model goes on with the other's frames,
+    the failed one is silent and its tracks end for lost data, as always (MODEL.md 4.4)."""
+    _, ended, in_stall = _live(tmp_path, monkeypatch, lost=("b",))
+    assert ended["b"] >= 1 and "a" not in ended
+    assert min(behind for behind, _ in in_stall) > -0.5  # on with a's frames, not held

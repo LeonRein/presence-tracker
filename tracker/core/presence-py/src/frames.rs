@@ -127,9 +127,11 @@ impl PyClock {
         }
     }
 
-    /// The time of a frame received at recv (by its uptime_ms).
-    fn __call__(&mut self, recv: f64, frame: &Bound<'_, PyFrame>) -> f64 {
-        self.0.at(recv, frame.get().0.uptime_ms)
+    /// The time of a frame received at recv (by its uptime_ms); now: the model's time (None: unknown, as if
+    /// it had gone on - a frame more than 2 s late comes at its receive time).
+    #[pyo3(signature = (recv, frame, now=None))]
+    fn __call__(&mut self, recv: f64, frame: &Bound<'_, PyFrame>, now: Option<f64>) -> f64 {
+        self.0.at(recv, frame.get().0.uptime_ms, now.unwrap_or(f64::INFINITY))
     }
 
     /// receive time - uptime as the clock holds it (None before the first frame with an uptime)

@@ -241,7 +241,9 @@ dieser Sensor seit mehr als 30 s keinen Frame gesendet hat (Board ohne Strom, ab
 fünf, *besetzt*, *Personen*, *Bewegung*, *wird betreten* und *Ziel*. Mit seinem nächsten Frame sind sie
 wieder verfügbar, mit dem aktuellen Zustand. Hat ein Raum mehrere eigene Sensoren, erst wenn alle schweigen.
 Ein Sensor, der seit dem Start der App noch nichts gesendet hat, zählt erst 30 s nach dem ersten Frame
-irgendeines Sensors als stumm. Dafür hat jede dieser Entitäten zwei Verfügbarkeits-Topics,
+irgendeines Sensors als stumm. Schweigen alle Sensoren des Hauses zugleich, wartet das Modell zuerst 60 s mit dem
+letzten Stand (meist hängt dann HA, der Broker oder der Host, und die Frames kommen danach gestaut; sie werden zu
+ihrer Zeit verarbeitet); erst dann gelten sie als stumm. Dafür hat jede dieser Entitäten zwei Verfügbarkeits-Topics,
 `presence-tracker/status` und `presence-tracker/zone/<raum>/availability` (beide `online`/`offline`,
 beibehalten; verfügbar nur, wenn beide `online` sagen). Räume ohne eigenen Sensor, Bereiche und das Haus
 haben nur das erste. Der Node-RED-Flow behält bei *nicht verfügbar* den letzten Zustand. Kaputte MQTT-Nachrichten, ein Browser, der die Live-Ansicht nicht mehr abholt, ein Fehler beim

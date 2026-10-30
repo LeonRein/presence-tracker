@@ -2,6 +2,32 @@
 
 ## Unveröffentlicht
 
+## 0.54.3 (Branch `rust-core`, Frames nach einem Stau zu ihrer Zeit; nicht live, kein Tag)
+
+Live stauten sich die Frames, wenn HA, der Broker oder inge eine Weile hing (18.10. etwa 35 s bei viel IO), und kamen
+danach auf einmal. Die Uhr je Board setzte jeden Frame, der mehr als 2 s zu spät kam, auf seine Empfangszeit: 35 s
+Bewegung in wenigen Millisekunden. Und das Modell ging während des Staus mit der Wanduhr weiter (alle 0,1 s): Jeder
+Sensor schien still, seine Spuren endeten als verlorene Daten und begannen mit den gestauten Frames neu (nachgestellt
+mit der Stunde 10.10. 12 Uhr, 35 s ab 12:21 bzw. 12:33: bis 3–4 bekannte Personen statt 2, 5 bzw. 2 Spuren als
+verlorene Daten beendet; mit dieser Version höchstens 2, keine). Jetzt (MODEL.md 4.4):
+- **Das Modell geht nie über den neuesten Frame hinaus, solange Frames kommen** (`sources.Clock`): Sendet kein Sensor
+  mehr, hält es an, die Ausgaben an Home Assistant behalten ihren letzten Stand. Erst wenn `STALL` = 60 s lang von
+  keinem Sensor ein Frame kam, gilt wieder die Wanduhr (alle Boards wirklich weg: WLAN, Strom); dann enden ihre Spuren
+  wie bisher, und ein Raum ist *nicht verfügbar* nach 60 s statt 30 s. Fällt nur ein Board aus, geht das Modell mit
+  den Frames der anderen weiter, das Board ist still wie bisher.
+- **Ein gestauter Frame behält die Zeit aus der Laufzeit seines Boards** (`frames.rs SensorClock::at`, mit der Zeit des
+  Modells): Ein Frame, der mehr als 2 s zu spät kommt, behält sie, solange das Modell nicht mehr als 2 s über sie
+  hinaus ist; die gestauten Frames werden so verarbeitet, als wäre nichts aufgehalten worden (Test: dieselben
+  Ausgaben wie ohne Stau). Ist das Modell weiter (die anderen Sensoren sendeten, nur dieser kam zu spät), kommt er wie
+  bisher zu seiner Empfangszeit, die Uhr wird neu verankert. Ein Neustart des Boards (Laufzeit zurück) verankert sie
+  neu wie bisher.
+- Normalbetrieb live: Das Modell geht mit den Frames (wie in der Wiedergabe und den Werkzeugen) statt alle 0,1 s auf
+  die Wanduhr, ein Frame kommt so nicht mehr nach der Zeit an, auf die das Modell schon ging.
+- `tools/replay.py` und `tools/report_eval.py` geben der Uhr die Zeit des Modells wie die App; ohne (`now` None, andere
+  Werkzeuge) wie bisher.
+- Spuren der drei Referenzstunden byte-gleich mit 0.54.2 (in den Aufnahmen kein Frame, der mehr als 2 s zu spät kam
+  und den das Modell nicht schon um mehr als 2 s überholt hatte).
+
 ## 0.54.2 (Branch `rust-core`, Wiedergabe bei Überlast; nicht live, kein Tag)
 
 Beobachtet 29.10.: eine Wiedergabe mit Tempo 30 (Modell 99 % CPU) meldete nach 66 s „probabilities not finite“ in

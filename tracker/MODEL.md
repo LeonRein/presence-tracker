@@ -531,11 +531,27 @@ LD2410C: mit den Energien des Frames vor der Lücke, 4.3); eine längere sagt ni
 Ein Neustart der App ist eine solche Lücke für alle Sensoren: Die Personen werden über sie nur
 vorgerückt, nicht gewichtet (5.3).
 Das Modell rechnet vorwärts: Ein Frame vor seiner Zeit wirkt auf den Stand jetzt, und was es aus dem Fehlen des
-Frames schloss (Lücke, Spuren zu Ende), bleibt. Live kommt ein Frame höchstens etwa 2 s nach der Zeit, auf die das
-Modell schon ging (die Uhr aus der Laufzeit des Sensors setzt einen späteren auf seine Empfangszeit), weniger als
-eine Lücke; die Wiedergabe wartet auf ihre Frames (seit 0.54.2: vorher lief ihre Uhr bei Überlast weiter, das
-Modell ging bis zu 40 min über Frames hinaus, die noch kamen, jeder Sensor schien länger still als seine Spuren
-leben, und jeder späte Frame begann sie neu – 25 Personen statt 2).
+Frames schloss (Lücke, Spuren zu Ende), bleibt. Deshalb geht es nicht über Frames hinaus, die nur unterwegs
+aufgehalten werden:
+- **Zeit eines Frames:** aus der Laufzeit des Boards (`uptime_ms`), verankert an der schnellsten Zustellung
+  (Empfangszeit − Laufzeit, kriecht um 1 ms/s nach oben: Drift zwischen Board- und Empfängeruhr, ein langsamerer
+  Broker). Ein Frame, der mehr als 2 s zu spät kommt, behält diese Zeit, solange das Modell nicht mehr als 2 s über
+  sie hinaus ist; sonst (die anderen Sensoren sendeten, nur er kam zu spät) kommt er zu seiner Empfangszeit, und die
+  Uhr des Boards wird dort neu verankert, ebenso nach einem Neustart des Boards (Laufzeit zurück) und für einen Frame
+  früher als der Anker (Empfängeruhr zurückgestellt). Ein Frame kommt so höchstens 2 s nach der Zeit, auf die das
+  Modell schon ging, weniger als eine Lücke.
+- **Zeit des Modells:** Es geht mit den Frames, live nie über den neuesten hinaus. Kommt von keinem Sensor ein Frame,
+  hält es an, bis wieder welche kommen, und die Ausgaben behalten ihren letzten Stand; bei einem Stau (HA, Broker oder
+  inge hängen, 18.10. etwa 35 s, danach alle Frames auf einmal) werden die gestauten Frames zu ihren Zeiten
+  verarbeitet, als wäre nichts aufgehalten worden. Erst nach `STALL` = 60 s ohne jeden Frame (länger als ein Stau,
+  alle Boards wirklich weg) gilt die Wanduhr: Dann sind alle Sensoren still, ihre Spuren enden, und ein Raum ist
+  nach 60 s *nicht verfügbar* (6) statt nach 30 s. Fällt ein einzelnes Board aus, geht das Modell mit den anderen
+  weiter, und es ist still wie oben. Die Wiedergabe wartet ebenso auf ihre Frames (seit 0.54.2: vorher lief ihre Uhr
+  bei Überlast weiter, das Modell ging bis zu 40 min über Frames hinaus, die noch kamen, jeder Sensor schien länger
+  still als seine Spuren leben, und jeder späte Frame begann sie neu – 25 Personen statt 2).
+- Nicht abgedeckt: ein Stau länger als 60 s (die Frames danach kommen zu ihrer Empfangszeit wie bis 0.54.2) und ein
+  Board, das während eines Staus neu startet (seine Frames nach dem Neustart kommen zu ihrer Empfangszeit, also nach
+  den gestauten der anderen, die das Modell dann überholt hat).
 
 ## 5. Inferenz
 
@@ -839,7 +855,8 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
     unverändert. `seen_hold` = 0 schaltet die Regel ab.
   - *Sensor des Raums stumm:* Hat jeder eingeschaltete, platzierte Sensor des Raums (wie oben bestimmt)
     seit mehr als `SILENT_AFTER` = 30 s keinen Frame gesendet (länger als die WLAN-Lücken von 6–20 s,
-    nach denen der Filter schon seine Spuren beendet, 4.4), sind alle Entitäten des Raums in Home Assistant *nicht verfügbar* statt
+    nach denen der Filter schon seine Spuren beendet, 4.4; in der Zeit des Modells, das bei Stille aller Sensoren erst
+    60 s hält), sind alle Entitäten des Raums in Home Assistant *nicht verfügbar* statt
     belegt oder frei (`roomseen.RoomSeen.silent`; eigenes Verfügbarkeits-Topic des Raums neben dem der
     App, `ha.py`). Ohne Daten sagt die Ausgabe „weiß ich nicht“; Node-RED schaltet dann nichts. Ein
     Sensor, der seit dem Start des Modells nichts gesendet hat, zählt ab diesem Start. Nur Ausgabe: Der

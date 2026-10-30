@@ -128,7 +128,10 @@ fn replay(
             continue;
         };
         done.in_frames += start.elapsed();
-        let t = clocks.entry(&m.board).or_default().at(m.t, frame.uptime_ms);
+        let t = clocks
+            .entry(&m.board)
+            .or_default()
+            .at(m.t, frame.uptime_ms, tracker.now());
         let t0 = *t0.get_or_insert(t);
         done.span = t - t0;
         if t - t0 > limit {

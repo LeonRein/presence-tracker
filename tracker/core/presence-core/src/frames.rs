@@ -328,7 +328,9 @@ fn ld2410(ld: &Map<String, Value>) -> Result<Ld2410, FrameError> {
 ///
 /// The receive time jitters with WiFi; the uptime does not. The anchor follows the fastest delivery
 /// seen (smallest receive - uptime) and creeps up by 1 ms per second so that it follows clock drift
-/// and a broker that got slower. It starts over on a reboot or a jump.
+/// and a broker that got slower. It starts over on a reboot or a jump. A frame later than the anchor
+/// allows keeps its uptime's time while the model has not gone past it by more than CLOCK_JUMP: it was
+/// held up on the way (HA, the broker or inge hanging, all sensors' frames at once, MODEL.md 4.4).
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct SensorClock {
     anchor: Option<Anchor>,
@@ -352,8 +354,8 @@ impl SensorClock {
     }
 
     /// The frame time of a frame received at `recv` with this uptime (Frame::uptime_ms, millis(); None:
-    /// the receive time).
-    pub fn at(&mut self, recv: f64, uptime_ms: Option<u32>) -> f64 {
+    /// the receive time); `now`: the model's time (infinite: unknown, as if it had gone on).
+    pub fn at(&mut self, recv: f64, uptime_ms: Option<u32>, now: f64) -> f64 {
         let Some(up) = uptime_ms.map(|ms| f64::from(ms) / 1000.0) else {
             return recv;
         };
@@ -362,6 +364,9 @@ impl SensorClock {
             Some(a) if up >= a.last_up && (candidate - a.offset).abs() <= CLOCK_JUMP => {
                 candidate.min(a.offset + CLOCK_CREEP * (up - a.last_up))
             }
+            // late, and the model waited for it: held up on the way, at its uptime's time. Late for a model
+            // that went on with the other sensors: at its receive time, anchored anew (as a clock that stepped)
+            Some(a) if up >= a.last_up && candidate > a.offset && up + a.offset >= now - CLOCK_JUMP => a.offset,
             _ => candidate,
         };
         self.anchor = Some(Anchor { offset, last_up: up });
@@ -438,6 +443,8 @@ mod tests {
     use super::*;
     use crate::config::Mount;
     use crate::testing;
+
+    const INF: f64 = f64::INFINITY; // the model's time unknown
 
     fn parse(s: &str) -> Result<Frame, FrameError> {
         Frame::parse(s.as_bytes())
@@ -616,14 +623,14 @@ mod tests {
     #[test]
     fn the_clock_follows_the_fastest_delivery_and_starts_over_after_a_reboot_or_a_jump() {
         let mut clock = SensorClock::default();
-        assert_eq!(clock.at(7.0, None), 7.0, "without an uptime: the receive time");
+        assert_eq!(clock.at(7.0, None, INF), 7.0, "without an uptime: the receive time");
         // frames every 0.1 s by the uptime, received with 0..50 ms of jitter: the times keep the
         // uptime's spacing, anchored at the fastest delivery
         let jitter = [0.03, 0.0, 0.05, 0.01, 0.02];
         let times: Vec<f64> = jitter
             .iter()
             .enumerate()
-            .map(|(k, j)| clock.at(100.0 + 0.1 * k as f64 + j, Some(1000 + 100 * k as u32)))
+            .map(|(k, j)| clock.at(100.0 + 0.1 * k as f64 + j, Some(1000 + 100 * k as u32), INF))
             .collect();
         for (k, w) in times.windows(2).enumerate() {
             let want = if k == 0 { 0.07 } else { 0.1 };
@@ -633,17 +640,53 @@ mod tests {
         assert!((a.offset - 99.0).abs() < 1e-3 + 1e-9);
         // a slower broker: the anchor creeps up by 1 ms per s, no faster
         assert_eq!(a.last_up, 1.4);
-        let t = clock.at(a.offset + 11.4 + 0.5, Some(11_400));
+        let t = clock.at(a.offset + 11.4 + 0.5, Some(11_400), INF);
         assert!((t - (a.offset + 0.01 + 11.4)).abs() < 1e-9);
         // a reboot (the uptime goes back; also millis() running over after 49.7 days) or a jump of
-        // more than 2 s: anchored anew
-        assert_eq!(clock.at(500.0, Some(1000)), 500.0);
-        assert_eq!(clock.at(503.6, Some(1500)), 503.6);
+        // more than 2 s past a model that went on: anchored anew
+        assert_eq!(clock.at(500.0, Some(1000), INF), 500.0);
+        assert_eq!(clock.at(503.6, Some(1500), 503.6), 503.6);
         let resumed = SensorClock::anchored(Anchor {
             offset: 499.0,
             last_up: 1.0,
         });
         assert_eq!(resumed.anchor().unwrap().offset, 499.0);
+    }
+
+    #[test]
+    fn frames_held_up_on_the_way_keep_their_uptimes_time_while_the_model_waits_for_them() {
+        // frames every 0.1 s, received at once; then 35 s nothing (a broker that hung), then the 350 it held
+        let mut clock = SensorClock::default();
+        for k in 0..10 {
+            clock.at(100.0 + 0.1 * f64::from(k), Some(1000 + 100 * k), 0.0);
+        }
+        let held: Vec<f64> = (10..360)
+            .map(|k| {
+                clock.at(
+                    135.95 + 1e-4 * f64::from(k),
+                    Some(1000 + 100 * k),
+                    100.9 + 0.1 * f64::from(k - 10),
+                )
+            })
+            .collect();
+        for (k, t) in held.iter().enumerate() {
+            // (the last of them, less than 2 s late, as always: the anchor creeps up by 1 ms per s)
+            assert!((t - (101.0 + 0.1 * k as f64)).abs() < 0.01, "{k}: {t}");
+        }
+        assert!((clock.anchor().unwrap().offset - 99.0).abs() < 0.01, "the anchor stays");
+        assert!(
+            (clock.at(136.03, Some(37_000), 135.9) - 136.0).abs() < 0.01,
+            "and goes on as before"
+        );
+        // late for a model that went on more than 2 s past it (the other sensors sent): at its receive time
+        assert_eq!(clock.at(140.5, Some(37_100), 140.0), 140.5);
+        // a board that rebooted meanwhile: anchored anew at its receive time, whatever the model waited for
+        let mut rebooted = SensorClock::anchored(Anchor {
+            offset: 99.0,
+            last_up: 2.0,
+        });
+        assert_eq!(rebooted.at(135.95, Some(1_500), 101.0), 135.95);
+        assert_eq!(rebooted.anchor().unwrap().offset, 134.45);
     }
 
     fn mount(mirror: bool) -> Mount {
