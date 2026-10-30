@@ -2,7 +2,8 @@
 //! (fixtures/ld_reference.py): a small fixed case - three hypotheses, a person with a track whose
 //! mixture has a part gone through a door, a known person whose amplitude was measured, another one
 //! anywhere, the unknown ones - two rounds of frames of two sensors. Everything the weighing changes
-//! or learns agrees to 1e-12.
+//! or learns agreed to 1e-12 until the unknown ones in view became one Bernoulli (MODEL.md 4.3, they
+//! weigh 2nd order in their mass, here enough for 3e-3): now a check of the weighing's shape only.
 
 use std::io::Read;
 
@@ -19,7 +20,7 @@ use crate::ld2410::sensor::LdCollect;
 use crate::tracker::Tracker;
 use crate::world::{World, WorldExport};
 
-const TOL: f64 = 1e-12;
+const TOL: f64 = 3e-3;
 
 fn fixture() -> Value {
     let gz = include_bytes!("../fixtures/ld_reference.json.gz");
