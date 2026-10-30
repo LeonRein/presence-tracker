@@ -221,7 +221,7 @@ Module von `presence-core`, nach MODEL.md:
 | `motion/{stay,walk,imm}.rs` | 3, 5.2 | Aufenthalte, Gehen je Tick, Regionen, Ankünfte, `leap`; Vorhersage der Mischung mit Wänden und Türen (`sync_step`) |
 | `filter/{pool,densities,mixture,hyp}.rs` | 5.2–5.6 | Pools, `Hidden`/`Undetected`, `Gauss`, Hypothesen und ihr Schlüssel |
 | `filter/{step,evidence,branch,merge,ld_weigh}.rs` | 4, 5, 7 | Takt und Flush, Evidenz je Frame, Verzweigen, Zusammenlegen/Abschneiden, LD2410C-Verrechnung |
-| `learn/{ghost_map,destination}.rs` | 4.2, 6 | Geisterkarte, Zielkarte samt Geometrie und Lernen der Gänge |
+| `learn/destination.rs` | 6 | Zielkarte samt Geometrie und Lernen der Gänge |
 | `outputs.rs`, `room_seen.rs` | 6 | Zähl-/Ortsverteilungen, Belegt (Filter oder LD2450 des Raums, stumm), *wird betreten*, *Ziel*, Anzeige |
 | `formats.rs` | 4.2, 4.3, 5.3, 6 | die gespeicherten Formate (base64/zlib, float16/float32), byte-kompatibel lesbar |
 | `tracker.rs` | – | `Tracker`: die öffentliche Rust-API, die Python-Bindung und Wiedergabe gemeinsam nutzen |
@@ -266,7 +266,7 @@ set_outputs(config)                          nur die Ausgabeparameter (params::O
 adopt(old)                                   was nach einem Neubau weitergeht
 reset_people(places) / reset_tracks()        people_state() -> JSON / restore_people(JSON) -> None | Grund
 set_pauses(intervals) / hold_background(s)   learned() -> Learned (json() ohne den Tracker, im Thread)
-use_ghost_map / use_ld_background / use_dest_map(JSON)
+use_ld_background / use_dest_map(JSON)
 zone_states(now), persons(), clouds(), online(id, now), silent(now), seen_last(), watched(), observed_total(),
 regions(), dwell, ld_shown(si)
 Sichten: plan(), tiles_view(), detections(si), last_frame(si), coverage(), learned_view() (0.54.0; sensor_map(si) weg)
@@ -278,7 +278,7 @@ des Kerns, beim Bauen eingebettet: build.rs, 0.50.0)
 nur mit dem Feature "testing" (Tests und Werkzeuge, nie im Image; 0.50.0 alles, was nur sie lesen):
 build_export, hidden_at, panic_for_test, Geometry(config), model_defaults(), ld_prior(), ld_expected(...);
 Core.normalize/spoil_weights_for_test/ld_last, loglik, hyp_weights(), check(), hypotheses(), tracks() (Spur ->
-Sensor-ID), room_at(pts), tile_near(p), sight(id, pts), observed(), ghost_rates(id, pts), background(id),
+Sensor-ID), room_at(pts), tile_near(p), sight(id, pts), observed(), background(id),
 count_distribution() / place_distribution() (nach Raum- bzw. Ortsnamen, "_observed"/"_house"), occupancy()
 (Raum -> Quelle oder None)
 ```
@@ -301,7 +301,7 @@ Abstände, Gates), die Uhr `Frame.uptime_ms`.
 und `Tracker::step(t)` tun alles, was `process_frame`/`step` taten, und geben die Ereignisse für die Listener zurück
 (`Watch`, `TrackEnd`, `Branch`); die Hülle ruft die Listener damit (der Listener „frame“ hört nach den Schritten). Das
 Gelernte gibt `learned()` als Kopie (`presence_core.Learned`, `json()` packt ohne den Tracker, im Thread der App);
-`use_ghost_map/use_ld_background/use_dest_map` nehmen das gespeicherte JSON. Die Python-Lerner (`ghostmap.py`,
+`use_ld_background/use_dest_map` nehmen das gespeicherte JSON. Die Python-Lerner (`ghostmap.py`,
 `destination.py`, `ld2410.Background`) bleiben bis Phase 9 als Orakel der Formate in den Tests.
 
 **Umgesetzt in Phase 9 (28.10.):** Der Python-Kern ist gelöscht (Liste im CHANGELOG 0.39.0). Das Modell sind die

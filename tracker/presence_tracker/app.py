@@ -44,8 +44,8 @@ DOWN_AFTER = 3  # model failures without RETRY s of running between: the model i
 RESET_HOLD = 300.0  # s of each sensor's frames the LD2410C background does not learn from after a reset
 RETRY = 60.0  # s: while down, the model is rebuilt and tried again this often (a rebuild is seconds of CPU)
 # what was collected and learned under a geometry (the sensors' places, the plan: presence_core.geometry_key), each
-# file with its key: the calibration's measurements, the ghost map, the LD2410C background, the destination map
-COLLECTED = ("calibration.npz", "ghostmap.json", "ld2410.json", "destinations.json")
+# file with its key: the calibration's measurements, the LD2410C background, the destination map
+COLLECTED = ("calibration.npz", "ld2410.json", "destinations.json")
 
 
 class LiveClient:
@@ -175,15 +175,12 @@ class App:
     def _reset_tracker(self):
         """A new model with what was learned and saved. A file that can't be read (empty after a
         power cut, broken, of another type) is logged and that part starts with nothing learned: until
-        0.18 an empty calibration.npz, people.json [1] or ghostmap.json [] kept the app from starting
+        0.18 an empty calibration.npz or people.json [1] kept the app from starting
         at all."""
         self.tracker = Tracker(self.config)
         self.tracker.pauses = self.pauses  # Lernen pausieren: the app's switch (pause.py)
-        # what was learned online, each part only under the geometry it was learned under (_load_learned): where
-        # the sensors start ghost tracks (MODEL.md 4.2), what each LD2410C sees without anybody (4.3), where walks
-        # go (6 "Ziel")
-        self._load_learned("ghostmap.json", self.tracker.use_ghost_map, "ghost map",
-                           "learned with another prior: starting a new one")
+        # what was learned online, each part only under the geometry it was learned under (_load_learned): what
+        # each LD2410C sees without anybody (MODEL.md 4.3), where walks go (6 "Ziel")
         self._load_learned("ld2410.json", self.tracker.use_ld_background, "LD2410C background")
         self._load_learned("destinations.json", self.tracker.use_dest_map, "destination map",
                            "learned on another grid: starting a new one")
@@ -469,8 +466,7 @@ class App:
         model failure (_model_failed: it starts over from the last save)."""
         files = []
         part = self._learned_packer(self.tracker.learned_snapshot(), self.geometry)
-        parts = [("ghostmap.json", lambda: part("ghost_map")),
-                 ("ld2410.json", lambda: part("ld_background")),
+        parts = [("ld2410.json", lambda: part("ld_background")),
                  ("destinations.json", lambda: part("dest_map")),
                  ("people.json", self._people_bytes),
                  ("pause.json", self._pause_bytes),
@@ -623,7 +619,6 @@ class App:
         app.router.add_get("/api/ha/map", self.h_map)
         app.router.add_post("/api/tracks/reset", self.h_reset_tracks)
         app.router.add_get("/api/learned", self.h_learned)
-        app.router.add_post("/api/learned", self.h_import_learned)
         app.router.add_get("/api/tiles", self.h_tiles)
         app.router.add_get("/api/reports", self.h_reports)
         app.router.add_post("/api/reports", self.h_report)
@@ -792,22 +787,11 @@ class App:
 
     async def h_learned(self, request):
         """What the running model learned (the core's, computed only when asked; the model is only read): per sensor
-        in use its ghost map and its LD2410C's background, the destination map."""
+        in use its LD2410C's background, the destination map."""
         try:
             return web.json_response(self.tracker.learned_view())
         except Exception as e:  # noqa: BLE001 - the model is down (restarting after an error)
             return web.json_response({"error": "model_down", "detail": repr(e)}, status=503)
-
-    async def h_import_learned(self, request):
-        """Take over a ghost map learned elsewhere, e.g. offline from recordings: {"ghost_map":
-        <tools/ghostmap.py output>}. Replaces the current one; saved as learned under the geometry in use."""
-        data = await request.json()
-        if "ghost_map" in data:
-            used = self.tracker.use_ghost_map(data["ghost_map"])  # ValueError if it cannot be read
-            atomic_write(self.data_dir / "ghostmap.json",
-                         json.dumps({"geometry": self.geometry, "learned": data["ghost_map"]}).encode())
-            log.info("ghost map imported, %s", "in use" if used else "not used: learned with another prior")
-        return web.json_response({"ghost_map": True})
 
     async def h_tiles(self, request):
         """The tiles (MODEL.md 5.3), for drawing where unseen people may be: per tile its square
@@ -820,7 +804,7 @@ class App:
 
     async def h_report(self, request):
         """Something looked wrong: what (room, kind, how long ago, a note), saved with the config,
-        when the model last started and what it had learned then (ghost map, LD2410C background)
+        when the model last started and what it had learned then (LD2410C background, destination map)
         and knew about the people (the saved state it started from, None: nothing), the code, and the
         sensor data of the last REPORT_WINDOW s in the recordings' format, with what the app showed per
         second in between (topic "app/shown"): the moment can be replayed and compared with what the

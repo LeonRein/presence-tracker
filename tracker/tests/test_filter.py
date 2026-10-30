@@ -10,7 +10,6 @@ from sim import Person, simulate
 from presence_tracker.frames import Frame
 
 from test_frames import sim_sensors, walk
-from fixture import fixture
 
 FLUR_DOOR = (0.0, 4.0)
 BALCONY_DOOR = (6.0, 2.0)
@@ -221,57 +220,15 @@ def test_occupied_is_the_cheaper_decision_on_the_probability():
         assert st.probability == p and st.occupied is occupied
 
 
-def _learned(crowd):
-    """(z0, P(ghost) the map learns with) of every track that ends."""
-    out = []
-    crowd.listeners.append(lambda kind, d: out.append((d[1], d[2])) if kind == "track_end" else None)
-    return out
-
-
-def test_the_ghost_map_does_not_confirm_itself():
-    # the map claims a hotspot of ghosts where somebody sits down (MODEL.md 4.2): the tracks on them
-    # there count as a person all the same - what the map says at a spot is no evidence for it
-    seat = (4.5, 3.5)
-    config = flat_config(entry=True)
-    crowd = Tracker(config, start=0.0, people=["outside", "outside"])
-    # 200 ghosts at the seat for each sensor, learned by the Python map of 0.38.1 (fixtures/ghosts.json)
-    assert crowd.use_ghost_map(fixture("ghosts.json")["flat_seat"])
-    learned = _learned(crowd)
-    a = Person(walk((-1.0, 4.0), FLUR_DOOR, seat, (seat[0] + 0.05, seat[1]), start=2, pauses={2: 150}))
-    for t, sid, frame in simulate([a], sim_sensors(config, still_dropout=1 / 30, still_gap=40), a.waypoints[-1][0],
-                                  plan=config):
-        crowd.process_frame(sid, t, Frame.of(frame))
-    at_seat = [p for z, p in learned if np.hypot(z[0] - seat[0], z[1] - seat[1]) < 0.5]
-    assert len(at_seat) >= 2 and max(at_seat) < 0.01, learned
-    assert max(p for _, p in learned) < 0.05, learned  # coming in at the door: a person too
-
-
-def test_a_sitter_taken_for_ghosts_does_not_become_a_ghost_source():
-    # MODEL.md 4.2, 10: somebody already sits at a spot when the filter starts with nobody inside (as
-    # after a start of the app); the LD2450s drop them now and then. Some of their tracks are taken
-    # for ghosts. That must not make the seat a ghost source (with the prior of 4 h of watching and the
-    # lives learned online: 3.6 / 12.6 times the prior after 10 min, the long ghosts 44 s instead of 39)
-    seat = (4.5, 3.5)
-    config = flat_config(entry=True)
-    crowd = Tracker(config, start=0.0, people=["outside", "outside"])
-    learned = _learned(crowd)
-    a = Person([(0.0, *seat), (600.0, seat[0] + 0.05, seat[1])])
-    for t, sid, frame in simulate([a], sim_sensors(config, still_dropout=1 / 60, ld2410=False), 600,
-                                  plan=config):
-        crowd.process_frame(sid, t, Frame.of(frame))
-    prior_rate = crowd.learned()["ghost_map"]["prior_rate"]
-    assert sum(p for _, p in learned) > 2, learned  # the case: some of them were taken for ghosts
-    assert all(crowd.core.ghost_rates(s, np.array([seat]))[0][0] < 2 * prior_rate for s in ("a", "b"))
-
-
-def test_a_ghost_in_an_empty_house_is_learned_as_one():
+def test_a_ghost_in_an_empty_house_ends_as_one():
     config = flat_config()
     crowd = Tracker(config, start=0.0, people=["outside", "outside"])
-    learned = _learned(crowd)
+    ended = []
+    crowd.listeners.append(lambda kind, d: ended.append(d[2]) if kind == "track_end" else None)
     ghost = Person([(20.0, 3.0, 2.5), (21.0, 3.0, 2.5)])
     for t, sid, frame in simulate([ghost], sim_sensors(config), 40, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
-    assert learned and min(p for _, p in learned) > 0.9, learned
+    assert ended and min(ended) > 0.9, ended
 
 
 def test_a_sitter_the_ld2450_loses_stays_while_the_ld2410c_sees_them():

@@ -92,21 +92,6 @@ pub(crate) fn number(v: &Value, name: &'static str, min: f64) -> Result<f64, Lea
         .ok_or(LearnedError::Field(name))
 }
 
-/// Per sensor id a value read by `read` (a JSON object {id: value}; missing: none).
-pub(crate) fn per_sensor<T>(
-    m: &Map<String, Value>,
-    name: &'static str,
-    mut read: impl FnMut(&str, &Value) -> Result<T, LearnedError>,
-) -> Result<Vec<(String, T)>, LearnedError> {
-    match m.get(name) {
-        None => Ok(Vec::new()),
-        Some(v) => object(v, name)?
-            .iter()
-            .map(|(id, x)| Ok((id.clone(), read(id, x)?)))
-            .collect(),
-    }
-}
-
 /// A list of exactly `n` finite numbers at least `min`.
 pub(crate) fn numbers(v: &Value, name: &'static str, n: usize, min: f64) -> Result<Vec<f64>, LearnedError> {
     let list = v.as_array().filter(|a| a.len() == n).ok_or(LearnedError::Field(name))?;

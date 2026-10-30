@@ -3,7 +3,7 @@
 //!
 //! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
-use super::branch::{Category, Found, Frame};
+use super::branch::{Category, Frame};
 use super::densities::{DensityData, DensityId, Kind};
 use super::hyp::{Ghost, GroupId, Hyp, Owner};
 use super::mixture::{MixtureId, NewTrack, SegId, ghost_source};
@@ -167,7 +167,6 @@ fn frame(t: f64, skip: &[SegId]) -> Frame<'_> {
         last: 0.089,
         censored: false,
         skip,
-        prior_rate: 1.8e-5,
     }
 }
 
@@ -179,10 +178,7 @@ fn track_through_its_events(world: &World, mut at: impl FnMut(&Filter, &str)) ->
     f.set_flushed(t);
     let seg = SegId(7);
     let z = [2.0, 2.0];
-    let found = Found {
-        track: NewTrack { seg, z, var: 0.04 },
-        map_rate: 1.8e-5,
-    };
+    let found = NewTrack { seg, z, var: 0.04 };
     let cats = f.branch_all(world, &frame(t, &[seg]), &[found]).expect("finite");
     at(&f, "branch");
     let cats: Vec<Category> = cats[0].iter().map(|&(_, c)| c).collect();
@@ -203,13 +199,10 @@ fn track_through_its_events(world: &World, mut at: impl FnMut(&Filter, &str)) ->
     at(&f, "held");
     t += 0.2;
     f.flush(world, &watching(t), t);
-    let again = Found {
-        track: NewTrack {
-            seg,
-            z: [2.15, 2.0],
-            var: 0.0,
-        },
-        map_rate: 0.0,
+    let again = NewTrack {
+        seg,
+        z: [2.15, 2.0],
+        var: 0.0,
     };
     let cats = f.branch_all(world, &frame(t, &[]), &[again]).expect("finite");
     at(&f, "found again");
@@ -279,13 +272,10 @@ fn a_person_partly_through_a_door(world: &World) -> (Filter, MixtureId) {
     let mut f = filter(world, 1).0;
     let world_shape = world.density_shape();
     f.set_flushed(1.0);
-    let found = Found {
-        track: NewTrack {
-            seg: SegId(1),
-            z: [2.0, 2.0],
-            var: 0.04,
-        },
-        map_rate: 1.8e-5,
+    let found = NewTrack {
+        seg: SegId(1),
+        z: [2.0, 2.0],
+        var: 0.04,
     };
     f.branch_all(world, &frame(1.0, &[SegId(1)]), &[found]).expect("finite");
     let objects = f.objects_mut();
@@ -388,9 +378,29 @@ fn giving_back_keeps_the_mass() {
 }
 
 #[test]
+fn a_ghost_starts_at_the_same_rate_anywhere() {
+    // MODEL.md 4.2: one rate per m^2 and s, whoever and whatever is near
+    let world = testing::flat();
+    let rate: f64 = world.params.ghost_types.iter().map(|t| t[0]).sum();
+    for z in [[2.0, 2.0], [5.0, 4.0]] {
+        let (mut f, _) = filter(&world, 1);
+        f.set_flushed(1.0);
+        let seg = SegId(7);
+        let before = f.hyps()[0].logw;
+        let track = NewTrack { seg, z, var: 0.04 };
+        let children = f.branch_all(&world, &frame(1.0, &[seg]), &[track]).expect("finite");
+        let (ghost, _) = children[0]
+            .iter()
+            .find(|c| c.1 == Category::Ghost)
+            .expect("a ghost's child");
+        assert!((ghost - before - (rate * 0.089).ln()).abs() < 1e-12, "{ghost}");
+    }
+}
+
+#[test]
 fn a_track_whose_ghost_alternative_is_all_but_gone_ends() {
     // test_hypotheses: no live track loses an alternative, so "ghost" can weigh 1e-310 next to
-    // "person" when the track ends; taking the map's factor out of those odds stays finite
+    // "person" when the track ends
     let world = testing::flat();
     let (mut f, hidden) = filter(&world, 1);
     let seg = SegId(3);
@@ -409,7 +419,6 @@ fn a_track_whose_ghost_alternative_is_all_but_gone_ends() {
         z0: track.z,
         born: 1.0,
         lost: None,
-        map_odds: 5.0,
     };
     f.tracks_mut().begin(seg, info);
     let objects = f.objects_mut();

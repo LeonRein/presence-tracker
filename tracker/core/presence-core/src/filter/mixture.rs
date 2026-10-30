@@ -384,10 +384,6 @@ impl Mixture {
         total
     }
 
-    pub fn walking(&self) -> f64 {
-        self.weights()[WALK]
-    }
-
     /// (K,) probability of each level of detectability
     pub fn kw(&self, levels: usize) -> Vec<f64> {
         self.ka.chunks_exact(self.ka.len() / levels).map(pairwise_sum).collect()

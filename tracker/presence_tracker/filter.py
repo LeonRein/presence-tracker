@@ -120,7 +120,7 @@ class Tracker:
         # the Rust core (presence_core.Core, _Guarded): the filter, its world and what it learns; the tests and
         # tools read it directly (its readings of the filter's state and outputs: feature "testing")
         self.core = None
-        # Lernen pausieren (pause.py): in these intervals nothing learns (the ghost map, MODEL.md 4.2; the
+        # Lernen pausieren (pause.py): in these intervals nothing learns (the
         # LD2410C background and echo rate, 4.3; the destination map, 6 "Ziel"); the tracking goes on
         self.pauses = Pauses()
         self.seen = _Seen(self)  # the rooms' own LD2450 (output only, MODEL.md 6 "Belegt"; in the core)
@@ -238,22 +238,15 @@ class Tracker:
             self.reset_people()
         return True
 
-    def use_ghost_map(self, gm) -> bool:
-        """Use a learned ghost map (MODEL.md 4.2; its dict, as learned()["ghost_map"]) if it was learned
-        with the prior the model has now; else (also None) start a new one from the prior. Only one learned
-        under this geometry (presence_core.geometry_key: the app keeps the key with the file). Returns whether
-        the learned map is used; ValueError if it cannot be read."""
-        return self.core.use_ghost_map(None if gm is None else json.dumps(gm))
-
     def use_dest_map(self, dm) -> bool:
-        """Use a learned destination map (MODEL.md 6 "Ziel"; its dict), learned under this geometry (as
-        use_ghost_map), if it is of this grid; else (also None) start an empty one. ValueError if it cannot be
-        read."""
+        """Use a learned destination map (MODEL.md 6 "Ziel"; its dict), only one learned under this geometry
+        (presence_core.geometry_key: the app keeps the key with the file), if it is of this grid; else (also
+        None) start an empty one. ValueError if it cannot be read."""
         return self.core.use_dest_map(None if dm is None else json.dumps(dm))
 
     def use_ld_background(self, bg) -> list:
         """Use a learned LD2410C background (MODEL.md 4.3; its dict, None: nothing learned), learned under this
-        geometry (as use_ghost_map). Returns why sensors' parts were dropped (a part out of range is dropped
+        geometry (as use_dest_map). Returns why sensors' parts were dropped (a part out of range is dropped
         alone, the others are used); ValueError if it is no background."""
         return self.core.use_ld_background(None if bg is None else json.dumps(bg))
 
@@ -266,7 +259,7 @@ class Tracker:
 
     def process_frame(self, sensor_id: str, t: float, frame: presence_core.Frame):
         """A frame of a sensor at t (in the core: the model starts at the first; a sensor in use moves
-        everybody on to t, then its frame is evidence, MODEL.md 4; the ghost map, the LD2410C background
+        everybody on to t, then its frame is evidence, MODEL.md 4; the LD2410C background
         and the destination map learn where they always did, docs/rust-core.md 2.0)."""
         self._sync_pauses()
         events = self.core.frame(sensor_id, t, frame)
@@ -448,22 +441,18 @@ class Tracker:
     # ------------------------------------------------------------- learned
 
     def learned(self) -> dict:
-        """What was learned in its saved formats: {"ghost_map", "ld_background", "dest_map"}."""
+        """What was learned in its saved formats: {"ld_background", "dest_map"}."""
         return json.loads(self.learned_snapshot().json())
 
     def learned_view(self) -> dict:
         """What the running model learned, for the web UI (the core's, computed when asked): per sensor in use its
-        ghost map per tile (ghost tracks per m^2 and hour, None where it does not watch), its LD2410C's background
-        per gate; the destination map per cell. Rounded for the web UI:
+        LD2410C's background per gate; the destination map per cell. Rounded for the web UI:
         positions to mm, rates and energies to two or four places, shares to three."""
         v = json.loads(self.core.learned_view())
         r = round
         xy = lambda p: [r(p[0], 3), r(p[1], 3)]  # noqa: E731
-        v["tiles"] = [[xy(square), room] for square, room in v["tiles"]]
         for s in v["sensors"].values():
-            g, b = s["ghosts"], s["background"]
-            g["rate"] = [None if x is None else r(x, 4) for x in g["rate"]]
-            g.update(prior=r(g["prior"], 4), hours=r(g["hours"], 2), forget_hours=r(g["forget_hours"], 2))
+            b = s["background"]
             for gates in (b["now"], b["anchor"]):
                 gates["moving"] = [r(x, 2) for x in gates["moving"]]
                 gates["still"] = [None if x is None else r(x, 2) for x in gates["still"]]
@@ -481,11 +470,8 @@ class Tracker:
         return self.core.learned()
 
     def load_learned(self, data: dict):
-        """Take over what was learned (learned()) under this geometry, each part present: the ghost map if
-        learned with the prior the model has now, the destination map if of this grid (ValueError if one
-        cannot be read)."""
-        if data.get("ghost_map"):
-            self.use_ghost_map(data["ghost_map"])
+        """Take over what was learned (learned()) under this geometry, each part present: the destination map
+        if of this grid (ValueError if one cannot be read)."""
         if data.get("ld_background"):
             for why in self.use_ld_background(data["ld_background"]):
                 log.warning("LD2410C background: a part dropped: %s", why)

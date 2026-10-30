@@ -366,20 +366,6 @@ impl Objects {
     }
 }
 
-/// p with its odds multiplied by e^log_factor, without overflow: since no
-/// live track loses an alternative, p can be ~1e-300 and e^x beyond the floating point range.
-pub fn odds_shifted(p: f64, log_factor: f64) -> f64 {
-    if !(0.0 < p && p < 1.0) {
-        return p;
-    }
-    let x = (-p).ln_1p() - p.ln() - log_factor;
-    if x > 0.0 {
-        let e = (-x).exp();
-        return e / (1.0 + e);
-    }
-    1.0 / (1.0 + x.exp())
-}
-
 /// Keeps the hypotheses marked to be kept, in their order.
 fn keep_marked(hyps: &mut Vec<Hyp>, keep: &[bool]) {
     let mut marks = keep.iter();
@@ -398,16 +384,5 @@ mod tests {
             [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]].map(|p| p.to_vec())
         );
         assert_eq!(permutations(0).count(), 1);
-    }
-
-    #[test]
-    fn shifting_odds_stays_finite() {
-        // test_hypotheses.test_shifting_odds_stays_finite
-        assert_eq!(odds_shifted(0.5, 0.0), 0.5);
-        assert!((odds_shifted(0.2, 4f64.ln()) - 0.5).abs() < 1e-12);
-        let tiny = odds_shifted(1e-310, -5.0);
-        assert!(0.0 < tiny && tiny < 1e-310);
-        assert_eq!(odds_shifted(1.0 - 1e-16, 800.0), 1.0);
-        assert_eq!(odds_shifted(0.0, 3.0), 0.0);
     }
 }

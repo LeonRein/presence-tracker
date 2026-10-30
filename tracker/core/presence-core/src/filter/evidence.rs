@@ -6,11 +6,10 @@
 
 use crate::filter::Filter;
 use crate::filter::densities::{TileFactors, TileFactorsBuf};
-use crate::filter::holders::{Holders, Obj};
+use crate::filter::holders::Obj;
 use crate::filter::hyp::{Hyp, Owner};
-use crate::filter::merge::odds_shifted;
 use crate::filter::mixture::{Mixture, MixtureId, SegId, UNIT_W};
-use crate::filter::objects::{Objects, ReleaseCache};
+use crate::filter::objects::ReleaseCache;
 use crate::filter::step::TileRates;
 use crate::filter::tracks::{Lost, TrackInfo, Tracks};
 use crate::geometry::Point;
@@ -37,9 +36,8 @@ pub fn no_find(p: &Params, kind: LostKind, u: f64) -> f64 {
     never + (1.0 - never) * later
 }
 
-/// A track that ended, for what the shell learns from it (the ghost map, MODEL.md 4.2): where it
-/// began, P(ghost) as judged now without what the map said at its birth, how long it lived, and
-/// when it was born.
+/// A track that ended, for the listeners: where it began, P(ghost) as judged now, how long it lived,
+/// and when it was born.
 #[derive(Debug, Clone, Copy)]
 pub struct Ended {
     pub z0: Point,
@@ -49,21 +47,11 @@ pub struct Ended {
 }
 
 impl Filter {
-    /// Step 1 of a frame: no ghost track was born in delta s (echoes come with walkers in view);
-    /// `ghost_total` is the rate of ghost births anywhere sensor si sees, read before the map
-    /// learns this time.
-    pub fn watch(&mut self, world: &World, si: usize, delta: f64, ghost_total: f64) {
-        let Filter {
-            walkers,
-            hyps,
-            objects,
-            holders,
-            ..
-        } = self;
-        let walkers = walkers.get(si, || count_walkers(hyps, objects, holders, world, si));
-        let (echo, area) = (world.params.ghost_echo, world.sights[si].area);
-        for (hy, w) in hyps.iter_mut().zip(walkers) {
-            hy.logw -= (ghost_total + echo * w * area) * delta;
+    /// Step 1 of a frame: no ghost track was born in delta s.
+    pub fn watch(&mut self, world: &World, si: usize, delta: f64) {
+        let total = world.params.ghost_types.iter().map(|t| t[0]).sum::<f64>() * world.sights[si].area;
+        for hy in &mut self.hyps {
+            hy.logw -= total * delta;
         }
     }
 
@@ -153,7 +141,7 @@ impl Filter {
 
     /// The sensor dropped the track. For a person this follows from not finding it
     /// again (counted while it was held); a ghost died: its hazard. A person left without tracks
-    /// goes to the people without one. Returns what the ghost map learns from it.
+    /// goes to the people without one.
     pub fn end(&mut self, world: &World, seg: SegId, t: f64, data_lost: bool) -> Ended {
         let w = self.hyp_weights();
         let p_ghost = w
@@ -162,8 +150,6 @@ impl Filter {
             .filter(|(_, hy)| hy.is_ghost(seg))
             .fold(0.0, |s, (wi, _)| s + wi);
         let info = self.tracks.end(seg);
-        // the map entered the odds once, as a factor at the birth: taken out
-        let p_ghost = odds_shifted(p_ghost, -info.map_odds);
         let life = info.lost.map_or(info.ghost_t(), |l| l.t) - info.born;
         let ghost_end = ghost_end(&world.params, &info, t);
         let mut cache = ReleaseCache::new();
@@ -237,38 +223,6 @@ impl Filter {
             self.holders.book(&mut self.hyps, entry, d);
         }
     }
-}
-
-/// Per hypothesis the expected number of walkers in view of sensor si.
-pub(super) fn count_walkers(hyps: &[Hyp], objects: &Objects, holders: &Holders, world: &World, si: usize) -> Vec<f64> {
-    let n = world.tiles.n;
-    let seen: Vec<f64> = world.sights[si]
-        .tiles
-        .iter()
-        .map(|&g| if g > 0.1 { 1.0 } else { 0.0 })
-        .collect();
-    let grid = &world.sights[si].grid;
-    let mut val = vec![0.0; hyps.len()];
-    for (entry, obj) in holders.people() {
-        let v = match obj {
-            Obj::Density(id) if n > 0 => objects.densities.get(id).walking_in(&seen),
-            Obj::Density(_) => 0.0,
-            Obj::Mixture(id) => {
-                let mix = objects.mixtures.get(id);
-                let pts = mix.sigma(world, Bounds::WallsAndDoors)[WALK];
-                let inside = expect(&pts.map(|p| if grid.at(p) > 0.1 { 1.0 } else { 0.0 }));
-                let mut v = (1.0 - mix.a) * mix.walking() * inside;
-                if let Some(away) = mix.away.filter(|_| n > 0) {
-                    v += mix.a * objects.densities.get(away).walking_in(&seen);
-                }
-                v
-            }
-        };
-        for &h in holders.refs(entry) {
-            val[h] += v;
-        }
-    }
-    val
 }
 
 /// The ghost's life goes on by dt: per kind of ghost its survival, the hypothesis weighed by the
@@ -413,7 +367,6 @@ mod tests {
             z0: lost.z,
             born: 5.0,
             lost: Some(lost),
-            map_odds: 0.0,
         };
         let got = ghost_end(&p, &info, lost.t + u).expect("held");
         let s = |tau: f64| no_find(&p, lost.kind, tau);

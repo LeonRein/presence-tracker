@@ -106,13 +106,8 @@ pub struct Params {
     pub track_life: [f64; 2],
     /// time to finding a lost target again, per kind of loss (4.1)
     pub refind: Refind,
-    // 4.2 ghosts: echoes per m^2, s and walking person in view; the kinds (rate, mean life s)
-    #[serde(deserialize_with = "real")]
-    pub ghost_echo: f64,
+    // 4.2 ghosts: the kinds (rate per m^2 and s, mean life s)
     pub ghost_types: Vec<[f64; 2]>,
-    /// the ghost map's prior: in each cell the weight of this many ghosts (MODEL.md 4.2)
-    #[serde(deserialize_with = "real")]
-    pub ghost_prior_ghosts: f64,
     // 5.3 nothing known: the unknown people expected at a start
     #[serde(deserialize_with = "real")]
     pub start_unknown: f64,
@@ -249,9 +244,7 @@ impl Default for Params {
                 coast: [0.13, 1.0, 0.03],
                 frozen: [0.2, 2.0, 0.02],
             },
-            ghost_echo: 3e-4,
             ghost_types: vec![[0.4 * 1.8e-5, 3.0], [0.6 * 1.8e-5, 39.0]],
-            ghost_prior_ghosts: 1.0,
             start_unknown: 1.0,
             unseen_life: 120.0,
             max_hyps: 12,
@@ -361,7 +354,6 @@ impl Params {
                     .iter()
                     .all(|&[median, spread, never]| positive(median) && positive(spread) && share(never)),
             ),
-            ("ghost_echo", at_least_0(self.ghost_echo)),
             (
                 "ghost_types",
                 up_to(self.ghost_types.len(), 1, 16)
@@ -371,7 +363,6 @@ impl Params {
                         .all(|&[rate, life]| at_least_0(rate) && positive(life))
                     && self.ghost_types.iter().map(|t| t[0]).sum::<f64>() > 0.0,
             ),
-            ("ghost_prior_ghosts", positive(self.ghost_prior_ghosts)),
             ("start_unknown", at_least_0(self.start_unknown)),
             ("unseen_life", time(self.unseen_life)),
             ("max_hyps", up_to(self.max_hyps, 1, 1000)),

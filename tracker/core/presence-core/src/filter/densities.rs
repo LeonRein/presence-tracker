@@ -658,11 +658,6 @@ impl DensityRef<'_> {
         }
         t
     }
-
-    /// The expected number walking in the tiles marked (seen 0 or 1): r x walk @ seen.
-    pub fn walking_in(&self, seen: &[f64]) -> f64 {
-        self.walk.iter().zip(seen).fold(0.0, |s, (w, f)| s + self.r * w * f)
-    }
 }
 
 impl DensityMut<'_> {

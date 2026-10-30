@@ -60,7 +60,6 @@ pub struct Filter {
     loglik_cut: f64,
     /// time of the last move of everybody
     flushed: f64,
-    walkers: WalkerCache,
     /// counts the moves of everybody and the events that concern all hypotheses (moved, an event of
     /// a frame, merged, cut, a gap, a new world, a start): what is derived from all of them, the
     /// outputs, is current while it stays. Only counts up: what was derived
@@ -77,31 +76,6 @@ impl GroupIds {
     fn next(&mut self) -> GroupId {
         self.0 += 1;
         GroupId(self.0 - 1)
-    }
-}
-
-/// Per sensor the expected number of walkers in its view per hypothesis, as of the last move of
-/// everybody or event: counted when first needed, void when the hypotheses
-/// change, everybody moves, or an event concerns everybody.
-#[derive(Debug)]
-struct WalkerCache {
-    per_sensor: Vec<Option<Vec<f64>>>,
-}
-
-impl WalkerCache {
-    fn new(sensors: usize) -> Self {
-        Self {
-            per_sensor: vec![None; sensors],
-        }
-    }
-
-    fn clear(&mut self) {
-        self.per_sensor.fill(None);
-    }
-
-    /// The walkers per hypothesis of a sensor, counted if they are not known.
-    fn get(&mut self, si: usize, count: impl FnOnce() -> Vec<f64>) -> &[f64] {
-        self.per_sensor[si].get_or_insert_with(count)
     }
 }
 
@@ -146,7 +120,6 @@ impl Filter {
             loglik: 0.0,
             loglik_cut: 0.0,
             flushed: 0.0,
-            walkers: WalkerCache::new(sensors),
             epoch: 0,
         }
     }
@@ -183,7 +156,6 @@ impl Filter {
     /// An event concerns everybody: what is cached per hypothesis is void (the Python filter's
     /// version went on).
     pub fn void_cache(&mut self) {
-        self.walkers.clear();
         self.epoch += 1;
     }
 
@@ -220,7 +192,6 @@ impl Filter {
         let objects = &self.objects;
         self.holders = Holders::build(&self.hyps, objects.mixtures.capacity(), objects.densities.capacity());
         self.objects.release_unheld(&self.holders);
-        self.walkers.clear();
     }
 
     /// No live tracks: from time t; what was derived before is void.

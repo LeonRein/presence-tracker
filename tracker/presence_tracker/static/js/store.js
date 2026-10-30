@@ -18,7 +18,7 @@ export const state = {
   // the tab "Gelerntes": what the model learned (api/learned, the core's; null: not fetched since the tab opened),
   // the layer shown (remembered per browser), the destination cells coloured by their likeliest outcome
   learned: null,
-  learnedLayer: loadPref('learnedLayer', 'ghosts'),
+  learnedLayer: loadPref('learnedLayer', 'background'),
   learnedColors: false,
   showRaw: loadPref('showRaw', false),  // the raw sensor data on the live map (remembered per browser)
   holds: {},            // zone id -> {approach, target}: badges held for HOLD_MS after they went off

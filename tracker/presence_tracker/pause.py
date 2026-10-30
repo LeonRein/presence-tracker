@@ -1,10 +1,9 @@
 """Lernen pausieren (MODEL.md 10, "Hintergrundaktivität"): while a switch in Home Assistant is on, the
-app learns nothing - neither the ghost map (4.2) nor the LD2410C background and echo rate (4.3), the
+app learns nothing - neither the LD2410C background and echo rate (4.3) nor the
 destination map (6, "Ziel") or the calibration data (10). The tracking goes on as always.
 
 What moves then is not what the learned maps are for: the vacuum robot (the LD2450s track it at 0.05-0.3
-m/s for minutes, a track that long counts as a person, and where it starts would become a ghost source
-for weeks), visitors, a cleaning person, a party. Node-RED switches it (e.g. vacuum not docked, until
+m/s for minutes), visitors, a cleaning person, a party. Node-RED switches it (e.g. vacuum not docked, until
 2 min after it docked: the margin is Node-RED's, the app takes the switch as it is).
 
 The switch is an MQTT switch (ha.py): Home Assistant publishes its commands retained on COMMAND (the

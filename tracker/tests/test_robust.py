@@ -285,7 +285,6 @@ def run_a_while(app, until=40.0):
 @pytest.mark.parametrize("name, content", [
     ("calibration.npz", b""), ("calibration.npz", b"PK\x03\x04garbage"), ("people.json", b"[1]"),
     ("people.json", b'"x"'), ("people.json", b""), ("people.json", b'{"tiles": [], "hyps": 5}'),
-    ("ghostmap.json", b""), ("ghostmap.json", b"[]"), ("ghostmap.json", b'{"x0": "a"}'),
     ("ld2410.json", b"[]"), ("ld2410.json", b'{"num": {"a": 5}}'), ("destinations.json", b"[]"),
 ])
 def test_a_broken_file_is_nothing_learned_for_its_part_only(tmp_path, caplog, name, content):
@@ -297,7 +296,7 @@ def test_a_broken_file_is_nothing_learned_for_its_part_only(tmp_path, caplog, na
     run_a_while(app)
     app._save_learned()
     saved = {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.suffix in (".json", ".npz")}
-    assert set(saved) >= {"ghostmap.json", "ld2410.json", "destinations.json", "people.json", "calibration.npz"}
+    assert set(saved) >= {"ld2410.json", "destinations.json", "people.json", "calibration.npz"}
     (tmp_path / name).write_bytes(content)
     again = App(tmp_path, publish=False)  # must not raise
     assert any(name in r.message for r in caplog.records if r.levelname in ("WARNING", "INFO"))
@@ -306,8 +305,6 @@ def test_a_broken_file_is_nothing_learned_for_its_part_only(tmp_path, caplog, na
         assert again.calibrator.data()  # the other parts as saved
     else:
         assert not again.calibrator.data()
-    if name == "ghostmap.json":
-        assert not again.tracker.learned()["ghost_map"]["count"]
     if name == "ld2410.json":
         assert not again.tracker.learned()["ld_background"]["num"]
     run_a_while(again, 20.0)
@@ -325,7 +322,7 @@ def test_a_failed_save_stops_nothing(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(app_module, "atomic_write", full)
     app._save_learned()  # must not raise
     asyncio.run(app._save_in_background())
-    assert sum("not saved" in r.message for r in caplog.records) == 12  # 6 files, 2 saves
+    assert sum("not saved" in r.message for r in caplog.records) == 10  # 5 files, 2 saves
     monkeypatch.undo()
     # the model refuses to save a broken state (a density that is no density): it starts over
     tracker = app.tracker
@@ -335,7 +332,7 @@ def test_a_failed_save_stops_nothing(tmp_path, monkeypatch, caplog):
 
     monkeypatch.setattr(tracker, "people_state", broken)
     app._save_learned()  # must not raise
-    assert app.tracker is not tracker and (tmp_path / "ghostmap.json").exists()
+    assert app.tracker is not tracker and (tmp_path / "ld2410.json").exists()
 
 
 def test_saving_runs_in_a_thread_and_loads_again(tmp_path, monkeypatch):
@@ -351,7 +348,7 @@ def test_saving_runs_in_a_thread_and_loads_again(tmp_path, monkeypatch):
 
     monkeypatch.setattr(app_module, "atomic_write", spy)
     asyncio.run(app._save_in_background())
-    assert threads == [False] * 6
+    assert threads == [False] * 5
     assert not list(tmp_path.glob("*.tmp")) and not list(tmp_path.glob(".*.tmp"))
     again = App(tmp_path, publish=False)
     assert again.tracker.started_from is not None

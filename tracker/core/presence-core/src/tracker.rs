@@ -8,7 +8,7 @@
 
 use serde_json::Value;
 
-use crate::filter::branch::{Category, Found, Frame};
+use crate::filter::branch::{Category, Frame};
 use crate::filter::mixture::{NewTrack, SegId};
 use crate::filter::{Filter, NotFinite, PeopleState, Start};
 use crate::frames::{self, CallError, LdGates};
@@ -17,7 +17,6 @@ use crate::ld2410::background::{Background, Weighed};
 use crate::ld2410::sensor::LdCollect;
 use crate::ld2450::tracks::{LOST, SegIds, Sighting};
 use crate::learn::destination::Target;
-use crate::learn::ghost_map::GhostMap;
 use crate::learn::pauses::Pauses;
 use crate::learn::{Learned, LearnedError};
 use crate::outputs::{
@@ -40,7 +39,7 @@ const RECYCLE_EVERY: f64 = 1.0;
 pub enum Event {
     /// sensor si watched delta s and no ghost track was born
     Watch { si: usize, delta: f64 },
-    /// a track of sensor si ended: where it began, P(ghost) as the ghost map learns it, how long it lived
+    /// a track of sensor si ended: where it began, P(ghost), how long it lived
     TrackEnd {
         si: usize,
         z0: Point,
@@ -61,8 +60,8 @@ pub enum Event {
 /// Why a track branched the hypotheses.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Branched {
-    /// a new track; the ghost map's rate of ghost births where it began (per m^2 and s)
-    Born { map_rate: f64 },
+    /// a new track
+    Born,
     /// a lost track measured again
     FoundAgain,
 }
@@ -570,8 +569,7 @@ impl Tracker {
     }
 
     /// The sensor dropped a live track: for a person this follows from not finding it
-    /// again; a ghost died. The ghost map learns where ghosts begin, with P(ghost) as judged now but
-    /// without what the map said at the birth (MODEL.md 4.2); a track of a paused time teaches nothing.
+    /// again; a ghost died. Told to the listeners, not those of a paused time.
     fn end(&mut self, si: usize, seg: SegId, t: f64, data_lost: bool, events: &mut Vec<Event>) {
         if self.filter.tracks().get(seg).is_none() {
             return;
@@ -579,9 +577,6 @@ impl Tracker {
         let ended = self.filter.end(&self.world, seg, t, data_lost);
         if self.pauses.paused(ended.born, t) {
             return;
-        }
-        if ended.p_ghost > 0.0 {
-            self.learned.ghosts.add_birth(si, ended.z0, ended.p_ghost);
         }
         events.push(Event::TrackEnd {
             si,
@@ -592,23 +587,17 @@ impl Tracker {
         });
     }
 
-    /// What the frame of sensor si says (MODEL.md 4.1, 4.2), step by step, the
-    /// ghost map learning in between (docs/rust-core.md 2.0): 1. no ghost track was born meanwhile;
-    /// 2. its tracks measured, lost, held, ended; 3. nothing seen before (a start): who has no track
-    /// now was not tracked; 4. new tracks and lost ones found again branch the hypotheses - the map at
-    /// a birth includes this frame's ends.
+    /// What the frame of sensor si says (MODEL.md 4.1, 4.2), step by step: 1. no ghost track was born
+    /// meanwhile; 2. its tracks measured, lost, held, ended; 3. nothing seen before (a start): who has no
+    /// track now was not tracked; 4. new tracks and lost ones found again branch the hypotheses.
     fn evidence(&mut self, si: usize, t: f64, delta: f64, events: &mut Vec<Event>) -> Result<(), NotFinite> {
         let censored = delta <= 0.0;
         if censored || self.concerns_all(si) {
             self.flush_to(t, true)?; // these weigh, branch or merge everybody: all at t
         }
         if delta > 0.0 {
-            // the total is read before the map learns this time
-            let total = self.learned.ghosts.total(si, &self.world.sights[si]);
-            self.filter.watch(&self.world, si, delta, total);
+            self.filter.watch(&self.world, si, delta);
             if !self.pauses.paused(t - delta, t) {
-                self.learned.ghosts.add_watch(si, delta);
-                self.learned.ghosts.fade(t);
                 events.push(Event::Watch { si, delta });
             }
         }
@@ -679,7 +668,7 @@ impl Tracker {
     }
 
     /// Step 4: the tracks born in this frame and the lost ones found again branch every hypothesis; a
-    /// birth with the variance of where a track sits on a person there and the ghost map's rate there.
+    /// birth with the variance of where a track sits on a person there.
     fn branch(
         &mut self,
         si: usize,
@@ -697,19 +686,13 @@ impl Tracker {
             return Ok(());
         }
         let at = self.world.sights[si].at;
-        let found: Vec<Found> = refound
+        let found: Vec<NewTrack> = refound
             .iter()
-            .map(|&(seg, z)| Found {
-                track: NewTrack { seg, z, var: 0.0 },
-                map_rate: 0.0,
-            })
-            .chain(born.iter().map(|&(seg, z)| Found {
-                track: NewTrack {
-                    seg,
-                    z,
-                    var: self.world.reading.offset_var(py_hypot(z[0] - at[0], z[1] - at[1])),
-                },
-                map_rate: self.learned.ghosts.rate(si, z),
+            .map(|&(seg, z)| NewTrack { seg, z, var: 0.0 })
+            .chain(born.iter().map(|&(seg, z)| NewTrack {
+                seg,
+                z,
+                var: self.world.reading.offset_var(py_hypot(z[0] - at[0], z[1] - at[1])),
             }))
             .collect();
         let censored = delta <= 0.0;
@@ -720,19 +703,18 @@ impl Tracker {
             last: if censored { FRAME } else { delta.min(FRAME) },
             censored,
             skip: &skip,
-            prior_rate: self.learned.ghosts.prior_rate(),
         };
         let children = self.filter.branch_all(&self.world, &frame, &found)?;
         for (k, (f, children)) in found.iter().zip(children).enumerate() {
             if !children.is_empty() {
                 events.push(Event::Branch {
                     si,
-                    seg: f.track.seg,
-                    z: f.track.z,
+                    seg: f.seg,
+                    z: f.z,
                     how: if k < refound.len() {
                         Branched::FoundAgain
                     } else {
-                        Branched::Born { map_rate: f.map_rate }
+                        Branched::Born
                     },
                     children: children
                         .into_iter()
@@ -772,7 +754,7 @@ impl Tracker {
     }
 
     /// Sensors changed, the people's world not: the people stay as they are;
-    /// the changed sensors' tracks end as at lost data (the ghost map learns from them), their next
+    /// the changed sensors' tracks end as at lost data, their next
     /// frame is a start, their LD2410C starts over; then the new world (what was learned follows it:
     /// under another geometry all of it starts over, Learned::follow).
     pub fn recalibrate(&mut self, changed: SensorSet, world: World) -> Result<Vec<Event>, Recalibrate> {
@@ -804,22 +786,8 @@ impl Tracker {
 
     // ------------------------------------------------------------------ what was learned
 
-    /// Use a saved ghost map (MODEL.md 4.2), learned under this geometry (the shell's files carry its key,
-    /// World::geometry), if it was learned with the prior the model has now, else the prior's (also for
-    /// None). Whether the saved one is used; Err, and nothing changed, if it cannot be read.
-    pub fn use_ghost_map(&mut self, saved: Option<&Value>) -> Result<bool, LearnedError> {
-        let plan = &self.world.plan;
-        let map = saved.map(|v| GhostMap::from_json(v, plan)).transpose()?;
-        let used = map.as_ref().is_some_and(|m| m.learned_with(&self.world.params));
-        self.learned.ghosts = map.filter(|_| used).unwrap_or_else(|| {
-            let mut prior = GhostMap::from_prior(&self.world.params);
-            prior.follow(plan);
-            prior
-        });
-        Ok(used)
-    }
-
-    /// Use a saved LD2410C background (MODEL.md 4.3), learned under this geometry (as use_ghost_map); None:
+    /// Use a saved LD2410C background (MODEL.md 4.3), learned under this geometry (the shell's files carry
+    /// its key, World::geometry); None:
     /// nothing learned. The parts not taken (a sensor's part out of range: dropped alone); Err, and
     /// nothing changed, if it is no background at all.
     pub fn use_background(&mut self, saved: Option<&Value>) -> Result<Vec<LearnedError>, LearnedError> {
@@ -836,7 +804,7 @@ impl Tracker {
         Ok(dropped)
     }
 
-    /// Use a saved destination map (MODEL.md 6 "Ziel"), learned under this geometry (as use_ghost_map), if
+    /// Use a saved destination map (MODEL.md 6 "Ziel"), learned under this geometry (as use_background), if
     /// it is of this grid (its fingerprint), else an empty one (also for None). Whether the saved one is used; Err, and nothing
     /// changed, if it cannot be read.
     pub fn use_dest_map(&mut self, saved: Option<&Value>) -> Result<bool, LearnedError> {
@@ -860,12 +828,6 @@ impl Tracker {
     pub fn background(&self, si: usize) -> ([f64; crate::ld2410::CELLS], f64) {
         let (bg, p) = (&self.learned.background, &self.world.params);
         (bg.b(si, p), bg.rate(si, p))
-    }
-
-    /// The ghost map's rate (per m^2 and s) of sensor si at the points, and how long it watched (s).
-    pub fn ghost_rates(&self, si: usize, points: &[Point]) -> (Vec<f64>, f64) {
-        let g = &self.learned.ghosts;
-        (points.iter().map(|&p| g.rate(si, p)).collect(), g.watched(si))
     }
 
     /// The LD2410C of sensor si as the display shows it.
@@ -1271,51 +1233,6 @@ mod frame_tests {
     }
 
     // ------------------------------------------- the learning order (docs/rust-core.md 2.0), per row
-
-    #[test]
-    fn row_1_a_birth_reads_the_ghost_map_with_the_births_of_the_tracks_ended_in_the_same_frame() {
-        let mut tr = started();
-        tr.frame("wohn", 1.0, &one(0.0, 2500.0)).expect("a frame");
-        let z0 = tr.sensor_frame(0).detections[0].pos;
-        tr.frame("wohn", 1.1, &one(20.0, 2500.0)).expect("a frame");
-        // the map as it would be had this frame only been watched, without the birth it learns
-        let mut watched_only = tr.learned().ghosts.clone();
-        watched_only.add_watch(0, 1.2 - 1.1);
-        // the target jumps back 1 m (more than the LD2450 tracks' gate): its track ends, a new one is born
-        let events = tr.frame("wohn", 1.2, &one(20.0, 1500.0)).expect("a frame");
-        let Some(&Event::TrackEnd { z0: began, p_ghost, .. }) =
-            events.iter().find(|e| matches!(e, Event::TrackEnd { .. }))
-        else {
-            panic!("no end in {events:?}");
-        };
-        assert!(p_ghost > 0.0 && began == z0, "{events:?}");
-        let z = tr.sensor_frame(0).detections[0].pos;
-        let [(_, Branched::Born { map_rate })] = branches(&events)[..] else {
-            panic!("no birth in {events:?}");
-        };
-        assert_eq!(
-            map_rate,
-            tr.learned().ghosts.rate(0, z),
-            "read after the end was learned"
-        );
-        assert_ne!(map_rate, watched_only.rate(0, z), "not before");
-    }
-
-    #[test]
-    fn row_1_the_total_rate_is_read_before_the_map_learns_the_time_watched() {
-        let mut tr = started();
-        tr.frame("wohn", 1.0, &one(0.0, 2500.0)).expect("a frame"); // a start: nothing watched
-        tr.frame("wohn", 1.1, &one(20.0, 2500.0)).expect("a frame");
-        // read (and kept) with nothing watched yet, then 0.1 s learned
-        let mut fresh = Learned::new(tr.world()).ghosts;
-        let mut later = fresh.clone();
-        later.add_watch(0, 1.1 - 1.0);
-        let sight = &tr.world.sights[0];
-        let read = tr.learned.ghosts.total(0, sight);
-        assert_eq!(read, fresh.total(0, sight));
-        assert_ne!(read, later.total(0, sight));
-        assert!(tr.learned().ghosts.watched(0) > 0.0);
-    }
 
     /// Frames of sensor 0's LD2410C with constant energies, gathered until t.
     fn energies(tr: &mut Tracker, from: f64, to: f64) {

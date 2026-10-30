@@ -3,7 +3,7 @@
 What the Python oracles of 0.38.1 (commit 29c2fe1) said, kept for the tests after phase 9 of the Rust port deleted
 them (docs/rust-core.md). The tests check the core against them. Made on 28.10.2026 by the scripts in `make/`, which
 run on 29c2fe1 only (they import the oracles); how, in their docstrings. Run again there, they give the same files
-(checked for `people.json`, `ghosts.json` and the geometry in `destinations.json`). They were deleted in 0.54.4;
+(checked for `people.json` and the geometry in `destinations.json`). They were deleted in 0.54.4;
 a8e8de0 is the last commit with them: `git show a8e8de0:tracker/tests/fixtures/make/make_0381.py` (and
 `core_build.py`) into a worktree of 29c2fe1. The digests of `core_build.json` on later trees come from
 `tests/test_core_build.py` itself (run as a script, its `__main__`).
@@ -13,12 +13,6 @@ a8e8de0 is the last commit with them: `git show a8e8de0:tracker/tests/fixtures/m
   (the stays' prior at its tiles, r = 1), `sitter` somebody standing at (3, 2.5) in `test_filter.flat_config(entry=
   True)`, `measured` two standing at (3, 3) in `flat_config()` with an LD2410C amplitude a track measured (0.3;
   `gauss.Gauss.source(...).to_tiles`, `measured_level` its level).
-- `ghosts.json` (`ghostmap.GhostMap.add_birth`/`add_watch`/`to_dict`, from a new tracker's map): `room_few` (3 ghosts
-  at (2, 2) for sensor a in 2.5 h of `test_frames.room_config`), `room_many` (27 more in 21.5 h more),
-  `room_other_prior` (one ghost, the prior's time / 24), `room_spot` (a day watched, 12 ghosts at (2.2, 2.6);
-  `room_spot_rate` the Python map's rate there), `room_source` (30 ghosts at sensor a's raw (0.6, 4.0),
-  `room_source_spot` on the floor, a day watched by a and b, 5 at (3, 2.5) for b), `flat_seat` (200 at (4.5, 3.5)
-  for a and b in `flat_config(entry=True)`).
 - `destinations.json` (`destination.Geometry`, `DestinationMap`) for `test_entering.two_rooms`: the geometry's
   fingerprint and number of cells, `around(3.5, 2.5)` (cells, weights), `vel_interp` of 1 m/s towards b (`ahead`)
   and towards a (`back`); `map` the map after two trips desk -> sofa and back (`test_destination.routine(2)`, as the

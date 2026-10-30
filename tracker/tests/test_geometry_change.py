@@ -1,6 +1,6 @@
 """What was collected and learned holds only under the geometry it was collected under (the core's key,
 presence_core.geometry_key: where the sensors hang and how they see and are read, the walls, doors and zones).
-A save of another geometry discards all of it for every sensor - the calibration's measurements, the ghost map,
+A save of another geometry discards all of it for every sensor - the calibration's measurements,
 the LD2410C background, the destination map, the measured view of the LD2410Cs - and says so; a save of
 anything else (names, a sensor switched off, parameters) keeps all of it. At a start, a file of another geometry
 (the configuration changed while the app did not run) is discarded the same way."""

@@ -1,10 +1,9 @@
 """The tab "Gelerntes" (static/js: view.js _learned, panels.js learnedBars): the web UI draws what the core says was
 learned (GET /api/learned), all sensors at once in their colours, the one chosen on the map strong and the others
-faint, and knows no number of the model - the ghost map's scale is the prior the core sends, the destination cells'
+faint, and knows no number of the model - the destination cells'
 colour the outcome the core names likeliest, the gates' distances the core's gate length, the measured view of the
 chosen sensor as sent (none chosen or none measured: nothing drawn). Runs the modules in Node; skipped without it."""
 
-import copy
 import json
 import pathlib
 import re
@@ -50,29 +49,6 @@ def opacities(svg, attr="fill-opacity"):
 def test_the_learned_layers_are_drawn_from_the_cores_numbers_only(tmp_path):
     app = an_app(tmp_path)
     learned, config = app.tracker.learned_view(), app.config.to_dict()
-    # the ghost map: nothing learned, nothing above the prior, nothing drawn
-    g = learned["sensors"]["a"]["ghosts"]
-    watched = [k for k, v in enumerate(g["rate"]) if v is not None]
-    assert watched and "<rect" not in draw(learned, config, "ghosts")
-    # one tile of a at ten times its prior, one of b at three times: each in its colour; the same relations to
-    # another prior draw the same map
-    more = copy.deepcopy(learned)
-    for sid, k in (("a", 10), ("b", 3)):
-        m = more["sensors"][sid]["ghosts"]
-        m["rate"][watched[0]] = k * m["prior"]
-    svg = draw(more, config, "ghosts")
-    fills = re.findall(r'<rect [^>]*fill="([^"]+)" fill-opacity="([0-9.]+)"', svg)
-    assert len(fills) == 2 and fills[0][0] != fills[1][0]
-    alike = {c: float(a) for c, a in fills}
-    scaled = copy.deepcopy(more)
-    s = scaled["sensors"]["a"]["ghosts"]
-    s["prior"] *= 3
-    s["rate"] = [None if v is None else 3 * v for v in s["rate"]]
-    assert draw(scaled, config, "ghosts") == svg
-    # b chosen: b stronger than without a choice, a fainter, and b drawn on top
-    (ca, a), (cb, b) = re.findall(r'<rect [^>]*fill="([^"]+)" fill-opacity="([0-9.]+)"', draw(more, config, "ghosts", "b"))
-    assert float(b) > alike[cb] and float(a) < alike[ca]
-
     # the destination map: an arrow per cell along its velocity, the cell in the colour of the outcome the core names
     d = learned["destinations"]
     d["walks"] = 2.0

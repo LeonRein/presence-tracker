@@ -45,20 +45,15 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
 - **Wer geht, wird schnell gesehen; wer sitzt, nicht immer.** Wie gut ein Sitzender erfasst wird, hängt von
   Haltung und Platz ab und wird für jeden Aufenthalt mitgeschätzt: Wer am Tisch oft erfasst wurde und lange
   nicht mehr, ist wahrscheinlich gegangen; wer auf dem Sofa selten erfasst wird, nicht.
-- **Geister**: Eine Spur, die zu keiner Person gehört. Wo jeder Sensor Geister sieht, **lernt die App
-  selbst** (Geisterkarte); wie lange Geister leben, ist fest (daran unterscheidet das Modell sie von
-  Sitzenden). Die Karte liegt für jeden Sensor in seinem eigenen Blick; sie gilt nur, solange Sensoren und
-  Grundriss so bleiben, wie sie beim Lernen waren (siehe *Gespeicherte Änderung von Sensorlage oder
-  Grundriss*). Eine Stelle wird erst nach vielen Geistern zur Geisterquelle (ein
-  Platz, an dem jemand sitzt, soll nicht durch ein paar Fehlurteile dazu werden); bis die Karte einige
-  Tage gelernt hat, werden Geister an festen Stellen (Möbel, Ladestation) leichter für Personen gehalten.
+- **Geister**: Eine Spur, die zu keiner Person gehört. Wie oft Geister entstehen und wie lange sie leben, ist
+  fest; die App lernt daran nichts (daran, wie lange eine Spur lebt, unterscheidet das Modell Geister von Sitzenden).
 - **Sensor drehen oder neu kalibrieren** (gleicher Grundriss): Was über die Personen bekannt ist, bleibt
   (alles Gelernte nicht, siehe nächster Punkt).
   Nur die Spuren dieses Sensors beginnen neu, wie nach einer Datenlücke. Andere Parameter: Das Modell
   beginnt neu mit dem, was es über die Personen wusste. Ein geänderter Grundriss (Wände, Räume, Türen):
   Es beginnt ohne Wissen (siehe *Personen*).
 - **Gespeicherte Änderung von Sensorlage oder Grundriss verwirft alles Gesammelte und Gelernte**, für alle
-  Sensoren: die Messungen der Kalibrierung, die Geisterkarte, den LD2410C-Hintergrund und die Zielkarte. Das gilt
+  Sensoren: die Messungen der Kalibrierung, den LD2410C-Hintergrund und die Zielkarte. Das gilt
   für Position, Blickrichtung, Höhe, x-Richtung, Maßstab,
   Öffnungswinkel und Reichweite eines Sensors, für *platziert* / *Von Karte nehmen*, für einen neuen oder
   entfernten Sensor, für Wände, Türen und Zonen, und auch, wenn ein Kalibrierergebnis übernommen und
@@ -70,8 +65,8 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
 - Der **LD2410C** zählt mit seinen Energien je 0,75-m-Entfernungsring (bewegt und ruhig): Wo eine Person
   Energie machen müsste und keine ist, ist niemand; Energie, die niemand erklärt, spricht für jemanden in
   diesem Ring, auch wenn der LD2450 ihn verloren hat. Was eine andere Person schon erklärt, sagt über die
-  übrigen nichts. Was jeder LD2410C ohne Personen sieht (Hintergrund), **lernt die App selbst**, wie die
-  Geisterkarte nur für Sensoren und Grundriss, wie sie sind. Seine Flags und die gemeldete Entfernung zählen nicht mehr.
+  übrigen nichts. Was jeder LD2410C ohne Personen sieht (Hintergrund), **lernt die App selbst**, nur für
+  Sensoren und Grundriss, wie sie sind. Seine Flags und die gemeldete Entfernung zählen nicht mehr.
 - **Wände**: Die Radare sehen nicht durch die Betonwände. Ein Messpunkt hinter einer Wand oder außerhalb aller
   Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*).
 - **Personen**: Wie viele es sind, wird nirgends eingestellt. Nach einem Neustart der App macht das Modell
@@ -93,7 +88,7 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   Person verloren, Geist, Person am falschen Ort, ungenaues Tracking, hohe Latenz), den Raum (keine
   Vorauswahl) und die Art des Fehlers wählen. Die App
   speichert dazu die Sensordaten der letzten 15 Minuten (der Dialog nennt die Zeit) mit der Konfiguration, dem Gelernten
-  (Geisterkarte, LD2410C-Hintergrund), dem Stand des Codes und dem, was sie in dieser Zeit sekündlich
+  (LD2410C-Hintergrund, Zielkarte), dem Stand des Codes und dem, was sie in dieser Zeit sekündlich
   angezeigt hat (unter `/data/reports`, je Meldung etwa 0,2–0,7 MB, in der Liste herunterladbar und
   löschbar, etwa eine Meldung, die nur kam, weil Sensoren ausgefallen waren). Daraus
   entsteht die Wahrheitstabelle für die Bewertung; `tools/replay.py --report DATEI` spielt eine Meldung
@@ -130,8 +125,6 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
    - *Bereich*: z. B. Sofa, Esstisch, für Home Assistant
    - *Eingang*: kleine Bereiche, wo Personen von außen kommen oder das Haus verlassen (Haustür im
      beobachteten Raum). Räume ohne Sensor, die über Türen zusammenhängen, erkennt die App selbst.
-   Stellen, an denen ein Sensor oft Geister meldet (Ventilator, Vorhang), lernt die App selbst
-   (Tab *Gelerntes*, Ebene *Geister*); eine eigene Zone dafür gibt es nicht mehr.
 4. **Sensoren** (Tab *Sensoren*): jeden Sensor platzieren, Blickrichtung drehen, Montagehöhe eintragen.
    *Tote Winkel zeigen* färbt Stellen, die kein Sensor sieht, rot.
 5. **Kalibrierung** (Tab *Kalibrierung*): Die App sammelt laufend, wo Gehende gemessen werden (die letzten
@@ -162,10 +155,6 @@ Ebene mit einer kurzen Erklärung. Nur zum Anschauen; geholt wird es beim Öffne
 (gerechnet nur dann, das Modell wird dabei nur gelesen). Jede Ebene zeigt alle Sensoren zugleich, jeden in seiner
 Farbe. Ein Klick auf einen Sensor auf der Karte (oder in der Liste der Ebene) hebt ihn hervor, die anderen treten
 zurück; nochmal klicken oder ein Klick ins Leere: alle gleich. Verschieben lässt sich hier nichts.
-- *Geister*: wo jeder Sensor Spuren beginnt, die der Filter für Geister hält, je Kachel als Rate je m² und Stunde,
-  umso kräftiger, je öfter gegenüber dem Vorwissen; dazu, über wie viele Stunden er beobachtet hat. Gezählt wird jede
-  beginnende Spur mit der Wahrscheinlichkeit, mit der der Filter sie für einen Geist hält: sein Urteil, keine
-  Wahrheit. Der Filter nutzt die Karte.
 - *LD2410C-Hintergrund*: je Sensor die Energie ohne Person je Entfernungsstufe (bewegt und ruhig), gelernt neben
   jetzt gemessen, mit dem Langzeitwert des Sensors, aus wie vielen Stunden beides gelernt ist und wie oft
   Echoquellen beginnen; der gewählte Sensor oben. Der Filter nutzt ihn.
@@ -361,7 +350,7 @@ oder aus, sollte die Automatik für diesen Raum pausieren, bis er eine Weile lee
 dass der Wechsel nicht kurz nach einem eigenen Befehl mit genau diesem Ziel kam.
 
 **Lernen pausieren** (`switch.presence_lernen_pausieren`, ein Schalter am Gerät): Die App lernt laufend
-mit, wo ihre Sensoren Geister sehen (Geisterkarte), was jeder LD2410C ohne Personen misst und wie oft
+mit, was jeder LD2410C ohne Personen misst und wie oft
 dort Echoquellen beginnen (Hintergrund), wohin Gänge führen (*Ziel*) und wie die Sensoren zueinander
 stehen (Kalibrierdaten). Bei **Hintergrundaktivität**, die anders ist als der Alltag, lernt sie damit das
 Falsche: Der Saugroboter wird minutenlang als langsam gehende Person verfolgt, und wo seine Spuren
