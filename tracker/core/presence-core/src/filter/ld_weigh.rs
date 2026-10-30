@@ -3,7 +3,8 @@
 //! per hypothesis the people one after the other, each given those before at what they put in
 //! afterwards (the ones with tracks first, the unknown ones last; exact for people at known places).
 //! Each person is then weighed given all the others, mixed over the hypotheses holding them (the
-//! marginals of JIPDA); the echo sources compete with the unseen people.
+//! marginals of JIPDA); the echo sources are the alternative to the unseen people, as clutter to a
+//! target.
 //!
 //! The steps, each on what it reads and what it changes: the amplitudes settled (`settle`, `&mut
 //! Objects`); where the sensor sees each object (`tile_points`, `mixture_points`, `&Densities`); the
@@ -214,15 +215,14 @@ impl LdContext<'_> {
     fn ratio(&mut self, e: usize, rest: &Cells) -> Ratio {
         let mu0 = self.mu0(rest);
         let pts = &self.points[e];
-        self.prep
-            .ratio(&mut self.scratch, &pts.mass, &pts.put, &mu0, self.unknown[e])
+        self.prep.ratio(&mut self.scratch, &pts.mass, &pts.put, &mu0)
     }
 
     /// The echo sources given that the people put in `rest`.
     fn echo_ratio(&mut self, rest: &Cells) -> Ratio {
         let mu0 = self.mu0(rest);
         self.prep
-            .ratio(&mut self.scratch, &self.echo.mass, &self.echo.put, &mu0, false)
+            .ratio(&mut self.scratch, &self.echo.mass, &self.echo.put, &mu0)
     }
 }
 
@@ -320,30 +320,29 @@ impl Chains {
             .collect()
     }
 
-    /// Per hypothesis what the people with tracks put in, and the others as they were before these
-    /// frames (the echo sources compete with the unseen people).
-    fn tracked(&self, ctx: &LdContext, hyps: &[Hyp], holders: &Holders) -> Vec<Cells> {
+    /// Per hypothesis what the known people put in: those with tracks, those without as they were
+    /// before these frames. A source is what they do not explain; the unknown ones are its
+    /// alternative and not counted (MODEL.md 4.3).
+    fn known(&self, ctx: &LdContext, hyps: &[Hyp], holders: &Holders) -> Vec<Cells> {
         hyps.iter()
             .zip(&self.paths)
             .map(|(hy, path)| {
-                let mut with_tracks = [0.0; CELLS];
+                let mut known = [0.0; CELLS];
                 for node in path.iter().map(|&n| &self.nodes[n]) {
                     if matches!(ctx.objs[node.entry], Obj::Mixture(_)) {
-                        for (x, y) in with_tracks.iter_mut().zip(&node.ratio.post) {
+                        for (x, y) in known.iter_mut().zip(&node.ratio.post) {
                             *x += y;
                         }
                     }
                 }
-                let mut without = [0.0; CELLS];
-                let known = hy.hidden.iter().chain([&hy.unknown]);
-                for e in known.map(|&d| holders.entry(Obj::Density(d))) {
+                for e in hy.hidden.iter().map(|&d| holders.entry(Obj::Density(d))) {
                     if ctx.seen[e] {
-                        for (x, y) in without.iter_mut().zip(&ctx.points[e].put_in()) {
+                        for (x, y) in known.iter_mut().zip(&ctx.points[e].put_in()) {
                             *x += y;
                         }
                     }
                 }
-                std::array::from_fn(|c| with_tracks[c] + without[c])
+                known
             })
             .collect()
     }
@@ -386,14 +385,7 @@ fn column_logsumexp(parts: &[Vec<f64>], i: usize) -> f64 {
 
 /// Object e given all the others, mixed over the hypotheses holding it (by post_w): its log factor
 /// per point, capped. None if no hypothesis holding it has weight.
-fn marginal(
-    ctx: &mut LdContext,
-    chains: &mut Chains,
-    holders: &Holders,
-    e: usize,
-    post_w: &[f64],
-    log_off: f64,
-) -> Option<Vec<f64>> {
+fn marginal(ctx: &mut LdContext, chains: &mut Chains, holders: &Holders, e: usize, post_w: &[f64]) -> Option<Vec<f64>> {
     let hs: Vec<usize> = holders.holding(e).collect();
     let q: Vec<f64> = hs.iter().map(|&h| post_w[h]).collect();
     let qs = pairwise_sum(&q);
@@ -405,13 +397,15 @@ fn marginal(
     let mut outs = Vec::new();
     for (&h, qh) in hs.iter().zip(&q) {
         let (lr, norm, ze) = chains.given_others(ctx, h, e);
-        // an unseen person and an echo source are alternatives (both rare): where the person is not,
-        // an echo may explain the energies - the person's view weighed against that
+        // an unseen person and an echo source are alternatives (both rare), as target and clutter: where
+        // the person is not, a source may explain the energies, not worse than nothing does (a source
+        // that explains nothing is no evidence for a person)
+        let ze = ze.max(0.0);
         let lq = at_least(qh / qs, 1e-300).ln() - norm;
         if intensity {
-            parts.push(lr.iter().map(|l| lq + l + log_off - ze).collect()); // outside stays
+            parts.push(lr.iter().map(|l| lq + l - ze).collect()); // outside stays
         } else {
-            parts.push(lr.iter().map(|l| lq + l + log_off).collect());
+            parts.push(lr.iter().map(|l| lq + l).collect());
             outs.push(lq + ze);
         }
     }
@@ -430,12 +424,11 @@ fn marginal(
     Some(f)
 }
 
-/// The echo sources' log factors given the people with tracks and the unseen ones as they were,
-/// mixed over the hypotheses.
-fn echo_factors(ctx: &mut LdContext, tracked: &[Cells], post_w: &[f64]) -> Vec<f64> {
+/// The echo sources' log factors given the known people, mixed over the hypotheses.
+fn echo_factors(ctx: &mut LdContext, known: &[Cells], post_w: &[f64]) -> Vec<f64> {
     let qs = pairwise_sum(post_w);
     let (mut parts, mut outs) = (Vec::new(), Vec::new());
-    for (w, rest) in post_w.iter().zip(tracked) {
+    for (w, rest) in post_w.iter().zip(known) {
         let qh = w / qs;
         if qh < 1e-12 {
             continue;
@@ -574,12 +567,7 @@ fn before(ctx: &LdContext, hyps: &[Hyp], holders: &Holders, prior_w: &[f64]) -> 
                 for (x, y) in mu.iter_mut().zip(&pts.put_in()) {
                     *x += y;
                 }
-                let mass = pairwise_sum(&pts.mass);
-                none *= if ctx.unknown[e] {
-                    1.0 / (1.0 + mass)
-                } else {
-                    (1.0 - mass).max(0.0)
-                };
+                none *= (1.0 - pairwise_sum(&pts.mass)).max(0.0);
             }
             nobody += w * none;
             mu
@@ -661,7 +649,7 @@ impl Filter {
         // per hypothesis the people one after the other, the echo sources last
         let mut chains = Chains::build(&mut ctx, &self.hyps, &self.holders);
         let logf = chains.logf(&mut ctx);
-        let tracked = chains.tracked(&ctx, &self.hyps, &self.holders);
+        let known = chains.known(&ctx, &self.hyps, &self.holders);
         let base = ctx.prep.loglik(&st, &b0);
         for (hy, l) in self.hyps.iter_mut().zip(&logf) {
             hy.logw += base + l;
@@ -682,12 +670,11 @@ impl Filter {
             None => current,
         });
         // each person given the others, mixed over the hypotheses holding them
-        let log_off = at_least(sensor.echoes.off(), 1e-300).ln();
         for e in 0..ctx.objs.len() {
             if !ctx.seen[e] {
                 continue;
             }
-            if let Some(f) = marginal(&mut ctx, &mut chains, &self.holders, e, &post_w, log_off) {
+            if let Some(f) = marginal(&mut ctx, &mut chains, &self.holders, e, &post_w) {
                 apply(
                     &mut self.objects,
                     world,
@@ -698,7 +685,7 @@ impl Filter {
                 );
             }
         }
-        let f = echo_factors(&mut ctx, &tracked, &post_w);
+        let f = echo_factors(&mut ctx, &known, &post_w);
         sensor.echoes.weigh(&f);
         let learned = LdLearn {
             mus,
@@ -788,6 +775,93 @@ mod tests {
             f.merge(); // the two say the same about the (no) tracks
             f.check().expect("after weighing");
         }
+    }
+
+    #[test]
+    fn energies_alone_tell_of_at_most_one_unknown_person_in_view() {
+        let mut world = testing::flat();
+        world.params.ld_echo_amps = vec![1e-9]; // sources that explain nothing: none to compete
+        let ld = &world.ld[0];
+        let j = ld.tiles.idx.len() / 2;
+        let c = ld.tiles.idx[j];
+        let mut f = filter_with(&world, c);
+        let unknown = f.hyps()[0].unknown;
+        f.objects_mut().densities.get_mut(unknown).walk[c] = 0.1;
+        f.set_hyps(vec![Hyp::new(0.0, Vec::new(), unknown)]);
+        let mut sensor = LdSensor::new(&world.params);
+        // the energies of three people, no echo sources to compete
+        let three: Cells = std::array::from_fn(|k| (B[k] + 3.0 * ld.tiles.walk[j][k]).round().min(100.0));
+        for _ in 0..30 {
+            for _ in 0..12 {
+                sensor.stats.add(&three, 0.089, false);
+            }
+            f.ld_weigh(&world, 0, &mut sensor, &B, 1e-30).expect("finite");
+        }
+        let there = f.objects().densities().get(unknown).total();
+        assert!(there > 0.5 && there <= 1.0 + 0.01 + 1e-12, "{there}"); // in view, and the 0.01 out of the house
+    }
+
+    /// An LD2410C with an echo source on, whichever: as if frames had called for one.
+    fn with_a_source_on(p: &crate::params::Params) -> LdSensor {
+        let mut sensor = LdSensor::new(p);
+        sensor.echoes.predict(p, 1.0, 1.0 / 3600.0);
+        let on = sensor.echoes.probs().len() - 1;
+        sensor.echoes.weigh(&vec![50.0; on]);
+        assert!(sensor.echoes.off() < 1e-9);
+        sensor
+    }
+
+    #[test]
+    fn a_source_on_does_not_push_a_person_without_a_track_out_of_view() {
+        // MODEL.md 4.3: the source is the alternative in the denominator, not a factor on the person
+        // (until 0.54 P(no source): -4.6 log per second and sensor, 10 "Echoquellen als Alternative")
+        let world = testing::flat();
+        let ld = &world.ld[0];
+        let j = ld.tiles.idx.len() / 2;
+        let mut f = filter_with(&world, ld.tiles.idx[j]);
+        let person = f.hyps()[0].hidden[0];
+        let unknown = f.hyps()[0].unknown;
+        let inside = f.objects().densities().get(person).total();
+        *f.objects_mut().densities.get_mut(person).out = inside; // half of it out of the house
+        f.set_hyps(vec![Hyp::new(0.0, vec![person], unknown)]);
+        let mut sensor = with_a_source_on(&world.params);
+        let e: Cells = std::array::from_fn(|k| (B[k] + ld.tiles.still[j][k]).round().min(100.0));
+        for _ in 0..5 {
+            for _ in 0..12 {
+                sensor.stats.add(&e, 0.089, false);
+            }
+            f.ld_weigh(&world, 0, &mut sensor, &B, 1e-30).expect("finite");
+        }
+        let d = f.objects().densities().get(person);
+        let share = (d.total() - d.out) / d.total();
+        assert!(share > 0.25, "{share}");
+    }
+
+    #[test]
+    fn a_source_that_explains_nothing_is_no_evidence_for_a_person() {
+        // the frames are the background's, the sources on all give too much: without the bound on
+        // the alternative the unknown ones grew by what the sources lose (10 "Echoquellen als
+        // Alternative"; the correction of 0.27 that made up people in the bed)
+        let world = testing::flat();
+        let ld = &world.ld[0];
+        let total = |j: usize| ld.tiles.walk[j].iter().chain(&ld.tiles.still[j]).sum::<f64>();
+        let j = (0..ld.tiles.idx.len())
+            .min_by(|&a, &b| total(a).total_cmp(&total(b)))
+            .expect("tiles");
+        let c = ld.tiles.idx[j];
+        let mut f = filter_with(&world, c);
+        let unknown = f.hyps()[0].unknown;
+        f.objects_mut().densities.get_mut(unknown).walk[c] = 0.01;
+        f.set_hyps(vec![Hyp::new(0.0, Vec::new(), unknown)]);
+        let before = f.objects().densities().get(unknown).total();
+        let mut sensor = with_a_source_on(&world.params);
+        let e: Cells = std::array::from_fn(|k| B[k].round());
+        for _ in 0..12 {
+            sensor.stats.add(&e, 0.089, false);
+        }
+        f.ld_weigh(&world, 0, &mut sensor, &B, 1e-30).expect("finite");
+        let after = f.objects().densities().get(unknown).total();
+        assert!(after <= before * (1.0 + 1e-9), "{before} -> {after}");
     }
 
     #[test]

@@ -71,18 +71,23 @@ def test_a_new_sensor_learns_an_empty_room_that_is_louder_than_the_prior():
         assert abs(ratio.mean() - 1) < 0.1 and np.all(np.abs(ratio - 1) < 0.25), tr.core.background(s)[0]
 
 
-def test_a_sitter_the_model_starts_with_is_not_learned_where_an_echo_source_holds_them():
+def test_a_sitter_the_model_starts_with_is_found_and_not_learned():
     # nothing known (a start of the app, a new sensor), somebody already sits 1.8 m in front of sensor
-    # a. The filter takes them for an echo source of a that never ends (it does not weigh a person
-    # without a track against an echo source the way it weighs the source against them, MODEL.md 9);
-    # a's background does not learn their energy (until 0.20: gate 2 5.0 -> 10.6 in an hour). Sensor
-    # b, 5 m away, has nothing that explains their energy and learns part of it (MODEL.md 10)
+    # a. Energy that stays longer than an echo source lives is a person within minutes (until 0.54 an
+    # echo source of a that never ended held it, nobody in the room for the whole hour, MODEL.md 4.3,
+    # 10 "Echoquellen als Alternative"), and neither sensor learns it (until 0.20 gate 2 of a 5.0 ->
+    # 10.6 in an hour; until 0.54 sensor b, 5 m away, 3.6-fold in a gate)
     config = flat_config(entry=True)
     seat = (1.3, 1.3)
     p = Person([(0.0, *seat), (3600.0, seat[0] + 0.05, seat[1])])
     tr = Tracker(config, start=0.0)
     sensors = [SimSensor(s, still_dropout=1.0, still_gap=900.0) for s in config.data["sensors"]]
+    found = []
     for t, sid, frame in simulate([p], sensors, 3600, plan=config):
         tr.process_frame(sid, t, Frame.of(frame))
+        if t > 600:
+            found.append(1 - tr.core.count_distribution()["wohn"][0])
+    assert min(found) > 2 / 3, min(found)
     prior = ld_prior()
-    assert np.all(np.abs(tr.core.background("a")[0] / prior - 1) < 0.3), tr.core.background("a")[0]
+    for s in ("a", "b"):
+        assert np.all(np.abs(tr.core.background(s)[0] / prior - 1) < 0.4), (s, tr.core.background(s)[0])

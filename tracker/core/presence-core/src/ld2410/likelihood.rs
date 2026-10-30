@@ -340,17 +340,10 @@ impl Prepared<'_> {
 
     /// Masses m (k) putting S (k x 16) on top of the means mu0: the log
     /// likelihood ratio per point against mu0 (capped; a point without mass gets -cap, not computed),
-    /// the log of the normalizer - the factor of the whole person, or for the unknown ones
-    /// (intensity) log((1 + int lambda L) / (1 + Lambda)): at most one of them in view - and what
-    /// they put in afterwards (16).
-    pub fn ratio(
-        &self,
-        scratch: &mut Scratch,
-        m: &[f64],
-        s: &[[f64; CELLS]],
-        mu0: &[f64; CELLS],
-        intensity: bool,
-    ) -> Ratio {
+    /// the log of the normalizer - the factor of the whole person, log(1 - m + int m L); the unknown
+    /// ones the same: at most one of them in view, whatever their mass (MODEL.md 4.3) - and what they
+    /// put in afterwards (16).
+    pub fn ratio(&self, scratch: &mut Scratch, m: &[f64], s: &[[f64; CELLS]], mu0: &[f64; CELLS]) -> Ratio {
         let n = m.iter().filter(|&&x| x > 0.0).count();
         scratch.mu.clear();
         scratch.mu.resize(CELLS * (n + 1), 0.0);
@@ -373,7 +366,7 @@ impl Prepared<'_> {
         {
             *x = both[j] - both[n];
         }
-        ratio_tail(ratios, m, s, intensity, &mut scratch.e)
+        ratio_tail(ratios, m, s, &mut scratch.e)
     }
 }
 
@@ -388,7 +381,7 @@ pub struct Ratio {
 
 /// kernels.ld_ratio_tail: the ratios capped at LOG_CAP (NaN wins), the normalizer, and sum_i m_i
 /// exp(lr_i - norm) S_i.
-fn ratio_tail(mut lr: Vec<f64>, m: &[f64], s: &[[f64; CELLS]], intensity: bool, e: &mut Vec<f64>) -> Ratio {
+fn ratio_tail(mut lr: Vec<f64>, m: &[f64], s: &[[f64; CELLS]], e: &mut Vec<f64>) -> Ratio {
     let cap = super::LOG_CAP;
     let mut top = f64::NEG_INFINITY;
     let mut nan = false;
@@ -413,32 +406,28 @@ fn ratio_tail(mut lr: Vec<f64>, m: &[f64], s: &[[f64; CELLS]], intensity: bool, 
     e.extend(lr.iter().map(|x| x - top));
     vexp(e);
     let inside = m.iter().zip(e.iter()).fold(0.0, |acc, (mi, ei)| acc + mi * ei);
-    let norm = if intensity {
-        top + ((-top).exp() + inside).ln() - msum.ln_1p()
+    let rest = (1.0 - msum).max(0.0);
+    let total = rest * (-top).exp() + inside;
+    let norm = if total > 0.0 {
+        top + total.ln()
     } else {
-        let rest = (1.0 - msum).max(0.0);
-        let total = rest * (-top).exp() + inside;
-        if total > 0.0 {
-            top + total.ln()
-        } else {
-            // every ratio below e^-745 and all of the person in view: the same in the log space
-            let mut hi = if rest > 0.0 { rest.ln() } else { f64::NEG_INFINITY };
+        // every ratio below e^-745 and all of the person in view: the same in the log space
+        let mut hi = if rest > 0.0 { rest.ln() } else { f64::NEG_INFINITY };
+        for (x, &mi) in lr.iter().zip(m) {
+            if mi > 0.0 && x + mi.ln() > hi {
+                hi = x + mi.ln();
+            }
+        }
+        if hi > f64::NEG_INFINITY {
+            let mut sum = if rest > 0.0 { (rest.ln() - hi).exp() } else { 0.0 };
             for (x, &mi) in lr.iter().zip(m) {
-                if mi > 0.0 && x + mi.ln() > hi {
-                    hi = x + mi.ln();
+                if mi > 0.0 {
+                    sum += (x + mi.ln() - hi).exp();
                 }
             }
-            if hi > f64::NEG_INFINITY {
-                let mut sum = if rest > 0.0 { (rest.ln() - hi).exp() } else { 0.0 };
-                for (x, &mi) in lr.iter().zip(m) {
-                    if mi > 0.0 {
-                        sum += (x + mi.ln() - hi).exp();
-                    }
-                }
-                hi + sum.ln()
-            } else {
-                hi
-            }
+            hi + sum.ln()
+        } else {
+            hi
         }
     };
     for (ei, x) in e.iter_mut().zip(&lr) {
@@ -512,7 +501,7 @@ mod tests {
         let p = Params::default();
         let lik = Likelihood::new(&p);
         let mut rng = Rng::new(13);
-        for trial in 0..60 {
+        for _ in 0..60 {
             let frames = 1 + rng.below(19);
             let st = stats(&mut rng, frames);
             let prep = st.prepare(&lik);
@@ -530,8 +519,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let intensity = trial % 3 == 0;
-            let r = prep.ratio(&mut Scratch::default(), &m, &s, &mu0, intensity);
+            let r = prep.ratio(&mut Scratch::default(), &m, &s, &mu0);
             let ll0 = prep.loglik(&st, &mu0);
             for i in 0..k {
                 if m[i] > 0.0 {
@@ -549,11 +537,7 @@ mod tests {
             let top = r.lr.iter().fold(0.0f64, |a, &b| a.max(b));
             let inside: f64 = m.iter().zip(&r.lr).map(|(mi, l)| mi * (l - top).exp()).sum();
             let msum: f64 = m.iter().sum();
-            let want = if intensity {
-                top + ((-top).exp() + inside).ln() - msum.ln_1p()
-            } else {
-                top + ((1.0 - msum).max(0.0) * (-top).exp() + inside).ln()
-            };
+            let want = top + ((1.0 - msum).max(0.0) * (-top).exp() + inside).ln();
             assert!((r.norm - want).abs() < 1e-9 * want.abs().max(1.0));
         }
     }
@@ -643,10 +627,10 @@ mod tests {
         // test_robust: all of a person in view (masses summing to 1) and every ratio below e^-745:
         // until 0.9.3 math.log(0) ("math domain error")
         let s = [[0.0; CELLS]; 2];
-        let r = ratio_tail(vec![-1000.0, -2000.0], &[0.5, 0.5], &s, false, &mut Vec::new());
+        let r = ratio_tail(vec![-1000.0, -2000.0], &[0.5, 0.5], &s, &mut Vec::new());
         assert!((r.norm - (-1000.0 + 0.5f64.ln())).abs() < 1e-12 * 1000.0);
         // the usual case as before
-        let r = ratio_tail(vec![1.0, -1.0], &[0.3, 0.2], &s, false, &mut Vec::new());
+        let r = ratio_tail(vec![1.0, -1.0], &[0.3, 0.2], &s, &mut Vec::new());
         let e = std::f64::consts::E;
         assert!((r.norm - (0.5 + 0.3 * e + 0.2 / e).ln()).abs() < 1e-15);
     }

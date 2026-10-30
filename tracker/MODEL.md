@@ -457,9 +457,15 @@ Das Modell, je Sensor:
   Mittel) wird dann mit `ℓ(e | Rest + S(x)) / ℓ(e | Rest)` gewichtet, der Rest = alle anderen, gemischt
   über die Hypothesen, die sie halten (Marginale wie bei JIPDA; was andere erklären, sagt über diese
   Person nichts, 0.6.13). Eine zweite Person am selben Ort bekommt so nur, was die erste nicht erklärt;
-  gekappte Werte (100) sprechen dabei nur für mehr Energie, nie dagegen (geprüft 7.10., 10). Die unbekannten Personen: höchstens eine von ihnen im Blick (Poisson nach
-  einer abgeschnitten, danach wieder per Momentenabgleich); wer hinter einer Tür oder außer Haus ist,
-  gibt nichts hinein.
+  gekappte Werte (100) sprechen dabei nur für mehr Energie, nie dagegen (geprüft 7.10., 10). **Die unbekannten Personen: höchstens eine von ihnen im
+  Blick**, gerechnet wie eine Person ohne Spur (ein Bernoulli mit r = ihrer Masse M im Blick; `M' = M L̄ /
+  (1 − M + M L̄)` ≤ 1, wobei L̄ das mittlere Verhältnis über diese Masse ist, per Momentenabgleich zurück in
+  die Intensität); wer hinter einer Tür oder außer Haus ist, gibt nichts hinein. Das ist, was Energie allein
+  belegen kann: dass jemand da ist, nicht wie viele. Sie addiert sich zwar je Person, aber die Amplitude
+  einer einzelnen Person streut um mehr als eine weitere Person ausmacht (oben: 881 Blöcke 10–90 % 0,24–2,4,
+  Wohnzimmer das Profil ×1,5–5), und wo gekappt ist, sagt sie nach oben nichts. Die Zahl kommt von den Spuren
+  des LD2450 und den Türen; dafür gibt es keine Grenze (1, 3.4), nur die Energie legt allein keine zweite
+  Person je Blick dazu (10, „Kaltstart“).
 - **Echoquellen** (`ld2410.Echoes`): Energie, die von keiner Person kommt (7.10. 01:07:52–01:08:34 in
   der leeren Küche: bewegt Ring 0–1 Schübe bis 100, ruhig Ring 2–4 bis 60–90, kein LD2450-Ziel, niemand
   ging). Wie die Geister des LD2450 (4.2) unterscheidet sie, wie sie beginnt und endet: Je Sensor aus
@@ -476,15 +482,23 @@ Das Modell, je Sensor:
   sagt, Beleg für sie selbst (bis 0.20: Simulation, eine Sitzende 1,8 m vor dem Sensor, 0,33 → 0,73
   je Stunde in einer Stunde; jetzt 0,34, 10 „Lernschleifen“).
   Verrechnung: Die Personen wie oben, die Echoquellen zuletzt (für die Gewichte der Hypothesen). Eine
-  Person ohne Spur und eine Echoquelle sind Alternativen (beide selten): Die Dichte einer Person
-  bekommt im Blick `P(keine Quelle) · ℓ(Person)`, außerhalb `P(keine Quelle) + Σ P(Quelle) ℓ(Quelle)`.
+  Quelle ist, was die bekannten Personen nicht erklären: Sie wird gegen die Personen mit Spur und die
+  bekannten ohne Spur so, wie sie vor diesen Frames waren, gewichtet (sonst erklärt eine von der Energie
+  hereingezogene Person die Quelle weg), die Unbekannten zählen dabei nicht. Eine Person ohne Spur und
+  eine Quelle sind Alternativen (beide selten), gerechnet wie Ziel und Clutter in der
+  Bernoulli-Aktualisierung (B_GarciaFernandez2018 Gl. 45: `ρ = e + c`, die Alternative steht im Nenner,
+  auf dem Ziel liegt kein Faktor): Die Dichte einer Person ohne Spur bekommt im Blick `ℓ(Person)`,
+  außerhalb `Z = max(1, P(keine Quelle) + Σ P(Quelle) ℓ(Quelle))`. Hält eine Quelle die Energie über ihre
+  Lebensdauer hinaus, steht sie nach jedem Block wieder auf „an“, weil im Zustand der Quellen nichts
+  sonst sie erklärt; die Vorhersage aber gibt ihr nur `≈ 0,9` je Sekunde (Lebensdauer 20 s), und eine
+  Person, die gleich gut erklärt, wächst so um etwa 11 % je Sekunde: Was Minuten bleibt, wird eine Person,
+  was 20–60 s dauert, bleibt eine Quelle. `Z ≥ 1`, weil eine Quelle, die nichts mehr erklärt, kein Beleg
+  für eine Person ist: Ohne die Grenze steigt die Person um das, was die Quelle verliert (10,
+  „Echoquellen als Alternative“).
   „Im Blick“ heißt für eine Person mit Spur wie für Kacheln: eine Komponente, die dem LD2410C mehr als
   `FLOOR` gibt; eine Komponente außerhalb wird nicht gewogen (seit 8.10. abends, `_ld_points`). Bis 0.25
-  zählte jede Komponente als im Blick jedes LD2410C, mit null Energie: Sie bekam `P(keine Quelle)`, ihr
-  Teil „durch eine Tür“ (5.2) außerhalb 1. Jede wahrscheinliche Echoquelle irgendwo schob so alle
-  Personen mit Spur im Haus durch eine Tür hinaus (10, „Meldungen 8.10. abends“).
-  Die Echoquellen selbst werden gegen die Personen mit Spur und die übrigen so, wie sie vor diesen
-  Frames waren, gewichtet (sonst erklärt eine von der Energie hereingezogene Person die Quelle weg).
+  zählte jede Komponente als im Blick jedes LD2410C, mit null Energie, und jede wahrscheinliche Echoquelle
+  irgendwo schob so alle Personen mit Spur im Haus durch eine Tür hinaus (10, „Meldungen 8.10. abends“).
   Exakt gerechnet (Prototyp `tools/ld2410/clutter_hmm.py`) spricht das Ereignis von 01:08 gegen eine
   Person (log Bayes-Faktor Person + Quelle / Quelle −5,0 über 56 s, höchstens +2,5 zwischendurch), eine
   Sitzende im Esszimmer (21:03) dafür (+9,0 nach 40 s, +17,3 nach 2 min).
@@ -980,9 +994,7 @@ Geister geschätzt (4.2).
 Offen beim LD2410C (4.3): Flur 21:35 und 21:56 (Eintretende zu 0,5 statt 0,9 im Flur) liegen nicht
 am LD2410C: ohne seine Echoquellen im Flur 0,54 / 0,46, ganz ohne den Flur-LD2410C 0,51 / 0,62
 (sonst 0,52 / 0,40). Die Person steht in der Tür zum Arbeitszimmer (−1,5 / 5,0), und welche Seite,
-entscheiden 0,2 m. Dass eine Person ohne Spur und eine Echoquelle Alternativen sind, die Quelle selbst aber gegen
-die Personen ohne Spur gewichtet wird, als wären sie da, ist nicht konsistent (10, „Energie aufteilen“).
-Ob und wie stark er durch Wände und Türen sieht (bisher: gar nicht; die zweite Person im
+entscheiden 0,2 m. Ob und wie stark er durch Wände und Türen sieht (bisher: gar nicht; die zweite Person im
 Bad erscheint im Arbeitszimmer, wenn doch); die Amplitude einzelner Aufenthalte streut um einen Faktor
 1,3–1,6 um das Profil, der Schweif je Raum um bis zu 3 (4.3), das Modell nimmt das mittlere; δ ist gegen teils
 unkalibrierte LD2450 gemessen (0,07–0,5 m je nach Sensor); die Addition mehrerer Personen ist nicht an
@@ -1083,9 +1095,8 @@ Näherungen, die man prüfen oder ersetzen kann:
   und den LD2410C-Hintergrund des Sensors neu beginnen (10, „Gelerntes bleibt bei neuer Kalibrierung“).
 - **Wen der Filter verliert, lernt der LD2410C-Hintergrund** (10, „Lernschleifen“), soweit der LD2450 im
   Gehäuse ihn nicht sieht und keine Echoquelle seine Energie hält. Die Schlafenden im Schlafzimmer
-  7./8.10. verlor der Filter um 00:25 an eine Echoquelle, die bis zum Morgen an blieb: Eine ungesehene
-  Person zählt im Blick nur mit P(keine Quelle), die Quelle selbst wird aber gegen sie gewogen, als
-  wäre sie da (4.3; oben und 10 „Energie aufteilen“). Ihre Spuren im Bett endeten als Geister.
+  7./8.10. verlor der Filter um 00:25 an eine Echoquelle, die bis zum Morgen an blieb (bis 0.54: 4.3, 10
+  „Echoquellen als Alternative“). Ihre Spuren im Bett endeten als Geister.
 
 - **Kalibrierung (10, „Kalibrierung der App neu“):** Beim Flur widersprechen sich Grundriss (36–41°)
   und Paare (50° mit Ess- und Wohnzimmer durch die Tür, 29° beim Gang im Flur selbst); frei gefittet
@@ -2682,6 +2693,81 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   *Ergebnis:* übernommen in 0.30.0. Den Fall der Meldung 13.10. 21:46 (die zweite Person im Bad verloren: eine
   Echoquelle nimmt ihre Energie) löst der Blick nicht: Es gibt kein gemessenes Paar „Bad ← Flur“.
   *Entfernt* 30.10. (4.3 „Blick in einen anderen Raum“).
+- **Kaltstart: die Unbekannten liefen davon** (30.10., Liste Punkt 10; 4.3 „Verrechnung“). Ohne Gelerntes und ohne
+  Personenstand 10.10. 10:00: Wohnzimmer bis 18 erwartete Personen, 8.10. 19:00 bis 43. Kein Gerät (der Drucker lief
+  im Arbeitszimmer, Dobby erst ab 10:40) und nicht der Hintergrund: ein bis zwei Personen in 2,7 m gaben ruhig
+  Ring 3–5 gekappt 100, bewegt Ring 3–4 30–45, also mehr als ihr Profil. Die Rechnung war der Fehler: Die
+  Unbekannten galten als „höchstens eine im Blick“, ihr Faktor war aber `L̄ (1 + Λ) / (1 + Λ L̄)`, auf die Intensität
+  angewandt. Für Λ ≪ 1 ist das der Bernoulli-Schritt, darüber heißt es `Λ' ≤ 1 + Λ`: bis zu eine Person mehr je
+  Block, und weil sich die Unbekannten dabei selbst nicht sehen (die Energie erklärte immer nur eine Person), ohne
+  Halt: Test mit den Energien von drei Personen, nach 30 Blöcken 29 im Blick. Schwache Gegenbelege wirkten dagegen
+  kaum (L̄ = 0,9 bei Λ = 10: −0,1). Dasselbe lief auch im warmen Betrieb, nur unsichtbar: Stand `base_0280` 8.10. 21:10
+  Λ = 34 im Blick des Wohnzimmers, Echoquellen dabei aus (P 0,999). Jetzt `1 − M + ∫ m L` wie für eine Person,
+  M' ≤ 1 (4.3), für kleines M dieselbe Zahl bis auf M². Das ist keine Grenze der Personenzahl: Spuren und bekannte
+  Personen ohne Spur sind unbegrenzt; nur belegt Energie allein keine zweite Person je Blick. Erwogen, nicht
+  gerechnet: die Überlagerung mit der eigenen mittleren Masse (Mahler 2009; Nannuru, Coates & Mahler 2013); sie hielte
+  die Masse dort, wo sie die Energie erklärt, im Wohnzimmer also bei mehreren Unbekannten, denn eine Person gibt dort
+  mehr als ihr Profil. Ergebnis, Kaltstart höchste Personenzahl im Haus vorher → nachher, je 2–3 h: 10.10. 10:00
+  21,9 → 5,5; 8.10. 19:00 44,6 → 3,7; 10.10. 12:00 4,8 → 4,7 (Schlafzimmer 3,6 → 1,0, im leeren Raum: 84 → 16 min
+  über 3,5); leeres Haus 8.10. 08:00 1,3 → 0,7 (Licht im leeren Schlafzimmer ~30 min → keins); 6.10. 22:00, 7.10. 03:00,
+  7.10. 07:00, 9.10. 18:00 gleich (3,5 / 0,7 / 3,2 / 2,9). Was bleibt, sind LD2450-Spuren, die ohne Geisterkarte
+  Personen sind. `fast_eval` gegen `rust0530_s2`: Wahrheit 0,48 / 3,28 gleich, leere Nacht und leeres Haus 0,
+  Proxy-Fenster gleich (Küche 10.10. 43,0 → 33,9), Licht anders 22,3 min in 96,4 h, nur in Richtung dunkler.
+  **Preis:** Indizien (`proxy_seated`) 5,8 min „Person wahrscheinlich“ dunkler (Wohnzimmer 8.10. 21:31 255 s,
+  10.10. 14:44 60 s, Bad 8.10. 22:10 27 s), 4,4 min „keine Person“ weniger Licht; dazu 6,2 min Küche 10.10. 12:47
+  ohne LD2450-Ziel an der Kippstelle (Liste Punkt 4). 21:31 nachgespielt: Der Sitzer blieb, weil Λ = 12–34 alle
+  Echoquellen unterdrückte und jede neue Spur zur Person machte. Ohne das geht die Echoquelle wieder an (P(aus) bis
+  0,001), nimmt die Energie der zweiten Person (9 Punkt 1, „Echoquelle nimmt ihre Energie“), und ihre Spur gilt
+  290 s als Geist. Behoben im nächsten Eintrag.
+- **Echoquellen als Alternative** (30.10., Liste Punkte 1, 3, 10, 11; 4.3 „Verrechnung“). Die Ablation zeigte: Ohne
+  Echoquellen 93 min mehr Licht in leeren Räumen, aber 38 min Sitzende im Ess-/Wohnzimmer gewonnen. Nachgespielt
+  (9.10. 17:53, 8.10. 19:04 und 21:29): Zwei sitzen, der Filter führt eine Person, die zweite ist nur Energie. Geht die
+  eine, steht eine Quelle am Platz der Gebliebenen 4–9 min lang auf „an“ (P(an) 0,9–1,0, Vorhersage 0,9), bei
+  20 s Lebensdauer: Im Zustand der Quellen konkurriert nur „aus“ mit ihr, und die Normierung hält sie oben. Eine Person
+  ohne Spur bekam im Blick aber `P(keine Quelle) · ℓ`, also etwa 0,01 je Sekunde, die Unbekannten ebenso; niemand konnte
+  die Energie übernehmen, solange die Quelle sie hielt. Der Faktor ist die Unabhängigkeit von Person und Quelle, in jedem
+  Block neu angewandt; bei Ziel gegen Clutter steht die Alternative nur im Nenner (B_GarciaFernandez2018 Gl. 45). Die
+  Korrektur von 0.27 (die Quelle für die Person auf ihrem Prior) erfand Personen, weil zwei Fehler zusammenkamen:
+  `Z < 1` bläht die Unbekannten auf, wenn eine Quelle als an gilt und nichts erklärt, und die Intensität hatte keinen Halt
+  (voriger Eintrag). Beides ist nun zu: `Z ≥ 1` und `M' ≤ 1`.
+  *Gemessen* gegen den Kaltstart-Stand (`ov_coldstart_s2`, Wahrheit 0,48 / 3,28), Wahrheit Licht leer / dunkel,
+  Indizien (`proxy_seated`) Person / unklar / keine Person in Minuten „neu an / neu aus“, *netto* wie in
+  `dev/ABLATION_2026-10-30.md` (dunkel 5×, negativ: besser), CPU gegen 0.53:
+
+  | Form (2 Stufen) | Wahrheit | Person | unklar | keine Person | netto | CPU |
+  |---|---|---|---|---|---|---|
+  | Quelle gegen alle wie vorher, ohne `P(keine Quelle)` | 5,37 / 0 | 36,1 / 0,6 | 55,0 / 0,6 | 29,7 / 3,9 | −151,7 | +92 % |
+  | **dazu ohne die Unbekannten (übernommen)** | 5,35 / 0 | 34,6 / 0,7 | 56,8 / 0,6 | 28,1 / 3,4 | −145,0 | +22 % |
+  | nur gegen Personen mit Spur | 5,32 / 0 | 27,6 / 1,2 | 52,3 / 0,5 | 15,7 / 4,3 | −120,6 | +10 % |
+
+  Die Unbekannten nicht mitzuzählen ist der Sinn der Alternative und spart die Hypothesen, die sie sonst halten (die
+  Zeile darüber führt fast dasselbe Licht mit doppelter Rechenzeit). Die bekannten ohne Spur herauszunehmen ist
+  konsequenter, kostet aber 7,5 min Sitzende (× 5) für 13 min Licht ohne Person. Gegen 0.53 (`rust0530_s2`): Wahrheit gleich,
+  Person 28,9 / 7,0 (6,2 davon die Küche 10.10. 12:47 aus dem vorigen Eintrag), unklar 56,8 / 0,6, keine Person 27,2 / 7,0,
+  netto −89,6; leere Nacht und leeres Haus 0; Licht anders 166 min in 96,4 h. Die Wahrheit gewichtet 5,35 statt 16,9: das Sofa
+  8.10. 19:06 (3,28 dunkel) ist weg, neu 7.10. 22:22 Esszimmer 2,52 und Arbeitszimmer 2,35 (Balkontür, 9 Punkt 3; dort
+  hielt die Quelle Energie, die eine Person ebenso erklärt). Simulation: Eine Sitzende, die beim Start schon da ist, ist nach
+  5 min eine Person (bis 0.54 die ganze Stunde niemand, und Sensor b in 5 m lernte sie zum 3,6-Fachen als Hintergrund).
+  *Geprüft, nicht übernommen* (1 Stufe, jeweils gegen die Form „nur mit Spur“ gerechnet, Stufe 1 dort 5,38 / 0, Person 33,8 /
+  0,9, unklar 50,9 / 0,5, keine Person 20,1 / 4,6, netto −148,8):
+  - *Ohne `Z ≥ 1`* (der exakte Pfad): 5,65 / 0, Person 47,0 / 1,9, aber unklar 201,9, keine Person 49,3; Esszimmer 167 min
+    unklar, davon lange Strecken 3–7 Uhr ohne Energie. Das Ende einer Quelle zählte als Beleg für jemanden.
+  - *Bernoulli-Nenner für die Unbekannten*, `M L / ((1 − M) Z + M L)` statt am Faktor (auf der Form der ersten Zeile): 5,63 / 0,
+    Person 37,8 / 0,6, unklar 82,2 (Schlafzimmer +23), keine Person 28,3 / 3,8. Kein Gewinn, mehr Code.
+  - *Quelle an die Person gebunden*, `ρ + ν · P(jemand im Blick)` (J_Park2020 Gl. 16), ν = 1/(10 min) / 1/(17 min) /
+    1/(2,8 h): Wahrheit je 3,00 / 0 (das Arbeitszimmer 22:22 fällt weg), Person 25,4 / 27,1 / 27,3, unklar 32,8 / 33,7 /
+    45,9, keine Person 13,1 / 10,8 / 12,2, netto −103,8 / −116,0 / −122,6, Rechenzeit wie 0.53. Ganz ohne Quellen im leeren
+    Blick (`ρ` ≈ 0, ν = 1/(10 min)) dasselbe: 3,00 / 0, leere Nacht und leeres Haus 0, netto −103,8. Die Quellen, die
+    wirklich etwas halten, hängen also an Personen; das Lernen von ρ trägt hier fast nichts (Kandidat zum Entfernen,
+    betrifft Format und Oberfläche). ν ist aber nicht messbar: Die Zahl begonnener Quellen folgt dem Prior (3,6 / 2,3 /
+    0,5 je Stunde bei den drei ν, bei niemandem im Blick 0,1), Fixpunkt um 0,7 je Stunde. Kostet Sitzende, ein neuer
+    Parameter ohne Messung: nicht übernommen, Entscheidung Leon.
+  - *Schweif je Sensor fest* (die Faktoren aus 4.3: Esszimmer 0,6, Küche 3,5, Flur 2, Arbeitszimmer 1,15): 5,33 / 0, Person
+    33,6 / 1,6, unklar 36,5, keine Person 18,6 / 4,8, netto −146,3. Mit den besten festen Werten kaum Gewinn (15 min unklar
+    weniger, im Esszimmer); das Lernen braucht er nicht.
+  - *Gewinn je Sensor fest* (Wohnzimmer 2,9, Küche 3,3, Esszimmer 1,1): 5,43 / 0, Person 39,1 / 41,4, netto +1,5. Im
+    Wohnzimmer 40,8 min dunkler mit Person: Wer einen Sensor lauter macht, lässt die Person, die dort wenig abgibt, woanders
+    hin (wie 7.10.). `c_s` online zu lernen lohnt nicht.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.
