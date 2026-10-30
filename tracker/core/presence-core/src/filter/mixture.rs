@@ -207,12 +207,19 @@ pub fn collapse(parts: &[(f64, &Kalman)]) -> (f64, Kalman) {
     if tot <= 0.0 {
         return (0.0, parts[0].1.clone()); // a copy: the same Gaussian goes on as another
     }
+    // weights summing to less than 1 are scaled up by a power of 2, exactly, to sum to about 1: the same moments.
+    // Near the least numbers (a mode of weight e^-739) their products had a few bits, and the matrix was no
+    // covariance - NaN at the next measurement (until 0.54.2). In two factors: 2^1074 is no f64.
+    let k = -tot.log2().floor().min(0.0) as i32;
+    let up = |w: f64| w * 2f64.powi(k / 2) * 2f64.powi(k - k / 2);
+    let parts: Vec<(f64, &Kalman)> = parts.iter().map(|&(w, g)| (up(w), g)).collect();
+    let total = up(tot);
     let d = parts[0].1.dim();
     let mut out = Kalman::zeros(d);
     for (i, m) in out.mean.iter_mut().enumerate() {
-        *m = parts.iter().fold(0.0, |s, (w, g)| s + w * g.mean[i]) / tot;
+        *m = parts.iter().fold(0.0, |s, (w, g)| s + w * g.mean[i]) / total;
     }
-    for &(w, g) in parts {
+    for &(w, g) in &parts {
         if w <= 0.0 {
             continue;
         }
@@ -227,7 +234,7 @@ pub fn collapse(parts: &[(f64, &Kalman)]) -> (f64, Kalman) {
         }
     }
     for c in &mut out.cov {
-        *c /= tot;
+        *c /= total;
     }
     (tot, out)
 }
@@ -987,7 +994,14 @@ pub fn from_tiles(
                 ka[k * s.amps + a] = dot(a) + fresh * shapes.amp_given_kappa[k * s.amps + a];
             }
         }
-        let total = pairwise_sum(&ka);
+        ka
+    } else {
+        Vec::new()
+    };
+    // the prior's also where the standing mass is so small that its products with the probabilities are 0 (until
+    // 0.54.2 0/0: NaN in every room, seen when an overloaded replay gave the model its frames up to 40 min late)
+    let total = pairwise_sum(&ka);
+    let ka = if total > 0.0 {
         ka.iter().map(|v| v / total).collect()
     } else {
         shapes.ka_w.clone()
@@ -1231,6 +1245,65 @@ mod tests {
         };
         let none = from_tiles(&world, &mut densities, id, TileFactors::same(&ones), far);
         assert!(none.is_none_or(|(_, l)| l < -1000.0));
+    }
+
+    #[test]
+    fn the_moments_of_weighted_gaussians_do_not_depend_on_how_small_the_weights_are() {
+        // 0.54.1 (frames up to 600 s late): a walking mode of weight e^-739 in each of the mixtures merged; their
+        // products with the moments had a few bits, the matrix was no covariance (Var of the measured x + c + o
+        // below 0), and the next measurement gave NaN
+        let gauss = |x: f64, var: f64, cov: f64| {
+            let mut g = Kalman::zeros(2);
+            for ax in 0..2 {
+                let (m, c) = g.axis_mut(ax);
+                m[0] = x;
+                (c[0], c[1], c[2], c[3]) = (var, cov, cov, 0.7 * var);
+            }
+            g
+        };
+        let (a, b) = (gauss(1.5969, 0.0356, -0.0201), gauss(1.8394, 0.0328, -0.0182));
+        let least = 5e-324;
+        let (tot, tiny) = collapse(&[(100.0 * least, &a), (37.0 * least, &b)]);
+        let (_, plain) = collapse(&[(100.0, &a), (37.0, &b)]);
+        assert_eq!(tot, 137.0 * least);
+        assert_eq!((tiny.mean, tiny.cov), (plain.mean, plain.cov));
+    }
+
+    #[test]
+    fn a_track_on_somebody_whose_standing_mass_is_all_but_gone_reads_no_amplitude_from_it() {
+        // 0.54.1 (replay at speed 30): standing mass of 1e-323 where the track starts, the walking rest; each
+        // level's share of it times the amplitude's probabilities was 0 in floating point, and the levels of
+        // detectability became 0/0 - NaN in every room from the person's tiles on
+        let world = testing::flat();
+        let s = &world.shapes;
+        let mut densities = Densities::new(DensityShape {
+            tiles: world.tiles.n,
+            kinds: 2,
+            levels: 2,
+            regions: 0,
+            ages: 18,
+            amps: 2,
+        });
+        let id = densities.alloc(Kind::Person);
+        let c = world.tiles.cell_near([3.25, 2.25]).expect("a tile");
+        {
+            let d = densities.get_mut(id);
+            let shape = d.shape;
+            d.walk[c] = 1.0;
+            d.still[shape.still_row(0, 1)][c] = 5e-324;
+        }
+        let ones = vec![1.0; world.tiles.n];
+        // where the density of z is about 1: the standing mass there times it is the least number above 0
+        let [x, y] = world.tiles.centers[c];
+        let track = NewTrack {
+            seg: SegId(1),
+            z: [x + 0.34, y],
+            var: 0.04,
+        };
+        let (mix, l) = from_tiles(&world, &mut densities, id, TileFactors::same(&ones), track).expect("mass");
+        assert!(l.is_finite() && mix.weights()[WALK] > 1.0 - 1e-12);
+        assert!(mix.ka.iter().all(|x| x.is_finite()), "{:?}", mix.ka);
+        assert!((mix.ka.iter().sum::<f64>() - 1.0).abs() < 1e-12 && mix.ka.len() == s.ka_w.len());
     }
 
     /// A person standing anywhere in view alike, nothing measured (Hidden.at_place(tiles, 0)).

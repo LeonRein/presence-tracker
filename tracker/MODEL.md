@@ -530,6 +530,12 @@ ersten leeren nach einem vollen sofort. Eine Lücke bis 6 s zählt als beobachte
 LD2410C: mit den Energien des Frames vor der Lücke, 4.3); eine längere sagt nichts.
 Ein Neustart der App ist eine solche Lücke für alle Sensoren: Die Personen werden über sie nur
 vorgerückt, nicht gewichtet (5.3).
+Das Modell rechnet vorwärts: Ein Frame vor seiner Zeit wirkt auf den Stand jetzt, und was es aus dem Fehlen des
+Frames schloss (Lücke, Spuren zu Ende), bleibt. Live kommt ein Frame höchstens etwa 2 s nach der Zeit, auf die das
+Modell schon ging (die Uhr aus der Laufzeit des Sensors setzt einen späteren auf seine Empfangszeit), weniger als
+eine Lücke; die Wiedergabe wartet auf ihre Frames (seit 0.54.2: vorher lief ihre Uhr bei Überlast weiter, das
+Modell ging bis zu 40 min über Frames hinaus, die noch kamen, jeder Sensor schien länger still als seine Spuren
+leben, und jeder späte Frame begann sie neu – 25 Personen statt 2).
 
 ## 5. Inferenz
 

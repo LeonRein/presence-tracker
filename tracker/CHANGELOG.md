@@ -2,6 +2,34 @@
 
 ## Unveröffentlicht
 
+## 0.54.2 (Branch `rust-core`, Wiedergabe bei Überlast; nicht live, kein Tag)
+
+Beobachtet 29.10.: eine Wiedergabe mit Tempo 30 (Modell 99 % CPU) meldete nach 66 s „probabilities not finite“ in
+allen Räumen, startete das Modell neu und zeigte danach 29–32 Personen; mit Tempo 12 nichts davon. Ein Fehler der
+Wiedergabe und zwei im Kern, die er zeigte:
+- **Die Uhr der Wiedergabe lief den Frames davon.** Sie gab die Zeit der Aufnahme nach der Wanduhr mal Tempo, auch
+  wenn die Wiedergabe mit den Frames nicht nachkam. Das Modell ging dann im Takt der App (alle 0,1 s) auf diese
+  Zeit, bis zu 40 min über Frames hinaus, die noch kamen: Jeder Sensor schien länger still als seine Spuren leben
+  (MODEL.md 4.4), seine Spuren endeten als verlorene Daten, und jeder späte Frame begann sie neu. Aus 2 Personen
+  wurden binnen Minuten 23–25, mit oder ohne Neustart (die 29–32 nach dem Neustart sind derselbe Fehler, der
+  Neustart selbst erfindet niemanden). Jetzt geht die Uhr der Wiedergabe nie über die nächste noch nicht gespielte
+  Nachricht hinaus (`sources.ReplayClock.due`): Bei Überlast läuft die Wiedergabe so schnell, wie der Rechner kann.
+  Live betrifft das nicht: Dort setzt die Uhr aus der Laufzeit des Sensors einen Frame, der mehr als 2 s zu spät
+  kommt, auf seine Empfangszeit.
+- **0/0 im Kern, wenn eine Spur auf jemandem ohne Spur beginnt, dessen stehende Masse dort fast 0 ist**
+  (`filter/mixture.rs from_tiles`): Geprüft wurde, ob die Masse je Stufe größer 0 ist (5·10⁻³²⁴), geteilt aber durch
+  die Summe ihrer Produkte mit den Wahrscheinlichkeiten der Amplitude, und die war 0. Die Stufen der Erfassbarkeit
+  wurden NaN, beim nächsten Ablösen der Spur die Kacheln der Person und damit jeder Raum. Jetzt entscheidet die
+  Summe, durch die geteilt wird; ist sie 0, gilt das Vorwissen wie ohne stehende Masse.
+- **Momente aus Gewichten nahe der kleinsten Zahlen** (`filter/mixture.rs collapse`, Zusammenlegen von Personen und
+  IMM-Mischung): Ein gehender Anteil mit Gewicht e^-739 (viele späte Messungen ohne Vorrücken dazwischen) wurde mit
+  Gewichten von wenigen Bit gemittelt, die Matrix war keine Kovarianz (Varianz der gemessenen Position unter 0), die
+  nächste Messung gab NaN („the hypotheses' weights are not finite“). Jetzt werden Gewichte, die zusammen unter 1
+  sind, vorher mit einer Zweierpotenz hochskaliert: exakt, dieselben Momente, nur ohne die verlorenen Bits.
+- Beide Kernfehler gefunden mit Schritten, die zufällig bis 40 s bzw. 600 s vor den Frames liegen (die Stunde 10.10.
+  12 Uhr, 14 Folgen); danach alle endlich. Im normalen Betrieb nicht erreicht: Spuren der drei Referenzstunden
+  byte-gleich mit 0.54.1.
+
 ## 0.54.1 (Branch `rust-core`, „Gelerntes“ für alle Sensoren zugleich; nicht live, kein Tag)
 
 Rückmeldung Leon zu 0.54.0: kein Sensor-Auswahlfeld, das Gelernte aller Sensoren zugleich, die Auswahl hebt hervor

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import math
 import pathlib
 import time
 
@@ -17,9 +18,17 @@ class Clock:
 
 
 class ReplayClock(Clock):
+    """The recording's time at the speed asked, but never past the next message not yet played (`due`): a replay
+    that falls behind (the model takes longer than the recording's time allows) waits for its frames, as live time
+    waits for nothing but the frames come with it. Until 0.54.2 it ran on at the speed asked: an overloaded replay
+    (speed 30 on hermann) stepped the model up to 40 min past the frames it had yet to play, every sensor seemed
+    silent for longer than its tracks live (MODEL.md 4.4), and every late frame started its tracks anew - 25
+    people from 2 within minutes."""
+
     def __init__(self, speed: float):
         self.speed = speed
         self.origin = None  # (recording time, monotonic time)
+        self.due = math.inf  # the time of the next message not yet played
 
     def start(self, t: float):
         self.origin = (t, time.monotonic())
@@ -28,7 +37,7 @@ class ReplayClock(Clock):
         if self.origin is None:
             return 0.0
         t0, m0 = self.origin
-        return t0 + (time.monotonic() - m0) * self.speed
+        return min(t0 + (time.monotonic() - m0) * self.speed, self.due)
 
 
 async def mqtt_source(settings: dict, prefix: str, on_message, on_client, publish: bool = True):
@@ -93,6 +102,7 @@ async def replay_source(paths: list, clock: ReplayClock, on_message, loop_foreve
                     m = json.loads(line)
                     if clock.origin is None:
                         clock.start(m["t"])
+                    clock.due = m["t"]
                     wait = (m["t"] - clock()) / clock.speed
                     # always yield, so the web server stays responsive while catching up
                     await asyncio.sleep(max(wait, 0))

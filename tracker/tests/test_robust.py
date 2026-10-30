@@ -172,6 +172,38 @@ def test_the_mqtt_loop_survives_whatever_a_message_does(monkeypatch):
     assert seen == [b"0", b"1", b"2"] and clients[-1] is None  # all messages, then reconnecting
 
 
+def test_an_overloaded_replay_waits_for_its_frames(tmp_path):
+    """The replay's clock ran on at the speed asked while the model took longer than the recording's time
+    allowed (speed 30 on hermann, 0.54.1): the app stepped the model up to 40 min past the frames it had yet to
+    play, every sensor seemed silent longer than its tracks live, and each late frame started its tracks anew -
+    25 people from 2. Now the clock never passes the next message not played."""
+    from presence_tracker import sources
+
+    times = [100.0 + 0.1 * k for k in range(30)]
+    rec = tmp_path / "rec.jsonl"
+    rec.write_text("".join(json.dumps({"t": t, "topic": "presence/a/frame", "payload": {}}) + "\n" for t in times))
+    clock = sources.ReplayClock(1000.0)  # 0.1 s of the recording in 0.1 ms
+    played, ahead = [], []
+
+    def on_message(topic, payload, t):
+        time.sleep(0.002)  # the model takes 20 times the recording's time
+        played.append(t)
+
+    async def ticks():  # the app's housekeeping: the model goes on to the clock's time
+        while True:
+            if len(played) < len(times) and clock() > times[len(played)]:
+                ahead.append(clock() - times[len(played)])
+            await asyncio.sleep(0)
+
+    async def main():
+        task = asyncio.create_task(ticks())
+        await sources.replay_source([rec], clock, on_message, loop_forever=False)
+        task.cancel()
+
+    asyncio.run(main())
+    assert played == times and ahead == []
+
+
 @pytest.mark.parametrize("publish", [True, False])
 def test_a_stop_says_offline_and_a_silent_app_has_no_last_will(tmp_path, monkeypatch, publish):
     """Stopped (SIGTERM: an update, a restart of the app), the app says "offline" before its clean goodbye,
