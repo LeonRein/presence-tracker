@@ -1268,7 +1268,7 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Entfernung. Die Energien selbst kosten etwa ein Sechstel (je Sensor und Sekunde ein Verhältnis je
   Kachel und Person); der Rest kommt von mehr getrennten Dichten über die Hypothesen (im Mittel 8,6
   statt 4,6 Personen auf Kacheln).
-- **Rechenzeit: kompilierte Kernel (Numba, 7.10.)**. Profil von 2eea738 (py-spy mit nativen Frames,
+- **Rechenzeit: kompilierte Kernel (Numba, 7.10.; bis 0.38, seit 0.39 ersetzt durch den Kern in Rust, s. u.)**. Profil von 2eea738 (py-spy mit nativen Frames,
   5 Sensoren, 21:00–21:20, 14 916 Proben): 41 % im Python-Interpreter, 39 % in numpys Aufwand je
   Aufruf (Typauflösung, Iteratoren, Prüfungen), 7 % Speicher anlegen und freigeben, nur 13 % in
   numpys Rechenschleifen. Die meisten Arrays sind klein (2 Achsen × 4–6 Zustände, 5–16 Punkte); bei
@@ -1345,6 +1345,20 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   des Gehens als ein Produkt mit T² (−1 %): Schon `W @ [T | T_in]` in einem BLAS-Aufruf statt zweien rundet
   anders, und das schaukelte sich in der Stunde zu einer anders entschiedenen Hypothese auf (ein Raum 30 min
   belegt statt leer, 844 Raum-Sekunden gekippt) – die Rauschgrenze oben, an einem Beispiel.
+- **Rechenzeit: das Modell in Rust (27.–29.10., 0.32–0.42)**. Phase für Phase portiert, jede gegen die Python-Fassung
+  (Spuren byte-gleich, Welt gegen Digests von 0.38.1); 0.39 löschte den Python-Kern und Numba, 0.41 brachte
+  `presence-replay` (Wiedergabe ohne Python, dieselben Spuren wie über die Hülle). CPU der ersten 20 min von
+  10.10. 12 Uhr (`ab.sh 1200`, ein Kern): 0.31.1 47,8 s → 0.39 16,8 s → 0.53 16,5 s; die Python-Hülle kostet davon
+  ~0,4 s. Seit 0.43–0.51 gilt die Grenzregel: der Kern ist das Modell (auch Kalibrierung, Ableitungen, Konfiguration
+  und ihre Prüfung), Python verbindet und legt ab, die Oberfläche bedient und formuliert. 0.53: `hypot` richtig
+  gerundet statt der C-Bibliothek, seitdem rechnen hermann und das Image gleich; dieselbe Stunde 10.10. 12 Uhr kippt
+  dabei 841 Raum-Sekunden (der Schnitt der Hypothesen entscheidet dort auf Rundungsniveau, wie 0.31.1 oben).
+- **Die Zeit des Modells darf den Frames nicht davonlaufen** (0.54.2/0.54.3). Ging das Modell weiter, während Frames
+  noch unterwegs waren (Wiedergabe unter Überlast; live ein Stau von HA, Broker oder inge, 18.10. ~35 s), galt jeder
+  Sensor als still: Spuren endeten als verlorene Daten und begannen mit den späten Frames neu, aus 2 Personen wurden
+  23–25 (Wiedergabe) bzw. kurz 3–4 (Stau). Seitdem geht die Zeit des Modells mit dem neuesten Frame, hält ohne Frames
+  bis 60 s und gibt gestauten Frames die Zeit aus der Laufzeit des Boards (4.4). Dabei gefunden: zwei Wege zu NaN an
+  der Untergrenze der f64 (`from_tiles`, `collapse`), im normalen Betrieb nie erreicht.
 - **Rechenzeit: weniger Aufrufe, bitgleich (12./13.10., Qualitätsrunde nach 0.28.0)**. Profil der vollsten
   Stunde der Aufnahmen (10.10. 12–13 Uhr, 154 398 Frames, cProfile): kein einzelner Brennpunkt, sondern
   Pythons und numpys Aufwand je Objekt und Schritt – LD2410C-Bewertung 24 %, Bewegen der Gauß-Mischungen
@@ -1438,7 +1452,7 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   4. *Maßstab frei, Kette:* Das Esszimmer hing nur über 251 Paare an einer Stelle am Wohnzimmer, dessen
      Maßstab der Fleck auf 8 m setzte (1,07 statt 1,15) – Esszimmer 1,27.
   5. *Frames als unabhängig:* Paare alle 0,1 s; die Unsicherheit wurde nicht ausgewiesen.
-  Neu (eine Rechnung für App und `tools/calibrate_offline.py`): alle Sensoren gemeinsam (Bündelausgleich,
+  Neu (eine Rechnung für App und `tools/calibrate_offline.py`; seit 0.45 im Kern, `calibration/`): alle Sensoren gemeinsam (Bündelausgleich,
   Triggs et al. 2000); Paare mit Ausreißeranteil (Myronenko & Song 2010); Übergänge zwischen
   Sichtfeldern wie Rahimi, Dunagan & Darrell 2004, mit dem OU-Gehmodell aus 3.2 über bis zu 2 s;
   Grundriss je LD2450-Spur (Person im sichtbaren freien Raum oder Echo); Maßstabsprior mit der

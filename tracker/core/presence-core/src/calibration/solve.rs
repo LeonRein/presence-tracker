@@ -14,7 +14,7 @@ use super::{
 };
 use crate::config::Config;
 use crate::plan::Plan;
-use crate::vmath::{pairwise_sum, py_hypot, py_round};
+use crate::vmath::{pairwise_sum, py_hypot};
 
 /// m: a walking point farther than this from what its sensor can see is out of sight
 const OUT_OF_SIGHT: f64 = 0.3;
@@ -51,7 +51,8 @@ pub struct Apply {
     pub mirror: bool,
 }
 
-/// The result for one sensor (calibration.solve of 0.43.0, its reasons as Reason).
+/// The result for one sensor (calibration.solve of 0.43.0, its reasons as Reason). The numbers as computed, the
+/// web UI rounds them; heading and scale as Problem::describe gives them.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SensorReport {
     pub id: String,
@@ -83,8 +84,8 @@ pub struct SensorReport {
     pub tracks: usize,
     pub pairs: usize,
     pub handovers: usize,
-    /// agreeing pairs with other sensors
-    pub agree: i64,
+    /// agreeing pairs with other sensors (weighted by how well they agree)
+    pub agree: f64,
     /// share of the walking points out of sight, drawn and fitted
     pub outside: [f64; 2],
     /// median distance of the agreeing simultaneous pairs, drawn and fitted
@@ -363,7 +364,7 @@ pub fn solve(config: &Config, data: &BTreeMap<String, Vec<Row>>, check_mirror: b
                     .filter(|&&(a, b, _)| a == si || b == si)
                     .filter_map(|&(_, _, m)| m)
                     .collect();
-                (!mine.is_empty()).then(|| py_round(median(&mine), 3))
+                (!mine.is_empty()).then(|| median(&mine))
             };
             let count = |kind: Kind| -> usize {
                 prob.pairs
@@ -379,13 +380,13 @@ pub fn solve(config: &Config, data: &BTreeMap<String, Vec<Row>>, check_mirror: b
                 mirror: s.mirror,
                 fitted_heading: heading,
                 fitted_scale: scale,
-                heading_sd: py_round(sd_h, 2),
-                scale_sd: py_round(sd_k, 4),
+                heading_sd: sd_h,
+                scale_sd: sd_k,
                 heading_plan: h_plan,
                 heading_pairs: h_pair,
                 stretches,
-                jackknife: (!jack.is_empty()).then(|| [py_round(jh, 2), py_round(jk, 4)]),
-                turn: py_round(angle_diff(heading, s.heading), 1),
+                jackknife: (!jack.is_empty()).then_some([jh, jk]),
+                turn: angle_diff(heading, s.heading),
                 apply: Apply {
                     heading: good_heading,
                     scale: good_scale,
@@ -403,10 +404,10 @@ pub fn solve(config: &Config, data: &BTreeMap<String, Vec<Row>>, check_mirror: b
                 tracks: pt.ntracks,
                 pairs: count(Kind::Pair),
                 handovers: count(Kind::Handover),
-                agree: joint.agree[si].round_ties_even() as i64,
+                agree: joint.agree[si],
                 outside: [
-                    py_round(before.get(&si).copied().unwrap_or_default(), 3),
-                    py_round(after.get(&si).copied().unwrap_or_default(), 3),
+                    before.get(&si).copied().unwrap_or_default(),
+                    after.get(&si).copied().unwrap_or_default(),
                 ],
                 pair_median: [medians(&agree0), medians(&agree1)],
                 mirror_gain: None,
@@ -420,13 +421,13 @@ pub fn solve(config: &Config, data: &BTreeMap<String, Vec<Row>>, check_mirror: b
             let mut mirrored = Fit::new(&other, true, true, None);
             mirrored.run(None, true);
             let gain = (mirrored.ll - joint.ll) / joint.inflation(si);
-            r.mirror_gain = Some(py_round(gain, 1));
+            r.mirror_gain = Some(gain);
             if gain > SECOND_MODE {
                 let (heading, scale) = other.describe(&mirrored.phi, si);
                 r.mirror = flipped;
                 r.heading = heading;
                 r.scale = scale;
-                r.turn = py_round(angle_diff(heading, config.sensors[si].heading), 1);
+                r.turn = angle_diff(heading, config.sensors[si].heading);
                 r.apply = Apply {
                     heading: true,
                     scale: true,
@@ -446,8 +447,8 @@ pub fn solve(config: &Config, data: &BTreeMap<String, Vec<Row>>, check_mirror: b
             .map(|&si| config.sensors[si].id.clone())
             .collect(),
         min_hours: MIN_STRETCHES,
-        inside: (!inside.is_empty()).then(|| py_round(pairwise_sum(&inside) / inside.len() as f64, 3)),
-        scale_prior: [py_round(mu.exp(), 3), py_round(tau, 3)],
+        inside: (!inside.is_empty()).then(|| pairwise_sum(&inside) / inside.len() as f64),
+        scale_prior: [mu.exp(), tau],
     }
 }
 

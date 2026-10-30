@@ -354,7 +354,9 @@ impl<'a> Problem<'a> {
             .collect()
     }
 
-    /// The heading (0.01 deg) and scale (1e-4) of a sensor at phi.
+    /// The heading (0.01 deg) and scale (1e-4) of a sensor at phi. Rounded for the model: taken over, they are
+    /// the configuration's values (the geometry key reads them), and the plan's and the pairs' headings are
+    /// compared at this resolution.
     pub(super) fn describe(&self, phi: &[f64], si: usize) -> (f64, f64) {
         let (c, _) = self.pose(phi, si, None);
         (py_round(heading_of(c), 2), py_round(c.abs(), 4))

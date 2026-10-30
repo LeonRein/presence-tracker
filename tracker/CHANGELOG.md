@@ -2,6 +2,31 @@
 
 ## Unveröffentlicht
 
+## 0.54.4 (Branch `rust-core`, kleine Reste der Grenzregel; nicht live, kein Tag)
+
+Modell unverändert; Spuren der drei Referenzstunden byte-gleich mit 0.54.3 (own und rs).
+- **Texte für den Nutzer nur in der Oberfläche:** Python schickt nur noch Schlüssel und Zahlen, `static/js/util.js`
+  formuliert sie (wie `problemText`). Fehler des Servers als `{"error": Schlüssel, "detail"}` (`errorText`: Modell
+  läuft nicht, Konfiguration abgelehnt oder nicht gespeichert, falscher Bildtyp, nur https, Art des Fehlers fehlt,
+  Minuten keine Zahl, keine Verbindung zu Home Assistant, kein Gehender für die Kalibrierung); die Antworten der
+  Saugroboter-Karte bei Fehlern jetzt JSON statt Text. Die Berichtsarten stehen nur in `util.REPORT_KINDS`; der
+  Server prüft nur, dass die Art ein Schlüssel ist (`[a-z_]{1,32}`, Teil des Dateinamens), `GET /api/reports` ohne
+  `kinds` und `kind_text`. Die Gründe der Kalibrierung gibt der Kern als Art und Zahlen weiter (`reasons`),
+  `util.reasonText` formuliert sie (`calibration.words` weg). Log-Meldungen bleiben englisch in Python.
+- **Dateiname eines Fehlerberichts:** Er behält die Art (`…-wohnzimmer-wrong_place.jsonl.gz`); gebraucht wird sie
+  dort nicht (die Art steht im Kopf des Berichts, nichts liest sie aus dem Namen), aber so bleibt der Ordner auf HA
+  lesbar und die alten Namen gelten wie bisher.
+- **Kalibrierung ohne Rundung für die Anzeige:** `calibration/solve.rs` rundet die Zahlen des Berichts nicht mehr
+  (Unsicherheiten, Jackknife, Drehung, Anteile außerhalb der Sicht, Mediane der Paare, Gewinn des Spiegels, Anteil in
+  Sicht, Vorwissen der Maßstäbe; `agree` jetzt die gewichtete Zahl, die Oberfläche rundet). Entschieden wurde schon
+  mit den ungerundeten Werten. Blickrichtung und Maßstab (`Problem::describe`, 0,01° und 1e-4) bleiben gerundet: Sie werden
+  beim Übernehmen die Werte der Konfiguration, und Grundriss und Paare werden in dieser Auflösung verglichen.
+- `tests/fixtures/make/` gelöscht; wie man die Skripte wiederfindet, steht in `tests/fixtures/README.md`. Nur
+  `make_0381.py` lief allein auf 29c2fe1; `core_build.py` las `test_core_build.py` für die Digests des Baus und
+  erneuerte sie in 0.53.0 – das steht jetzt in `test_core_build.py` selbst (`digests`, als Skript gestartet schreibt
+  es `core_build.json` neu; mit 0.54.3 gleich der Fixture). MODEL.md 10: der Kern in Rust und die Zeit des Modells nachgetragen.
+- Tests: Gründe, Fehler und Berichtsarten in Node gegen `util.js` (statt `calibration.words`).
+
 ## 0.54.3 (Branch `rust-core`, Frames nach einem Stau zu ihrer Zeit; nicht live, kein Tag)
 
 Live stauten sich die Frames, wenn HA, der Broker oder inge eine Weile hing (18.10. etwa 35 s bei viel IO), und kamen

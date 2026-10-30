@@ -1,6 +1,6 @@
 // Application state, server API, saving and undo.
 import { syncRooms } from './floorplan.js';
-import { discardedText, layersError, problemText, rebase, toast } from './util.js';
+import { discardedText, errorText, layersError, problemText, rebase, toast } from './util.js';
 
 const listeners = new Set();
 
@@ -76,10 +76,10 @@ export async function api(path, options = {}) {
   });
   const ctype = r.headers.get('Content-Type') || '';
   const data = ctype.includes('json') ? await r.json() : await r.text();
-  // silent: the server has nothing to say about it (an edit of the editor that changes nothing); problem: the
-  // core's problem with a configuration, worded here
+  // silent: the server has nothing to say about it (an edit of the editor that changes nothing); error: the server's
+  // key, problem: the core's problem with a configuration, both worded here
   if (!r.ok) {
-    const text = typeof data === 'string' ? data : (data.error || (data.problem && problemText(data.problem)) || r.statusText);
+    const text = typeof data === 'string' ? data : (data.error ? errorText(data) : (data.problem && problemText(data.problem)) || r.statusText);
     throw Object.assign(new Error(text),
       { status: r.status, code: data?.code, silent: data?.error === null });
   }

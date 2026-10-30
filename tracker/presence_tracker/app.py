@@ -36,17 +36,7 @@ STATIC = (pathlib.Path(__file__).parent / "static").resolve()
 BLOCKED_DUMP = 15.0  # s the event loop may be busy before the watchdog logs where it is
 REPORT_WINDOW = 15 * 60.0  # s of sensor data kept for an error report
 CODE = code_hash()
-REPORT_KINDS = {  # new kinds only add keys: old reports keep theirs
-    "light_on": "Licht fälschlich an (niemand da)",
-    "light_off": "Licht fälschlich aus (jemand da)",
-    "light_late": "Licht kam zu spät",
-    "lost": "Person verloren",
-    "ghost": "Geist (Person, wo niemand ist)",
-    "wrong_place": "Person am falschen Ort",
-    "inaccurate": "Ungenaues Tracking",
-    "latency": "Hohe Latenz",
-    "other": "Sonstiges",
-}
+REPORT_KIND = re.compile(r"[a-z_]{1,32}")  # a report's kind: a key (in its file name), worded by the web UI (util.js REPORT_KINDS)
 REPORT_NAME = re.compile(r"[A-Za-z0-9_-]+\.jsonl\.gz")  # a report's file (h_report: time-room-kind)
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}
 SEND_TIMEOUT = 5.0  # s a browser may take for one live message; a slower one is cut off
@@ -681,7 +671,7 @@ class App:
         try:
             return web.json_response(self.tracker.coverage())
         except Exception as e:  # noqa: BLE001 - the model is down (restarting after an error)
-            return web.json_response({"error": f"Das Modell läuft gerade nicht: {e!r}"}, status=503)
+            return web.json_response({"error": "model_down", "detail": repr(e)}, status=503)
 
     async def h_put_config(self, request):
         """A save in the web UI: the configuration in the core's form (Config.from_dict: checked, what it leaves
@@ -700,7 +690,7 @@ class App:
         try:
             data = await request.json()
         except ValueError:
-            return web.json_response({"error": "Keine gültige Konfiguration (JSON)."}, status=400)
+            return web.json_response({"error": "not_json"}, status=400)
         try:
             config = Config.from_dict(data)
         except presence_core.ConfigError as e:
@@ -712,7 +702,7 @@ class App:
                 config.save(self.config_path)
             except OSError as e:
                 log.exception("tracker.json not saved")
-                return web.json_response({"error": f"Nicht gespeichert: {e}"}, status=500)
+                return web.json_response({"error": "not_saved", "detail": str(e)}, status=500)
             return web.json_response({"ok": True, "restarted": False, "derived": None, "config": config.to_dict(),
                                       "discarded": None})
         moved = presence_core.geometry_key(config.model_json()) != self.geometry
@@ -728,8 +718,7 @@ class App:
             # it, people.json had their fingerprint, and the old model restored nothing until 0.28)
             self._model_failed("a new configuration", count=False,
                                people=getattr(self.tracker, "reconfigured_from", None))
-            return web.json_response({"error": f"Das Modell läuft mit dieser Konfiguration nicht: {e!r}. "
-                                               "Es gilt die vorige."}, status=400)
+            return web.json_response({"error": "model_refused", "detail": repr(e)}, status=400)
         self.config = config
         discarded = self._forget(measured) if moved else None
         if restarted:
@@ -743,7 +732,7 @@ class App:
             config.save(self.config_path)
         except OSError as e:
             log.exception("tracker.json not saved")
-            return web.json_response({"error": f"In Gebrauch, aber nicht gespeichert: {e}"}, status=500)
+            return web.json_response({"error": "in_use_not_saved", "detail": str(e)}, status=500)
         return web.json_response({"ok": True, "restarted": restarted, "derived": model.derive(config.to_dict()),
                                   "config": config.to_dict(), "discarded": discarded})
 
@@ -769,11 +758,11 @@ class App:
             if body.get("url"):
                 url = body["url"]
                 if not url.startswith("https://"):
-                    return web.json_response({"error": "Nur https-URLs."}, status=400)
+                    return web.json_response({"error": "https_only"}, status=400)
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
                         if r.status != 200:
-                            return web.json_response({"error": f"HTTP {r.status}"}, status=502)
+                            return web.json_response({"error": "download", "detail": r.status}, status=502)
                         data = await r.content.read(20 * 1024 * 1024)
                 filename = url.rsplit("/", 1)[-1].split("?")[0]
             else:
@@ -783,7 +772,7 @@ class App:
             filename, data = field.filename or "", await field.read()
         suffix = pathlib.Path(filename).suffix.lower()
         if suffix not in IMAGE_TYPES:
-            return web.json_response({"error": "Nur PNG, JPEG, WebP oder SVG."}, status=400)
+            return web.json_response({"error": "image_type"}, status=400)
         name = f"{uuid.uuid4().hex[:12]}{suffix}"
         (self.images / name).write_bytes(data)
         return web.json_response({"name": name, "url": f"images/{name}"})
@@ -811,7 +800,7 @@ class App:
         try:
             return web.json_response(self.tracker.learned_view())
         except Exception as e:  # noqa: BLE001 - the model is down (restarting after an error)
-            return web.json_response({"error": f"Das Modell läuft gerade nicht: {e!r}"}, status=503)
+            return web.json_response({"error": "model_down", "detail": repr(e)}, status=503)
 
     async def h_import_learned(self, request):
         """Take over a ghost map learned elsewhere, e.g. offline from recordings: {"ghost_map":
@@ -845,15 +834,15 @@ class App:
         same times (tools/replay.py)."""
         body = await request.json()
         kind = body.get("kind")
-        if kind not in REPORT_KINDS:
-            return web.json_response({"error": "Art des Fehlers fehlt."}, status=400)
+        if not isinstance(kind, str) or not REPORT_KIND.fullmatch(kind):
+            return web.json_response({"error": "report_kind"}, status=400)
         room = str(body.get("room") or "")
         try:
             ago = float(body.get("minutes_ago") or 0)
         except (TypeError, ValueError):
             ago = math.nan
         if not math.isfinite(ago):  # (NaN passed min and max: comparisons with it are false)
-            return web.json_response({"error": "Die Minuten sind keine Zahl."}, status=400)
+            return web.json_response({"error": "minutes"}, status=400)
         ago = min(max(ago, 0.0), REPORT_WINDOW / 60)
         now = self.clock()  # the wall clock, or the recording's time in a replay
         start = self.model_start or self.tracker.start
@@ -929,9 +918,8 @@ class App:
                 continue
             if not isinstance(rep, dict):
                 continue
-            out.append({"name": path.name, "size": path.stat().st_size, **rep,
-                        "kind_text": REPORT_KINDS.get(rep.get("kind"), rep.get("kind"))})
-        return web.json_response({"reports": out, "kinds": REPORT_KINDS, "window_min": REPORT_WINDOW / 60})
+            out.append({"name": path.name, "size": path.stat().st_size, **rep})
+        return web.json_response({"reports": out, "window_min": REPORT_WINDOW / 60})
 
     def _report_path(self, name: str) -> pathlib.Path:
         """The file of an existing report, by its name as listed (h_reports); anything else is 404: a
@@ -972,12 +960,13 @@ class App:
 
     async def _ha_get(self, path: str, binary: bool = False):
         if not self.ha_url:
-            raise web.HTTPServiceUnavailable(text="Keine Verbindung zu Home Assistant konfiguriert.")
+            raise web.HTTPServiceUnavailable(text=json.dumps({"error": "no_ha"}), content_type="application/json")
         headers = {"Authorization": f"Bearer {self.ha_token}"}
         async with aiohttp.ClientSession() as session:
             async with session.get(self.ha_url + path, headers=headers) as r:
                 if r.status != 200:
-                    raise web.HTTPBadGateway(text=f"Home Assistant: HTTP {r.status}")
+                    raise web.HTTPBadGateway(text=json.dumps({"error": "ha_http", "detail": r.status}),
+                                             content_type="application/json")
                 return (await r.read(), r.content_type) if binary else await r.json()
 
     async def h_cameras(self, request):

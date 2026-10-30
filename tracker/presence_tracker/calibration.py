@@ -7,9 +7,9 @@ progress of the data (presence_core.calibration_status).
 Here the app's session: the rows of the last KEEP seconds, collected all the time (in raw sensor
 coordinates), stored for the next start with the key of the geometry they were collected under (the core's:
 presence_core.geometry_key; a saved configuration of another one discards them, app.App._forget, as a file
-of another one at the start: load), handed to the core in a thread; and the core's reasons in the words of the
-web UI. A sensor turned or moved for real while its drawing stays needs `reset`. Everyday walking connects the sensors as well as a calibration walk does, and over a day
-far better (MODEL.md 10: a 10-minute walk alone put the hall's heading 15 deg off); a walk alone through
+of another one at the start: load), handed to the core in a thread; the web UI words the core's reasons. A
+sensor turned or moved for real while its drawing stays needs `reset`. Everyday walking connects the sensors
+as well as a calibration walk does, and over a day far better (MODEL.md 10: a 10-minute walk alone put the hall's heading 15 deg off); a walk alone through
 rooms and doors adds what everyday walking doesn't reach. `tools/calibrate_offline.py` (its analyses need
 a tree of 0.43.0, where the estimator was Python) feeds recordings through the same collection.
 """
@@ -32,30 +32,6 @@ KEEP = 24 * 3600.0  # s of walking measurements the app keeps (about 5 MB a day 
 T, SEG = 0, 1  # columns of the stored rows: t, track, raw x, raw y (m), raw radial speed (m/s), single (1/0)
 COLUMNS = 6
 
-# the core's reasons (presence_core.calibrate: "reasons" per sensor) in the words of the web UI
-_REASONS = {
-    "few": "Erst {stretches} von {min} Stunden mit Gehenden.",
-    "worse": "Mit dem neuen Wert lägen mehr Punkte in Bewegung außerhalb der Sicht ({after:.0f} % statt {before:.0f} %). "
-             "Bleibt wie bisher.",
-    "conflict": "Grundriss ({plan:.0f}°) und gemeinsame Messungen mit anderen Sensoren ({pairs:.0f}°) widersprechen "
-                "sich. Stimmt die eingezeichnete Position des Sensors und der Wände um ihn?",
-    "ambiguous": "Drehung mehrdeutig: {alt:.0f}° passt fast so gut.",
-    "heading_uncertain": "Drehung unsicher (± {sd:.0f}°).",
-    "no_ruler": "Maßstab: zu wenig gemeinsame Messungen mit anderen Sensoren.",
-    "scale_uncertain": "Maßstab unsicher (± {sd:.2f}).",
-    "mirrored": "Gespiegelt passen die Messungen besser (log {gain:.0f}).",
-}
-
-
-def words(reason: dict) -> str:
-    """A reason of the core as a sentence of the web UI."""
-    r = dict(reason)
-    kind = r.pop("kind")
-    if kind == "worse":  # shares in per cent
-        r = {k: 100 * v for k, v in r.items()}
-    return _REASONS[kind].format(**r)
-
-
 def _bytes(data: dict) -> dict:
     """The rows per sensor as the core takes them: the bytes of their float64 rows."""
     return {sid: np.ascontiguousarray(a, dtype="<f8").reshape(-1, COLUMNS).tobytes() for sid, a in data.items()}
@@ -64,15 +40,11 @@ def _bytes(data: dict) -> dict:
 def solve(config: Config, data: dict, check_mirror: bool = False) -> dict:
     """New heading and scale for every placed sensor with walking measurements, each with its uncertainty;
     only what is determined is proposed (the core's: presence_core.calibrate). data: {sensor id: rows};
-    check_mirror: also fit each sensor mirrored. The reasons why something is not proposed in words."""
+    check_mirror: also fit each sensor mirrored. The reasons why something is not proposed as the core gives
+    them ("reasons": kind and numbers; the web UI words them), as is {"error": "no_walking"}."""
     out = json.loads(presence_core.calibrate(config.model_json(), _bytes(data), check_mirror))
-    if "error" in out:
-        return {"error": "Keine Messungen einer Person in Bewegung."}
-    sensors = {}
-    for s in out["sensors"]:
-        s["reason"] = " ".join(words(r) for r in s.pop("reasons"))
-        sensors[s.pop("id")] = s
-    out["sensors"] = sensors
+    if "sensors" in out:
+        out["sensors"] = {s.pop("id"): s for s in out["sensors"]}
     return out
 
 

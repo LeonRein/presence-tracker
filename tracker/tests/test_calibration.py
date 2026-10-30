@@ -65,7 +65,7 @@ def test_recovers_headings_and_scales_from_a_walk():
     for s in truth.data["sensors"][:3]:
         r = result["sensors"][s["id"]]
         assert "x" not in r and "y" not in r
-        assert r["quality"] == "ok", r["reason"]
+        assert r["quality"] == "ok", r["reasons"]
         assert r["scale"] == pytest.approx(s["scale"], abs=0.02)
         assert _turn(r, s["heading"]) == pytest.approx(0, abs=2.0)
         assert r["mirror"] == s["mirror"]
@@ -121,7 +121,7 @@ def test_sensors_that_share_only_a_door():
     for s in truth.data["sensors"]:
         r = result["sensors"][s["id"]]
         assert r["mirror"] is True
-        assert r["apply"]["heading"], r["reason"]
+        assert r["apply"]["heading"], r["reasons"]
         assert _turn(r, s["heading"]) == pytest.approx(0, abs=3.0)
         assert r["outside"][1] <= r["outside"][0]
 
@@ -144,7 +144,7 @@ def test_a_single_walk_proposes_nothing():
     for sid, r in result["sensors"].items():
         assert not r["apply"]["heading"] and not r["apply"]["scale"]
         assert r["heading"] == next(s["heading"] for s in guess.data["sensors"] if s["id"] == sid)
-        assert r["few"] and r["reason"] == "Erst 1 von 3 Stunden mit Gehenden."
+        assert r["few"] and r["reasons"] == [{"kind": "few", "stretches": 1, "min": 3}]
     # the progress before a solve counts as the solve does
     calibrator = _collect(truth, guess, [person], person.waypoints[-1][0], plan=truth, hours=1)
     status = calibrator.status()
@@ -235,16 +235,3 @@ def test_the_status_counts_a_copy_and_a_reset_drops_a_count_under_way(tmp_path):
     again.load(tmp_path / "calibration.npz")
     assert again.status()["frames"] == calibrator.status()["frames"]
 
-
-@pytest.mark.parametrize("reason", [
-    {"kind": "few", "stretches": 1, "min": 3}, {"kind": "worse", "after": 0.125, "before": 0.05},
-    {"kind": "conflict", "plan": 40.2, "pairs": 50.1}, {"kind": "ambiguous", "alt": 123.4},
-    {"kind": "heading_uncertain", "sd": 6.2}, {"kind": "no_ruler"}, {"kind": "scale_uncertain", "sd": 0.091},
-    {"kind": "mirrored", "gain": 12.3},
-])
-def test_every_reason_of_the_core_is_a_sentence(reason):
-    from presence_tracker.calibration import words
-    text = words(reason)
-    assert text[0].isupper() and text.endswith((".", "?")) and "{" not in text
-    if reason["kind"] == "worse":
-        assert "(12 % statt 5 %)" in text

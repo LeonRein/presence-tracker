@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 
@@ -13,11 +14,12 @@ import presence_core
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from presence_tracker.app import App
+from presence_tracker.app import App, REPORT_KIND
 from presence_tracker.model import Config, problem
 from test_filter import flat_config
 
 UTIL = pathlib.Path(__file__).parents[1] / "presence_tracker" / "static" / "js" / "util.js"
+APP = UTIL.parents[2] / "app.py"
 node = pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
 
 
@@ -182,7 +184,7 @@ def test_a_configuration_the_model_fails_with_is_refused_and_the_old_one_holds(a
     data = app.config.to_dict()
     data["zones"].append(_area())
     status, body = put(app, data)
-    assert status == 400 and "läuft mit dieser Konfiguration nicht" in body["error"] and calls
+    assert status == 400 and body["error"] == "model_refused" and "NoneType" in body["detail"] and calls
     assert app.config is old and app.tracker.config is old
     assert (tmp_path / "tracker.json").read_text() == before
     app.tracker.zone_states()  # the model runs
@@ -253,6 +255,25 @@ def test_every_problem_of_the_core_is_a_german_sentence():
     light = next(t for p, t in zip(problems, texts) if p["field"] == "light_cost" and p["reason"] == "out_of_range")
     assert light == "Kosten: Licht ohne Person muss größer als 0 und höchstens 1000 sein, nicht 0."
 
+
+
+@node
+def test_every_reason_and_error_of_the_server_is_worded():
+    # the calibration's reasons (the core's: kind and numbers), the server's error keys and the report kinds:
+    # the web UI words them (util.js reasonText, errorText, REPORT_KINDS), the server sends only keys
+    reasons = [{"kind": "few", "stretches": 1, "min": 3}, {"kind": "worse", "after": 0.12, "before": 0.05},
+               {"kind": "conflict", "plan": 40.2, "pairs": 50.1}, {"kind": "ambiguous", "alt": 123.4},
+               {"kind": "heading_uncertain", "sd": 6.2}, {"kind": "no_ruler"},
+               {"kind": "scale_uncertain", "sd": 0.091}, {"kind": "mirrored", "gain": 12.3}]
+    keys = sorted(set(re.findall(r'"error": "(\w+)"', APP.read_text())) | {"no_walking"})
+    got = ui(f"[{json.dumps(reasons)}.map(util.reasonText), "
+             f"{json.dumps(keys)}.map(e => util.errorText({{error: e, detail: 502}})), util.REPORT_KINDS]")
+    for text in got[0] + got[1]:
+        assert text[0].isupper() and text.endswith((".", "?")) or text.endswith("502"), text
+        assert "{" not in text and "undefined" not in text, text
+    assert "(12 % statt 5 %)" in got[0][1] and "± 0,09)" in got[0][6]
+    assert len(keys) > 10 and all(k not in t for k, t in zip(keys, got[1])), got[1]
+    assert "wrong_place" in got[2] and all(REPORT_KIND.fullmatch(k) for k in got[2])
 
 @pytest.mark.skipif(not os.environ.get("PT_RELEASE_WHEEL"), reason="against the release wheel only (CI)")
 def test_the_release_wheel_has_no_test_hooks():

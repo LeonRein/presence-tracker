@@ -3,7 +3,10 @@
 What the Python oracles of 0.38.1 (commit 29c2fe1) said, kept for the tests after phase 9 of the Rust port deleted
 them (docs/rust-core.md). The tests check the core against them. Made on 28.10.2026 by the scripts in `make/`, which
 run on 29c2fe1 only (they import the oracles); how, in their docstrings. Run again there, they give the same files
-(checked for `people.json`, `ghosts.json` and the geometry in `destinations.json`).
+(checked for `people.json`, `ghosts.json` and the geometry in `destinations.json`). They were deleted in 0.54.4;
+a8e8de0 is the last commit with them: `git show a8e8de0:tracker/tests/fixtures/make/make_0381.py` (and
+`core_build.py`) into a worktree of 29c2fe1. The digests of `core_build.json` on later trees come from
+`tests/test_core_build.py` itself (run as a script, its `__main__`).
 
 - `people.json` (`make/make_0381.py`, `hidden.Hidden.to_dict`): saved states of the people, `Tracker.people_state`'s
   format, each one hypothesis, nobody unknown: `nook` somebody standing in the nook of `test_existence._nook_config`
@@ -22,7 +25,7 @@ run on 29c2fe1 only (they import the oracles); how, in their docstrings. Run aga
   filter of 0.38.1 counted them) as `DestinationMap.to_dict` wrote it, `map_lookup` its `lookup` there.
 - `ld2410.json` (`ld2410.Background.to_dict`): two sensors of `room_config`, each with its level, anchor and echoes
   counted, b held for 42.5 s; `b`, `anchor`, `rate` what the Python background read from it.
-- `core_build.json` (`make/core_build.py`): per configuration of the tests a sha1 per part of what the core builds
+- `core_build.json` (`make/core_build.py`, now `test_core_build.digests`): per configuration of the tests a sha1 per part of what the core builds
   (`presence_core.build_export`: the plan, the raster, the tiles, per sensor its sight and LD2410C) and the tiles'
   fingerprint - made with the core of 0.38.1, whose build was checked against the Python build there.
 - `core_reflections.json` (`make/make_0381.py`, `model.Config.hidden`): per configuration and sensor a sha1 of the

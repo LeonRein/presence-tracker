@@ -228,6 +228,52 @@ export function bindNumber(input, lim, apply, { allowEmpty = false } = {}) {
   };
 }
 
+// The server's errors ({error: key, detail}: app.py, calibration's no_walking from the core) in words; an
+// unknown key as it is
+const ERRORS = {
+  model_down: 'Das Modell läuft gerade nicht: {detail}',
+  model_refused: 'Das Modell läuft mit dieser Konfiguration nicht: {detail}. Es gilt die vorige.',
+  not_json: 'Keine gültige Konfiguration (JSON).',
+  not_saved: 'Nicht gespeichert: {detail}',
+  in_use_not_saved: 'In Gebrauch, aber nicht gespeichert: {detail}',
+  https_only: 'Nur https-URLs.',
+  download: 'Bild nicht geladen: HTTP {detail}',
+  image_type: 'Nur PNG, JPEG, WebP oder SVG.',
+  report_kind: 'Art des Fehlers fehlt.',
+  minutes: 'Die Minuten sind keine Zahl.',
+  no_ha: 'Keine Verbindung zu Home Assistant konfiguriert.',
+  ha_http: 'Home Assistant: HTTP {detail}',
+  no_walking: 'Keine Messungen einer Person in Bewegung.',
+};
+export const errorText = d => (ERRORS[d.error] ?? String(d.error)).replace('{detail}', d.detail ?? '');
+
+// The kinds of an error report (the server keeps the key: the reports' header and file name). New kinds only
+// add keys: old reports keep theirs
+export const REPORT_KINDS = {
+  light_on: 'Licht fälschlich an (niemand da)',
+  light_off: 'Licht fälschlich aus (jemand da)',
+  light_late: 'Licht kam zu spät',
+  lost: 'Person verloren',
+  ghost: 'Geist (Person, wo niemand ist)',
+  wrong_place: 'Person am falschen Ort',
+  inaccurate: 'Ungenaues Tracking',
+  latency: 'Hohe Latenz',
+  other: 'Sonstiges',
+};
+
+// Why the calibration proposes nothing or less for a sensor (the core's reasons: kind and numbers) in words
+const REASONS = {
+  few: r => `Erst ${r.stretches} von ${r.min} Stunden mit Gehenden.`,
+  worse: r => `Mit dem neuen Wert lägen mehr Punkte in Bewegung außerhalb der Sicht (${fmt(100 * r.after, 0)} % statt ${fmt(100 * r.before, 0)} %). Bleibt wie bisher.`,
+  conflict: r => `Grundriss (${fmt(r.plan, 0)}°) und gemeinsame Messungen mit anderen Sensoren (${fmt(r.pairs, 0)}°) widersprechen sich. Stimmt die eingezeichnete Position des Sensors und der Wände um ihn?`,
+  ambiguous: r => `Drehung mehrdeutig: ${fmt(r.alt, 0)}° passt fast so gut.`,
+  heading_uncertain: r => `Drehung unsicher (± ${fmt(r.sd, 0)}°).`,
+  no_ruler: () => 'Maßstab: zu wenig gemeinsame Messungen mit anderen Sensoren.',
+  scale_uncertain: r => `Maßstab unsicher (± ${fmt(r.sd, 2)}).`,
+  mirrored: r => `Gespiegelt passen die Messungen besser (log ${fmt(r.gain, 0)}).`,
+};
+export const reasonText = r => REASONS[r.kind]?.(r) ?? r.kind;
+
 // What a save of another geometry (a sensor's place or view, the walls, doors, zones; the server's "discarded":
 // the calibration's measurements and the room pairs of the LD2410Cs' measured view) discarded, as a sentence;
 // '' for nothing

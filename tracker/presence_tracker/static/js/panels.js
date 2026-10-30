@@ -1,7 +1,7 @@
 // Side panel per tab.
 import { api, coverageNow, edit, emit, heldBadges, learnedSelected, onWall, refreshCoverage, savePref, saveNow, select, sensorById, sensorColor, setTool, state } from './store.js';
 import { autoFitImage, deleteSelection, fitFromCalibration } from './tools.js';
-import { LABELS, LAYER_LIMITS, ZONE_KINDS, bindNumber, dist, esc, fmt, h, onSegment, outcomeColor, personColor, regionOfRoom, roomsWithSensor, sharePct, toast, uid, zoneArea } from './util.js';
+import { LABELS, LAYER_LIMITS, REPORT_KINDS, ZONE_KINDS, bindNumber, dist, errorText, esc, fmt, h, onSegment, outcomeColor, personColor, reasonText, regionOfRoom, roomsWithSensor, sharePct, toast, uid, zoneArea } from './util.js';
 import { loadSize } from './view.js';
 
 let skipRender = false;
@@ -384,12 +384,12 @@ async function reportForm(el) {
     el.querySelector('#rep-ago').max = data.window_min;
     el.querySelector('#rep-window').textContent = `${fmt(data.window_min, 0)} Minuten`;
     const kinds = el.querySelector('#rep-kind');
-    if (!kinds.options.length) kinds.innerHTML = Object.entries(data.kinds).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+    if (!kinds.options.length) kinds.innerHTML = Object.entries(REPORT_KINDS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
     const names = Object.fromEntries(rooms.map(z => [z.id, z.name]));
     list.innerHTML = '';
     for (const r of data.reports.slice(0, 20)) {
       const when = new Date(r.t_event * 1000).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-      const what = `${when} · ${names[r.room] || 'Haus'} · ${r.kind_text}`;
+      const what = `${when} · ${names[r.room] || 'Haus'} · ${REPORT_KINDS[r.kind] ?? r.kind}`;
       const row = h(`<div class="item"><span class="grow">${esc(what)}${r.text ? ` · <i>${esc(r.text)}</i>` : ''}</span>
         <a class="meta" href="api/reports/${encodeURIComponent(r.name)}" download>${r.size < 1e6 ? `${Math.max(1, Math.round(r.size / 1e3))} kB` : `${fmt(r.size / 1e6, 1)} MB`}</a>
         <button class="btn danger small rep-del" title="Meldung löschen" aria-label="Meldung löschen">Löschen</button></div>`);
@@ -784,7 +784,7 @@ function calibrationPanel(panel, view) {
 }
 
 function calibrationResult(el, r) {
-  if (r.error) { el.innerHTML = `<p class="note" style="color:var(--bad)">${esc(r.error)}</p>`; return; }
+  if (r.error) { el.innerHTML = `<p class="note" style="color:var(--bad)">${esc(errorText(r))}</p>`; return; }
   const label = { ok: 'gut', warn: 'teilweise', bad: 'bleibt' };
   const cls = { ok: 'ok', warn: 'warn', bad: '' };  // "bleibt" is mostly "not enough data yet", no error
   const entries = Object.entries(r.sensors);
@@ -807,7 +807,7 @@ function calibrationResult(el, r) {
       <div class="row"><b class="grow">${esc(cur?.name || id)}</b><span class="badge ${cls[s.quality]}">${label[s.quality]}</span></div>
       <dl class="kv"><dt>Drehung</dt><dd>${turn}</dd><dt>Maßstab</dt><dd>${scale}</dd>
         ${s.apply.mirror ? '<dt>x-Richtung</dt><dd><b>ändern</b></dd>' : ''}</dl>
-      <p class="note">${s.points} Punkte in Bewegung aus ${s.stretches}/${need}\u00a0h, ${s.pairs}\u00a0s gleichzeitig mit anderen Sensoren gesehen (${s.agree} passend), ${s.handovers} Übergänge. Außerhalb der Sicht: ${out[0]}\u00a0% → ${out[1]}\u00a0%.${s.reason && !s.few ? ' ' + esc(s.reason) : ''}</p>
+      <p class="note">${s.points} Punkte in Bewegung aus ${s.stretches}/${need}\u00a0h, ${s.pairs}\u00a0s gleichzeitig mit anderen Sensoren gesehen (${Math.round(s.agree)} passend), ${s.handovers} Übergänge. Außerhalb der Sicht: ${out[0]}\u00a0% → ${out[1]}\u00a0%.${s.reasons.length && !s.few ? ' ' + esc(s.reasons.map(reasonText).join(' ')) : ''}</p>
     </div>`;
   }).join('');
   const usable = entries.filter(([, s]) => s.apply.heading || s.apply.scale);
