@@ -20,7 +20,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 use std::{env, fs, io::Write};
 
-use presence_core::config::Config;
+use presence_core::config::{Config, canonical};
 use presence_core::frames::{Frame, SensorClock};
 use presence_core::outputs::ZoneState;
 use presence_core::params::Params;
@@ -93,7 +93,9 @@ fn messages(path: &str) -> Result<Vec<Message>, String> {
 /// The tracker of a configuration with the core's model.
 fn tracker(config: &str) -> Result<Tracker, String> {
     let text = fs::read_to_string(config).map_err(|e| format!("{config}: {e}"))?;
-    let config = Config::from_json(&text).map_err(|e| format!("{config}: {e}"))?;
+    // as the app reads a saved configuration: old settings go, missing ones are the defaults
+    let canonical = canonical(&text).map_err(|e| format!("{config}: {e}"))?;
+    let config = Config::from_json(&canonical.to_string()).map_err(|e| format!("{config}: {e}"))?;
     let mut tracker = Tracker::new(World::build(&config, Params::default())?);
     tracker.reset_people(None)?; // nothing known about the people (the shell's Tracker() starts so)
     Ok(tracker)
@@ -256,7 +258,6 @@ impl PyJson for ZoneOut<'_> {
     fn write(&self, out: &mut String) {
         let s = self.0;
         let from = s.target_from.as_deref();
-        let source = s.decided.source().map(|s| s.name());
         Fields::new(out)
             .field("count", &s.count)
             .field("moving", &s.moving)
@@ -277,11 +278,8 @@ impl PyJson for ZoneOut<'_> {
             .field("target_eta", &s.target_eta)
             .field("target_person", &s.target_person)
             .field("probability", &s.probability)
-            .field("decided", &s.decided.occupied())
-            .field("source", &source)
             .field("available", &s.available)
             .field("occupied", &s.occupied)
-            .field("c_occupied", &s.c_occupied)
             .field("target_source", &s.target_source)
             .end();
     }

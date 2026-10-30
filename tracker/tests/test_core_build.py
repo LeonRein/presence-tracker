@@ -27,7 +27,7 @@ from test_filter import flat_config
 
 pytestmark = pytest.mark.hooks  # build_export, hidden_at
 from test_frames import room_config
-from test_roomseen import open_plan
+from test_silent import open_plan
 
 PRIVATE = os.environ.get("PT_CONFIGS")
 

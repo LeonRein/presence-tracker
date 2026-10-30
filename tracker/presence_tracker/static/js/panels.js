@@ -81,27 +81,21 @@ function patchRows(el, rows) {
 
 const pct = p => `${Math.round(p * 100)}\u00a0%`;
 const people = n => `${n}\u00a0${n === 1 ? 'Person' : 'Personen'}`;
-// what decided "besetzt" (the attribute quelle in Home Assistant): [badge, explanation]
-const SOURCE = {
-  filter: ['Filter', 'Besetzt, weil die Wahrscheinlichkeit des Filters \u00fcber der Schwelle liegt.'],
-  ld2450: ['LD2450', 'Besetzt, weil der LD2450 dieses Raums gerade jemanden im Raum misst (Haltezeit in den Einstellungen). Der Filter allein sagt \u201eleer\u201c.'],
-  beide: ['beide', 'Besetzt nach dem Filter und nach dem LD2450 dieses Raums.'],
-};
 
-// where a person of the model is: the room they are drawn in, or the most probable places
+// where a person of the model is: the room they count in, or the most probable places
 function whereText(t) {
   const regions = state.live?.regions || {};
   const names = Object.fromEntries(state.config.zones.map(z => [z.id, z.name]));
   const name = k => k === 'observed' ? (t.room ? names[t.room] : 'in Räumen mit Sensor')
     : k === 'outside' ? 'außer Haus' : (regions[k]?.rooms || []).map(id => names[id] || id).join(', ') || k;
   return Object.entries(t.places || {}).sort((a, b) => b[1] - a[1]).slice(0, 2)
-    .map(([k, v]) => `${esc(name(k))} ${pct(v)}`).join(' · ');
+    .map(([k, v], i) => `${esc(name(k))} ${pct(i ? v : t.sure)}`).join(' · ');
 }
 
-// people in the rooms the sensors see (the core's: the most probable number there, of those shown there
-// how many move; the house total counts guesses about rooms without a sensor)
-export function seenTotal() {
-  return state.live?.seen ?? null;
+// the people of the house: those of the display at their most probable place, the rooms and the regions add
+// up to it (the core's)
+export function houseTotal() {
+  return state.live?.zones?._total ?? null;
 }
 
 const LIVE = {
@@ -131,19 +125,17 @@ const LIVE = {
         <span class="grow">${esc(z.name)}</span>
         ${gone ? '<span class="badge bad" title="Der Sensor des Raums sendet nichts: In Home Assistant ist der Raum nicht verfügbar (weder besetzt noch leer), das Licht bleibt, wie es ist.">nicht verfügbar</span>' : ''}
         ${st && !gone ? `<span class="badge ${occ ? 'on' : ''}">${occ ? 'besetzt' : 'leer'}</span>` : ''}
-        ${occ && SOURCE[st.source] ? `<span class="badge" title="${SOURCE[st.source][1]}">${SOURCE[st.source][0]}</span>` : ''}
-        ${st?.probability != null ? `<span class="badge num" title="Wahrscheinlichkeit, dass jemand im Raum ist${st.c_occupied != null ? `; besetzt ab ${pct(st.c_occupied)}` : ''}">${pct(st.probability)}</span>` : ''}
         ${extra ? `<div class="meta sub">${extra}</div>` : ''}</div>`];
     });
   },
   total() {
-    const t = seenTotal();
+    const t = houseTotal();
     if (!t) return '–';
     const live = state.live;
     const home = new Set(state.derived?.plan.home || []);  // the zones of the home (the core's)
     const occupied = state.config.zones.filter(z => home.has(z.id) && live?.zones?.[z.id]?.occupied);
     return `<div class="occupied-line">${occupied.length ? `Besetzt: <b>${occupied.map(z => esc(z.name)).join(', ')}</b>` : 'Kein Raum besetzt'}</div>
-      <div><b style="font-size:22px">${t.count}</b> <span class="note">${t.count === 1 ? 'Person' : 'Personen'} in den Räumen mit Sensor · ${t.moving} bewegt · ${t.still} ruhig</span></div>`;
+      <div><b style="font-size:22px">${t.count}</b> <span class="note">${t.count === 1 ? 'Person' : 'Personen'} im Haus · ${t.moving} bewegt · ${t.still} ruhig</span></div>`;
   },
   people() {
     const tracks = state.live?.tracks || [];
@@ -179,7 +171,7 @@ const LIVE = {
     const names = Object.fromEntries(state.config.zones.map(z => [z.id, z.name]));
     return regions.map(r => [r.name, `<div class="item" style="flex-wrap:wrap"><span class="grow" style="white-space:normal">${(r.rooms || []).map(id => esc(names[id] || id)).join(', ') || esc(r.name)}</span>
       ${r.open ? '<span class="badge" title="Von hier aus kann man das Haus verlassen (Tür nach draußen, Eingang)">Ausgang</span>' : ''}
-      ${r.probabilities.length ? r.probabilities.map(p => `<span class="badge ${r.count > 0 ? 'on' : ''}" title="Wahrscheinlichkeit, dass jemand hier ist${r.count > 0 ? '; wahrscheinlich ist jemand da' : ''}">${pct(p)}</span>`).join('') : '<span class="badge">leer</span>'}
+      <span class="badge ${r.count ? 'on' : ''}">${r.count ? people(r.count) : 'leer'}</span>
       <div class="meta sub">${(r.rooms || []).length > 1 ? 'Ohne Sensor über Türen verbunden, deshalb zusammen. ' : ''}Aufenthalt typisch ${fmtS(r.dwell.median)}, 90\u00a0% unter ${fmtS(r.dwell.p90)} (Annahme)</div></div>`]);
   },
   sensorNow(ds) {
@@ -281,7 +273,7 @@ export function learnedBars(b, ld) {
 // what the panels show of the model of the saved configuration (updateDerived)
 const DERIVED_PARTS = {
   occupied: () => (state.derived ? pct(state.derived.thresholds.occupied) : '–'),
-  occupiedText: () => (state.derived ? `Damit: besetzt ab ${pct(state.derived.thresholds.occupied)}.` : ''),
+  occupiedText: () => (state.derived ? `Damit: Ein Raum geht an, wenn eine Person dort mindestens ${pct(state.derived.thresholds.occupied)} erreicht.` : ''),
   enteringText: () => (state.derived ? `Damit: „wird betreten“ ab ${pct(state.derived.thresholds.entering)}.` : ''),
   roomRow: ds => {
     const d = state.derived;
@@ -334,7 +326,7 @@ function livePanel(panel, view) {
       <div class="list" id="rep-list"></div>
     </details>
     <h3>Räume mit Sensor</h3>
-    <p class="note">% = Wahrscheinlichkeit, dass jemand im Raum ist. Besetzt (Licht an) ab <span data-derived="occupied"></span>, aus den Kosten in den Einstellungen${state.config.params.seen_hold > 0 ? ', oder solange der LD2450 des Raums dort jemanden misst (Filter / LD2450 / beide: was entschied)' : ''}.</p>
+    <p class="note">Jede angezeigte Person zählt einmal, an ihrem wahrscheinlichsten Ort. Besetzt (Licht an) heißt: Mindestens eine ist dort, ab <span data-derived="occupied"></span> Sicherheit. Eine Wolke ohne Punkt ist eine Person, die dafür nicht sicher genug ist; sie zählt nicht.</p>
     <div class="list" data-live="zones"></div>
     <h3>Räume ohne Sensor</h3><div class="list" data-live="unobserved"></div>
     <p class="note">Aus dem Grundriss: Räume, die kein Sensor überwiegend sieht, über Türen zu Gruppen verbunden. Wer hineingeht, ist dort. Die Wahrscheinlichkeit, dass jemand noch drin ist, sinkt mit der Zeit, je nachdem, wie lange Besuche dort üblicherweise dauern. % = Wahrscheinlichkeit, dass jemand dort ist.</p>
@@ -938,8 +930,8 @@ const PARAMS = [
     ['ld2410_hold', 's', 'Lücken in der LD2410C-Präsenz bis zu dieser Länge werden in der Anzeige überbrückt.', 0.1],
   ]],
   ['Ausgabe', [
-    ['light_cost', '×', 'Eine Sekunde Licht ohne Person ist so schlimm wie so viele Sekunden Dunkel mit Person. Ein Raum gilt als besetzt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.5],
-    ['seen_hold', 's', 'Ein Raum gilt auch als besetzt, solange der LD2450 dieses Raums in den letzten so vielen Sekunden ein gemessenes Ziel im Raum hatte (nicht gehalten, nicht hinter einer Wand), auch wenn der Filter „leer“ sagt. Nur der Sensor des Raums zählt: Andere messen Personen an Raumgrenzen im Nachbarraum. 0 = nur der Filter. Gemessen mit 10 s auf den Wahrheiten bis 8.10.: dunkel mit Person 25,6 → 0,6 min, Licht im leeren Raum 4,3 → 6,3 min.', 1],
+    ['light_cost', '×', 'Eine Sekunde Licht ohne Person ist so schlimm wie so viele Sekunden Dunkel mit Person. Ein Raum geht an, wenn die Wahrscheinlichkeit, dass eine ihm zugeordnete Person wirklich dort ist, Kosten / (Kosten + 1) erreicht.', 0.5],
+    ['occupied_off', '', 'Ein Raum, der an ist, bleibt an, solange eine ihm zugeordnete Person mindestens diese Wahrscheinlichkeit hat. Darunter zählt sie nicht mehr. Niedriger als die Schwelle zum Angehen, damit Räume nicht flackern. Eine Nachlaufzeit gehört nicht hierher, die macht Node-RED.', 0.05],
     ['lead_time', 's', 'So weit rechnet das Modell jeden Gehenden mit seinem eigenen Bewegungsmodell voraus (Wände halten auf, Türen nicht). Weil es Richtung und Tempo mit der Zeit vergisst, kommt das Signal später als diese Zeit vor dem Eintritt: gemessen mit 2 s: bei 60 % der Eintritte mindestens 1 s (1 m) vorher.', 0.1],
     ['approach_cost', '×', 'Ein Einschalten auf Verdacht, nach dem niemand hereinkommt, ist so schlimm wie so viele Eintritte in einen dunklen Raum. „Wird betreten“ gilt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.01],
     ['target_threshold', '', '„Ziel“ ist an, wenn die Wahrscheinlichkeit, dass ein Gehender als Nächstes in den Raum geht, mindestens so hoch ist. Sie entsteht aus der Bewegung (wie „wird betreten“) und der gelernten Karte, wohin die Gänge von dort bisher gingen; wo die Karte noch nichts weiß, ist „Ziel“ genau „wird betreten“. Schwelle = K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein vergebliches Licht ist so schlimm wie 4 späte. Je Raum unten anders einstellbar.', 0.05],

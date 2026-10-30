@@ -50,8 +50,7 @@ def test_the_saved_configuration_comes_with_the_model_of_it(tmp_path):
             again = await (await client.put("/api/config", json=edited)).json()
         return live, got, put, again
     live, got, put, again = asyncio.run(main())
-    assert live["zones"]["wohn"]["c_occupied"] == 0.667 and "c_occupied" not in live["zones"]["_total"]
-    assert set(live["seen"]) == {"count", "moving", "still"}
+    assert {"count", "moving", "still"} <= set(live["zones"]["_total"]) and "seen" not in live
     assert put["derived"]["thresholds"]["occupied"] == 0.75
     assert {k: v for k, v in got["derived"].items() if k != "thresholds"} == \
         {k: v for k, v in put["derived"].items() if k != "thresholds"}

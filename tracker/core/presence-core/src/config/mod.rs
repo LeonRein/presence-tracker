@@ -343,9 +343,8 @@ pub struct TrackerParams {
     pub ld2410_hold: f64,
     /// a second of light without anybody costs as much as this many seconds dark with somebody there
     pub light_cost: f64,
-    /// s: "Belegt" (MODEL.md 6) also while the room's own LD2450 measured somebody in it within this long
-    /// (room_seen.rs); 0: the filter alone
-    pub seen_hold: f64,
+    /// a room on stays on while a person counted there is there with this probability (MODEL.md 6)
+    pub occupied_off: f64,
     /// s and the cost of a light switched on in vain against an entry into a dark room: "wird betreten"
     /// (MODEL.md 6) is P(a walker enters within lead_time) above approach_cost / (approach_cost + 1)
     pub lead_time: f64,
@@ -359,8 +358,7 @@ pub struct TrackerParams {
 impl Default for TrackerParams {
     /// The parameters unless set: the LD2450's error from a sweep over the 2026-10-03 recordings; the stays
     /// assumed, wide so that long ones stay possible; light without a person is the worst (Leon: twice a
-    /// second dark with somebody there); seen_hold 10 s measured on the truth of 6.-8.10.; lead_time 2 s and
-    /// approach_cost 0.05 measured 6./7.10. (light >= 1 s / 1 m before 60 / 62 % of the entries, 4.0 vain
+    /// second dark with somebody there); lead_time 2 s and approach_cost 0.05 measured 6./7.10. (light >= 1 s / 1 m before 60 / 62 % of the entries, 4.0 vain
     /// 30-s lights per hour); target_threshold 0.8: a vain light costs as much as 4 late ones.
     fn default() -> Self {
         Self {
@@ -374,7 +372,7 @@ impl Default for TrackerParams {
             dwell_spread: 1.5,
             ld2410_hold: 1.5,
             light_cost: 2.0,
-            seen_hold: 10.0,
+            occupied_off: 1.0 / 3.0,
             lead_time: 2.0,
             approach_cost: 0.05,
             target_threshold: 0.8,

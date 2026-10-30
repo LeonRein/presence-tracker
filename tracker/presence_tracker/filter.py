@@ -78,9 +78,9 @@ def plan(config) -> dict:
     return presence_core.plan(config.model_json())
 
 
-class _Seen:
-    """The rooms' own LD2450s (MODEL.md 6 "Belegt": the room's own sensor measured somebody in it within
-    the last seen_hold s) as the core keeps them, for reading. Silent after the model's silent_after s."""
+class _Heard:
+    """Whether the sensors are heard, as the core keeps it, for reading (MODEL.md 6 "Sensor des Raums
+    stumm"). Silent after the model's silent_after s."""
 
     def __init__(self, tracker):
         self._tr = tracker
@@ -89,11 +89,6 @@ class _Seen:
     def own(self) -> dict:
         """sensor id -> the id of its own room"""
         return dict(self._tr._own)
-
-    @property
-    def last(self) -> dict:
-        """room id -> the last time its own LD2450 measured somebody in it"""
-        return dict(self._tr.core.seen_last())
 
     def watched(self) -> set:
         """The rooms with an own sensor in use: these may be silent (Home Assistant: their own availability)."""
@@ -123,7 +118,7 @@ class Tracker:
         # Lernen pausieren (pause.py): in these intervals nothing learns (the
         # LD2410C background and echo rate, 4.3; the destination map, 6 "Ziel"); the tracking goes on
         self.pauses = Pauses()
-        self.seen = _Seen(self)  # the rooms' own LD2450 (output only, MODEL.md 6 "Belegt"; in the core)
+        self.heard = _Heard(self)  # output only, in the core
         self._build()
         if start is not None:
             self.core.start_at(float(start))
@@ -367,14 +362,14 @@ class Tracker:
         """The known people of the most probable hypothesis that more probably exist than not
         (Garcia-Fernandez et al. 2018, sec. VI), for the display: those with a track first. Where to
         draw them: with a measuring track the mean of the mixture, without the densest tile of the most
-        probable place, and the room there; their most probable place, whether they move (the core's,
-        rounded here)."""
+        probable place, and the room there; their most probable place, how probably they are there over all
+        hypotheses, whether they count (MODEL.md 6) and move (the core's, rounded here)."""
         places = self.places
         out = []
         for p in self.core.persons():
             d = {"id": p.id, "places": {places[i]: round(v, 3) for i, v in enumerate(p.places) if v >= 0.005},
                  "place": places[p.place], "lost": p.lost, "r": round(p.r, 3), "room": p.room,
-                 "moving": p.moving}
+                 "sure": round(p.sure, 3), "counted": p.counted, "moving": p.moving}
             s = p.shown
             if s is None:
                 d.update({"x": None, "y": None, "vx": 0.0, "vy": 0.0, "sigma": 0.0, "walk": 0.0})
@@ -396,11 +391,9 @@ class Tracker:
                 for c in self.core.clouds()]
 
     def zone_states(self) -> dict:
-        """Per zone its state (MODEL.md 6; the core's, ZoneState field for field): the most probable number of
-        people (observed rooms: from all hypotheses), moving / still from the most probable hypothesis'
-        people, "about to be entered" and "Ziel" with their thresholds. Occupied, where the probability is
-        known: P(somebody there) above the threshold that minimizes the expected cost of the light, or the
-        observed room's own LD2450 measured somebody in it (its count then at least 1, and the house's too).
+        """Per zone its state (MODEL.md 6; the core's, ZoneState field for field): the people of the display
+        counted in it (so the rooms and the regions add up to the house), occupied if there are any, of them
+        moving / still, "about to be entered" and "Ziel" with their thresholds.
         A room whose own sensors in use all went silent is not available: Home Assistant gets
         "unavailable" instead of its state (ha.py). The rooms of the home first, then its other zones (as
         Home Assistant and the display have them), last the house ("_total")."""
@@ -410,16 +403,15 @@ class Tracker:
         """For the web UI: the people of the most probable hypothesis at their most probable place (and the
         room there), their densities as heat maps, the sensors' raw data, the places without a sensor."""
         t = self.now
-        tracks = self.persons()
+        tracks = [p for p in self.persons() if p["counted"]]  # the rest is only a cloud (MODEL.md 6)
         clouds = self._clouds()
-        count, moving, still = self.core.observed_total()
         sensors = {}
         for sid, rt in self.runtime.items():
             known = sid in self.sidx
             last = self.core.last_frame(self.sidx[sid]) if known else -math.inf
             present, distance = self.core.ld_shown(self.sidx[sid]) if known else (False, 0.0)
             sensors[sid] = {
-                "online": self.seen.online(sid, t),  # as Home Assistant's rooms
+                "online": self.heard.online(sid, t),  # as Home Assistant's rooms
                 "detections": [{"x": round(float(d.pos[0]), 3), "y": round(float(d.pos[1]), 3),
                                 "lx": round(d.local[0], 3), "ly": round(d.local[1], 3),
                                 "speed": round(d.speed, 2), "hidden": d.hidden or d.stale}
@@ -434,9 +426,9 @@ class Tracker:
         for r in self.core.regions():  # the regions without a sensor, as the core has them
             plan = self.plan["regions"][r.id]
             regions[r.id] = {"name": plan["name"], "rooms": plan["rooms"], "open": plan["open"], "count": r.count,
-                             "probabilities": [round(r.p_any, 3)] if r.p_any >= 0.005 else [], "dwell": dwell}
+                             "dwell": dwell}
         return {"t": t, "tracks": tracks, "clouds": clouds, "tiling": self._tiles.fingerprint, "sensors": sensors,
-                "regions": regions, "seen": {"count": count, "moving": moving, "still": still}}
+                "regions": regions}
 
     # ------------------------------------------------------------- learned
 

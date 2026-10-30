@@ -334,7 +334,7 @@ class App:
             # states of a run that ended without its last will, and Home Assistant would show them as now
             await self._set_available(False)
             self.discovery.published.clear()
-            await self.discovery.sync(self.tracker.plan["home"], self.tracker.seen.watched())
+            await self.discovery.sync(self.tracker.plan["home"], self.tracker.heard.watched())
             # what the broker retains of earlier runs: entities no longer wanted are removed (ha.py)
             try:
                 await client.subscribe(ha.DISCOVERY)
@@ -541,7 +541,7 @@ class App:
     def live_message(self) -> str:
         snap = self.tracker.snapshot()
         snap["zones"] = {k: v.to_dict() for k, v in self.zone_states.items()}
-        # rooms whose own sensors went silent: unavailable in Home Assistant (the core's room_seen.rs)
+        # rooms whose own sensors went silent: unavailable in Home Assistant (the core's silent.rs)
         snap["unavailable"] = sorted(k for k, v in self.zone_states.items() if not v.available)
         snap["status"] = self.sensor_status
         snap["calibration"] = self._calibration_status()
@@ -718,7 +718,7 @@ class App:
             self._config_changed()
         self.calibrator.config = config
         if self.client is not None:
-            await self.discovery.sync(self.tracker.plan["home"], self.tracker.seen.watched())
+            await self.discovery.sync(self.tracker.plan["home"], self.tracker.heard.watched())
         try:
             config.save(self.config_path)
         except OSError as e:

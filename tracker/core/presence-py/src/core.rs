@@ -22,8 +22,6 @@ use presence_core::geometry::Point;
 use presence_core::ld2410::{CELLS, background, profile::expected};
 use presence_core::learn::pauses::{Pause, Pauses};
 use presence_core::learn::{Learned, LearnedError};
-#[cfg(feature = "testing")]
-use presence_core::outputs::Source;
 use presence_core::params::{OutputParams, Params};
 #[cfg(feature = "testing")]
 use presence_core::params::{STILL, WALK};
@@ -404,26 +402,15 @@ impl Core {
     // ---------------------------------------------------------------- outputs (MODEL.md 6)
 
     /// The people of the display.
-    fn persons(&self) -> Vec<PersonView> {
+    fn persons(&mut self) -> Vec<PersonView> {
+        let persons = self.tracker.persons();
         let plan = &self.tracker.world().plan;
-        self.tracker
-            .persons()
-            .into_iter()
-            .map(|p| PersonView::of(p, plan))
-            .collect()
-    }
-
-    /// The people in the observed rooms: (most probable number, moving, still) (Tracker::observed_total).
-    fn observed_total(&mut self, py: Python<'_>) -> (usize, usize, usize) {
-        let tracker = &mut self.tracker;
-        let t = py.detach(|| tracker.observed_total());
-        (t.count, t.moving, t.still)
+        persons.into_iter().map(|p| PersonView::of(p, plan)).collect()
     }
 
     /// The regions without a sensor as the display shows them (in the order of the plan's places).
-    fn regions(&mut self, py: Python<'_>) -> Vec<RegionView> {
-        let tracker = &mut self.tracker;
-        let shown = py.detach(|| tracker.regions_shown());
+    fn regions(&mut self) -> Vec<RegionView> {
+        let shown = self.tracker.regions_shown();
         let plan = &self.tracker.world().plan;
         plan.regions
             .iter()
@@ -464,11 +451,6 @@ impl Core {
     /// The plan of the world (plan_view).
     fn plan<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         plan_view(py, &self.tracker.world().plan)
-    }
-
-    /// Per room id the last time its own LD2450 measured somebody in it.
-    fn seen_last(&self) -> Vec<(String, f64)> {
-        self.tracker.seen().last().to_vec()
     }
 
     /// Per observed room whether it has an own sensor in use.
@@ -585,18 +567,14 @@ impl Core {
         named(py, names.iter().map(String::as_str).chain(["_house"]), rows)
     }
 
-    /// Per observed room (id) what decided it occupied now (MODEL.md 6 "Belegt": "filter", "ld2450",
-    /// "beide"), None: not occupied.
+    /// Per observed room (id) true if it is on (MODEL.md 6), None if not (as the dev tool seg_replay of
+    /// fast_eval reads it: `is not None`).
     #[cfg(feature = "testing")]
-    fn occupancy(&mut self) -> BTreeMap<String, Option<&'static str>> {
-        let now = self.tracker.now();
-        let sources = self.tracker.occupancy(now);
+    fn occupancy(&mut self) -> BTreeMap<String, Option<bool>> {
+        let occupied = self.tracker.occupancy();
         let plan = &self.tracker.world().plan;
-        plan.rooms
-            .iter()
-            .zip(sources)
-            .map(|(z, s)| (plan.zones[z.0].id.clone(), s.map(Source::name)))
-            .collect()
+        let ids = plan.rooms.iter().map(|z| plan.zones[z.0].id.clone());
+        ids.zip(occupied.into_iter().map(|o| o.then_some(true))).collect()
     }
 }
 

@@ -1,4 +1,4 @@
-import { renderPanel, seenTotal, updateDerived, updateLive } from './panels.js';
+import { renderPanel, houseTotal, updateDerived, updateLive } from './panels.js';
 import { TAB_NAMES, emit, loadConfig, onChange, redo, redoState, saveNow, select, setTool, state, undo, undoState, unsaved, updateHolds, heldBadges } from './store.js';
 import { AlignTool, DoorTool, PickTool, PlaceSensorTool, SelectTool, WallTool, ZoneTool } from './tools.js';
 import { fmt, sensorsOnline, toast } from './util.js';
@@ -161,11 +161,11 @@ setInterval(checkStale, 1000);
 function updateStatus() {
   const live = state.live;
   const { online, total: used } = sensorsOnline(state.derived, live);
-  const total = seenTotal();
+  const total = houseTotal();
   const cpu = live.load?.cpu;
   document.getElementById('status').innerHTML = `
     <span><span class="dot ${online === used && online ? 'ok' : 'bad'}"></span>${online}/${used} Sensoren</span>
-    <span title="in den Räumen mit Sensor">${total ? total.count : 0} ${total?.count === 1 ? 'Person' : 'Personen'}</span>
+    <span title="im Haus, wie die Räume zusammen">${total ? total.count : 0} ${total?.count === 1 ? 'Person' : 'Personen'}</span>
     ${live.learning_paused?.on ? `<span class="st-paused" title="Schalter &quot;Lernen pausieren&quot; ist an${live.learning_paused.since ? ` (seit ${new Date(live.learning_paused.since * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })})` : ''}: Hintergrundaktivität (Saugroboter, Besuch …). Geistkarte, LD2410C-Hintergrund, Zielkarte und Kalibrierdaten lernen nichts, das Tracking läuft weiter.">Lernen pausiert</span>` : ''}
     ${state.replay ? '<span class="st-extra">Wiedergabe</span>' : ''}
     <span class="st-extra" title="Rechenzeit des Modells auf dem Server, in % eines Prozessorkerns (über 100 %: mehr als ein Kern)">Modell ${Number.isFinite(cpu) ? fmt(cpu, 1) : '–'}\u00a0% CPU</span>`;

@@ -163,8 +163,6 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   über ihre Regression. Sieht er keinen der Punkte, werden sie an der Wand
   gespiegelt wie die Bewegung (3.2). Das ist die Likelihood mal „in Sicht“ als 0/1 (nur Wände, nicht
   das Blickfeld); die Gewichte der Hypothesen ändert der Schnitt nicht.
-  Die Regel „LD2450 des Raums“ (6, `room_seen.rs`) bleibt beim Ziel: Ein Ziel jenseits der Wand liegt im
-  Nachbarraum und zählt dort nicht, weil nur der eigene Sensor eines Raums zählt.
 - Die drei Plätze rücken auf; Ziele werden über die Nähe verknüpft (≤ 0,6 m je Frame).
 - Gehaltene Frames sind keine Messung: ≥ 3 Frames mit derselben Geschwindigkeit ≠ 0 (der Sensor lässt
   ein verlorenes Ziel weiterlaufen) oder bitgleiche Koordinaten (eingefroren).
@@ -797,59 +795,52 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
   eine Hypothese statt einer je Zahl (5.3).
 
 ## 6. Ausgaben
-- **Je beobachtetem Raum:** Verteilung der Personenzahl (5.1); an Home Assistant gehen die
-  wahrscheinlichste Zahl und P(belegt) = 1 − P(0) (Attribut `probability`, in 5-%-Schritten).
-- **Belegt (Licht):** `P(belegt) > c` mit `c = K_an / (K_an + K_dunkel)`, der Schwelle mit den
-  kleinsten erwarteten Kosten (Bayes-Entscheidung; I_GneitingRaftery2007 S. 364–365, Satz 3).
-  `light_cost` = K_an / K_dunkel = 2 (angenommen: Licht ohne Person ist der schlimmste Fehler), also
-  c = 2/3. Das verzögerte Ausschalten bleibt in Home Assistant (bzw. Node-RED): Die App schaltet keine
-  Lichter, sie liefert je Raum *besetzt*, *wird betreten* (unten) und die Wahrscheinlichkeiten dazu.
-  **Oder der LD2450 des Raums misst jemanden** (`Tracker.occupancy`, `room_seen.rs`): Ein beobachteter
-  Raum ist auch belegt, solange der LD2450 dieses Raums in den letzten `T_seen` = `seen_hold` = 10 s ein
-  *gemessenes* Ziel im Raum hatte. Gemessen heißt, was der Filter selbst als Messung nimmt (4.1): nicht
-  gehalten (eingefroren oder fortgeschrieben), nicht hinter einer Wand oder außerhalb aller Räume, nicht am
-  Sensor (0,3 m); im Raum heißt, der erste beobachtete Raum, dessen Umriss den Punkt enthält, ist dieser.
-  Der Sensor des Raums ist der, dessen Name die ID des Raums ist (`kueche` für die Küche), sonst der
-  Anzeigename des Raums, sonst der Raum, in dem er hängt (0,3 m um den Umriss, nur wenn eindeutig).
-  - *Warum:* Hatte der Sensor des Raums in den letzten 10 s ein gemessenes Ziel im Raum, war der Raum in
-    99,2 % der bewerteten Sekunden belegt (9721 zu 74), auch in den Sekunden, in denen der Filter „frei“
-    sagte, in 94 % (1046 zu 65). Das liegt weit über c = 2/3: Der Posterior des Filters ist dort nicht
-    kalibriert, die Entscheidung mit der gemessenen bedingten Wahrscheinlichkeit ist die
-    Bayes-Entscheidung. Auf den vier Wahrheiten (6.10., 7.10. vormittags, 7.10. und 8.10. abends; Licht
-    mit 2 min Nachlauf wie in Node-RED, ohne die Nacht): Filter allein 4,3 min Licht im leeren Raum /
-    25,6 min dunkel mit Person, Filter oder LD2450 des Raums 5,7 / 0,6 min (`report_eval`: fälschlich an
-    0,01 → 1,51 von 108, fälschlich aus 4,82 → 2,53 von 39), so in der App nachgespielt 6,3 / 0,6 min
-    (10); die leere Nacht 6./7.10. 0 min wie zuvor. Bei gleichen Kosten beider Fehler (Leon 8.10.)
-    rund 7 statt 29,9 Fehlerminuten. Der Filter verliert
-    Personen, die sein eigener LD2450 weiter misst (9), die Regel ist die Untergrenze dafür (10, „Filter
-    oder LD2450 des Raums“).
-  - *Nur der Sensor des Raums:* Andere Sensoren messen Personen an Raumgrenzen aus 6–7 m im Nachbarraum
-    (8.10. die Person am Esstisch im Flur: „jeder Sensor“ 21,6 statt 5,7 min Licht im leeren Raum).
-    *Nur gemessene Ziele:* Der LD2450 hält ein eingefrorenes Ziel bis 35 s, nachdem die Person gegangen
-    ist (mit gehaltenen 10,9 statt 5,7 min).
-  - *Nur Ausgabe:* Die Regel ändert keinen Zustand, kein Gewicht und nichts, was der Filter lernt.
-    `probability` bleibt P(belegt) des Filters. Die Personenzahl des Raums ist mindestens 1, solange
-    die Regel ihn belegt, die des Hauses dann ebenso (sonst wäre *besetzt* ohne Person); *bewegt / ruhig*,
-    *wird betreten* und *Ziel* bleiben, wie sie sind. Das Attribut `quelle` an *besetzt* sagt, was
-    entschied: `filter`, `ld2450` oder `beide`. Räume ohne eigenen LD2450 und Bereiche ohne Sensor:
-    unverändert. `seen_hold` = 0 schaltet die Regel ab.
-  - *Sensor des Raums stumm:* Hat jeder eingeschaltete, platzierte Sensor des Raums (wie oben bestimmt)
-    seit mehr als `SILENT_AFTER` = 30 s keinen Frame gesendet (länger als die WLAN-Lücken von 6–20 s,
+- **Je beobachtetem Raum:** Verteilung der Personenzahl (5.1); an Home Assistant geht
+  P(belegt) = 1 − P(0) als Attribut `probability` (in 5-%-Schritten). Nur Auskunft: Nichts entscheidet danach,
+  und die Oberfläche zeigt sie nicht, weil sie den Unbekannten (5.5) mitzählt: Ein Schlafzimmer ohne Person stand
+  in zwei Stunden der Aufnahme drei Viertel der Zeit über 50 % (10).
+- **Personen und Belegt, eine Zuordnung:** Jede Zahl von Personen und jedes *besetzt* kommt aus einer Quelle
+  (Leon, 30.10.: „Ich will, dass das Licht dem folgt, was angezeigt wird“; bis 0.54 Maximum je Randverteilung für die
+  Zahl, P(belegt) über c für das Licht, Punkte aus der wahrscheinlichsten Hypothese: drei Quellen).
+  - *Zuordnung:* Die Personen der Anzeige (unten) stehen an ihrem wahrscheinlichsten Ort (`Person::place`), im
+    beobachteten Bereich im Raum ihres Punkts (liegt er in keinem, in einer Wand etwa: Raum der nächsten Kachel).
+  - *Wie sicher:* `sure_at` = P(die Person ist dort) über alle Hypothesen: je Hypothese die Person, der sie
+    eine der lebenden Spuren gibt (die Nummer einer Gruppe gilt nur innerhalb einer Hypothese), ohne Spur die Dichte
+    selbst; ihr Anteil am Ort (enthält r und den Teil durch eine Tür), gewichtet mit der Hypothese. Eine Hypothese,
+    die die Spur einen Geist nennt, trägt nichts bei. Damit hängt die Wahrscheinlichkeit an der Person, keine je
+    Raum wird ausgewertet.
+  - *Regel* (`Occupied::update`, Zustand bei den Ausgaben, nicht im Filter): Ein Raum geht an, wenn eine ihm
+    zugeordnete Person `sure` ≥ c erreicht, c = K_an / (K_an + K_dunkel) = `light_cost` / (`light_cost` + 1) = 2/3
+    (Bayes-Entscheidung; I_GneitingRaftery2007 S. 364–365, Satz 3, jetzt je Person), und aus, wenn keine
+    zugeordnete Person `occupied_off` erreicht. Keine Nachlaufzeit: Das verzögerte Ausschalten bleibt in Home
+    Assistant (bzw. Node-RED). Die App schaltet keine Lichter, sie liefert je Raum *besetzt*, *wird betreten* (unten).
+    Die Regel ist zustandsarm und doppelt angewandt dieselbe; nach einem Neustart beginnt der Zustand leer und baut
+    sich aus ihr auf. Bereiche ohne Sensor genauso, ein Bereich aus mehreren Räumen als ein Ort.
+  - *Wer zählt:* Wer `occupied_off` erreicht und in einem Raum steht, der an ist. Wer zugeordnet ist, aber nicht
+    zählt, ist für die Anzeige keine Person, nur eine Wolke ohne Punkt: Der dunkle Raum zeigt 0, nicht 1. Es
+    gilt ohne Ausnahme: *besetzt* ⇔ Zahl ≥ 1, Räume + Bereiche ohne Sensor = Haus, *bewegt* + *ruhig* = Zahl des Raums,
+    und Karte, Liste, Kopfzeile, `*_count` und `*_occupancy` sagen dasselbe. Unbekannte ohne Person der Anzeige
+    zählen nicht.
+  - *Warum so:* Die Personen der Anzeige und ihre Orte gab es schon, sie sind der Schätzer der Literatur
+    (B_GarciaFernandez2018 Abschn. VI); sie allein zu zählen ließ Hypothesen zu 0,51 / 0,46 Räume schalten, die
+    Sicherheit über die Hypothesen nimmt das heraus, die Hysterese das Pendeln um die Schwelle.
+  - *Sensor des Raums stumm:* Der Sensor des Raums ist der, dessen Name die ID des Raums ist (`kueche` für die
+    Küche), sonst der Anzeigename des Raums, sonst der Raum, in dem er hängt (0,3 m um den Umriss, nur wenn
+    eindeutig). Hat jeder eingeschaltete, platzierte Sensor des Raums seit mehr als `SILENT_AFTER` = 30 s keinen Frame gesendet (länger als die WLAN-Lücken von 6–20 s,
     nach denen der Filter schon seine Spuren beendet, 4.4; in der Zeit des Modells, das bei Stille aller Sensoren erst
     60 s hält), sind alle Entitäten des Raums in Home Assistant *nicht verfügbar* statt
-    belegt oder frei (`roomseen.RoomSeen.silent`; eigenes Verfügbarkeits-Topic des Raums neben dem der
+    belegt oder frei (`silent.rs`; eigenes Verfügbarkeits-Topic des Raums neben dem der
     App, `ha.py`). Ohne Daten sagt die Ausgabe „weiß ich nicht“; Node-RED schaltet dann nichts. Ein
     Sensor, der seit dem Start des Modells nichts gesendet hat, zählt ab diesem Start. Nur Ausgabe: Der
     Filter rechnet unverändert weiter, auch sein P(belegt) dieses Raums (9.10. 15:04 fielen die Boards
     von Wohn- und Esszimmer aus; der Raum war 1,5 h „frei“ und das Licht ging aus, während jemand auf
     dem Sofa saß). Räume ohne eigenen Sensor, Bereiche und das Haus: unverändert.
-- **Bereiche ohne Sensor:** P(jemand dort); belegt wie oben, wenn der Bereich nur ein Raum ist.
+- **Bereiche ohne Sensor:** wie oben; eine Zahl am Raum nur, wenn der Bereich ein Raum ist.
 - **Außer Haus** (auch das Treppenhaus): keine Zahl, kein Zustand, keine Entität in Home Assistant und
   in der Anzeige. Die Zahl im Haus (`presence_haus_count`) zählt alles außer *außer Haus*. Entitäten, die
   der Broker von früher hält (etwa die alten der Treppe), löscht die App beim Verbinden (`ha.py`: leere
   Konfiguration und leerer Zustand, beibehalten).
-- **Bewegt / ruhig:** aus den Personen der wahrscheinlichsten Hypothese (geht-Gewicht > 0,5 und
-  > 0,15 m/s).
+- **Bewegt / ruhig:** aus den gezeichneten Personen (geht-Gewicht > 0,5 und > 0,15 m/s).
 - **Wird betreten** (`Tracker.entering`, je beobachtetem Raum und Bereich): `p_enter` = P(jemand, der
   gerade mit Spur geht, ist binnen der Vorausschau T = `lead_time` darin). Je Person mit Spur (5.2)
   rückt nur ihre Komponente *geht* vor (Stehende schwanken um Zentimeter, wer aufsteht, geht irgendwohin):
@@ -950,7 +941,7 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
   und *Ziel* aus: feste Attribute (Wahrscheinlichkeit 0, der Rest leer). Nur die Ausgabe an Home
   Assistant; die Anzeige der App bekommt die gerundeten Werte ungehalten.
 - Anzeige: Personen der wahrscheinlichsten Hypothese, die eher existieren als nicht (r ≥ 0,5, 5.5),
-  ihre Dichten (r × Dichte) als Wärmekarten.
+  ihre Dichten (r × Dichte) als Wärmekarten; einen Punkt und eine Zeile in der Liste hat nur, wer zählt (oben).
 
 ## 7. Evidenz
 Die Summe der Normierungen ist die Log-Evidenz der Aufnahmen (`Tracker.loglik`; Summe der
@@ -1014,8 +1005,8 @@ P = 0,00 bei einer gemessenen Spur am Schreibtisch, 8.10. 00:29–06:14 im Schla
 Bett bis 45 min. Vermuteter Mechanismus: Die Spur wird bei ihrer Geburt in jeder überlebenden Hypothese
 ein Geist (neue Person nur bei harter Evidenz, danach H = 1–2), und mit nur einer Hypothese normiert sich
 jede Evidenz gegen „Geist“ weg (e^−71 für 46 min Geist). Bis das im Filter (5.1, Abschneiden, Geister)
-behoben ist, hält die Ausgaberegel *besetzt* (6) die Lichter an; die Personenzahl, *wird betreten* und
-*Ziel* hängen weiter an den verlorenen Personen.
+behoben ist, hängen *besetzt*, die Personenzahl, *wird betreten* und *Ziel* an den verlorenen Personen; die
+Ausgaberegel, die *besetzt* bis 0.54 darüber hinweg hielt, ist weg (10, „Eine Zuordnung“).
 
 Näherungen, die man prüfen oder ersetzen kann:
 - Auf den Kacheln ist Gehen eine Diffusion: Kurzzeitig gerades Gehen und die Richtung gehen verloren,
@@ -2768,6 +2759,40 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   - *Gewinn je Sensor fest* (Wohnzimmer 2,9, Küche 3,3, Esszimmer 1,1): 5,43 / 0, Person 39,1 / 41,4, netto +1,5. Im
     Wohnzimmer 40,8 min dunkler mit Person: Wer einen Sensor lauter macht, lässt die Person, die dort wenig abgibt, woanders
     hin (wie 7.10.). `c_s` online zu lernen lohnt nicht.
+- **Eine Zuordnung, Nachlauf entfernt** (30.10.; Leon: „In der Webansicht bleibt die Anzahl der Personen in einem Raum
+  gleich, obwohl eine Person den Raum verlässt“, „Die Nachlaufzeit wird ja schon in Node-RED geregelt“, „Ich will,
+  dass das Licht dem folgt, was angezeigt wird“, „Die Wahrscheinlichkeit hängt an der getrackten Person“). Bis 0.54
+  hielt `seen_hold` = 10 s einen Raum, dessen eigener LD2450 jemanden maß, besetzt und seine Zahl auf 1; die Zahl kam
+  aus der Randverteilung des Raums, das Licht aus P(belegt) > c, die Punkte aus der wahrscheinlichsten Hypothese. Jetzt
+  eine Zuordnung (6). `fast_eval` zwei Stufen über 96,4 h; alle `fast_eval`-Läufe bis hier liefen mit
+  `seen_hold` = 0, live lief 10. Dunkel mit Person zählt 5×, Schaltvorgänge: *besetzt* an / davon kürzer als 5 s / Licht
+  an bei 2 min Nachlauf.
+
+  | Lauf | Wahrheit an, leer / aus, besetzt | gewichtet | leere Nacht / leeres Haus | Schalten |
+  |---|---|---|---|---|
+  | `seen_hold` 10 (bis 0.54 live) | 5,33 / 0,28 | 6,75 | 0 / 5,38 | 1606 / 218 / 551 |
+  | `seen_hold` 0 (Grundlinie aller Messungen) | 0,48 / 3,28 | 16,90 | 0 / 0 | 2173 / 1193 / 552 |
+  | Zuordnung, `occupied_off` 0,2 | 0,48 / 3,28 | 16,90 | 0 / 0 | 1795 / 866 / 548 |
+  | **Zuordnung, `occupied_off` 1/3** | **0,48 / 3,28** | **16,90** | **0 / 0** | **1846 / 884 / 548** |
+  | Zuordnung, `occupied_off` 0,5 | 0,48 / 3,28 | 16,90 | 0 / 0 | 2179 / 1012 / 550 |
+
+  *Die Zuordnung gegen `seen_hold` 0:* Das Licht weicht in 26,8 von 5784 min ab, die Wahrheit nicht. Indizien
+  (`tools/proxy_seated.py` aus d63245c): nur neu an: Person 1,0, unklar 3,7, niemand 2,7 min; nur alt an: Person 9,0,
+  unklar 0,1, niemand 3,0, davon 6,2 eine Strecke Küche 10.10. 12:47 ohne gemessenes Ziel (Handy im Esszimmer) und
+  zusammen 2,7 in Strecken mit gemessenem Ziel. 2 h Aufnahme im Takt der App (0,1 s), reine Zählung der Personen der
+  Anzeige gegen die Regel: Wechsel 266 → 225, kürzer als 1 s 56 → 33; die Sicherheit über die Hypothesen nimmt die
+  Schaltvorgänge bei Hypothesen 0,51 / 0,46 weg. Eine bekannte Person zählte in diesen 2 h 131-mal zeitweise nicht
+  (Median 0,4 s, 417 s zusammen; mit Spur längste 41 s, auf Kacheln längste 56 s). Eine Person an der Tür zu 50/50
+  macht den neuen Raum nicht an, bis sie 2/3 erreicht, und der alte geht aus, sobald ihr Punkt ihn verlässt; für den
+  neuen Raum sorgen *wird betreten* und *Ziel*. Ihr Ort wechselte mit Spur 287-, auf Kacheln 125-mal.
+  *`occupied_off`:* 0,5 hysteresiert kaum (so viele Wechsel wie die Grundlinie), 0,2 bringt gegen 1/3 fast nichts.
+  *Gegen `seen_hold` 10, also das, was live geschieht:* Das Licht weicht in 311 min ab. Nur noch `seen_hold` 10 an wäre:
+  Person 36,3 min (Wohnzimmer 17,7, Esszimmer 8,4), unklar 109,0 (Schlafzimmer 60,6), niemand 82,0 (Küche 22,3,
+  Flur 22,8). Die Wahrheit sagt 5,33 → 0,48 Licht im leeren Raum, 5,38 → 0 im leeren Haus, 0,28 → 3,28 dunkel
+  mit Person (Sofa 8.10. 19:06, 3,0 min im Wohnzimmer); gewichtet schlechter (6,75 → 16,90), das ist der Preis des
+  Nachlaufs, den Node-RED nicht ersetzt, wenn der Filter jemanden verliert, den der eigene LD2450 noch misst (9).
+  Die Zählung selbst ändert daran nichts: Die Filter-Spuren, P(belegt), *wird betreten* und *Ziel* sind in den drei
+  Stunden unverändert.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

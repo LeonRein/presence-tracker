@@ -9,7 +9,7 @@ use crate::config::config_from;
 use presence_core::filter;
 use presence_core::frames::Detection;
 use presence_core::geometry::Point;
-use presence_core::outputs::{Cloud, Person, RegionShown, Source, ZoneState, argmax};
+use presence_core::outputs::{Cloud, Person, ZoneState};
 use presence_core::plan::{Plan, RoomIdx, ZoneIdx};
 use presence_core::world::World;
 use presence_core::world::tiles::SIZE;
@@ -65,7 +65,8 @@ impl TilesView {
 }
 
 /// A person of the display: id, P per place, the most probable place (its index), lost, how probably they
-/// exist, where to draw them (None: nowhere in view) and the room (id) there.
+/// exist, where to draw them (None: nowhere in view), the observed room (id) of their most probable place,
+/// how probably they are where they are assigned over all hypotheses, and whether they count.
 #[pyclass(module = "presence_core", frozen, get_all)]
 pub struct PersonView {
     id: usize,
@@ -75,6 +76,8 @@ pub struct PersonView {
     r: f64,
     shown: Option<Shown>,
     room: Option<String>,
+    sure: f64,
+    counted: bool,
     /// shown as moving (Person::moving)
     moving: bool,
 }
@@ -94,9 +97,11 @@ impl PersonView {
         Self {
             moving: p.moving(),
             id: p.id,
-            place: argmax(&p.places),
+            place: p.place(),
             places: p.places,
-            room: p.shown.and_then(|s| plan.room_of(s.at)).map(|z| z.id.clone()),
+            room: p.room.map(|k| plan.room(k).id.clone()),
+            sure: p.sure,
+            counted: p.counted,
             lost: p.lost,
             r: p.r,
             shown: p.shown.map(|s| Shown {
@@ -180,21 +185,18 @@ impl DetectionView {
     }
 }
 
-/// A region without a sensor as the display shows it: its id, the most probable number of people in it,
-/// P(somebody there).
+/// A region without a sensor as the display shows it: its id, the people of the display in it.
 #[pyclass(module = "presence_core", frozen, get_all)]
 pub struct RegionView {
     id: String,
     count: usize,
-    p_any: f64,
 }
 
 impl RegionView {
-    pub(crate) fn of(id: &str, r: RegionShown) -> Self {
+    pub(crate) fn of(id: &str, count: usize) -> Self {
         Self {
             id: id.to_owned(),
-            count: r.count,
-            p_any: r.p_any,
+            count,
         }
     }
 }
@@ -221,8 +223,7 @@ impl CloudView {
     }
 }
 
-/// A zone's state (the core's ZoneState; the shell's zones.ZoneState, field for field): decided None where no
-/// decision is made, source what decided it occupied ("filter", "ld2450", "beide").
+/// A zone's state (the core's ZoneState; the shell's zones.ZoneState, field for field).
 #[pyclass(module = "presence_core", frozen, get_all)]
 pub struct ZoneStateView {
     id: String,
@@ -245,11 +246,8 @@ pub struct ZoneStateView {
     target_eta: Option<f64>,
     target_person: Option<usize>,
     probability: Option<f64>,
-    decided: Option<bool>,
-    source: Option<&'static str>,
     available: bool,
     occupied: bool,
-    c_occupied: Option<f64>,
     target_source: Option<&'static str>,
 }
 
@@ -276,11 +274,8 @@ impl ZoneStateView {
             target_eta: z.target_eta,
             target_person: z.target_person,
             probability: z.probability,
-            decided: z.decided.occupied(),
-            source: z.decided.source().map(Source::name),
             available: z.available,
             occupied: z.occupied,
-            c_occupied: z.c_occupied,
             target_source: z.target_source,
         }
     }

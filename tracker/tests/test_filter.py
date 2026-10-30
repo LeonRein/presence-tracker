@@ -150,8 +150,6 @@ def test_a_recalibrated_sensor_keeps_the_people():
     tracks, before = crowd.core.tracks(), hyps()
     assert not crowd.reconfigure(Config.from_dict(d)) and crowd.core.tracks() == tracks
     assert hyps() == before
-    c = 3.0 / 4.0
-    assert crowd.zone_states()["wohn"].decided == (crowd.zone_states()["wohn"].probability > c)
     # a parameter of the model: it starts over as after a restart, from what it knew (the tracks
     # end, the people go to the tiles, MODEL.md 5.3): both are still there
     other = Config.from_dict({**d, "params": {**d["params"], "range_sigma_base": 0.2}})
@@ -204,20 +202,6 @@ def test_the_bookkeeping_holds_when_two_cross_and_ghosts_come():
     b = Person(walk((7.0, 2.0), BALCONY_DOOR, (5.0, 1.0), (1.0, 4.0), (1.1, 4.0), start=1, pauses={3: 5}))
     run(config, [a, b], 25, ["flur", "balkon"], check=True, bias=0.2, bias_time=3.5, resolution=0.5,
         ghost_rate=20)
-
-
-def test_occupied_is_the_cheaper_decision_on_the_probability():
-    # nothing known: P(somebody in the room) lies between the thresholds of the two costs
-    config = flat_config()
-    crowd = Tracker(config, start=0.0)
-    p = 1 - crowd.core.count_distribution()["wohn"][0]
-    assert 0.2 < p < 0.8
-    for cost, occupied in ((0.1, True), (10.0, False)):
-        d = crowd.config.to_dict()
-        d["params"]["light_cost"] = cost
-        assert crowd.reconfigure(Config.from_dict(d)) is False  # an output only: nothing starts over
-        st = crowd.zone_states()["wohn"]
-        assert st.probability == p and st.occupied is occupied
 
 
 def test_a_ghost_in_an_empty_house_ends_as_one():

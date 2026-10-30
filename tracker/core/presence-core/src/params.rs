@@ -291,7 +291,7 @@ impl Default for Params {
             gap_exact: 120.0,
             leap: 15.0,
             max_leaps: 2000,
-            silent_after: crate::room_seen::SILENT_AFTER,
+            silent_after: crate::silent::SILENT_AFTER,
         }
     }
 }
@@ -460,11 +460,11 @@ impl std::error::Error for ModelError {}
 /// them restarts nothing, but it is a new world (the outputs' cache is void).
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutputParams {
-    /// a second of light without anybody costs as much as this many seconds dark: occupied above
-    /// light_cost / (light_cost + 1)
+    /// a second of light without anybody costs as much as this many seconds dark: a room goes on when a
+    /// person counted there is there with more than light_cost / (light_cost + 1)
     pub light_cost: f64,
-    /// s: a room is occupied while its own LD2450 measured somebody in it this recently (0: never)
-    pub seen_hold: f64,
+    /// and it goes off when none of them is there with this much (MODEL.md 6)
+    pub occupied_off: f64,
     /// s: the look-ahead of "wird betreten", on above approach_cost / (approach_cost + 1)
     pub lead_time: f64,
     pub approach_cost: f64,
@@ -488,7 +488,7 @@ const Z_90: f64 = 1.2815515655446004;
 pub const OUTPUT_FIELDS: [&str; 7] = [
     "ld2410_hold",
     "light_cost",
-    "seen_hold",
+    "occupied_off",
     "lead_time",
     "approach_cost",
     "target_threshold",
@@ -499,7 +499,7 @@ impl OutputParams {
     pub fn of(p: &crate::config::TrackerParams, silent_after: f64) -> Self {
         Self {
             light_cost: p.light_cost,
-            seen_hold: p.seen_hold,
+            occupied_off: p.occupied_off,
             lead_time: p.lead_time,
             approach_cost: p.approach_cost,
             silent_after,
@@ -514,7 +514,7 @@ impl OutputParams {
         let ok = |x: f64| x >= 0.0 && x.is_finite();
         if [
             self.light_cost,
-            self.seen_hold,
+            self.occupied_off,
             self.lead_time,
             self.approach_cost,
             self.silent_after,
@@ -529,9 +529,14 @@ impl OutputParams {
         }
     }
 
-    /// The threshold of P(somebody there) for occupied (MODEL.md 6: the Bayes decision).
+    /// The probability of a person at which their room goes on (MODEL.md 6: the Bayes decision).
     pub fn occupied_above(&self) -> f64 {
         self.light_cost / (self.light_cost + 1.0)
+    }
+
+    /// The probability of a person at which their room stays on: never above that at which it goes on.
+    pub fn occupied_below(&self) -> f64 {
+        self.occupied_off.min(self.occupied_above())
     }
 
     /// The threshold of "Ziel" in a room: its own, else the default, kept inside (0, 1)
