@@ -238,9 +238,15 @@ const ERRORS = {
   minutes: 'Die Minuten sind keine Zahl.',
   no_ha: 'Keine Verbindung zu Home Assistant konfiguriert.',
   ha_http: 'Home Assistant: HTTP {detail}',
+  recording_replay: 'Die Wiedergabe zeichnet nicht auf.',
+  recording_not_deleted: 'Aufnahmen nicht gelöscht: {detail}',
+  recording_failed: 'Aufzeichnung gestoppt, Schreibfehler: {detail}',
   no_walking: 'Keine Messungen einer Person in Bewegung.',
 };
 export const errorText = d => (ERRORS[d.error] ?? String(d.error)).replace('{detail}', d.detail ?? '');
+
+// A file's size in words
+export const sizeText = b => (b < 1e6 ? `${Math.max(1, Math.round(b / 1e3))} kB` : b < 1e9 ? `${fmt(b / 1e6, 1)} MB` : `${fmt(b / 1e9, 1)} GB`);
 
 // The kinds of an error report (the server keeps the key: the reports' header and file name). New kinds only
 // add keys: old reports keep theirs

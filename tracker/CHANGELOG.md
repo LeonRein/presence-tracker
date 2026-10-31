@@ -2,6 +2,26 @@
 
 ## Unveröffentlicht
 
+## 0.55.1 (Branch `rust-core`, Aufzeichnung in der App; nicht live, kein Tag)
+
+Das Modell ändert sich nicht: Spuren der drei Stunden own und rs byte-gleich mit 9862763.
+- **Aufzeichnung in den Einstellungen** (Leon 31.10.: ein paar Tage Testbetrieb auswerten, Hermann läuft nicht durchgehend). Schalter, standardmäßig
+  aus, übersteht einen Neustart (`recording.json`, nicht in `tracker.json`, weder Kern noch Geometrieschlüssel sehen ihn). Je Stunde
+  `recordings/JJJJMMTT-HH.jsonl.gz` (lokale Zeit), Zeilen wie `tools/record.py`; die Wiedergabe zeichnet nicht auf. Aufgezeichnet wird, was die App
+  annimmt: Frames, Status, der Befehl *Lernen pausieren*. Keine Telefon-Zustände, keine `wifi_signal`-Topics (die abonniert die App nicht), keine Frames, die sie verwirft.
+- **Jede Datei steht für sich:** Sie beginnt mit `app/config` (Konfiguration und Version, auch bei jeder gespeicherten Änderung) und dem Stand des Schalters.
+  Das zweite ist eine zusätzliche Zeile: Der Broker schickt den gehaltenen Befehl nur beim Verbinden, eine Aufnahme mitten in einer Pause wüsste
+  sonst nichts davon und die Wiedergabe lernte dort weiter. Alle Leser nehmen nur `/frame` und den Schalter (`replay_source`, `tools/*`, `presence-replay`, `seg_replay`).
+- **Absturz:** Alle 30 s gehen die Zeilen in einem Thread mit `Z_SYNC_FLUSH` und `fsync` auf die Platte. Neue Zeilen hinter einem Gzip-Mitglied ohne Ende
+  wären unlesbar, also wird eine Datei, die wieder geöffnet wird, zuerst auf ihre ganzen Zeilen gekürzt (atomar) und bekommt dann ein neues Mitglied; eine Datei je Stunde bleibt.
+  Für `gunzip` taugt eine abgeschnittene Datei nicht (es löscht die Ausgabe), `zcat` liest bis zur letzten Leerung (DOCS.md).
+- **Grenze 3 GB** fest im Code (`recording.LIMIT`), die ältesten Dateien fallen weg, die laufende nie. Ein Schreibfehler stoppt nur die Aufzeichnung: geloggt, aus, im Abschnitt zu lesen.
+- **Größe und Last** (10.10. 12 Uhr, 43 Nachrichten/s, 154 400 Nachrichten): 56,4 MB → 5,14 MB/h, ruhigere Stunden 3,38 und 0,26 MB. Schreibweg 1,36 s CPU je Stunde (0,04 %), ein
+  Stapel höchstens 17 ms, im Thread. App in Live-Rate, je 5 min nebeneinander, zwei Runden mit getauschten Kernen: aus 3,11 / 3,37 %, an 3,11 / 3,48 %, also im Rauschen; Verzögerung der Schleife p99 2,2 / 2,4 → 2,1 / 2,5 ms, Maximum 13 / 15 → 22 / 20 ms.
+- **Download und Löschen:** *Alle herunterladen* streamt eine unkomprimierte Tar-Datei stückweise (`GET /api/recording/download`), die laufende Datei wird davor abgeschlossen und läuft in einem neuen Mitglied weiter. Nur normale Dateien mit dem Namen der Aufnahmen, kein Link. *Alle löschen* geht auch während der Aufnahme.
+- **Sicherungen:** `backup_exclude: recordings/*` in `config.yaml`. Der Supervisor prüft `PurePath.match` gegen den vollen Pfad, von rechts; `reports/` bleibt drin. Beim Wiederherstellen leert er `/data`: Die Aufnahmen sind dann weg (DOCS.md).
+- `util.decoded` (aus `_write_report`), `util.sizeText` (aus der Berichtsliste).
+
 ## 0.55.0 (Branch `ov-all`, Modell-Überarbeitung: Löschen, Geister, Echoquellen, Anzeige; nicht live, kein Tag)
 
 Vier Branches ab 0.54.4 zusammengeführt (`ov-delete`, `ov-ghost`, `ov-echo`, `ov-count`). Modell, Ausgabe und Anzeige ändern sich.

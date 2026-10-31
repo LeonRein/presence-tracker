@@ -264,7 +264,8 @@ def test_every_reason_and_error_of_the_server_is_worded():
                {"kind": "conflict", "plan": 40.2, "pairs": 50.1}, {"kind": "ambiguous", "alt": 123.4},
                {"kind": "heading_uncertain", "sd": 6.2}, {"kind": "no_ruler"},
                {"kind": "scale_uncertain", "sd": 0.091}, {"kind": "mirrored", "gain": 12.3}]
-    keys = sorted(set(re.findall(r'"error": "(\w+)"', APP.read_text())) | {"no_walking"})
+    server = APP.read_text() + (APP.parent / "recording.py").read_text()
+    keys = sorted(set(re.findall(r'"error": "(\w+)"', server)) | {"no_walking"})
     got = ui(f"[{json.dumps(reasons)}.map(util.reasonText), "
              f"{json.dumps(keys)}.map(e => util.errorText({{error: e, detail: 502}})), util.REPORT_KINDS]")
     for text in got[0] + got[1]:

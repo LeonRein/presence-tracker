@@ -1,7 +1,7 @@
 // Side panel per tab.
 import { api, coverageNow, edit, emit, heldBadges, learnedSelected, onWall, refreshCoverage, savePref, saveNow, select, sensorById, sensorColor, setTool, state } from './store.js';
 import { autoFitImage, deleteSelection, fitFromCalibration } from './tools.js';
-import { LABELS, LAYER_LIMITS, REPORT_KINDS, ZONE_KINDS, bindNumber, dist, errorText, esc, fmt, h, onSegment, outcomeColor, personColor, reasonText, regionOfRoom, roomsWithSensor, toast, uid, zoneArea } from './util.js';
+import { LABELS, LAYER_LIMITS, REPORT_KINDS, ZONE_KINDS, bindNumber, dist, errorText, esc, fmt, h, onSegment, outcomeColor, personColor, reasonText, regionOfRoom, roomsWithSensor, sizeText, toast, uid, zoneArea } from './util.js';
 import { loadSize } from './view.js';
 
 let skipRender = false;
@@ -383,7 +383,7 @@ async function reportForm(el) {
       const when = new Date(r.t_event * 1000).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
       const what = `${when} · ${names[r.room] || 'Haus'} · ${REPORT_KINDS[r.kind] ?? r.kind}`;
       const row = h(`<div class="item"><span class="grow">${esc(what)}${r.text ? ` · <i>${esc(r.text)}</i>` : ''}</span>
-        <a class="meta" href="api/reports/${encodeURIComponent(r.name)}" download>${r.size < 1e6 ? `${Math.max(1, Math.round(r.size / 1e3))} kB` : `${fmt(r.size / 1e6, 1)} MB`}</a>
+        <a class="meta" href="api/reports/${encodeURIComponent(r.name)}" download>${sizeText(r.size)}</a>
         <button class="btn danger small rep-del" title="Meldung löschen" aria-label="Meldung löschen">Löschen</button></div>`);
       // a report made by mistake, or while sensors were offline, is no truth: deleted for good
       row.querySelector('.rep-del').onclick = async () => {
@@ -966,6 +966,49 @@ function targetRooms(p) {
   return el;
 }
 
+// the app's own recording (app.py /api/recording, recording.py): the switch, what is there, download and delete
+function recordingSection() {
+  const el = h(`<div><h3>Aufzeichnung</h3>
+    <p class="note">Speichert alles, was von den Sensoren kommt, je Stunde eine Datei, zum späteren Nachspielen. Nicht in den Sicherungen von Home Assistant.</p>
+    <label class="check"><input type="checkbox" id="rec-on"> Aufzeichnen</label>
+    <p class="note" id="rec-error" style="color:var(--bad)" hidden></p>
+    <p class="note" id="rec-state"></p>
+    <div class="row" id="rec-files">
+      <a class="btn" id="rec-get" href="api/recording/download" download>Alle herunterladen</a>
+      <button class="btn danger" id="rec-del">Alle löschen</button>
+    </div></div>`);
+  const on = el.querySelector('#rec-on');
+  const show = r => {
+    on.checked = r.on;
+    on.disabled = state.replay;
+    const when = new Date(r.since * 1000).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const parts = [state.replay ? 'Die Wiedergabe zeichnet nicht auf' : r.on ? `Läuft seit ${when}` : 'Aus',
+      `${r.files} ${r.files === 1 ? 'Datei' : 'Dateien'}`, r.files ? sizeText(r.size) : null,
+      r.oldest ? `ältester Stand ${r.oldest.slice(6, 8)}.${r.oldest.slice(4, 6)}. ${r.oldest.slice(9)} Uhr` : null,
+      `Grenze ${fmt(r.limit / 1e9, 0)} GB, dann fallen die ältesten weg`];
+    el.querySelector('#rec-state').textContent = parts.filter(Boolean).join(' · ');
+    const error = el.querySelector('#rec-error');
+    error.hidden = !r.error;
+    error.textContent = r.error ? errorText(r.error) : '';
+    el.querySelector('#rec-files').style.display = r.files ? '' : 'none';
+  };
+  const load = async () => show(await api('api/recording'));
+  const change = async (options, done) => {
+    try {
+      show(await api('api/recording', options));
+      if (done) toast(done);
+    } catch (err) { toast(err.message, 5000); await load().catch(() => {}); }
+  };
+  on.onchange = () => change({ method: 'PUT', body: JSON.stringify({ on: on.checked }) });
+  el.querySelector('#rec-del').onclick = () => {
+    if (confirm('Alle Aufnahmen löschen? Das lässt sich nicht rückgängig machen.')) change({ method: 'DELETE' }, 'Aufnahmen gelöscht');
+  };
+  // while the panel is open: the size grows, and a failed write shows
+  const timer = setInterval(() => (el.isConnected ? load().catch(() => {}) : clearInterval(timer)), 10000);
+  load().catch(err => toast(err.message, 5000));
+  return el;
+}
+
 function settingsPanel(panel) {
   const p = state.config.params;
   // what only the outputs read: a change of it alone does not start the model over (the core's)
@@ -987,6 +1030,7 @@ function settingsPanel(panel) {
     }
   }
   root.append(targetRooms(p));
+  root.append(recordingSection());
   root.append(experts);
   const reset = h('<button class="btn" style="margin-top:12px">Alle auf Standard</button>');
   reset.onclick = async () => {

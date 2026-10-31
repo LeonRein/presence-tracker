@@ -27,9 +27,10 @@ from . import model
 from .model import Config
 from .filter import Tracker
 from .pause import Pauses
+from .recording import Recorder
 from .sources import Clock, ReplayClock, mqtt_source, replay_source
 from .frames import Frame, SensorClock
-from .util import Throttled, atomic_write
+from .util import Throttled, atomic_write, decoded
 
 log = logging.getLogger(__name__)
 STATIC = (pathlib.Path(__file__).parent / "static").resolve()
@@ -122,6 +123,7 @@ class App:
                 self.pauses = Pauses.from_dict(json.loads(pause_path.read_text()))
             except Exception as e:  # noqa: BLE001 - learning then goes on until the switch says otherwise
                 log.warning("pause.json unreadable (%r): learning not paused", e)
+        self.recorder = Recorder(data_dir, self._config_line(), lambda: self.pauses.on, active=not replay)
         self._reset_tracker()
         self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
 
@@ -225,6 +227,10 @@ class App:
         # recalibration 40 s in put the replay up to 0.12 off from what the app believed (BUGS 6)
         self.configs = [(t, self.config.to_dict())]
 
+    def _config_line(self) -> str:
+        """What a recording keeps of the configuration in use (recording.py)."""
+        return json.dumps({"version": __version__, "config": self.config.to_dict()})
+
     def _config_changed(self):
         """A configuration taken over while the model goes on: when, for an error report."""
         if self.tracker.start is None:  # not started yet: it starts with this one
@@ -244,6 +250,7 @@ class App:
 
     def _on_message(self, topic: str, payload: bytes, recv: float):
         if topic in pause.TOPICS:  # Lernen pausieren (live: the command; in a replayed recording both)
+            self.recorder.add(recv, topic, payload)
             self._on_pause(payload, recv)
             return
         if self.discovery.retained(topic, payload):  # our own entities as the broker keeps them
@@ -259,6 +266,7 @@ class App:
                 self.throttled(("frame", sensor_id), logging.WARNING, "frame of %s dropped: %s (%r)",
                                sensor_id, e, bytes(payload[:200]))
                 return
+        self.recorder.add(recv, topic, payload)
         self.recent.append((recv, topic, payload))
         while self.recent and self.recent[0][0] < recv - REPORT_WINDOW:
             self.recent.popleft()
@@ -367,6 +375,7 @@ class App:
             # to the log - where the app hangs (each call replaces the previous timer)
             faulthandler.dump_traceback_later(BLOCKED_DUMP)
             await asyncio.sleep(0.1)
+            self.recorder.tick()
             await self._send_pause()
             if self.down:
                 await self._set_available(False)
@@ -600,6 +609,7 @@ class App:
                 if self._saving is not None:
                     await asyncio.gather(self._saving, return_exceptions=True)
                 self._save_learned()
+                await self.recorder.flush(close=True)
             await runner.cleanup()
 
     # ------------------------------------------------------------------- web
@@ -624,6 +634,10 @@ class App:
         app.router.add_post("/api/reports", self.h_report)
         app.router.add_get("/api/reports/{name}", self.h_report_file)
         app.router.add_delete("/api/reports/{name}", self.h_delete_report)
+        app.router.add_get("/api/recording", self.h_recording)
+        app.router.add_put("/api/recording", self.h_recording_switch)
+        app.router.add_delete("/api/recording", self.h_recording_delete)
+        app.router.add_get("/api/recording/download", self.h_recording_download)
         return app
 
     async def h_index(self, request):
@@ -697,6 +711,7 @@ class App:
             except OSError as e:
                 log.exception("tracker.json not saved")
                 return web.json_response({"error": "not_saved", "detail": str(e)}, status=500)
+            self.recorder.config(self._config_line())
             return web.json_response({"ok": True, "restarted": False, "derived": None, "config": config.to_dict(),
                                       "discarded": None})
         moved = presence_core.geometry_key(config.model_json()) != self.geometry
@@ -724,6 +739,7 @@ class App:
         except OSError as e:
             log.exception("tracker.json not saved")
             return web.json_response({"error": "in_use_not_saved", "detail": str(e)}, status=500)
+        self.recorder.config(self._config_line())
         return web.json_response({"ok": True, "restarted": restarted, "derived": model.derive(config.to_dict()),
                                   "config": config.to_dict(), "discarded": discarded})
 
@@ -878,11 +894,7 @@ class App:
             while shown and shown[0][0] <= recv:
                 t, data = shown.popleft()
                 lines.append(json.dumps({"t": t, "topic": "app/shown", "payload": data}))
-            try:
-                data = json.loads(payload)
-            except ValueError:
-                data = payload.decode(errors="replace")
-            lines.append(json.dumps({"t": recv, "topic": topic, "payload": data}))
+            lines.append(json.dumps({"t": recv, "topic": topic, "payload": decoded(payload)}))
         lines += [json.dumps({"t": t, "topic": "app/shown", "payload": data}) for t, data in shown]
         # whole or not at all: a report cut off (a power cut) is no truth, and the list must not see one half written
         atomic_write(path, gzip.compress("\n".join(lines).encode(), compresslevel=6))
@@ -922,6 +934,35 @@ class App:
         path.unlink()
         log.info("error report %s deleted", path.name)
         return web.json_response({"ok": True, "name": path.name})
+
+    # ------------------------------------------------------------ the recording
+
+    async def h_recording(self, request):
+        return web.json_response(self.recorder.status())
+
+    async def h_recording_switch(self, request):
+        if self.replay:  # a replay records nothing: it would only record itself
+            return web.json_response({"error": "recording_replay"}, status=409)
+        await self.recorder.switch((await request.json()).get("on") is True)
+        return web.json_response(self.recorder.status())
+
+    async def h_recording_delete(self, request):
+        try:
+            await self.recorder.delete()
+        except OSError as e:
+            log.exception("recordings not deleted")
+            return web.json_response({"error": "recording_not_deleted", "detail": str(e)}, status=500)
+        return web.json_response(self.recorder.status())
+
+    async def h_recording_download(self, request):
+        """All recordings as one tar, streamed (recording.py); no name in the request, nothing to choose but them."""
+        name = time.strftime("aufnahmen-%Y%m%d-%H%M.tar")
+        response = web.StreamResponse(headers={"Content-Type": "application/x-tar",
+                                               "Content-Disposition": f'attachment; filename="{name}"'})
+        await response.prepare(request)
+        await self.recorder.stream(response.write)
+        await response.write_eof()
+        return response
 
     async def h_reset_tracks(self, request):
         """"Tracks zurücksetzen": nothing known about where anybody is, the data decide again. The

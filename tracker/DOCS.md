@@ -360,13 +360,50 @@ sonst (der Saugroboter darf also weiter das Licht einschalten). Die Live-Ansicht
 hat keine Verfügbarkeit, er lässt sich auch schalten, während die App nicht läuft: Home Assistant legt
 den Befehl im Broker ab (*retained*), die App übernimmt ihn beim nächsten Verbinden. Eine Nachlaufzeit
 (etwa 2 min, nachdem der Saugroboter angedockt hat) gehört in die Automation, die App nimmt den
-Schalter, wie er ist. Fehlermeldungen enthalten die Pausen, `tools/record.py` zeichnet den Schalter mit
-auf; die Werkzeuge pausieren beim Nachspielen an denselben Stellen und bewerten dort nichts.
+Schalter, wie er ist. Fehlermeldungen enthalten die Pausen, die *Aufzeichnung* und `tools/record.py` zeichnen den
+Schalter mit auf; die Werkzeuge pausieren beim Nachspielen an denselben Stellen und bewerten dort nichts.
 
 Mit Node-RED: `server-state-changed` auf den Saugroboter (`vacuum.<name>`); jeder Zustand außer
 `docked`, `idle`, `charging` und `error` (also `cleaning`, `returning`, `paused`) → `switch.turn_on` auf
 `switch.presence_lernen_pausieren`; wieder angedockt (`docked`) und 2 min dort geblieben (*for*: 2 min) →
 `switch.turn_off`. `unavailable` und `unknown` (die Integration verbindet sich neu) ändern nichts.
+
+## Aufzeichnung
+
+Für ein paar Tage Testbetrieb, ohne einen Rechner nebenher: Im Tab *Einstellungen*, Abschnitt *Aufzeichnung*, schreibt
+die App auf Wunsch alles mit, was sie von den Sensoren bekommt. Standardmäßig aus; der Schalter übersteht einen Neustart
+(`/data/recording.json`), er gehört nicht zur Konfiguration, und das Modell sieht davon nichts. Die Wiedergabe zeichnet
+nicht auf.
+
+- **Was:** je Stunde eine Datei `/data/recordings/JJJJMMTT-HH.jsonl.gz` (lokale Zeit) mit den Frames, den Statusmeldungen
+  der Sensoren und dem Schalter *Lernen pausieren*, jede Zeile wie bei `tools/record.py` (`{"t", "topic", "payload"}`).
+  Jede Datei beginnt mit der Konfiguration samt Version (Topic `app/config`, auch bei jeder gespeicherten Änderung; sie
+  enthält den Grundriss) und dem Stand des Schalters. Die Wiedergabe und die Werkzeuge überlesen `app/config`.
+  Keine Telefon-Zustände. Frames, die die App verwirft, stehen wie in den Fehlermeldungen nicht darin.
+- **Größe:** etwa 5 MB je Stunde bei allen Sensoren und 43 Frames/s, in ruhigen Stunden weit weniger. Über alle Aufnahmen
+  gilt eine feste Grenze von 3 GB, das sind gut drei Wochen; darüber fallen die ältesten Dateien weg.
+- **Absturz:** Die Daten gehen alle 30 s auf die Platte, mehr geht nicht verloren. Nach einem Neustart in derselben Stunde
+  geht die Datei weiter; eine abgebrochene Datei wird dabei zuerst bis zur letzten ganzen Zeile repariert.
+- **Schreibfehler** (Platte voll): Die Aufzeichnung geht aus und sagt im Abschnitt warum; die App läuft weiter. Wieder
+  einschalten geht von Hand.
+- **Sicherungen:** `recordings/` ist von den Sicherungen in Home Assistant ausgenommen (`backup_exclude` in
+  `config.yaml`). Wer eine Sicherung der App wiederherstellt, verliert deshalb die Aufnahmen: Home Assistant leert dabei
+  `/data`. Vorher herunterladen. Auch Deinstallieren löscht sie.
+
+*Alle herunterladen* gibt eine Tar-Datei; *Alle löschen* geht auch während einer Aufnahme, sie läuft dann in einer neuen
+Datei weiter. Zum Nachspielen und für `fast_eval` entpacken:
+
+```bash
+tar xf aufnahmen-*.tar
+cd recordings
+for f in *.jsonl.gz; do zcat "$f" > "${f%.gz}"; done
+cd ../tracker && uv run python -m presence_tracker --data devdata --replay ../recordings/*.jsonl
+python tools/replay.py --recordings recordings --config KONFIGURATION --from "2026-10-31 10:00:00" --to "2026-10-31 11:00:00"
+```
+
+Nicht `gunzip`: Das löscht bei einer abgeschnittenen Datei (die letzte eines Absturzes, ohne Neustart in derselben Stunde)
+die Ausgabe; `zcat` meldet dort *unexpected end of file*, und alles bis zur letzten Leerung ist da. Für die Wiedergabe
+dann die letzte, unvollständige Zeile entfernen, falls es eine gibt.
 
 ## Optionen
 

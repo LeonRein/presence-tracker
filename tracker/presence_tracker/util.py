@@ -2,6 +2,7 @@
 lines that a stream of bad input can't flood."""
 
 import contextlib
+import json
 import logging
 import os
 import pathlib
@@ -36,6 +37,14 @@ def atomic_write(path, data: bytes):
         pass
     finally:
         os.close(fd)
+
+
+def decoded(payload: bytes):
+    """A message's payload as the recordings keep it: its JSON, else its text."""
+    try:
+        return json.loads(payload)
+    except ValueError:
+        return payload.decode(errors="replace")
 
 
 class Throttled:

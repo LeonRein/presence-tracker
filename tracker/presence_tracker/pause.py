@@ -9,8 +9,8 @@ m/s for minutes), visitors, a cleaning person, a party. Node-RED switches it (e.
 The switch is an MQTT switch (ha.py): Home Assistant publishes its commands retained on COMMAND (the
 app gets the last one at every connect, also one sent while it was down), the app its state on STATE.
 The pauses are intervals of the model's time (the frames' receive times): the app keeps the recent
-ones with what it learned (pause.json) and puts them into an error report, the recorder records both
-topics (tools/record.py), so the replays pause where the app did.
+ones with what it learned (pause.json) and puts them into an error report, the recordings keep the switch
+(recording.py: the command; tools/record.py: both topics), so the replays pause where the app did.
 """
 
 import json
