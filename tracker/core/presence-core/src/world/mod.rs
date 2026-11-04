@@ -8,13 +8,11 @@ mod build;
 pub mod ld;
 pub mod raster;
 pub mod sight;
-pub mod targets;
 pub mod tiles;
 
 pub use ld::{LdPlace, LdSight, LdTiles};
 pub use raster::{CELL, Grid, Raster, RoomGrid};
 pub use sight::Sight;
-pub use targets::EntryTargets;
 pub use tiles::{AGE_EDGES, DoorTile, POINT, Tiles};
 
 use crate::config::{Config, SensorConfig};
@@ -54,8 +52,6 @@ pub struct World {
     /// the LD2410C's likelihood (its tables are built once)
     pub ld_lik: Likelihood,
     pub plan: Plan,
-    /// the zones of "wird betreten"
-    pub targets: EntryTargets,
     /// the cells and outcomes of the destination map ("Ziel")
     pub destinations: DestGeometry,
     /// the key of the configuration's geometry (Config::geometry_key): what was learned holds only under it
@@ -208,7 +204,6 @@ impl World {
         Ok(Self {
             geometry: config.geometry_key(),
             destinations: DestGeometry::new(&plan, &raster, &labels, &rooms, &walls),
-            targets: EntryTargets::new(&plan, raster, &rooms, &tiles),
             ld_lik: Likelihood::new(&params),
             shapes: Shapes::new(&params),
             params,
@@ -275,7 +270,6 @@ impl World {
         Ok(Self {
             geometry: config.geometry_key(),
             destinations: DestGeometry::new(&plan, &raster, &labels, &rooms, &walls),
-            targets: EntryTargets::new(&plan, raster, &rooms, &e.tiles),
             ld_lik: Likelihood::new(&e.params),
             params: e.params,
             outputs,

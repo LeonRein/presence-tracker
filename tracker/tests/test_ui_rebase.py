@@ -21,17 +21,17 @@ def rebase(base, sent, now):
 
 
 def test_a_refused_edit_goes_back_and_later_edits_stay():
-    base = {"params": {"light_cost": 2.0, "lead_time": 2.0},
+    base = {"params": {"light_cost": 2.0, "occupied_off": 0.3},
             "zones": [{"id": "wohn", "name": "Wohn"}, {"id": "kueche", "name": "Küche"}],
             "walls": [{"points": [[0, 0], [1, 0]]}], "background": {"layers": []}}
     sent = json.loads(json.dumps(base))
     sent["params"]["light_cost"] = 0  # refused
     now = json.loads(json.dumps(sent))
-    now["params"]["lead_time"] = 3.0  # edited while the request was under way
+    now["params"]["occupied_off"] = 0.4  # edited while the request was under way
     now["zones"][1]["name"] = "Kochen"
     now["zones"].append({"id": "bad", "name": "Bad"})
     out = rebase(base, sent, now)
-    assert out["params"] == {"light_cost": 2.0, "lead_time": 3.0}
+    assert out["params"] == {"light_cost": 2.0, "occupied_off": 0.4}
     assert out["zones"] == [{"id": "wohn", "name": "Wohn"}, {"id": "kueche", "name": "Kochen"}, {"id": "bad", "name": "Bad"}]
     assert out["walls"] == base["walls"] and out["background"] == base["background"]
 

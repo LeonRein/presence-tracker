@@ -1,6 +1,5 @@
-""""Ziel" (MODEL.md 6): where a walker goes next, from their motion ("wird betreten") and the map of
-where walks went, learned by the app (the core's learn/destination.rs). Two rooms with sensors, a door between them
-(test_entering)."""
+""""Ziel" (MODEL.md 6): where a walker goes next, from the map of where walks went, learned by the app (the
+core's learn/destination.rs). Two rooms with sensors, a door between them."""
 
 import json
 
@@ -12,12 +11,33 @@ from presence_tracker.model import Config
 from sim import Person, simulate
 from presence_tracker.frames import Frame
 
-from test_entering import DOOR, two_rooms
 from test_frames import sim_sensors, walk
 from fixture import fixture, unpack
 
+DOOR = (6.0, 2.5)  # between "a" (x 0-6) and "b" (x 6-10)
 DESK = (1.5, 2.5)
 SOFA = (8.5, 2.5)
+
+
+def two_rooms(areas=()) -> Config:
+    """Two rooms with sensors, a door between them; areas: more zones (dicts)."""
+    def rect(zid, x0, y0, x1, y1):
+        return {"id": zid, "name": zid, "kind": "room", "shape": "rect", "points": [[x0, y0], [x1, y1]],
+                "anchor": [(x0 + x1) / 2, (y0 + y1) / 2], "entry": False}
+
+    def w(a, b):
+        return {"points": [list(a), list(b)], "kind": "wall"}
+    return Config.from_dict({
+        "sensors": [
+            {"id": "a1", "name": "", "x": 0.05, "y": 0.05, "heading": 45, "placed": True},
+            {"id": "a2", "name": "", "x": 5.95, "y": 4.95, "heading": 225, "placed": True},
+            {"id": "b1", "name": "", "x": 9.95, "y": 0.05, "heading": 135, "placed": True},
+        ],
+        "zones": [rect("a", 0, 0, 6, 5), rect("b", 6, 0, 10, 5), *areas],
+        "walls": [w((0, 0), (6, 0)), w((6, 0), (10, 0)), w((10, 0), (10, 5)), w((10, 5), (6, 5)),
+                  w((6, 5), (0, 5)), w((0, 5), (0, 0)), w((6, 0), (6, 5))],
+        "doors": [{"id": "ab", "x": DOOR[0], "y": DOOR[1], "width": 0.9}],
+    })
 
 
 def routine(trips: int, start: float = 1.0):
@@ -46,9 +66,9 @@ def lookup(dm: dict, vel: str) -> np.ndarray:
     return np.einsum("c,v,cvk->k", cw, vw, dm["count"][np.array(cells)[:, None], np.array(vc)[None, :]])
 
 
-def run(person, until, tracker=None):
-    """The tracker after the run, and per step (t, zone states of b, count distribution)."""
-    config = two_rooms()
+def run(person, until, tracker=None, config=None, zone="b"):
+    """The tracker after the run, and per step (t, zone states of the zone, count distribution)."""
+    config = config or two_rooms()
     tr = tracker or Tracker(config, start=0.0, people=["observed"])
     out, nxt = [], 0.0
     for t, sid, frame in simulate([person], sim_sensors(config), until, plan=config):
@@ -56,31 +76,28 @@ def run(person, until, tracker=None):
         if t >= nxt:
             tr.step(t)
             states = tr.zone_states()
-            out.append((t, states["b"], tr.core.count_distribution(), tr.core.loglik[0]))
+            out.append((t, states[zone], tr.core.count_distribution(), tr.core.loglik[0]))
             nxt = t + 0.2
     return tr, out
 
 
-def test_untrained_ziel_is_wird_betreten():
+def test_untrained_ziel_is_off():
+    # nothing learned yet: "Ziel" says nothing, whoever walks straight at the door
     a = Person(walk((1.0, 2.5), (1.0, 2.5), (8.5, 2.5), start=1.0, pauses={0: 4}))
     tr, out = run(a, a.waypoints[-1][0] + 1)
-    assert any(st.approaching for _, st, _, _ in out)
     disc = ha.Discovery(None)
     for t, st, _, _ in out:
-        assert st.target == st.approaching
-        assert st.target_weight == 0.0
-        # and so in what Home Assistant gets: binary_sensor..._ziel is binary_sensor..._approaching
-        sent = disc.steady("b", st.to_dict(), t)
-        assert sent["target"] == sent["approaching"] == st.approaching
-    # on the room's scale: at its threshold exactly where p_enter is at approach_cost's
-    on = [st for _, st, _, _ in out if st.approaching]
-    assert all(st.p_target >= st.c_target for st in on)
+        assert not st.target and st.c_target is not None
+        assert not disc.steady("b", st.to_dict(), t)["target"]
 
 
 def test_the_map_learns_a_routine_and_predicts_it_earlier():
-    trips = 10
+    trips = 20
     a = routine(trips)
-    tr, out = run(a, a.waypoints[-1][0] + 1)
+    d = two_rooms().to_dict()
+    d["params"]["target_threshold"] = 0.66  # Leon's (two equal walks against the prior's one)
+    config = Config.from_dict(d)
+    tr, out = run(a, a.waypoints[-1][0] + 1, config=config)
     dm, geo = dest_map(tr), fixture("destinations.json")
     assert dm["fingerprint"] == geo["fingerprint"] and dm["count"].shape[0] == geo["n"]  # the geometry of 0.38.1
     b = tr.rooms.index("b")
@@ -92,20 +109,18 @@ def test_the_map_learns_a_routine_and_predicts_it_earlier():
     # walking away from the door there: none of them went to b
     back = lookup(dm, "back")
     assert back[b] < 0.1 * back.sum()
-    # one more trip: "Ziel" comes on well before "wird betreten", from the map
+    # one more trip: "Ziel" comes on well before the door, from the map
     more = Person([(t + a.waypoints[-1][0], x, y) for t, x, y in routine(1).waypoints])
-    _, out = run(more, more.waypoints[-1][0], tracker=tr)
-    first_t = next(t for t, st, _, _ in out if st.target)
-    first_e = next(t for t, st, _, _ in out if st.approaching)
-    assert first_t <= first_e - 1.0
-    st = next(st for t, st, _, _ in out if st.target)
-    assert st.target_weight > 0.5 and st.target_walks >= 0.25 * trips and st.target_from == "a"
-    # and is on most of the time up to the door, all the last 1.5 s (the velocity estimate jitters:
-    # where the map knows only a few walks, the motion's part flickers it near its threshold)
+    _, out = run(more, more.waypoints[-1][0], tracker=tr, config=config)
     t_door = more.waypoints[1][0] + (DOOR[0] - DESK[0])
+    first_t = next(t for t, st, _, _ in out if st.target)
+    assert first_t <= t_door - 2.0
+    st = next(st for t, st, _, _ in out if st.target)
+    assert st.target_walks >= 0.25 * trips and st.target_from == "a"
+    # and is on most of the time up to the door (the velocity estimate jitters: a step into velocity cells
+    # with fewer walks lowers it for a moment)
     span = [st.target for t, st, _, _ in out if first_t <= t <= t_door - 0.2]
-    assert sum(span) >= 0.6 * len(span)
-    assert all(st.target for t, st, _, _ in out if t_door - 1.5 <= t <= t_door - 0.2)
+    assert sum(span) >= 0.8 * len(span)
     # back from b: not into b
     assert not any(st.target for t, st, _, _ in out if t > t_door + 2.0)
 
@@ -158,7 +173,6 @@ def test_occupancy_is_unchanged_by_the_map():
         assert t0 == t1 == t2
         assert c0 == c1 == c2
         assert l0 == l1 == l2
-        assert s0.approaching == s1.approaching == s2.approaching and s0.p_enter == s1.p_enter == s2.p_enter
         assert s0.occupied == s1.occupied == s2.occupied and s0.probability == s1.probability == s2.probability
 
 

@@ -1,5 +1,5 @@
 //! What the filter tells (MODEL.md 6; the outputs of filter.Tracker): per observed room and per place
-//! the distribution of the number of people, "wird betreten", and the people of the most probable
+//! the distribution of the number of people, "Ziel", and the people of the most probable
 //! hypothesis for the display: all numbers of people, and with them occupied. They only
 //! read the filter. The sums run in numpy's order (vmath), the numbers are those of the Python filter;
 //! nothing is rounded for the display here (the shell does).
@@ -14,16 +14,14 @@ use crate::filter::mixture::{Mixture, SegId};
 use crate::filter::objects::Objects;
 use crate::geometry::Point;
 use crate::learn::destination::{self, DestMap, Target};
-use crate::motion::imm::walk_ahead;
 use crate::params::{OutputParams, WALK};
 use crate::plan::{Place, RoomIdx, Zone, ZoneRole};
 use crate::vmath::{log_factorials, pairwise_sum};
 use crate::vmath::{max2, py_hypot};
 use crate::world::World;
 
-/// "wird betreten": a person walking with less probability can raise no zone's p_enter by more than
-/// this; not moved on
-pub const ENTER_MIN_WALK: f64 = 0.02;
+/// "Ziel": a person walking with less probability is no walker the destination map is asked for
+pub const WALKER_MIN: f64 = 0.02;
 
 /// Distributions of the number of people, one per column of what was counted: [P(0), P(1), ...],
 /// all as long as the longest.
@@ -38,7 +36,6 @@ pub struct OutputCache {
     in_rooms: Option<PerObject>,
     counts: Option<Distributions>,
     places: Option<Distributions>,
-    entering: Option<Vec<Entering>>,
     targets: Option<Vec<Target>>,
 }
 
@@ -73,34 +70,20 @@ impl OutputCache {
         self.places.get_or_insert_with(|| place_distribution(filter))
     }
 
-    pub fn entering(&mut self, filter: &Filter, world: &World) -> &[Entering] {
-        self.entering
-            .get_or_insert_with(|| entering(filter, world, world.outputs.lead_time))
-    }
-
-    /// "Ziel" (after "wird betreten", its prior).
+    /// "Ziel" per observed room, then per area.
     pub fn targets(&mut self, filter: &Filter, world: &World, map: &DestMap) -> &[Target] {
-        if self.targets.is_none() {
-            let entering = self.entering(filter, world);
-            self.targets = Some(destination::targets(filter, world, map, entering));
-        }
-        self.targets.as_deref().expect("just computed")
+        self.targets
+            .get_or_insert_with(|| destination::targets(filter, world, map))
     }
 
-    /// The three at once (for the zones), each computed if missing, in this order.
-    fn all(&mut self, filter: &Filter, world: &World) -> (&Distributions, &Distributions, &[Entering]) {
+    /// Both at once (for the zones), each computed if missing, in this order.
+    fn all(&mut self, filter: &Filter, world: &World) -> (&Distributions, &Distributions) {
         self.counts(filter, world);
         self.places(filter);
-        self.entering(filter, world);
-        let Self {
-            counts,
-            places,
-            entering,
-            ..
-        } = self;
-        match (counts, places, entering) {
-            (Some(c), Some(p), Some(e)) => (c, p, e),
-            _ => unreachable!("all three computed above"),
+        let Self { counts, places, .. } = self;
+        match (counts, places) {
+            (Some(c), Some(p)) => (c, p),
+            _ => unreachable!("both computed above"),
         }
     }
 }
@@ -646,163 +629,6 @@ pub fn clouds(filter: &Filter, world: &World) -> Vec<Cloud> {
         .collect()
 }
 
-// ------------------------------------------------------------------ "wird betreten"
-
-/// "wird betreten" of a zone (Tracker.entering): the probability that somebody walking with a track
-/// enters it within the look-ahead, and for the one who most probably does (if it is at least 1 %)
-/// the way along their velocity to it (None: a wall, or farther than 5 m), the time at their speed
-/// and their number in the display (None: not in the most probable hypothesis).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Entering {
-    pub p: f64,
-    pub distance: Option<f64>,
-    pub eta: Option<f64>,
-    pub person: Option<usize>,
-}
-
-/// A walker with a track and how much they may rise each zone's mass.
-struct Rise {
-    entry: usize,
-    rise: Vec<f64>,
-    at: Point,
-    velocity: Point,
-}
-
-/// Per zone of plan.targets (the observed rooms, then the areas) "wird betreten" for the look-ahead h
-/// (s, MODEL.md 6). Per person with a track (not a ghost's source) only
-/// their walking component moves on (standing people sway by centimetres; getting up goes anywhere):
-/// where it is h/2 and h s ahead - unless the walk ends first (rate speed / walk length, 3.2): then
-/// where it stopped, the time of stopping on the nodes 0, h/2, h -, against where it is now. Their
-/// rise in each zone, max(P(in it at h/2), P(in it at h)) - P(in it now), at least 0, is the
-/// probability that they enter it within h (a lower bound of being in it at some time; whoever is in
-/// it stays). People of a hypothesis are independent: P(somebody enters) = 1 - prod(1 - rise), mixed
-/// over the hypotheses (5.1). Deterministic, no samples.
-pub fn entering(filter: &Filter, world: &World, h: f64) -> Vec<Entering> {
-    let targets = &world.targets;
-    let none = Entering {
-        p: 0.0,
-        distance: None,
-        eta: None,
-        person: None,
-    };
-    let mut out = vec![none; targets.len()];
-    if targets.is_empty() || h <= 0.0 {
-        return out;
-    }
-    let mass = |at: Point, var: Point| match world.gauss_points(at, var) {
-        Some(d) => targets.sums(&d),
-        None => vec![0.0; targets.len()],
-    };
-    let mu = world.params.stop_rate();
-    // who stops stays where they stopped: the time of stopping on the three nodes (0, h/2, h), each
-    // taking the stops nearest to it
-    let (q1, q3) = ((-mu * h * 0.25).exp(), (-mu * h * 0.75).exp());
-    let objects = filter.objects();
-    let mut rises: Vec<Rise> = Vec::new();
-    for (entry, obj) in filter.holders().people() {
-        let Obj::Mixture(m) = obj else { continue };
-        let mix = objects.mixtures().get(m);
-        let w = mix.weights()[WALK] * (1.0 - mix.a);
-        if mix.phantom || w < ENTER_MIN_WALK {
-            continue;
-        }
-        let walking = &mix.modes[WALK];
-        let (at, velocity) = (walking.pos(), walking.velocity());
-        let now = mass(at, walking.pos_var());
-        let (half_at, half_var) = walk_ahead(world, walking, 0.5 * h);
-        let half = mass(half_at, half_var);
-        let (end_at, end_var) = walk_ahead(world, walking, h);
-        let end = mass(end_at, end_var);
-        let rise: Vec<f64> = (0..targets.len())
-            .map(|z| {
-                let at_half = (1.0 - q1) * now[z] + q1 * half[z];
-                let at_end = (1.0 - q1) * now[z] + (q1 - q3) * half[z] + q3 * end[z];
-                w * maximum(maximum(at_half, at_end) - now[z], 0.0)
-            })
-            .collect();
-        if crate::vmath::nan_max(&rise) > 0.0 {
-            rises.push(Rise {
-                entry,
-                rise,
-                at,
-                velocity,
-            });
-        }
-    }
-    if rises.is_empty() {
-        return out;
-    }
-    let holders = filter.holders();
-    // per entry of the holders its rise, if it has one
-    let mut rise_of = vec![None; holders.len()];
-    for (k, r) in rises.iter().enumerate() {
-        rise_of[r.entry] = Some(k);
-    }
-    let mut p = vec![0.0; targets.len()];
-    let mut share = vec![vec![0.0; targets.len()]; rises.len()];
-    for (&wh, hy) in filter.hyp_weights().iter().zip(filter.hyps()) {
-        let mut empty = vec![1.0; targets.len()];
-        for &m in hy.people.values() {
-            let Some(k) = rise_of[holders.entry(Obj::Mixture(m))] else {
-                continue;
-            };
-            for ((e, s), &r) in empty.iter_mut().zip(&mut share[k]).zip(&rises[k].rise) {
-                *e *= 1.0 - r;
-                *s += wh * r;
-            }
-        }
-        for (pz, e) in p.iter_mut().zip(&empty) {
-            *pz += wh * (1.0 - e);
-        }
-    }
-    let shown = shown_people(filter);
-    for (z, (o, &pz)) in out.iter_mut().zip(&p).enumerate() {
-        o.p = pz.clamp(0.0, 1.0);
-        if pz < 0.01 {
-            continue;
-        }
-        // the first of the most probable
-        let mut best = 0;
-        for (k, s) in share.iter().enumerate() {
-            if s[z] > share[best][z] {
-                best = k;
-            }
-        }
-        let rise = &rises[best];
-        let speed = py_hypot(rise.velocity[0], rise.velocity[1]);
-        o.distance = ray_distance(world, z, rise.at, rise.velocity);
-        o.eta = o.distance.filter(|_| speed > 0.05).map(|dist| dist / speed);
-        let obj = holders.objects()[rise.entry];
-        o.person = shown.iter().find(|&&(_, s)| s == obj).map(|&(id, _)| id);
-    }
-    out
-}
-
-/// numpy's maximum: NaN if either is.
-fn maximum(a: f64, b: f64) -> f64 {
-    if a.is_nan() || b.is_nan() { f64::NAN } else { a.max(b) }
-}
-
-/// How far a walker at `at` walks along their velocity until they are in zone z (its cells), if no
-/// wall is in the way and within 5 m, in steps of 5 cm.
-fn ray_distance(world: &World, z: usize, at: Point, velocity: Point) -> Option<f64> {
-    const REACH: f64 = 5.0;
-    const STEP: f64 = 0.05;
-    let speed = py_hypot(velocity[0], velocity[1]);
-    if speed < 1e-6 {
-        return None;
-    }
-    let unit = [velocity[0] / speed, velocity[1] / speed];
-    // numpy's arange(0, REACH + STEP / 2, STEP)
-    let steps = ((REACH + STEP / 2.0) / STEP).ceil() as usize;
-    (0..steps)
-        .map(|i| i as f64 * STEP)
-        .map(|s| (s, [at[0] + s * unit[0], at[1] + s * unit[1]]))
-        .find(|&(_, p)| world.targets.holds(z, world.raster.cell_of(p)))
-        .filter(|&(s, p)| s == 0.0 || !world.walls.crosses(&[at], &[p])[0])
-        .map(|(s, _)| s)
-}
-
 // ------------------------------------------------------------------ the zones (MODEL.md 6)
 
 /// What the outputs say of a zone of the home (Tracker.zone_states; the shell forms its ZoneState).
@@ -816,9 +642,6 @@ pub struct ZoneNumbers {
     /// of those drawn in it how many walk and how many do not
     pub moving: usize,
     pub still: usize,
-    /// "wird betreten" (the observed rooms and the areas), and whether above its threshold
-    pub entering: Option<Entering>,
-    pub approaching: bool,
     /// false: its own sensors all went silent (Home Assistant gets it as unavailable)
     pub available: bool,
 }
@@ -835,7 +658,6 @@ pub struct HouseNumbers {
 pub struct ZoneInputs<'a> {
     pub counts: &'a Distributions,
     pub places: &'a Distributions,
-    pub entering: &'a [Entering],
     pub silent: &'a [bool],
     pub persons: &'a [Person],
 }
@@ -849,11 +671,10 @@ pub fn zones_of(
     persons: &[Person],
     silent: &[bool],
 ) -> (Vec<ZoneNumbers>, HouseNumbers) {
-    let (counts, places, entering) = cache.at(filter.epoch()).all(filter, world);
+    let (counts, places) = cache.at(filter.epoch()).all(filter, world);
     let inputs = ZoneInputs {
         counts,
         places,
-        entering,
         silent,
         persons,
     };
@@ -865,9 +686,9 @@ pub fn zones_of(
 /// rooms and the regions add up to the house, and a zone is occupied if it has anybody. P(somebody there) from
 /// all hypotheses (a region's rooms: from the region's distribution) goes along as information, nothing reads
 /// it. Areas: those drawn in them. Moving or still from those drawn (walking above 1/2 and faster than
-/// 0.15 m/s), "wird betreten" above approach_cost / (approach_cost + 1).
+/// 0.15 m/s).
 pub fn zone_numbers(world: &World, x: &ZoneInputs) -> (Vec<ZoneNumbers>, HouseNumbers) {
-    let (plan, o) = (&world.plan, &world.outputs);
+    let plan = &world.plan;
     let regions = plan.regions.len();
     let home: Vec<&Zone> = plan.home().collect();
     let mut zones: Vec<ZoneNumbers> = home
@@ -878,8 +699,6 @@ pub fn zone_numbers(world: &World, x: &ZoneInputs) -> (Vec<ZoneNumbers>, HouseNu
                 probability: None,
                 moving: 0,
                 still: 0,
-                entering: None,
-                approaching: false,
                 available: true,
             };
             match z.role {
@@ -916,21 +735,11 @@ pub fn zone_numbers(world: &World, x: &ZoneInputs) -> (Vec<ZoneNumbers>, HouseNu
             }
         }
     }
-    // "wird betreten": the targets are the observed rooms, then the areas
-    let observed = (0..home.len()).filter(|&k| matches!(home[k].role, ZoneRole::Observed(_)));
-    let targets = observed.chain((0..home.len()).filter(|&k| home[k].role == ZoneRole::Area));
-    for (k, e) in targets.zip(x.entering) {
-        zones[k].entering = Some(*e);
-        zones[k].approaching = e.p > o.entering_above();
-    }
     (zones, total)
 }
 
 /// The id of the house as a whole among the zones' states (Home Assistant's "_total").
 pub const HOUSE: &str = "_total";
-
-/// "Ziel" counts as decided by the learned map where its weight against the motion is at least this.
-const TARGET_MAP: f64 = 0.5;
 
 /// Per region (the places between observed and outside) the people counted in it.
 pub fn regions_shown(persons: &[Person], regions: usize) -> Vec<usize> {
@@ -940,27 +749,18 @@ pub fn regions_shown(persons: &[Person], regions: usize) -> Vec<usize> {
 }
 
 /// A zone's state as the outputs hand it on (Home Assistant, the display; the shell's zones.ZoneState, field
-/// for field): its numbers, "wird betreten" and "Ziel" with their thresholds.
+/// for field): its numbers and "Ziel" with its threshold.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZoneState {
     pub id: String,
     pub count: usize,
     pub moving: usize,
     pub still: usize,
-    /// "wird betreten" (observed rooms and areas): p_enter above c_enter; for the one who most probably
-    /// enters, when, how far, who
-    pub approaching: bool,
-    pub p_enter: Option<f64>,
-    pub eta: Option<f64>,
-    pub distance: Option<f64>,
-    pub person: Option<usize>,
-    pub c_enter: Option<f64>,
-    /// "Ziel" (observed rooms): p_target at least c_target; the learned map's weight against the motion,
-    /// the walks behind it; the walker who most probably goes here, their room, how far, when, who
+    /// "Ziel" (observed rooms and areas): p_target at least c_target; the walks behind it; the walker who
+    /// most probably goes here, their room, how far, when, who
     pub target: bool,
     pub p_target: Option<f64>,
     pub c_target: Option<f64>,
-    pub target_weight: f64,
     pub target_walks: f64,
     pub target_from: Option<String>,
     pub target_distance: Option<f64>,
@@ -972,9 +772,6 @@ pub struct ZoneState {
     pub available: bool,
     /// somebody counted there
     pub occupied: bool,
-    /// "Ziel": which part decided, the learned map ("karte", its weight at least 1/2) or the motion
-    /// ("bewegung")
-    pub target_source: Option<&'static str>,
 }
 
 impl ZoneState {
@@ -985,16 +782,9 @@ impl ZoneState {
             count,
             moving,
             still,
-            approaching: false,
-            p_enter: None,
-            eta: None,
-            distance: None,
-            person: None,
-            c_enter: None,
             target: false,
             p_target: None,
             c_target: None,
-            target_weight: 0.0,
             target_walks: 0.0,
             target_from: None,
             target_distance: None,
@@ -1003,17 +793,30 @@ impl ZoneState {
             probability: None,
             available: true,
             occupied: count > 0,
-            target_source: None,
         }
     }
 }
 
-/// The zones' states (Tracker.zone_states) from their numbers and "Ziel" per observed room: the zones of the
+/// The zones' states (Tracker.zone_states) from their numbers and "Ziel" per observed room, then per area (as
+/// destination::targets has them): the zones of the
 /// home, its rooms first and then the other zones (each in the configuration's order: as Home Assistant and
 /// the display have them), and last the house (HOUSE).
 pub fn zone_states(world: &World, numbers: &[ZoneNumbers], house: &HouseNumbers, targets: &[Target]) -> Vec<ZoneState> {
     let (plan, o) = (&world.plan, &world.outputs);
     let home: Vec<&Zone> = plan.home().collect();
+    // "Ziel" of each zone that has one: the observed rooms (by their index), then the areas in order
+    let mut area = plan.rooms.len();
+    let target_of: Vec<Option<usize>> = home
+        .iter()
+        .map(|z| match z.role {
+            ZoneRole::Observed(RoomIdx(r)) => Some(r),
+            ZoneRole::Area => {
+                area += 1;
+                Some(area - 1)
+            }
+            _ => None,
+        })
+        .collect();
     let mut order: Vec<usize> = (0..home.len()).collect();
     order.sort_by_key(|&k| !home[k].is_room()); // stable
     let mut states: Vec<ZoneState> = order
@@ -1022,15 +825,9 @@ pub fn zone_states(world: &World, numbers: &[ZoneNumbers], house: &HouseNumbers,
             let (z, n) = (home[k], &numbers[k]);
             let mut st = ZoneState::of(&z.id, n.count, n.moving, n.still);
             (st.probability, st.available) = (n.probability, n.available);
-            if let Some(e) = &n.entering {
-                (st.p_enter, st.distance, st.eta, st.person) = (Some(e.p), e.distance, e.eta, e.person);
-                (st.approaching, st.c_enter) = (n.approaching, Some(o.entering_above()));
-            }
-            if let ZoneRole::Observed(RoomIdx(r)) = z.role {
-                let t = &targets[r];
+            if let Some(t) = target_of[k].map(|i| &targets[i]) {
                 (st.target, st.p_target, st.c_target) = (t.on, Some(t.p), Some(o.target_above(&z.id)));
-                (st.target_weight, st.target_walks) = (t.weight, t.walks);
-                st.target_source = Some(if t.weight >= TARGET_MAP { "karte" } else { "bewegung" });
+                st.target_walks = t.walks;
                 st.target_from = t.from.map(|f| plan.room(f).id.clone());
                 (st.target_distance, st.target_eta, st.target_person) = (t.distance, t.eta, t.person);
             }
@@ -1043,7 +840,7 @@ pub fn zone_states(world: &World, numbers: &[ZoneNumbers], house: &HouseNumbers,
 
 // ------------------------------------------------------------------ "Ziel" (until it is in Rust)
 
-/// A person with a track walking with P(walking) at least ENTER_MIN_WALK (filter.Tracker.
+/// A person with a track walking with P(walking) at least WALKER_MIN (filter.Tracker.
 /// _target_outputs, until the destination map is in Rust): that probability without the part gone
 /// through a door, where the walking component is and its velocity.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1077,7 +874,7 @@ pub fn walkers(filter: &Filter) -> Walkers {
         let Obj::Mixture(m) = obj else { continue };
         let mix = objects.mixtures().get(m);
         let walking = mix.weights()[WALK] * (1.0 - mix.a);
-        if mix.phantom || walking < ENTER_MIN_WALK {
+        if mix.phantom || walking < WALKER_MIN {
             continue;
         }
         let mode = &mix.modes[WALK];
@@ -1234,23 +1031,8 @@ mod tests {
     }
 
     #[test]
-    fn a_walker_about_to_enter_an_area_makes_it_entered() {
-        // the sofa (0..2 x 3..5) 0.8 m ahead of somebody walking at 1 m/s: within 2 s
+    fn a_walker_with_a_track_is_shown_at_the_mixture_s_mean() {
         let mut tr = walking([1.0, 2.2], [0.0, 1.0]);
-        let enter = tr.entering().to_vec();
-        let (room, sofa) = (enter[0], enter[1]);
-        assert!(room.p < 1e-12, "already in the room: nobody enters it ({})", room.p);
-        assert!(sofa.p > 0.3, "{sofa:?}");
-        assert!((sofa.distance.expect("a way") - 0.8).abs() < 1e-9);
-        assert!((sofa.eta.expect("a time") - 0.8).abs() < 1e-9);
-        assert_eq!(sofa.person, Some(1));
-        // walking away from it: hardly anybody enters (the velocity's spread over 2 s is 0.8 m)
-        let mut away = walking([1.0, 2.2], [0.0, -1.0]);
-        let p_away = away.entering()[1].p;
-        assert!(p_away < 0.05 * sofa.p, "{p_away} against {}", sofa.p);
-        // no look-ahead: nothing
-        assert_eq!(entering(tr.filter(), tr.world(), 0.0)[1].p, 0.0);
-        // shown at the mixture's mean, walking
         let shown = tr.persons()[0].shown.expect("in view");
         assert_eq!((shown.at, shown.velocity), ([1.0, 2.2], [0.0, 1.0]));
         assert!(shown.walk > 0.999 && !tr.persons()[0].lost);
@@ -1381,7 +1163,6 @@ mod tests {
         assert_eq!((room.count, room.moving, room.still), (1, 0, 1));
         assert!((room.probability.expect("the filter's") - 1.0).abs() < 1e-12);
         assert_eq!((sofa.count, sofa.moving, sofa.still, sofa.probability), (1, 0, 1, None));
-        assert!(sofa.entering.is_some() && room.entering.is_some() && !sofa.approaching);
         assert_eq!((house.count, house.moving, house.still), (1, 0, 1));
         // nothing heard from its own sensor for longer than silent_after: not available
         let (zones, _) = tr.zone_numbers(31.0);
@@ -1403,19 +1184,14 @@ mod tests {
             (room.count, room.probability, room.occupied),
             (numbers[0].count, numbers[0].probability, true)
         );
-        assert_eq!(
-            (room.c_enter, sofa.c_enter),
-            (Some(o.entering_above()), Some(o.entering_above()))
-        );
-        assert_eq!(sofa.p_enter, numbers[1].entering.map(|e| e.p));
-        // "Ziel" in the observed room only, with its own threshold
+        // "Ziel" in the observed room and in the area, each with its own threshold
         assert_eq!(
             (room.p_target, room.c_target),
             (Some(targets[0].p), Some(o.target_above("wohn")))
         );
         assert_eq!(
-            (sofa.p_target, sofa.c_target, sofa.target, sofa.target_weight),
-            (None, None, false, 0.0)
+            (sofa.p_target, sofa.c_target, sofa.target),
+            (Some(targets[1].p), Some(o.target_above("sofa")), false)
         );
         let whole = ZoneState::of(HOUSE, house.count, house.moving, house.still);
         assert_eq!(*all, whole);
@@ -1434,15 +1210,8 @@ mod tests {
     }
 
     #[test]
-    fn new_outputs_void_the_cache_and_other_tiles_are_refused() {
+    fn other_tiles_are_refused() {
         let mut tr = walking([1.0, 2.2], [0.0, 1.0]);
-        assert!(tr.entering()[1].p > 0.3);
-        // the same tiles, no look-ahead: "wird betreten" anew from the new world
-        let mut config = testing::flat_config();
-        config.params.lead_time = 0.0;
-        tr.set_outputs(crate::params::OutputParams::of(&config.params, 30.0))
-            .expect("outputs");
-        assert_eq!(tr.entering()[1].p, 0.0);
         // other tiles (the core's own build of the flat room: 0.4 m squares): refused, nothing changed
         let other = World::build(&testing::flat_config(), crate::params::Params::default()).expect("a world");
         let refused = tr.recalibrate(crate::sensors::SensorSet::default(), other);

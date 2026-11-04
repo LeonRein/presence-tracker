@@ -813,7 +813,7 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
     zugeordnete Person `sure` ≥ c erreicht, c = K_an / (K_an + K_dunkel) = `light_cost` / (`light_cost` + 1) = 2/3
     (Bayes-Entscheidung; I_GneitingRaftery2007 S. 364–365, Satz 3, jetzt je Person), und aus, wenn keine
     zugeordnete Person `occupied_off` erreicht. Keine Nachlaufzeit: Das verzögerte Ausschalten bleibt in Home
-    Assistant (bzw. Node-RED). Die App schaltet keine Lichter, sie liefert je Raum *besetzt*, *wird betreten* (unten).
+    Assistant (bzw. Node-RED). Die App schaltet keine Lichter, sie liefert je Raum *besetzt* und *Ziel* (unten).
     Die Regel ist zustandsarm und doppelt angewandt dieselbe; nach einem Neustart beginnt der Zustand leer und baut
     sich aus ihr auf. Bereiche ohne Sensor genauso, ein Bereich aus mehreren Räumen als ein Ort.
   - *Wer zählt:* Wer `occupied_off` erreicht und in einem Raum steht, der an ist. Wer zugeordnet ist, aber nicht
@@ -841,44 +841,24 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
   der Broker von früher hält (etwa die alten der Treppe), löscht die App beim Verbinden (`ha.py`: leere
   Konfiguration und leerer Zustand, beibehalten).
 - **Bewegt / ruhig:** aus den gezeichneten Personen (geht-Gewicht > 0,5 und > 0,15 m/s).
-- **Wird betreten** (`Tracker.entering`, je beobachtetem Raum und Bereich): `p_enter` = P(jemand, der
-  gerade mit Spur geht, ist binnen der Vorausschau T = `lead_time` darin). Je Person mit Spur (5.2)
-  rückt nur ihre Komponente *geht* vor (Stehende schwanken um Zentimeter, wer aufsteht, geht irgendwohin):
-  die OU-Näherung aus 3.2 in einem Schritt auf T/2 und auf T, Wände wie in 5.2 über die Sigma-Punkte der
-  Bewegung (Türlücken sind keine Wand), die Masse je Raum wie für die Ausgaben (Punkte hinter einer Wand,
-  vom Mittel aus gesehen, zählen nicht). Wer vorher anhält (Rate s/ℓ, 3.2), bleibt, wo er anhielt; die
-  Zeit des Anhaltens auf den drei Knoten 0, T/2, T. Der Anstieg max(P(dort bei T/2), P(dort bei T)) −
-  P(dort jetzt), mindestens 0, ist die Wahrscheinlichkeit, dass sie hineinkommt (eine untere Schranke für
-  „irgendwann darin“; wer drin ist, bleibt). Gegeben eine Hypothese sind die Personen unabhängig:
-  `p_enter` = Σ_h w_h (1 − Π (1 − Anstieg)), über alle Hypothesen (5.1). Nichts gezogen, ein Horizont,
-  nur für Personen, die zu mindestens 2 % gehen. Dazu für die Person, die am wahrscheinlichsten
-  hereinkommt, Weg und Zeit bis in den Raum (gerade weiter mit ihrem Tempo, nicht durch Wände) und ihre
-  Nummer in der Anzeige. Räume ohne Sensor: keine Vorhersage. **An**, wenn `p_enter > c_v` mit
-  `c_v = K_v / (K_v + K_d)` (Bayes-Entscheidung wie oben): K_v ein Einschalten auf Verdacht, nach dem
-  niemand hereinkommt (mit der Regel in Home Assistant/Node-RED: 30 s Licht im leeren Raum), K_d ein
-  Eintritt ins Dunkle; `approach_cost` = K_v / K_d = 0,05 (Leons Versuch „1 s / 1 m vorher“, 7.10.),
-  also c_v = 0,048. Mit den linearen Kosten von `light_cost` (30 s Licht ohne Person gegen ~1 s Dunkel
-  mit Person) lohnte sich keine Vorhersage (c_v = 60/61); ein dunkler Eintritt zählt deshalb als eigenes
-  Ereignis. Gemessen (10, „Vorausschauend einschalten“): mit T = 2 s und c_v = 0,048 brennt das Licht vor
-  60 % der Eintritte in dunkle Räume mindestens 1 s, vor 62 % mindestens 1 m vorher (heute 2 %), für
-  4,0 vergebliche 30-s-Lichter je Stunde (Tagesmittel; ohne Wohnzimmer 2,2). `p_enter` ist vorsichtig:
-  Von den Momenten mit `p_enter` 0,05–0,1 vor einem leeren Raum kam in 28 % binnen T + 1 s jemand herein,
-  bei 0,1–0,2 in 45 %, bei 0,3–0,5 in 76 %; das OU-Modell vergisst die Richtung nach 1,2 s, vor Türen
-  geht man gerader (9). Die Schwelle aus den Kosten wirkt also auf eine zu kleine Wahrscheinlichkeit:
-  c_v = 0,048 entspricht einer gemessenen Trefferquote um 0,25.
-  Bis 0.15.0 war „wird betreten“ ein Flag aus den Personen der wahrscheinlichsten Hypothese: ihr Mittel
-  1 s geradeaus (ab 0,3 m/s), durch Wände hindurch.
-- **Ziel** (`Tracker.targets`, `learn/destination.rs`, je beobachtetem Raum): P(ein Gehender geht als Nächstes
-  in diesen Raum), ohne Horizont. Zwei Quellen:
-  - *Die Bewegung:* `p_enter` von *wird betreten* (oben), unverändert.
-  - *Die gelernte Karte, wohin Gänge gingen* (eine ortsabhängige Karte der Raumnutzung aus Spuren,
-    J_Luber2014 Kap. 6, Abschn. 6.5; Übergänge aus Daten gelernt, G_Liao2003). Je Zelle (0,3 m, an den
-    Räumen geteilt wie die Kacheln), Richtung (16) und Tempo (0,3–0,7 / 0,7–1,1 / ab 1,1 m/s) zählt sie
-    die Gänge je Ausgang: der Raum hinter der ersten Tür, ein Bereich ohne Sensor, außer Haus, oder
-    „bleibt“ (der Gang endet ohne Tür, 2 s Stehen). Jeder Schritt eines Gangs zählt mit einem Kern
-    (0,3 m, 0,3 m/s, wie in der Untersuchung) auf den Zellen um ihn, nur im eigenen Raum und nicht durch
-    Wände, so normiert, dass ein Gang durch die Mitte einer Zelle in ihrer Geschwindigkeit dort 1 zählt.
-    Gefragt wird sie über die Zellen um den Ort (0,15 m) und linear zwischen Richtungen und Tempi.
+- **Ziel** (`Tracker.targets`, `learn/destination.rs`, je beobachtetem Raum und je Bereich): P(ein Gehender geht
+  als Nächstes dorthin), ohne Horizont, allein aus der gelernten Karte, wohin Gänge gingen (eine ortsabhängige
+  Karte der Raumnutzung aus Spuren, J_Luber2014 Kap. 6, Abschn. 6.5; Übergänge aus Daten gelernt, G_Liao2003).
+  - *Die Karte:* Je Zelle (0,3 m, an den Räumen geteilt wie die Kacheln), Richtung (16) und Tempo (0,3–0,7 /
+    0,7–1,1 / ab 1,1 m/s) zählt sie die Gänge je Ausgang: der Raum hinter der ersten Tür, ein Bereich ohne
+    Sensor, außer Haus, ein Bereich (unten) oder „bleibt“ (der Gang endet ohne Tür, 2 s Stehen, in keinem
+    Bereich). Jeder Schritt eines Gangs zählt mit einem Kern (0,3 m, 0,3 m/s, wie in der Untersuchung) auf
+    den Zellen um ihn, nur im eigenen Raum und nicht durch Wände, so normiert, dass ein Gang durch die Mitte
+    einer Zelle in ihrer Geschwindigkeit dort 1 zählt. Gefragt wird sie über die Zellen um den Ort (0,15 m)
+    und linear zwischen Richtungen und Tempi. Ein Gang durch mehrere Räume ist je Raum einer: Nach jeder Tür
+    beginnt ein neuer, die Schritte davor zählen für den Raum dahinter (fürs Licht genügt der nächste Raum;
+    zwei Räume voraus verteilten die Gänge auf viel mehr Ausgänge).
+  - *Bereiche als Ausgang* (seit 0.56; Leon, 4.11.: die Speisekammer hinter der Küche, „Vorratszimmer“, ohne
+    Tür, der Küchensensor sieht durch die Lücke nur einen Streifen). Ein Bereich ist Ausgang der Räume, deren
+    Zellen er enthält. Ein Gang endet in ihm, wenn die Person dort 2 s steht (wo sich Bereiche überlappen, im
+    kleinsten), oder wenn ihre Spuren dort enden und binnen 1,5 s niemand den Gang übernimmt: Wer in einen
+    toten Winkel geht, bleibt nicht sichtbar stehen. Sonst zählt ein Gang ohne Übernahme weiter nicht. Ein
+    Geist, dessen Spur in einem Bereich endet, zählt so als Gang dorthin; die Karte ist nur Ausgabe (unten).
   - *Ein Raumteiler ist keine Tür:* Räume, die nur ein Raumteiler trennt, sind für die Gänge ein Raum
     (dort pendelt man, ZIEL-Untersuchung 3.1; Wohn- und Esszimmer sind eine Lichtgruppe). Ein Gang über
     den Raumteiler geht weiter, sein Ausgang ist die nächste Tür; die Karte sagt dort für den Raum
@@ -888,57 +868,57 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
     Hypothesen, 10 „Geisterkarte“). Weich sind nur die Schritte: Der Ausgang eines Gangs (wo die Person
     nach der Tür ist) kommt aus der schwersten Hypothese, die sie hält (`learn/destination.rs`, `observe`). Eine Person ist ihre früheste laufende Spur; endet sie, übernimmt den
     Gang, wer binnen 1,5 s höchstens 1 m daneben auftaucht (Übergabe an einer Tür). Der Ausgang: der Raum
-    oder Bereich, in dem die Person zwei Takte nach einer Tür ist, oder „bleibt“ nach 2 s mit P(geht) <
-    ½. Ein Gang, dessen Spuren enden, ohne dass jemand ihn übernimmt, zählt nicht. Vergessen mit 14 Tagen.
+    oder Bereich ohne Sensor, in dem die Person zwei Takte nach einer Tür ist, ein Bereich (oben), oder
+    „bleibt“ nach 2 s mit P(geht) < ½. Vergessen mit 14 Tagen.
     Gespeichert mit dem Übrigen Gelernten (`destinations.json`, Fehlermeldungen). Andere Räume, Türen oder
-    Bereiche: die Karte beginnt leer; ein neu kalibrierter Sensor ändert nichts an ihr.
+    Zonen: die Karte beginnt leer.
   - *Nur Ausgabe:* Die Karte liest die Hypothesen, sie ändert keinen Zustand und kein Gewicht des Filters.
     Darum kann sie keinen Fehler des Verfolgens verstärken (10: aus den eigenen Urteilen lernt das Modell
     seine Fehler; hier lernt nur die Ausgabe).
 
-  **Die Mischung ist ein Dirichlet-Posterior mit der Bewegung als Prior.** Je Gehendem k mit
-  den Gängen n_k an seiner Stelle und Geschwindigkeit, davon der Anteil f_k(R) in den Raum R:
-  `P_k(R) = (n_k f_k(R) + α q(R)) / (n_k + α)` mit dem Gewicht α des Priors in Gängen
-  (`dest_prior_walks` = 1: ein Gang allein
-  macht keine Stelle zum Ziel, wenige gleiche tun es). Für den Raum, über die Gehenden und Hypothesen:
+  **Ein Dirichlet-Posterior mit einem Prior, der nirgends hingeht.** Je Gehendem k mit den Gängen n_k an
+  seiner Stelle und Geschwindigkeit, davon der Anteil f_k(Z) zur Zone Z:
+  `P_k(Z) = n_k f_k(Z) / (n_k + α)` mit dem Gewicht α des Priors in Gängen (`dest_prior_walks` = 1: ein
+  Gang allein macht keine Stelle zum Ziel, zwei gleiche ergeben 2/3, vier 0,8). Für die Zone, über die
+  Gehenden und Hypothesen:
 
-  `P(R) = (1 − λ) q_move(R) + λ q_map(R)`, `λ = n / (n + α)`,
+  `P(Z) = λ q_map(Z)`, `λ = n / (n + α)`,
 
-  - `q_map(R) = Σ_h w_h (1 − Π_k (1 − P(k geht) f_k(R)))`, wie `p_enter` über alle Hypothesen;
-  - n = die Gänge hinter den Gehenden, die als Nächstes nach R gehen könnten (durch eine Tür; über einen
-    Raumteiler mit f = 0), gemittelt mit P(geht) und dem Gewicht ihrer Hypothese;
-  - `q_move(R)` = `p_enter` auf der Skala der Schwelle des Raums: seine Odds mal odds(c_R) / odds(c_v)
-    (eine Verschiebung der log-Odds, Platt-Skalierung mit Steigung 1). So ist `q_move ≥ c_R` genau
-    dort, wo `p_enter > c_v`: Ohne Gelerntes ist *Ziel* **genau** *wird betreten* (Test; im Code
-    für λ = 0 dieselbe Abfrage `p_enter > c_v`, also bitgleich). Das ist keine Trefferquote (`p_enter`
-    ist zu klein, oben), sondern dieselbe Entscheidung auf der Skala, auf der die Karte kalibriert ist.
+  - `q_map(Z) = Σ_h w_h (1 − Π_k (1 − P(k geht) f_k(Z)))`, über alle Hypothesen (5.1);
+  - n = die Gänge hinter den Gehenden, die als Nächstes nach Z gehen könnten (ein Raum durch eine Tür, über
+    einen Raumteiler mit f = 0; ein Bereich ihres Raums, in dem sie nicht schon sind), gemittelt mit P(geht)
+    und dem Gewicht ihrer Hypothese.
 
-  **An**, wenn `P(R) ≥ c_R` mit `c_R = K_Fehl / (K_Fehl + K_spät)` je Raum (Bayes-Entscheidung wie für
-  *besetzt*; K_Fehl ein Licht auf Verdacht ohne Person, K_spät ein Eintritt ins Dunkle).
-  `target_threshold` = 0,8 (K_Fehl = 4 K_spät), je Raum anders (`target_thresholds`). Anders als bei
-  `approach_cost` wirkt die Schwelle hier auf eine kalibrierte Wahrscheinlichkeit (die Karte: von den
-  Momenten mit 0,9–0,95 traten 89 % ein, ZIEL-Untersuchung 3.4), also auf das, was die Kosten meinen.
-  Warum nicht dieselben Kosten wie `approach_cost` (0,05, also c = 0,048)? Bei `p_enter` entspricht
-  0,048 einer gemessenen Trefferquote um 0,25; ein Licht, das bei 25 % auf Verdacht angeht, wäre mit der
-  Karte, die über den ganzen Weg rechnet, 19 Fehl-Ein je Stunde (ZIEL 3.2, P ≥ 0,3). 0,8 liegt dort,
-  wo Fehl-Ein selten sind (1,2 je Stunde in der Untersuchung) und Leons Vorgabe gilt, Licht ohne Person
-  sei der schlimmste Fehler (1.1, `light_cost` = 2 meint c = 2/3). Gemessen in 10 („Ziel“): mit 0,8
-  halb so viele Fehl-Ein wie *wird betreten*, aber seltener früh; mit 0,5 in beidem besser. Die Wahl ist
-  eine der Kosten, also Leons (je Raum einstellbar). Wo die Karte nichts weiß, gilt die Schwelle nicht:
-  dort entscheidet `p_enter > c_v`.
+  Wo die Karte nichts weiß (n = 0), ist *Ziel* aus. Bis 0.55 war der Prior die eigene Bewegung (*wird
+  betreten*: das OU-Modell 2 s vorausgerechnet, `P = (1 − λ) q_move + λ q_map`, ohne Gelerntes genau *wird
+  betreten*); Leon (4.11.): „eine komplett dumme Mischung aus zwei unterschiedlichen Systemen“, die
+  Vorhersage aus der Bewegung überflüssig, dass die Karte erst lernen muss, hinnehmbar. *Wird betreten*
+  ist mit ihr weg. Gemessen ist der Wechsel nicht (die Aufnahmen vom 6.–14.10. sind gelöscht); im
+  Test (`test_destination`, 20 gleiche Wege) liegt P vor der Tür bei 0,8–0,87 und flackert bei 0,8 um die
+  Schwelle, mit 0,66 ist es 80 % der Takte bis zur Tür an.
+
+  **An**, wenn `n > 0` und `P(Z) ≥ c_Z` mit `c_Z = K_Fehl / (K_Fehl + K_spät)` je Zone (Bayes-Entscheidung
+  wie für *besetzt*; K_Fehl ein Licht auf Verdacht ohne Person, K_spät ein Eintritt ins Dunkle).
+  `target_threshold` = 0,8 (K_Fehl = 4 K_spät), je Raum oder Bereich anders (`target_thresholds`). Die
+  Schwelle wirkt auf eine kalibrierte Wahrscheinlichkeit (von den Momenten mit 0,9–0,95 traten 89 % ein,
+  ZIEL-Untersuchung 3.4). Die Wahl ist eine der Kosten, also Leons (live 0,66).
 
   Attribute: die Wahrscheinlichkeit, aus welchem Raum der Gehende kommt, der am wahrscheinlichsten
-  hingeht, sein Abstand zur nächsten Tür dorthin (Luftlinie) und die Zeit bei seinem Tempo, seine
-  Nummer, die Gänge dahinter (n), das Gewicht der Karte (λ) und welcher Teil entschied (`karte` ab λ ≥
-  ½, sonst `bewegung`). Bereiche und Räume ohne Sensor: kein Ziel. Die Karte lernt in der App nur aus
-  dem, was die App live sieht; nach einem Update beginnt sie leer.
+  hingeht, sein Abstand zur nächsten Tür dorthin (ein Bereich: zu seiner nächsten Zelle; Luftlinie) und die
+  Zeit bei seinem Tempo, seine Nummer und die Gänge dahinter (n). Räume ohne Sensor: kein Ziel. Die Karte
+  lernt in der App nur aus dem, was die App live sieht; nach einem Update beginnt sie leer.
+  *Anzeige* (Tab *Gelerntes*, `DestMap::shown`): je Zelle die Richtungen (über die Tempi) zu Spitzen
+  zusammengefasst, jede Richtung zu der, zu der sie ansteigt; jede Spitze mit mindestens 15 % der Gänge der
+  Zelle ein Pfeil (höchstens 6) mit dem mittleren Tempo, ihren Gängen und dem häufigsten Ausgang mit seinem
+  Anteil. Ein Weg verschmiert beim Lernen über 2–3 Nachbarrichtungen (Kern 0,3 m/s); einzelne Richtungen über
+  einer Schwelle wären ein Fächer aus Pfeilen für einen Weg.
 - **An Home Assistant** (`ha.py`, `ZoneState.to_dict`): Jede Änderung von Zustand oder Attributen einer
   Entität ist eine Zeile im Recorder von Home Assistant. Deshalb: Wahrscheinlichkeiten in 5-%-Schritten,
-  Zeiten in 0,5 s, Wege in 0,5 m; die Zustände (*besetzt*, Zahl, *Bewegung*, *wird betreten*, *Ziel*)
+  Zeiten in 0,5 s, Wege in 0,5 m; die Zustände (*besetzt*, Zahl, *Bewegung*, *Ziel*)
   gehen in dem Takt hinaus, in dem sie wechseln; die Attribute einer Entität (`Discovery.steady`) neu mit
   jedem Wechsel ihres Zustands, sonst nur, wenn eines um mindestens zwei Stufen wanderte (eine Stufe ist
-  Rundungsflackern) und die letzte Änderung mindestens 10 s (Personenzahl: 60 s) her ist. *Wird betreten*
-  und *Ziel* aus: feste Attribute (Wahrscheinlichkeit 0, der Rest leer). Nur die Ausgabe an Home
+  Rundungsflackern) und die letzte Änderung mindestens 10 s (Personenzahl: 60 s) her ist. *Ziel* aus:
+  feste Attribute (Wahrscheinlichkeit 0, der Rest leer). Nur die Ausgabe an Home
   Assistant; die Anzeige der App bekommt die gerundeten Werte ungehalten.
 - Anzeige: Personen der wahrscheinlichsten Hypothese, die eher existieren als nicht (r ≥ 0,5, 5.5),
   ihre Dichten (r × Dichte) als Wärmekarten; einen Punkt und eine Zeile in der Liste hat nur, wer zählt (oben).
@@ -1005,7 +985,7 @@ P = 0,00 bei einer gemessenen Spur am Schreibtisch, 8.10. 00:29–06:14 im Schla
 Bett bis 45 min. Vermuteter Mechanismus: Die Spur wird bei ihrer Geburt in jeder überlebenden Hypothese
 ein Geist (neue Person nur bei harter Evidenz, danach H = 1–2), und mit nur einer Hypothese normiert sich
 jede Evidenz gegen „Geist“ weg (e^−71 für 46 min Geist). Bis das im Filter (5.1, Abschneiden, Geister)
-behoben ist, hängen *besetzt*, die Personenzahl, *wird betreten* und *Ziel* an den verlorenen Personen; die
+behoben ist, hängen *besetzt*, die Personenzahl und *Ziel* an den verlorenen Personen; die
 Ausgaberegel, die *besetzt* bis 0.54 darüber hinweg hielt, ist weg (10, „Eine Zuordnung“).
 
 Näherungen, die man prüfen oder ersetzen kann:
@@ -1096,16 +1076,6 @@ Näherungen, die man prüfen oder ersetzen kann:
   Wand laufen mit den Personen mit). Der Wohnzimmer-Maßstab ist auf 8 m (durch die Tür in den Flur) 1,07,
   auf 2–6 m 1,13: ein Entfernungsversatz statt eines Maßstabs ist ungeprüft. Ein Faktor auf
   sin(Azimut) je Sensor (Phasen-Monopuls) machte die Fenster nicht einheitlicher.
-
-- **„Wird betreten“ kennt nur das allgemeine Gehen** (6): Die OU-Näherung vergisst die Richtung mit
-  τ = 1,2 s, das Mittel eines Gehenden läuft höchstens v·τ ≈ 1,2 m weit. Vor Türen geht man gerader
-  (Autokorrelation der Geschwindigkeit in den letzten 3 s vor einem Durchgang 0,94 / 0,78 / 0,52 nach
-  0,4 / 1 / 2 s, über alle Wege 0,64 / 0,46 / 0,17). Folgen: `p_enter` ist zu klein (6), und wer in
-  weniger als etwa 1,3 m an einer Tür vorbeigeht, erreicht in der Simulation `p_enter` 0,05–0,16 (bei
-  c_v = 0,048: Verdacht), wer geradewegs auf sie zugeht 0,3–0,4. Der Raumteiler Wohn-/Esszimmer ist
-  keine Wand: Dort entsteht fast die Hälfte der vergeblichen Verdachte, unabhängig von der Schwelle
-  (10). Abhilfe wäre ein zielgerichtetes Gehen (je Tür eine Komponente mit Zug zur Tür; J_Luber2014
-  Abschn. 6.5, G_Liao2003), erst wenn diese Stufe nicht reicht.
 
 - **Der Versatz einer Spur bleibt, solange sie lebt** (Meldung 7.10. 18:31: „Der LD2450 ortet mich
   immer leicht oberhalb meiner Position. Müsste sich meine Position nicht annähern?“). Mit einem Sensor

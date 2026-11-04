@@ -81,7 +81,7 @@ pub const TARGET_THRESHOLD: Limits = Limits::between(0.0, 1.0);
 
 /// The tracker's parameters and their limits. A value outside is a typo, not a setting: light_cost 0 (an
 /// emptied field) put every room above its threshold, every light on.
-pub const PARAMS: [(&str, Limits); 14] = [
+pub const PARAMS: [(&str, Limits); 12] = [
     ("target_height", Limits::closed(0.0, 2.5)),
     ("range_sigma_base", Limits::above(0.0, 2.0)),
     ("range_sigma_slope", Limits::closed(0.0, 1.0)),
@@ -93,8 +93,6 @@ pub const PARAMS: [(&str, Limits); 14] = [
     ("ld2410_hold", Limits::closed(0.0, 60.0)),
     ("light_cost", Limits::above(0.0, 1000.0)), // the threshold c / (c + 1) > 0
     ("occupied_off", Limits::closed(0.0, 1.0)),
-    ("lead_time", Limits::above(0.0, 5.0)),
-    ("approach_cost", Limits::above(0.0, 1000.0)),
     ("target_threshold", TARGET_THRESHOLD),
 ];
 

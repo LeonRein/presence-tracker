@@ -1,6 +1,6 @@
 """Home Assistant entities via MQTT discovery: one device, four entities per room/area zone of the home
-and a fifth ("Ziel") per room (not for an entry room: the stairwell is outside, MODEL.md 6), and the
-switch "Lernen pausieren" (pause.py).
+("Ziel" with them; not for an entry room: the stairwell is outside, MODEL.md 6), three for the house, and
+the switch "Lernen pausieren" (pause.py).
 
 Availability: every entity is available while the app is (AVAILABILITY). The entities of a room with an
 own sensor in use (the core's silent.rs) have a second topic, the room's own (zone_availability): "offline" while
@@ -27,9 +27,9 @@ def zone_availability(zone_id: str) -> str:
     return f"{PREFIX}/zone/{zone_id}/availability"
 
 
-def _entities(zone_id: str, name: str, room: bool = False, own: bool = False) -> list:
-    """(component, object_id suffix, config) for one zone; "Ziel" only for a room; own: the room has an
-    own sensor in use, its entities are also unavailable while it is silent."""
+def _entities(zone_id: str, name: str, target: bool = True, own: bool = False) -> list:
+    """(component, object_id suffix, config) for one zone; target: with "Ziel" (a room or an area, not the
+    house); own: the room has an own sensor in use, its entities are also unavailable while it is silent."""
     state = f"{PREFIX}/zone/{zone_id}/state"
     if own:
         avail = {"availability": [{"topic": AVAILABILITY}, {"topic": zone_availability(zone_id)}],
@@ -37,14 +37,14 @@ def _entities(zone_id: str, name: str, room: bool = False, own: bool = False) ->
     else:
         avail = {"availability_topic": AVAILABILITY}
     base = {"state_topic": state, **avail, "device": DEVICE}
-    target = [
-        # MODEL.md 6: somebody walking goes into the room next (their motion, and the learned map where
-        # it knows enough); the probability that decides, from where, how far, and which part decided
+    ziel = [
+        # MODEL.md 6: somebody walking goes into the zone next (the learned destination map); the
+        # probability that decides, from where, how far, and how many walks are behind it
         ("binary_sensor", "ziel", {**base, "name": f"{name} Ziel", "icon": "mdi:walk",
                                    "value_template": "{{ 'ON' if value_json.target else 'OFF' }}",
                                    "json_attributes_topic": state,
-                                   "json_attributes_template": "{{ {'probability': value_json.p_target | default(none), 'from': value_json.target_from | default(none), 'distance': value_json.target_distance | default(none), 'eta': value_json.target_eta | default(none), 'person': value_json.target_person | default(none), 'walks': value_json.target_walks | default(none), 'source': value_json.target_source | default(none), 'weight': value_json.target_weight | default(none)} | tojson }}"}),
-    ] if room else []
+                                   "json_attributes_template": "{{ {'probability': value_json.p_target | default(none), 'from': value_json.target_from | default(none), 'distance': value_json.target_distance | default(none), 'eta': value_json.target_eta | default(none), 'person': value_json.target_person | default(none), 'walks': value_json.target_walks | default(none)} | tojson }}"}),
+    ] if target else []
     return [
         # MODEL.md 6 "Belegt": the filter's probability
         ("binary_sensor", "occupancy", {**base, "name": f"{name} besetzt", "device_class": "occupancy",
@@ -55,13 +55,7 @@ def _entities(zone_id: str, name: str, room: bool = False, own: bool = False) ->
                               "json_attributes_template": "{{ {'moving': value_json.count_moving | default(value_json.moving), 'still': value_json.count_still | default(value_json.still), 'probability': value_json.probability | default(none)} | tojson }}"}),
         ("binary_sensor", "moving", {**base, "name": f"{name} Bewegung", "device_class": "motion",
                                       "value_template": "{{ 'ON' if value_json.moving > 0 else 'OFF' }}"}),
-        # MODEL.md 6: P(somebody walking enters within the look-ahead) above its threshold; the
-        # probability, time, distance and who as attributes (for Node-RED and tuning)
-        ("binary_sensor", "approaching", {**base, "name": f"{name} wird betreten", "icon": "mdi:walk",
-                                           "value_template": "{{ 'ON' if value_json.approaching else 'OFF' }}",
-                                           "json_attributes_topic": state,
-                                           "json_attributes_template": "{{ {'p_enter': value_json.p_enter | default(none), 'eta': value_json.eta | default(none), 'distance': value_json.distance | default(none), 'person': value_json.person | default(none)} | tojson }}"}),
-    ] + target
+    ] + ziel
 
 
 DISCOVERY = "homeassistant/+/presence_tracker/+/config"  # every discovery config of this device
@@ -79,16 +73,15 @@ PAUSE_SWITCH = ("switch", "lernen_pausieren", {
 # Each change of an entity's state or attributes is a row in Home Assistant's recorder. The states go
 # out whenever they change; the attributes of each entity (a group of the payload) are held
 # (Discovery.steady): new with every flip of the entity's state, else only when one moved by more than
-# its tolerance and the group's last change is at least GAP s old. With "wird betreten" / "Ziel" off they
+# its tolerance and the group's last change is at least GAP s old. With "Ziel" off they
 # are one steady payload (probability 0, the rest empty).
 GROUPS = {
     # entity state -> (its attributes {key: tolerance (None: any change)}, GAP s, quiet while off)
     "count": ({"probability": 0.1, "count_moving": None, "count_still": None}, 60.0, False),
-    "approaching": ({"p_enter": 0.1, "eta": 1.0, "distance": 1.0, "person": None}, 10.0, True),
     "target": ({"p_target": 0.1, "target_from": None, "target_distance": 1.0, "target_eta": 1.0, "target_person": None,
-                "target_walks": 2.0, "target_source": None, "target_weight": 0.2}, 10.0, True),
+                "target_walks": 2.0}, 10.0, True),
 }
-QUIET = {"p_enter": 0.0, "p_target": 0.0}  # the rest None
+QUIET = {"p_target": 0.0}  # the rest None
 
 
 class Discovery:
@@ -184,7 +177,8 @@ class Discovery:
         items = [(zone_id, name, room) for zone_id, name, room in home] + [("_total", "Haus", False)]
         for zone_id, name, room in items:
             zid = "total" if zone_id == "_total" else slug(zone_id)
-            for component, suffix, cfg in _entities(zone_id, name, room, own=room and zone_id in watched):
+            for component, suffix, cfg in _entities(zone_id, name, target=zone_id != "_total",
+                                                    own=room and zone_id in watched):
                 uid = f"presence_tracker_{zid}_{suffix}"
                 cfg = {**cfg, "unique_id": uid,
                        "default_entity_id": f"{component}.presence_{slug(name)}_{suffix}"}

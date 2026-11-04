@@ -17,7 +17,7 @@ from presence_tracker.pause import Pauses
 from sim import Person, simulate
 
 from test_destination import routine
-from test_entering import two_rooms
+from test_destination import two_rooms
 from test_filter import FLUR_DOOR, flat_config
 from test_frames import sim_sensors, walk
 

@@ -13,7 +13,7 @@ a8e8de0 is the last commit with them: `git show a8e8de0:tracker/tests/fixtures/m
   (the stays' prior at its tiles, r = 1), `sitter` somebody standing at (3, 2.5) in `test_filter.flat_config(entry=
   True)`, `measured` two standing at (3, 3) in `flat_config()` with an LD2410C amplitude a track measured (0.3;
   `gauss.Gauss.source(...).to_tiles`, `measured_level` its level).
-- `destinations.json` (`destination.Geometry`, `DestinationMap`) for `test_entering.two_rooms`: the geometry's
+- `destinations.json` (`destination.Geometry`, `DestinationMap`) for `test_destination.two_rooms`: the geometry's
   fingerprint and number of cells, `around(3.5, 2.5)` (cells, weights), `vel_interp` of 1 m/s towards b (`ahead`)
   and towards a (`back`); `map` the map after two trips desk -> sofa and back (`test_destination.routine(2)`, as the
   filter of 0.38.1 counted them) as `DestinationMap.to_dict` wrote it, `map_lookup` its `lookup` there.

@@ -235,18 +235,6 @@ pub fn predict(
     mix.logw = [l0, l1];
 }
 
-/// Where a walker's walking component is h s ahead (MODEL.md 6 "wird betreten"):
-/// the OU velocity of 3.2 over one step h, the walls reflecting the move as in the prediction (door
-/// gaps are no wall). The mean and variance per axis of its position.
-pub fn walk_ahead(world: &World, walking: &Kalman, h: f64) -> (Point, Point) {
-    let before = walking.motion();
-    let step = ImmStep::new(&world.params, &world.shapes, h);
-    let (f, q) = transition(before.dim(), std::iter::empty(), &step);
-    let mut after = linear(&before, &f[WALK], &q[WALK]);
-    reflect_at_walls(world, &before, &mut after, &f[WALK], &q[WALK]);
-    (after.pos(), after.pos_var())
-}
-
 /// Walls reflect the walking component's motion (MODEL.md 3.2, 5.2): the
 /// augmented unscented transform with the 16 cubature points of position, velocity and noise per
 /// axis (Saerkkae & Svensson 2023 alg. 8.16 / 8.11), moved, mirrored at the walls (the velocity
@@ -410,35 +398,4 @@ fn go_through_doors(densities: &mut Densities, mix: &mut Mixture, moved: f64, ra
         away.region[r * ages] += moved / (a + moved) * rate_r / total;
     }
     *away.out += moved / (a + moved) * rate[regions] / total;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::testing;
-
-    /// A walking component at `at` with velocity v (position variance 0.01, velocity 0.05).
-    fn walking(at: Point, v: Point) -> Kalman {
-        let mut g = Kalman::zeros(2);
-        for ax in 0..2 {
-            let (mean, cov) = g.axis_mut(ax);
-            (mean[0], mean[1], cov[0], cov[3]) = (at[ax], v[ax], 0.01, 0.05);
-        }
-        g
-    }
-
-    #[test]
-    fn a_walker_ahead_follows_the_ou_velocity_and_walls_turn_them_back() {
-        let world = testing::flat();
-        let p = &world.params;
-        let (h, tau) = (1.5, 1.0 / p.turn_rate);
-        // in the open: the mean velocity decays over tau (MODEL.md 3.2)
-        let (at, var) = walk_ahead(&world, &walking([3.0, 2.5], [0.5, 0.0]), h);
-        assert!((at[0] - (3.0 + tau * (1.0 - (-h / tau).exp()) * 0.5)).abs() < 1e-12 && at[1] == 2.5);
-        assert!(var[0] > 0.01 && var[0] == var[1]);
-        // towards the wall at x = 6 m: mirrored at it, the mean stays inside
-        let (at, _) = walk_ahead(&world, &walking([5.6, 2.5], [1.5, 0.0]), h);
-        let free = 5.6 + tau * (1.0 - (-h / tau).exp()) * 1.5;
-        assert!(free > 6.0 && at[0] < 6.0, "{at:?}");
-    }
 }

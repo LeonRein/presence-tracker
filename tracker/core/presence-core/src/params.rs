@@ -465,9 +465,6 @@ pub struct OutputParams {
     pub light_cost: f64,
     /// and it goes off when none of them is there with this much (MODEL.md 6)
     pub occupied_off: f64,
-    /// s: the look-ahead of "wird betreten", on above approach_cost / (approach_cost + 1)
-    pub lead_time: f64,
-    pub approach_cost: f64,
     /// s without a frame: a room's own sensor is gone, the room silent
     pub silent_after: f64,
     /// "Ziel": on above this, per room id its own if it has one (MODEL.md 6)
@@ -485,12 +482,10 @@ const Z_90: f64 = 1.2815515655446004;
 
 /// The fields of the configuration's parameters that only the outputs read (OutputParams::of): a change
 /// of them alone builds nothing (Tracker::set_outputs).
-pub const OUTPUT_FIELDS: [&str; 7] = [
+pub const OUTPUT_FIELDS: [&str; 5] = [
     "ld2410_hold",
     "light_cost",
     "occupied_off",
-    "lead_time",
-    "approach_cost",
     "target_threshold",
     "target_thresholds",
 ];
@@ -500,8 +495,6 @@ impl OutputParams {
         Self {
             light_cost: p.light_cost,
             occupied_off: p.occupied_off,
-            lead_time: p.lead_time,
-            approach_cost: p.approach_cost,
             silent_after,
             target_threshold: p.target_threshold,
             target_thresholds: p.target_thresholds.clone(), // the world's own copy of the configuration's
@@ -512,16 +505,9 @@ impl OutputParams {
 
     pub fn validate(&self) -> Result<(), String> {
         let ok = |x: f64| x >= 0.0 && x.is_finite();
-        if [
-            self.light_cost,
-            self.occupied_off,
-            self.lead_time,
-            self.approach_cost,
-            self.silent_after,
-            self.ld2410_hold,
-        ]
-        .iter()
-        .all(|&x| ok(x))
+        if [self.light_cost, self.occupied_off, self.silent_after, self.ld2410_hold]
+            .iter()
+            .all(|&x| ok(x))
         {
             Ok(())
         } else {
@@ -548,11 +534,6 @@ impl OutputParams {
             .copied()
             .unwrap_or(self.target_threshold);
         c.clamp(1e-6, 1.0 - 1e-6)
-    }
-
-    /// The threshold of p_enter for "wird betreten".
-    pub fn entering_above(&self) -> f64 {
-        self.approach_cost / (self.approach_cost + 1.0)
     }
 }
 

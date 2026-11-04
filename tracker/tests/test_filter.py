@@ -139,10 +139,10 @@ def test_a_recalibrated_sensor_keeps_the_people():
             samples.append((t, float(dist[2]) if len(dist) > 2 else 0.0))
     assert crowd.config.data["sensors"][0]["heading"] == 46.5
     assert all(p > 0.9 for t, p in samples), [(round(t), round(p, 3)) for t, p in samples if p <= 0.9]
-    # what only the outputs read (the light's cost, "wird betreten", the display) and the names of
+    # what only the outputs read (the light's cost, "Ziel", the display) and the names of
     # zones and sensors: nothing of the model changes, the tracks and hypotheses stay
     d = turned.to_dict()
-    d["params"].update(light_cost=3.0, approach_cost=0.1, lead_time=3.0, ld2410_hold=5.0, target_threshold=0.7)
+    d["params"].update(light_cost=3.0, occupied_off=0.25, ld2410_hold=5.0, target_threshold=0.7)
     d["zones"][0]["name"] = "Wohnzimmer"
     d["sensors"][1]["name"] = "Ecke"
     # per hypothesis its weight and what it says about the live tracks
@@ -167,11 +167,11 @@ def test_reconfigure_builds_nothing_for_the_outputs_and_starts_over_only_in_anot
     config = flat_config(entry=True)
     tr = Tracker(config, start=0.0, people=["anywhere"])
     d = config.to_dict()
-    d["params"].update(light_cost=3.0, lead_time=3.0, approach_cost=0.5)
+    d["params"].update(light_cost=3.0, target_threshold=0.5)
     with monkeypatch.context() as m:
         m.setattr(tr, "_new_world", lambda: pytest.fail("a world was built"))
         assert not tr.reconfigure(Config.from_dict(d))
-    assert next(iter(tr.zone_states().values())).c_enter == 0.5 / 1.5
+    assert next(iter(tr.zone_states().values())).c_target == 0.5
     bad = {**d, "sensors": [{**s, "range": 50.0} for s in d["sensors"]]}  # beyond what the core holds
     with pytest.raises(ValueError, match="range"):
         tr.reconfigure(Config.from_dict(bad))

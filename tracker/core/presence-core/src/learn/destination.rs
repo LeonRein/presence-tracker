@@ -1,8 +1,8 @@
 //! Where a walker goes next ("Ziel", MODEL.md 6): a map, learned by the app, of where
 //! the walks went from each place, in each direction and at each speed - per cell (CELL m squares split
 //! at the rooms), per velocity cell (SECTORS directions x the speed classes around SPEED_MID) and per
-//! outcome (the room behind the first door the walk goes through, a region, out of the house, or
-//! "stays") the number of walks (J_Luber2014 ch. 6, sec. 6.5; G_Liao2003). Each step of a walk counts
+//! outcome (the room behind the first door the walk goes through, a region, out of the house, the area it
+//! ends in, or "stays") the number of walks (J_Luber2014 ch. 6, sec. 6.5; G_Liao2003). Each step of a walk counts
 //! with a Gaussian kernel on the cells around it, within its own space (rooms joined by dividers) and
 //! not across a wall, normalized so that one walk straight through a cell counts 1 there. Learned from
 //! the model's own walkers (Learner); an output only, it never changes the filter. Counts fade with
@@ -23,7 +23,7 @@ use crate::filter::holders::Obj;
 use crate::filter::hyp::Owner;
 use crate::filter::mixture::{MixtureId, SegId};
 use crate::formats::{self, Fingerprint, field, number, object, round_numpy};
-use crate::geometry::{Point, Walls};
+use crate::geometry::{Point, Shape, Walls};
 use crate::params::WALK;
 use crate::plan::{Place, Plan, RoomIdx};
 use crate::vmath::{pairwise_sum, py_hypot};
@@ -50,6 +50,10 @@ const ARRIVE: u32 = 2;
 /// s, m: a walk whose tracks end is taken over by a walker appearing this soon and near
 const LINK_TIME: f64 = 1.5;
 const LINK_DIST: f64 = 1.0;
+/// the web UI's arrows: a cell's lobe of directions with less than this share of its walks has none, and a cell
+/// at most this many
+const ARROW_MIN: f64 = 0.15;
+const ARROWS: usize = 6;
 /// s: a walk's steps older than this are dropped (walks last 2.4 s on average)
 const MAX_PENDING: f64 = 60.0;
 /// a walker with less weight (hypothesis x P(walking)) is not counted
@@ -122,7 +126,7 @@ pub struct DestCell {
 }
 
 /// The map's cells and outcomes for a floor plan, part of the world. Outcomes:
-/// the observed rooms, the regions, out of the house, stays.
+/// the observed rooms, the regions, out of the house, the areas, stays.
 #[derive(Debug)]
 pub struct DestGeometry {
     pub cells: Vec<DestCell>,
@@ -135,8 +139,11 @@ pub struct DestGeometry {
     cell_of_fine: Vec<Option<usize>>,
     /// per space what a walk in it can end in
     allowed: Vec<Vec<bool>>,
-    /// per (space, outcome) where its doors are
+    /// per (space, outcome) where it is entered: its doors, an area's cells
     doors: BTreeMap<(usize, usize), Vec<Point>>,
+    /// per area its outcome, its outline and how many cells of the map it holds (where areas overlap, the
+    /// smallest is where a walk ended)
+    areas: Vec<(usize, Shape, usize)>,
     /// the outcomes' names
     names: Vec<String>,
     fingerprint: String,
@@ -153,9 +160,10 @@ impl DestGeometry {
             .collect();
         let (cells, cell_of_fine) = map_cells(raster, &fine);
         let neigh = (0..cells.len()).map(|c| neighbours(&cells, &space, walls, c)).collect();
-        // outcomes: observed rooms, regions, outside, stays
-        let stay = k + r + 1;
-        let mut allowed = vec![vec![false; k + r + 2]; k];
+        // outcomes: observed rooms, regions, outside, areas, stays
+        let n_areas = plan.areas().count();
+        let stay = k + r + 1 + n_areas;
+        let mut allowed = vec![vec![false; stay + 1]; k];
         for a in &mut allowed {
             a[stay] = true;
         }
@@ -195,12 +203,26 @@ impl DestGeometry {
                 }
             }
         }
+        // an area is an outcome of the spaces it has cells of; it is entered at those cells
+        let mut areas = Vec::new();
+        for (j, z) in plan.areas().enumerate() {
+            let o = k + r + 1 + j;
+            let inside: Vec<&DestCell> = cells.iter().filter(|c| z.shape.contains(c.centre, 0.0)).collect();
+            for c in &inside {
+                let s = space[c.room.0];
+                allowed[s][o] = true;
+                doors.entry((s, o)).or_default().push(c.centre);
+            }
+            areas.push((o, z.shape.clone(), inside.len()));
+        }
         let names = plan
             .rooms
             .iter()
             .map(|z| plan.zones[z.0].id.clone())
             .chain(plan.regions.iter().map(|rg| rg.id.clone()))
-            .chain(["outside".to_string(), "stays".to_string()])
+            .chain(["outside".to_string()])
+            .chain(plan.areas().map(|z| z.id.clone()))
+            .chain(["stays".to_string()])
             .collect();
         let mut geo = Self {
             cells,
@@ -210,6 +232,7 @@ impl DestGeometry {
             cell_of_fine,
             allowed,
             doors,
+            areas,
             names,
             fingerprint: String::new(),
         };
@@ -255,7 +278,17 @@ impl DestGeometry {
         Some((cells, w.iter().map(|x| x / total).collect()))
     }
 
-    /// Straight distance from a point to the nearest door of the space to an outcome.
+    /// The area a walk of this space ended in at p (the smallest that holds p), if any.
+    fn area_at(&self, space: usize, p: Point) -> Option<usize> {
+        self.areas
+            .iter()
+            .filter(|(o, shape, _)| self.allowed[space][*o] && shape.contains(p, 0.0))
+            .min_by_key(|(_, _, n)| *n)
+            .map(|(o, _, _)| *o)
+    }
+
+    /// Straight distance from a point to the nearest door of the space to an outcome (an area: its nearest
+    /// cell).
     fn door_distance(&self, space: usize, outcome: usize, p: Point) -> Option<f64> {
         let pts = self.doors.get(&(space, outcome))?;
         pts.iter()
@@ -476,13 +509,21 @@ pub struct DestCellShown {
     pub at: Point,
     pub square: Point,
     pub room: String,
-    /// the walks counted in its most frequent velocity cell: the way most walks went through it, at this velocity
+    /// the walks counted through it
     pub walks: f64,
+    /// a way through it per peak of its directions, the most walked first
+    pub arrows: Vec<DestArrow>,
+}
+
+/// One way through a cell: a lobe of neighbouring directions around a peak (each direction climbs to the
+/// peak it rises to), the mean velocity of its walks, how many, and where most of them went (an outcome,
+/// "stays" too) with their share.
+#[derive(Debug, Serialize)]
+pub struct DestArrow {
     pub velocity: Point,
-    /// per outcome the share of the walks through it that went so, over all velocities, and the largest but
-    /// "stays": where they most often went next (None: none went on)
-    pub shares: Vec<f64>,
-    pub likely: Option<usize>,
+    pub walks: f64,
+    pub likely: usize,
+    pub share: f64,
 }
 
 /// What the map learned, for the web UI (derived::learned): its cells with walks counted.
@@ -494,13 +535,33 @@ pub struct DestShown {
     pub walks: f64,
     /// h: the counts fade with this time constant
     pub forget_hours: f64,
-    /// the outcomes: the observed rooms, the regions (ids), "outside", "stays"
+    /// the outcomes: the observed rooms, the regions (ids), "outside", the areas (ids), "stays"
     pub outcomes: Vec<String>,
     pub cells: Vec<DestCellShown>,
+    /// what an arrow needs of its cell's walks (ARROW_MIN), how many a cell has at most (ARROWS)
+    pub arrow_min: f64,
+    pub arrows: usize,
+}
+
+/// The lobes of a cell's directions (walks per sector, around the circle): per sector the peak it climbs
+/// to, always to the higher neighbour while one is higher.
+fn lobes(per_sector: &[f64; SECTORS]) -> [usize; SECTORS] {
+    std::array::from_fn(|mut i| {
+        loop {
+            let (l, r) = ((i + SECTORS - 1) % SECTORS, (i + 1) % SECTORS);
+            let up = if per_sector[r] > per_sector[l] { r } else { l };
+            if per_sector[up] > per_sector[i] {
+                i = up;
+            } else {
+                return i;
+            }
+        }
+    })
 }
 
 impl DestMap {
-    /// The map per cell as the web UI shows it (computed when asked, the map unchanged).
+    /// The map per cell as the web UI shows it (computed when asked, the map unchanged): per cell its ways,
+    /// each lobe of directions with at least ARROW_MIN of its walks, at most ARROWS.
     pub fn shown(&self, geo: &DestGeometry) -> DestShown {
         let k = self.outcomes;
         let fine = ((CELL / raster::CELL).round() as usize).max(1); // map_cells' blocks
@@ -511,23 +572,46 @@ impl DestMap {
             .iter()
             .zip(self.count.chunks(V * k))
             .filter_map(|(cell, count)| {
+                // per velocity cell its walks; per sector over the speeds
                 let per_v: Vec<f64> = count.chunks(k).map(|o| o.iter().map(|&c| f64::from(c)).sum()).collect();
                 let total: f64 = per_v.iter().sum();
                 if !(total > 0.0) {
                     return None;
                 }
-                let best = crate::outputs::argmax(&per_v);
-                let shares: Vec<f64> = (0..k)
-                    .map(|o| count.chunks(k).map(|v| f64::from(v[o])).sum::<f64>() / total)
+                let mut per_sector = [0.0; SECTORS];
+                for (v, w) in per_v.iter().enumerate() {
+                    per_sector[v % SECTORS] += w;
+                }
+                let peak = lobes(&per_sector);
+                let mut arrows: Vec<DestArrow> = (0..SECTORS)
+                    .filter(|&p| peak[p] == p)
+                    .filter_map(|p| {
+                        let vs: Vec<usize> = (0..V).filter(|v| peak[v % SECTORS] == p).collect();
+                        let walks: f64 = vs.iter().map(|&v| per_v[v]).sum();
+                        if walks < ARROW_MIN * total {
+                            return None;
+                        }
+                        let mean = |ax: usize| vs.iter().map(|&v| per_v[v] * VELOCITIES[v][ax]).sum::<f64>() / walks;
+                        let to: Vec<f64> = (0..k)
+                            .map(|o| vs.iter().map(|&v| f64::from(count[v * k + o])).sum())
+                            .collect();
+                        let likely = crate::outputs::argmax(&to);
+                        Some(DestArrow {
+                            velocity: [mean(0), mean(1)],
+                            walks,
+                            likely,
+                            share: to[likely] / walks,
+                        })
+                    })
                     .collect();
+                arrows.sort_by(|a, b| b.walks.total_cmp(&a.walks));
+                arrows.truncate(ARROWS);
                 Some(DestCellShown {
                     at: cell.centre,
                     square: [corner(cell.centre[0], r.x0), corner(cell.centre[1], r.y0)],
                     room: geo.names[cell.room.0].clone(),
-                    walks: per_v[best],
-                    velocity: VELOCITIES[best],
-                    likely: Some(crate::outputs::argmax(&shares[..geo.stay()])).filter(|&o| shares[o] > 0.0),
-                    shares,
+                    walks: total,
+                    arrows,
                 })
             })
             .collect();
@@ -537,6 +621,8 @@ impl DestMap {
             forget_hours: self.forget / 3600.0,
             outcomes: geo.names.clone(),
             cells,
+            arrow_min: ARROW_MIN,
+            arrows: ARROWS,
         }
     }
 }
@@ -676,7 +762,17 @@ impl Learner {
                 .filter(|(_, w)| !w.pending.is_empty() && w.space.is_some())
                 .map(|(_, w)| (t, w)),
         );
-        self.orphans.retain(|(t0, _)| t - t0 <= LINK_TIME);
+        // not taken over in time: a walk whose tracks ended in an area went there (a blind corner like a
+        // pantry), else it counts nothing
+        let (late, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.orphans)
+            .into_iter()
+            .partition(|(t0, _)| t - t0 > LINK_TIME);
+        self.orphans = waiting;
+        for (_, w) in late {
+            if let Some(o) = w.space.and_then(|s| geo.area_at(s, w.pos)) {
+                map.add(&w.pending, o);
+            }
+        }
         let k_rooms = world.plan.rooms.len();
         for (key, s) in seen {
             let space = s.loc.filter(|&l| l < k_rooms).map(|l| geo.space[l]);
@@ -808,7 +904,8 @@ fn advance(walk: &mut Walk, s: &Seen, space: Option<usize>, dt: f64, t: f64, geo
         walk.stand += dt;
         if walk.stand >= STOP_TIME {
             if !walk.pending.is_empty() {
-                map.add(&walk.pending, geo.stay());
+                // stopped in an area: it went there
+                map.add(&walk.pending, geo.area_at(own, s.pos).unwrap_or(geo.stay()));
             }
             walk.pending.clear();
             return;
@@ -846,16 +943,13 @@ fn advance(walk: &mut Walk, s: &Seen, space: Option<usize>, dt: f64, t: f64, geo
 
 // ------------------------------------------------------------------ "Ziel" (MODEL.md 6)
 
-/// "Ziel" of an observed room: P(a walker goes there next), whether it is on, the learned map's part
-/// of it and its weight, the walks counted for its walkers; for the walker who most probably goes
-/// there (if P >= 0.01) the room they are in, the way to the door, the time at their speed and their
-/// number in the display.
+/// "Ziel" of an observed room or an area: P(a walker goes there next), whether it is on, the walks counted for
+/// its walkers; for the walker who most probably goes there (if P >= 0.01) the room they are in, the way to
+/// the door (an area: to its nearest cell), the time at their speed and their number in the display.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Target {
     pub p: f64,
     pub on: bool,
-    pub map: f64,
-    pub weight: f64,
     pub walks: f64,
     pub from: Option<RoomIdx>,
     pub distance: Option<f64>,
@@ -875,15 +969,16 @@ struct Asked {
     velocity: Point,
 }
 
-/// "Ziel" per observed room. The walkers' own motion ("wird betreten",
-/// p_enter) is the prior, the learned map its data, per walker a Dirichlet posterior with
-/// dest_prior_walks walks of prior weight: P = (1 - lam) q_move + lam q_map with q_move = p_enter on the
-/// scale of the room's threshold c (odds x odds(c) / odds(c_v)), q_map = sum_h w_h (1 - prod_k (1 - P(k
-/// walks) f_k(room))), lam = n / (n + prior), n the walks counted for the walkers who could go there.
-/// On if P >= c; with nothing learned (lam = 0) exactly when "wird betreten" is on.
-pub fn targets(filter: &Filter, world: &World, map: &DestMap, entering: &[crate::outputs::Entering]) -> Vec<Target> {
+/// "Ziel" per observed room, then per area, from the learned map alone: per walker a Dirichlet posterior
+/// with dest_prior_walks walks of prior weight on none of them, P = lam q_map with q_map = sum_h w_h (1 -
+/// prod_k (1 - P(k walks) f_k(zone))) and lam = n / (n + prior), n the walks counted for the walkers who
+/// could go there. On if P >= c, the zone's threshold; with nothing learned never.
+pub fn targets(filter: &Filter, world: &World, map: &DestMap) -> Vec<Target> {
     let geo = &world.destinations;
     let k_rooms = world.plan.rooms.len();
+    // the targets' outcomes: the observed rooms, then the areas
+    let outcomes: Vec<usize> = (0..k_rooms).chain(geo.areas.iter().map(|a| a.0)).collect();
+    let n_t = outcomes.len();
     let found = crate::outputs::walkers(filter);
     let asked: Vec<Option<Asked>> = found.walkers.iter().map(|w| ask(geo, map, w)).collect();
     let hw = if found.held.is_empty() {
@@ -891,29 +986,38 @@ pub fn targets(filter: &Filter, world: &World, map: &DestMap, entering: &[crate:
     } else {
         filter.hyp_weights()
     };
-    let mut q_map = vec![0.0; k_rooms];
-    let (mut num, mut den) = (vec![0.0; k_rooms], vec![0.0; k_rooms]);
+    let mut q_map = vec![0.0; n_t];
+    let (mut num, mut den) = (vec![0.0; n_t], vec![0.0; n_t]);
     let mut share: Vec<(usize, Vec<f64>)> = Vec::new(); // per walker, in the order they come
     for (wh, mine) in hw.iter().zip(&found.held) {
-        let mut empty = vec![1.0; k_rooms];
+        let mut empty = vec![1.0; n_t];
         for held in mine {
             let Some(a) = &asked[held.walker] else { continue };
-            // the rooms this walker could go to next: by a door, or across a divider (there f = 0)
-            let rel: Vec<f64> = (0..k_rooms)
-                .map(|k| f64::from(k != a.room && (geo.allowed[a.space][k] || geo.space[k] == a.space)))
+            // what this walker could go to next: a room by a door, or across a divider (there f = 0); an area
+            // of their space they are not in yet
+            let rel: Vec<f64> = outcomes
+                .iter()
+                .enumerate()
+                .map(|(t, &o)| {
+                    f64::from(if t < k_rooms {
+                        o != a.room && (geo.allowed[a.space][o] || geo.space[o] == a.space)
+                    } else {
+                        geo.allowed[a.space][o] && !geo.areas[t - k_rooms].1.contains(a.at, 0.0)
+                    })
+                })
                 .collect();
             let at = match share.iter().position(|(i, _)| *i == held.walker) {
                 Some(at) => at,
                 None => {
-                    share.push((held.walker, vec![0.0; k_rooms]));
+                    share.push((held.walker, vec![0.0; n_t]));
                     share.len() - 1
                 }
             };
-            for k in 0..k_rooms {
-                empty[k] *= 1.0 - a.walking * a.shares[k] * rel[k];
-                num[k] += wh * a.walking * a.walks * rel[k];
-                den[k] += wh * a.walking * rel[k];
-                share[at].1[k] += wh * a.walking * rel[k] * (a.shares[k] + 1e-3);
+            for (t, &o) in outcomes.iter().enumerate() {
+                empty[t] *= 1.0 - a.walking * a.shares[o] * rel[t];
+                num[t] += wh * a.walking * a.walks * rel[t];
+                den[t] += wh * a.walking * rel[t];
+                share[at].1[t] += wh * a.walking * rel[t] * (a.shares[o] + 1e-3);
             }
         }
         for (q, e) in q_map.iter_mut().zip(&empty) {
@@ -921,37 +1025,17 @@ pub fn targets(filter: &Filter, world: &World, map: &DestMap, entering: &[crate:
         }
     }
     let best = found.held.get(found.best);
-    let o = &world.outputs;
-    let c_v = o.entering_above();
-    (0..k_rooms)
-        .map(|k| {
-            let c = o.target_above(&world.plan.room(RoomIdx(k)).id);
-            let pe = entering.get(k).map_or(0.0, |e| e.p);
-            let n = if den[k] > 0.0 { num[k] / den[k] } else { 0.0 };
-            let lam = if n > 0.0 {
-                n / (n + world.params.dest_prior_walks)
-            } else {
-                0.0
-            };
-            let q_move = if pe <= 0.0 {
-                0.0
-            } else if pe >= 1.0 {
-                1.0
-            } else {
-                let odds = pe / (1.0 - pe) * (c / (1.0 - c)) / (c_v / (1.0 - c_v));
-                odds / (1.0 + odds)
-            };
-            let (p, on) = if lam > 0.0 {
-                let p = (1.0 - lam) * q_move + lam * q_map[k];
-                (p, p >= c)
-            } else {
-                (q_move, pe > c_v) // nothing learned for these walkers: "wird betreten" decides
-            };
-            let mut t = Target {
-                p: p.clamp(0.0, 1.0),
-                on,
-                map: q_map[k],
-                weight: lam,
+    outcomes
+        .iter()
+        .enumerate()
+        .map(|(t, &o)| {
+            let c = world.outputs.target_above(&geo.names[o]);
+            let n = if den[t] > 0.0 { num[t] / den[t] } else { 0.0 };
+            let lam = n / (n + world.params.dest_prior_walks);
+            let p = (lam * q_map[t]).clamp(0.0, 1.0);
+            let mut target = Target {
+                p,
+                on: n > 0.0 && p >= c,
                 walks: n,
                 from: None,
                 distance: None,
@@ -959,20 +1043,20 @@ pub fn targets(filter: &Filter, world: &World, map: &DestMap, entering: &[crate:
                 person: None,
             };
             if p >= 0.01 {
-                let top = share.iter().reduce(|a, b| if b.1[k] > a.1[k] { b } else { a });
-                if let Some((walker, _)) = top.filter(|(_, s)| s[k] > 0.0) {
+                let top = share.iter().reduce(|a, b| if b.1[t] > a.1[t] { b } else { a });
+                if let Some((walker, _)) = top.filter(|(_, s)| s[t] > 0.0) {
                     let a = asked[*walker].as_ref().expect("a walker with shares was asked");
-                    let distance = geo.door_distance(a.space, k, a.at);
+                    let distance = geo.door_distance(a.space, o, a.at);
                     let speed = py_hypot(a.velocity[0], a.velocity[1]);
-                    t.from = Some(RoomIdx(a.room));
-                    t.distance = distance;
-                    t.eta = distance.filter(|_| speed > 0.05).map(|d| d / speed);
-                    t.person = best
+                    target.from = Some(RoomIdx(a.room));
+                    target.distance = distance;
+                    target.eta = distance.filter(|_| speed > 0.05).map(|d| d / speed);
+                    target.person = best
                         .and_then(|b| b.iter().find(|h| h.walker == *walker))
                         .map(|h| h.place + 1);
                 }
             }
-            t
+            target
         })
         .collect()
 }
@@ -1009,6 +1093,19 @@ mod tests {
     /// Two rooms of 3 x 3 m side by side, a sensor in each; between them a wall with a door at y 1.5,
     /// or a divider.
     fn two_rooms(divider: bool) -> World {
+        two_rooms_and(divider, "")
+    }
+
+    /// The two rooms with the door and a pantry: an area in b's far corner (5..6 x 2..3).
+    fn two_rooms_and_a_pantry() -> World {
+        two_rooms_and(
+            false,
+            r#", {"id": "p", "name": "P", "kind": "area", "shape": "rect", "points": [[5, 2], [6, 3]]}"#,
+        )
+    }
+
+    /// The two rooms and more zones after them (JSON objects, each after a comma).
+    fn two_rooms_and(divider: bool, zones: &str) -> World {
         let middle = if divider {
             r#"{"points": [[3.0, 0.0], [3.0, 3.0]], "kind": "divider"}"#.to_string()
         } else {
@@ -1028,8 +1125,10 @@ mod tests {
         };
         let c = config(
             &[("sa", "a", [0.05, 0.05], 45.0), ("sb", "b", [5.95, 0.05], 135.0)],
-            r#"[{"id": "a", "name": "A", "kind": "room", "shape": "rect", "points": [[0, 0], [3, 3]]},
-                {"id": "b", "name": "B", "kind": "room", "shape": "rect", "points": [[3, 0], [6, 3]]}]"#,
+            &format!(
+                r#"[{{"id": "a", "name": "A", "kind": "room", "shape": "rect", "points": [[0, 0], [3, 3]]}},
+                {{"id": "b", "name": "B", "kind": "room", "shape": "rect", "points": [[3, 0], [6, 3]]}}{zones}]"#
+            ),
             &format!("[{}]", walls.join(", ")),
             doors,
         );
@@ -1142,8 +1241,93 @@ mod tests {
         assert!(map.lookup(cells, &cw, [1.0, 0.0])[g.stay()] > 0.0);
     }
 
+    /// Walks in b from (4, 0.5) along v for `steps` of 0.1 s at 1 m/s, then stands for STOP_TIME + 1 s.
+    fn walk_and_stop(w: &World, map: &mut DestMap, v: Point, steps: usize) -> Walk {
+        let g = &w.destinations;
+        let mut at = [4.0, 0.5];
+        let mut walk = Walk::new(Some(g.space[1]), 0.0, at);
+        for k in 0..steps + 30 {
+            let walking = if k < steps { 1.0 } else { 1e-9 };
+            if k < steps {
+                at = [at[0] + 0.1 * v[0], at[1] + 0.1 * v[1]];
+            }
+            let s = seen(w, at, [v[0] * walking, v[1] * walking], walking);
+            advance(&mut walk, &s, s.loc.map(|l| g.space[l]), 0.1, 0.1 * k as f64, g, map);
+            walk.pos = s.pos;
+        }
+        walk
+    }
+
     #[test]
-    fn the_map_is_shown_per_cell_with_its_most_frequent_velocity_and_where_its_walks_went() {
+    fn an_area_is_an_outcome_of_its_room_a_stop_in_it_or_a_track_ending_in_it_went_there() {
+        let w = two_rooms_and_a_pantry();
+        let g = &w.destinations;
+        assert_eq!(g.names, ["a", "b", "outside", "p", "stays"]);
+        assert_eq!(
+            (g.allowed[g.space[0]][3], g.allowed[g.space[1]][3]),
+            (false, true),
+            "the pantry is in b"
+        );
+        // walking north-east into the pantry and stopping there: a walk to p; stopping short of it: stays
+        let mut map = DestMap::new(g);
+        walk_and_stop(&w, &mut map, [0.6, 0.8], 25);
+        assert_eq!(map.walks, 1.0);
+        let (cells, cw) = g.around([4.6, 1.3]).expect("in view");
+        let to = map.lookup(cells, &cw, [0.6, 0.8]);
+        assert!(to[3] > 0.0 && to[g.stay()] == 0.0, "{to:?}");
+        let mut map = DestMap::new(g);
+        walk_and_stop(&w, &mut map, [0.6, 0.8], 10);
+        let to = map.lookup(cells, &cw, [0.6, 0.8]);
+        assert!(to[3] == 0.0 && to[g.stay()] > 0.0, "{to:?}");
+        // tracks that end in the pantry and are taken over by nobody: it went there; elsewhere: nothing
+        let nobody = {
+            let mut f = Filter::new(w.density_shape(), w.sights.len());
+            let id = f
+                .objects_mut()
+                .densities
+                .alloc(crate::filter::densities::Kind::Intensity);
+            f.set_hyps(vec![crate::filter::hyp::Hyp::new(0.0, Vec::new(), id)]);
+            f
+        };
+        for (end, counted) in [([5.5, 2.5], 1.0), ([4.5, 1.0], 0.0)] {
+            let mut map = DestMap::new(g);
+            let mut walk = Walk::new(Some(g.space[1]), 0.0, [4.0, 0.5]);
+            let s = seen(&w, [4.2, 0.7], [1.0, 1.0], 1.0);
+            advance(&mut walk, &s, Some(g.space[1]), 0.1, 0.1, g, &mut map);
+            walk.pos = end;
+            let mut learner = Learner {
+                walks: Vec::new(),
+                orphans: vec![(0.0, walk)],
+            };
+            learner.observe(&mut map, &nobody, &w, 1.0);
+            assert_eq!(map.walks, 0.0, "still waiting for a hand-over");
+            learner.observe(&mut map, &nobody, &w, 2.0);
+            assert_eq!((map.walks, learner.orphans.len()), (counted, 0), "ended at {end:?}");
+        }
+    }
+
+    #[test]
+    fn an_area_has_its_target_for_walkers_of_its_room() {
+        let w = two_rooms_and_a_pantry();
+        let g = &w.destinations;
+        let mut map = DestMap::new(g);
+        for cell in map.count.chunks_exact_mut(g.outcomes()) {
+            cell[3] = 9.0;
+        }
+        // a walker in b heading for the pantry: the area's "Ziel" (after the two rooms) is on
+        let got = targets(&walker(&w, [4.5, 1.0], [0.6, 0.8]), &w, &map);
+        assert_eq!(got.len(), 3);
+        let lam = 9.0 / (9.0 + w.params.dest_prior_walks);
+        assert!((got[2].p - lam).abs() < 1e-12 && got[2].on, "{:?}", got[2]);
+        assert_eq!(got[2].from, Some(RoomIdx(1)));
+        assert!(got[2].distance.expect("to its nearest cell") < 1.5);
+        // in a: the pantry is no place to go next; in it already: neither
+        assert_eq!(targets(&walker(&w, [1.0, 1.5], [1.0, 0.0]), &w, &map)[2].p, 0.0);
+        assert_eq!(targets(&walker(&w, [5.5, 2.5], [0.6, 0.8]), &w, &map)[2].p, 0.0);
+    }
+
+    #[test]
+    fn the_map_is_shown_per_cell_with_an_arrow_per_way_and_where_its_walks_went() {
         // a cell of a: 3 walks east at 0.9 m/s into b and 1 that stayed, 1 walk north at 0.5 m/s into b; one
         // further east where they all stayed
         let w = two_rooms(false);
@@ -1167,10 +1351,19 @@ mod tests {
         let [cell, still] = &shown.cells[..] else {
             panic!("two cells with walks")
         };
-        assert_eq!((cell.room.as_str(), cell.walks, cell.likely), ("a", 4.0, Some(1)));
-        assert_eq!((still.walks, still.likely), (2.0, None));
-        assert!((cell.velocity[0] - 0.9).abs() < 1e-12 && cell.velocity[1].abs() < 1e-12);
-        assert_eq!(cell.shares, [0.0, 0.8, 0.0, 0.2]);
+        assert_eq!((cell.room.as_str(), cell.walks), ("a", 5.0));
+        // two ways: east (4 walks, 3 of them into b) first, then north (1 walk, a fifth: above ARROW_MIN)
+        let [east_way, north_way] = &cell.arrows[..] else {
+            panic!("two ways: {:?}", cell.arrows)
+        };
+        assert_eq!((east_way.walks, east_way.likely, east_way.share), (4.0, 1, 0.75));
+        assert!((east_way.velocity[0] - 0.9).abs() < 1e-12 && east_way.velocity[1].abs() < 1e-12);
+        assert_eq!((north_way.walks, north_way.likely, north_way.share), (1.0, 1, 1.0));
+        assert!(north_way.velocity[0].abs() < 1e-12 && (north_way.velocity[1] - 0.5).abs() < 1e-12);
+        assert_eq!(
+            (still.walks, still.arrows.len(), still.arrows[0].likely),
+            (2.0, 1, g.stay())
+        );
         let centre = g.cells[c].centre;
         assert_eq!(cell.at, centre);
         assert!((0..2).all(|k| cell.square[k] <= centre[k] && centre[k] < cell.square[k] + CELL));
@@ -1240,9 +1433,9 @@ mod tests {
 
     #[test]
     fn a_walker_s_target_is_the_map_s_share_weighted_by_its_walks_against_the_prior() {
-        // MODEL.md 6 "Ziel": nobody enters by their own motion (q_move = 0); the map counted 9 walks
-        // from here into b and 1 that stayed, so q_map = 0.9, lam = 10 / (10 + dest_prior_walks = 1)
-        // and P = lam q_map = 9/11 >= 0.8: on. a, the walker's own room, is no target.
+        // MODEL.md 6 "Ziel": the map counted 9 walks from here into b and 1 that stayed, so q_map = 0.9,
+        // lam = 10 / (10 + dest_prior_walks = 1) and P = lam q_map = 9/11 >= 0.8: on. a, the walker's own
+        // room, is no target.
         let w = two_rooms(false);
         let g = &w.destinations;
         let mut map = DestMap::new(g);
@@ -1250,18 +1443,19 @@ mod tests {
             (cell[1], cell[g.stay()]) = (9.0, 1.0);
         }
         let f = walker(&w, [1.0, 1.5], [1.0, 0.0]);
-        let got = targets(&f, &w, &map, &[]);
+        let got = targets(&f, &w, &map);
         let lam = 10.0 / (10.0 + w.params.dest_prior_walks);
         let (a, b) = (&got[0], &got[1]);
-        assert!((b.map - 0.9).abs() < 1e-12 && (b.walks - 10.0).abs() < 1e-12, "{b:?}");
         assert!(
-            (b.weight - lam).abs() < 1e-12 && (b.p - lam * 0.9).abs() < 1e-12,
+            (b.walks - 10.0).abs() < 1e-12 && (b.p - lam * 0.9).abs() < 1e-12,
             "{b:?}"
         );
         assert!(b.on && b.p >= w.outputs.target_above("b"));
         assert_eq!((b.from, b.person), (Some(RoomIdx(0)), Some(1)));
         let d = b.distance.expect("a way to the door");
         assert!((d - 2.0).abs() < 0.5 && b.eta == Some(d / 1.0), "{b:?}");
-        assert_eq!((a.p, a.on, a.weight, a.walks), (0.0, false, 0.0, 0.0));
+        assert_eq!((a.p, a.on, a.walks), (0.0, false, 0.0));
+        // nothing learned: off, whoever walks towards the door
+        assert!(!targets(&f, &w, &DestMap::new(g))[1].on);
     }
 }

@@ -65,7 +65,7 @@ Wandenden gekappt (`derived.plan.doors`: `{wall, t0, t1}`, 0.50.0); die Oberflä
 | Hypothesen, Gauß-Mischungen, Kacheldichten, Unbekannte; Bewegen, Evidenz, Verzweigen, Zusammenlegen, Abschneiden, Zurückgeben, Ablauf, Datenlücken | 3, 4.1, 4.2, 5, 7 | `filter.py`, `gauss.py`, `hidden.py`, `kernels.py` |
 | LD2410C: Sammeln, Likelihood, Echoquellen, Verrechnung; **Hintergrund, Anker und Echorate lernen** | 4.3 | `ld2410.py`, `filter.py` |
 | **Zielkarte** (Geometrie, Lernen der Gänge, Abfrage) | 6 „Ziel“ | `destination.py` |
-| Ausgaben: Zähl- und Ortsverteilungen, Belegt und „stumm“, *wird betreten*, *Ziel*, Personen der Anzeige, Snapshot | 6 | `filter.py`, `roomseen.py` |
+| Ausgaben: Zähl- und Ortsverteilungen, Belegt und „stumm“, *Ziel*, Personen der Anzeige, Snapshot | 6 | `filter.py`, `roomseen.py` |
 | Pausen als **Eingabe** (Intervalle; was in eine Pause fällt, lernt nichts) | 4.2 | `pause.Pauses.paused` |
 | Gespeicherte Formate lesen und schreiben, **unverändert**: `people_state`, LD2410C-Hintergrund, Zielkarte (als Zeichenketten/Dicts; Dateien schreibt Python) | 5.3, 4.2, 4.3, 6 | `to_dict`/`from_dict` der Klassen |
 | Kalibrierung: Messzeilen je Frame, Schätzer (Paare, Übergaben, Grundriss, Maßstäbe; EM, Gauß-Newton, robuste Kovarianz, Jackknife), Vorschlag mit Gründen, Fortschritt (`calibration/`, 0.45.0) | 10 | `calibration.py` |
@@ -221,7 +221,7 @@ Module von `presence-core`, nach MODEL.md:
 | `filter/{pool,densities,mixture,hyp}.rs` | 5.2–5.6 | Pools, `Hidden`/`Undetected`, `Gauss`, Hypothesen und ihr Schlüssel |
 | `filter/{step,evidence,branch,merge,ld_weigh}.rs` | 4, 5, 7 | Takt und Flush, Evidenz je Frame, Verzweigen, Zusammenlegen/Abschneiden, LD2410C-Verrechnung |
 | `learn/destination.rs` | 6 | Zielkarte samt Geometrie und Lernen der Gänge |
-| `outputs.rs`, `silent.rs` | 6 | Zähl-/Ortsverteilungen, Personen der Anzeige und Belegt (eine Zuordnung, `Occupied`), stumm, *wird betreten*, *Ziel*, Anzeige |
+| `outputs.rs`, `silent.rs` | 6 | Zähl-/Ortsverteilungen, Personen der Anzeige und Belegt (eine Zuordnung, `Occupied`), stumm, *Ziel*, Anzeige |
 | `formats.rs` | 4.2, 4.3, 5.3, 6 | die gespeicherten Formate (base64/zlib, float16/float32), byte-kompatibel lesbar |
 | `tracker.rs` | – | `Tracker`: die öffentliche Rust-API, die Python-Bindung und Wiedergabe gemeinsam nutzen |
 
@@ -356,7 +356,7 @@ der ein stummer Sensor als weg gilt (`silent_after`), ist ein Feld des Modells.
 Fehler: Nicht endliche Gewichte werden in Python ein `FloatingPointError` wie heute (die App beginnt neu).
 
 **`reconfigure` behält seine drei Wege** (`filter.reconfigure`, `_changed_sensors`):
-1. nur Ausgabeparameter (`params::OUTPUT_FIELDS` des Kerns, der Oberfläche als `derived.output_params`: `light_cost`, `occupied_off`, `lead_time`, `approach_cost`,
+1. nur Ausgabeparameter (`params::OUTPUT_FIELDS` des Kerns, der Oberfläche als `derived.output_params`: `light_cost`, `occupied_off`,
    `target_threshold`, `target_thresholds`; dazu `ld2410_hold`, das nur die Anzeige der Hülle liest) geändert:
    **kein Neubau** (`Core.set_outputs`), nichts beginnt neu, nur die Parameter und der Ausgabe-Cache;
 2. nur Sensoren oder Namen geändert (gedreht, verschoben, kalibriert, ein/aus; die Namen liest der Plan, z. B. den

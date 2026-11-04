@@ -262,16 +262,9 @@ impl PyJson for ZoneOut<'_> {
             .field("count", &s.count)
             .field("moving", &s.moving)
             .field("still", &s.still)
-            .field("approaching", &s.approaching)
-            .field("p_enter", &s.p_enter)
-            .field("eta", &s.eta)
-            .field("distance", &s.distance)
-            .field("person", &s.person)
-            .field("c_enter", &s.c_enter)
             .field("target", &s.target)
             .field("p_target", &s.p_target)
             .field("c_target", &s.c_target)
-            .field("target_weight", &s.target_weight)
             .field("target_walks", &s.target_walks)
             .field("target_from", &from)
             .field("target_distance", &s.target_distance)
@@ -280,7 +273,6 @@ impl PyJson for ZoneOut<'_> {
             .field("probability", &s.probability)
             .field("available", &s.available)
             .field("occupied", &s.occupied)
-            .field("target_source", &s.target_source)
             .end();
     }
 }

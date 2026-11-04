@@ -9,6 +9,7 @@ export function personColor(id) { return PERSON_COLORS[((id - 1) % PERSON_COLORS
 const OUTCOME_COLORS = ['#2f6fde', '#d9822b', '#2e9d5a', '#a855c7', '#c2413b', '#0f8f9c', '#b8961c', '#d6589c', '#5d8a2e', '#8a5a3c'];
 export function outcomeColor(outcomes, k) {
   if (outcomes[k] === 'outside') return '#3a3f47';
+  if (outcomes[k] === 'stays') return '#9aa0a6';
   return OUTCOME_COLORS[k % OUTCOME_COLORS.length];
 }
 
@@ -109,8 +110,6 @@ export const LABELS = {
     ld2410_hold: 'Haltezeit LD2410C (Anzeige)',
     light_cost: 'Kosten: Licht ohne Person',
     occupied_off: 'Besetzt bis Wahrscheinlichkeit',
-    lead_time: 'Vorausschau „wird betreten“',
-    approach_cost: 'Kosten: Einschalten auf Verdacht',
     target_threshold: 'Schwelle „Ziel“',
   },
   sensor: { x: 'x', y: 'y', heading: 'Blickrichtung', height: 'Montagehöhe', fov: 'Öffnungswinkel', range: 'Reichweite', scale: 'Maßstab' },

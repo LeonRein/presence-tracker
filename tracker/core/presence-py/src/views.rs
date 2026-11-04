@@ -230,16 +230,9 @@ pub struct ZoneStateView {
     count: usize,
     moving: usize,
     still: usize,
-    approaching: bool,
-    p_enter: Option<f64>,
-    eta: Option<f64>,
-    distance: Option<f64>,
-    person: Option<usize>,
-    c_enter: Option<f64>,
     target: bool,
     p_target: Option<f64>,
     c_target: Option<f64>,
-    target_weight: f64,
     target_walks: f64,
     target_from: Option<String>,
     target_distance: Option<f64>,
@@ -248,7 +241,6 @@ pub struct ZoneStateView {
     probability: Option<f64>,
     available: bool,
     occupied: bool,
-    target_source: Option<&'static str>,
 }
 
 impl ZoneStateView {
@@ -258,16 +250,9 @@ impl ZoneStateView {
             count: z.count,
             moving: z.moving,
             still: z.still,
-            approaching: z.approaching,
-            p_enter: z.p_enter,
-            eta: z.eta,
-            distance: z.distance,
-            person: z.person,
-            c_enter: z.c_enter,
             target: z.target,
             p_target: z.p_target,
             c_target: z.c_target,
-            target_weight: z.target_weight,
             target_walks: z.target_walks,
             target_from: z.target_from,
             target_distance: z.target_distance,
@@ -276,7 +261,6 @@ impl ZoneStateView {
             probability: z.probability,
             available: z.available,
             occupied: z.occupied,
-            target_source: z.target_source,
         }
     }
 }

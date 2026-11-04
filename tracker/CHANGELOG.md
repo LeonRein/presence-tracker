@@ -2,6 +2,34 @@
 
 ## Unveröffentlicht
 
+## 0.56.0 (Branch `rust-core`: „Ziel“ allein aus der Karte, Bereiche als Ziel, Pfeile je Weg)
+
+Leon 4.11.: die Speisekammer hinter der Küche („Vorratszimmer“, ein Bereich: ohne Tür, der Küchensensor sieht durch die Lücke
+nur einen Streifen) soll ihr Licht bekommen; die Mischung aus Bewegung und Karte sei „eine komplett dumme Mischung aus zwei
+unterschiedlichen Systemen“, die 2-s-Vorhersage überflüssig, dass die Karte erst lernen muss, hinnehmbar. Der Filter ändert
+sich nicht, nur die Ausgabe *Ziel* und was die App dazu zeigt. Gespeichertes: Eine `tracker.json` mit `lead_time` und
+`approach_cost` startet (unbekannte Parameter fallen beim Einlesen weg); eine gespeicherte Zielkarte passt nur noch, wo es keine
+Bereiche gibt (ihre Ausgänge sind neu), sonst beginnt sie leer.
+- ***Wird betreten* ist weg:** `outputs::entering`, `world/targets.rs` (`EntryTargets`), `imm::walk_ahead`, die Parameter
+  `lead_time` und `approach_cost` (Einstellungen, Grenzen, `derived.thresholds.entering`), die Entität
+  `binary_sensor.presence_<zone>_approaching` (die App entfernt sie beim Verbinden aus dem Broker), die Felder `approaching`,
+  `p_enter`, `eta`, `distance`, `person`, `c_enter` des Zonenzustands, das Pulsieren und die Plakette in der Live-Ansicht;
+  `tools/entries.py` (lief seit dem Rust-Port nicht mehr, verglich die beiden Signale), `tests/test_entering.py`.
+- ***Ziel* allein aus der Karte:** `P = λ q_map` mit `λ = n / (n + dest_prior_walks)`, der Prior ein Gang, der nirgends hinging;
+  ohne Gelerntes aus. Zwei gleiche Gänge ergeben 2/3 (Leons Schwelle live 0,66), vier 0,8. Die Attribute `source` und `weight`
+  sind weg (es entscheidet immer die Karte), `target_weight` und `target_source` auch im Zonenzustand.
+- **Bereiche sind Ausgänge der Karte und haben *Ziel*:** Ein Gang endet im Bereich, in dem die Person 2 s steht (überlappen sich
+  Bereiche, im kleinsten), oder in dem ihre Spuren enden, wenn binnen 1,5 s niemand übernimmt (wer in einen toten Winkel geht,
+  bleibt nicht sichtbar stehen). `binary_sensor.presence_<bereich>_ziel` neu, die Schwelle je Bereich einstellbar; Abstand
+  zum Bereich: zu seiner nächsten Zelle.
+- **Tab *Gelerntes*, Ziele: ein Pfeil je Weg** (Leon: „sodass man irgendwie auf der Karte auch sich kreuzende Wege erkennen
+  kann“). Je Zelle die 16 Richtungen zu Spitzen zusammengefasst (jede Richtung zu der, zu der sie ansteigt); jede Spitze mit
+  mindestens 15 % der Gänge ein Pfeil, höchstens 6, von der Mitte aus, in der Farbe ihres häufigsten Ausgangs (grau: bleibt),
+  kräftiger je mehr Gänge. Die Färbung ganzer Zellen (über alle Richtungen) ist weg. Grenzen aus dem Kern (`arrow_min`, `arrows`).
+- Nicht gemessen (die Aufnahmen 6.–14.10. sind gelöscht, die neuen liegen in der App): im Test 20 gleiche Wege, P vor der Tür
+  0,8–0,87, mit 0,66 an 80 % der Takte bis zur Tür. Die Spiegelung an Wänden testete bisher `walk_ahead`; sie bleibt im
+  Vorhersageschritt, geprüft über `test_sight`.
+
 ## 0.55.1 (Branch `rust-core`, Aufzeichnung in der App; nicht live, kein Tag)
 
 Das Modell ändert sich nicht: Spuren der drei Stunden own und rs byte-gleich mit 9862763.

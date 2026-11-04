@@ -26,9 +26,9 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   Raumliste stehen die besetzten Räume zuerst. Die Zahlen an der Karte, in der Liste und oben sind dieselben, und
   *besetzt* heißt genau: mindestens eine Person im Raum (siehe *Besetzt*). Die Prozentzahl an einer Person ist die
   Wahrscheinlichkeit, dass *diese Person* dort ist. Ein blasser, gestrichelter Punkt ist eine Person, die gerade
-  kein Sensor sieht; eine Wolke ohne Punkt ist eine Person, die dafür nicht sicher genug ist, sie zählt nicht. *wird betreten* und *Ziel* (mit Wahrscheinlichkeit und
-  Quelle *Bewegung* oder *Karte*) stehen nur an Räumen, die noch nicht besetzt sind, und bleiben 2 s
-  sichtbar, auch wenn sie nur kurz an waren.
+  kein Sensor sieht; eine Wolke ohne Punkt ist eine Person, die dafür nicht sicher genug ist, sie zählt nicht. *Ziel* (mit
+  Wahrscheinlichkeit und den gelernten Gängen dahinter) steht nur an Räumen und Bereichen, die noch nicht besetzt
+  sind, die Zone pulsiert dann auf der Karte; es bleibt 2 s sichtbar, auch wenn es nur kurz an war.
 - **Verbindung:** Oben rechts stehen Sensoren und Personen, auch am Handy. *Sensoren* zählt alle
   eingeschalteten und platzierten Sensoren, auch einen, der seit dem Start nichts gesendet hat (bis 0.26.0
   nur die, von denen Daten kamen: zwei ausgefallene Boards zeigten 5/5); der Punkt ist nur grün, wenn
@@ -157,10 +157,13 @@ zurück; nochmal klicken oder ein Klick ins Leere: alle gleich. Verschieben läs
 - *LD2410C-Hintergrund*: je Sensor die Energie ohne Person je Entfernungsstufe (bewegt und ruhig), gelernt neben
   jetzt gemessen, mit dem Langzeitwert des Sensors, aus wie vielen Stunden beides gelernt ist und wie oft
   Echoquellen beginnen; der gewählte Sensor oben. Der Filter nutzt ihn.
-- *Ziele*: die Zielkarte, je Zelle ein Pfeil in die häufigste Gehrichtung (Länge nach dem Tempo, Deckkraft nach
-  der Zahl der Gänge); auf Wunsch die Zellen in der Farbe des häufigsten Ziels der Gänge von dort (Raum hinter der
-  ersten Tür, Bereich ohne Sensor, außer Haus; kräftiger, je größer sein Anteil, ohne Farbe, wo alle stehen
-  blieben). Sie dient nur der Ausgabe *Ziel* und ändert den Filter nicht.
+- *Ziele*: die Zielkarte, je Zelle ein Pfeil für jeden Weg hindurch: Die Richtungen der Gänge dort werden zu
+  Spitzen zusammengefasst (jede Richtung gehört zu der Spitze, zu der sie ansteigt), und jede Spitze mit
+  mindestens 15 % der Gänge der Zelle bekommt einen Pfeil, höchstens 6. Jeder Pfeil beginnt in der Mitte der Zelle,
+  so sind Hin- und Rückweg beide zu sehen, und hat die Farbe, wohin die Gänge in seiner Richtung am häufigsten
+  weitergingen (Raum hinter der ersten Tür, Raum ohne Sensor, außer Haus, Bereich, grau: bleibt), kräftiger, je
+  mehr Gänge. Sich kreuzende Wege sind Pfeile verschiedener Farbe in derselben Zelle. Sie dient nur der Ausgabe
+  *Ziel* und ändert den Filter nicht.
 
 Einen gelernten Messfehler nach Abstand gibt es nicht: Wie stark ein Messpunkt in Blickrichtung und seitlich streut,
 sind feste Einstellungen (*Messfehler …*, Tab *Einstellungen*).
@@ -172,7 +175,7 @@ bekommen im Editor schon dieselben Werte), legt genau diese in `/data/tracker.js
 Oberfläche arbeitet damit weiter. Eine kurze Meldung sagt *Gespeichert* und, wenn das Modell dabei neu startet,
 *Modell neu gestartet* (bei fast jeder Änderung an Grundriss, Zonen und
 Einstellungen; nicht, wenn nur Sensoren kalibriert oder verschoben wurden, nicht bei Einstellungen, die nur
-die Ausgaben betreffen: *Kosten: Licht ohne Person*, *Besetzt bis Wahrscheinlichkeit*, *Kosten: Einschalten auf Verdacht*, *Vorausschau*,
+die Ausgaben betreffen: *Kosten: Licht ohne Person*, *Besetzt bis Wahrscheinlichkeit*,
 *Haltezeit LD2410C (Anzeige)*, die Schwellen „Ziel“, und nicht beim Umbenennen), und, wenn sich Sensorlage oder
 Grundriss geändert haben, was dabei verworfen wurde. Rückgängig und Wiederholen mit den Knöpfen ↶ ↷ unten
 rechts auf der Karte oder mit Strg+Z / Strg+Y. Sie wirken nur auf Änderungen im aktuellen Tab; liegt die
@@ -201,8 +204,7 @@ Gerät **Presence Tracker**, für jeden Raum und Bereich:
 | `binary_sensor.presence_<zone>_occupancy` | Jemand ist in der Zone (siehe unten) |
 | `sensor.presence_<zone>_count` | Anzahl Personen, wie die App sie zeigt, Attribute `moving` / `still`, `probability` (nur Auskunft) |
 | `binary_sensor.presence_<zone>_moving` | Mindestens eine Person bewegt sich |
-| `binary_sensor.presence_<zone>_approaching` | *wird betreten*: Jemand, der gerade geht, kommt wahrscheinlich gleich herein (Vorhersage, siehe unten) |
-| `binary_sensor.presence_<raum>_ziel` | *Ziel* (nur Räume): Jemand, der gerade geht, geht als Nächstes in diesen Raum; aus der Bewegung und einer gelernten Karte (siehe unten) |
+| `binary_sensor.presence_<zone>_ziel` | *Ziel*: Jemand, der gerade geht, geht als Nächstes in diesen Raum oder Bereich; aus einer gelernten Karte (siehe unten) |
 
 Einmal für das Gerät: `switch.presence_lernen_pausieren`, *Lernen pausieren* bei Hintergrundaktivität
 (Saugroboter, Besuch, Putzen, Feier; siehe unten).
@@ -219,7 +221,7 @@ wieder eine Minute ohne Fehler läuft; im Protokoll steht dann ein Fehler in Gro
 wird nur noch einmal je Minute neu versucht. Die Entitäten eines Raums mit eigenem Sensor (der Sensor,
 der im Raum hängt: sein Name ist die ID des Raums, etwa `kueche`; eingeschaltet und platziert) sind außerdem *nicht verfügbar*, solange
 dieser Sensor seit mehr als 30 s keinen Frame gesendet hat (Board ohne Strom, abgestürzt, WLAN weg): alle
-fünf, *besetzt*, *Personen*, *Bewegung*, *wird betreten* und *Ziel*. Mit seinem nächsten Frame sind sie
+vier, *besetzt*, *Personen*, *Bewegung* und *Ziel*. Mit seinem nächsten Frame sind sie
 wieder verfügbar, mit dem aktuellen Zustand. Hat ein Raum mehrere eigene Sensoren, erst wenn alle schweigen.
 Ein Sensor, der seit dem Start der App noch nichts gesendet hat, zählt erst 30 s nach dem ersten Frame
 irgendeines Sensors als stumm. Schweigen alle Sensoren des Hauses zugleich, wartet das Modell zuerst 60 s mit dem
@@ -244,90 +246,57 @@ besetzt; das Licht dort braucht eine eigene Nacht-Regel in Node-RED.
 **Personen:** Die Zahl eines Raums sind die Personen, die in ihm gezählt sind. Jede zählt einmal; die Räume und die
 Bereiche ohne Sensor ergeben zusammen `presence_haus_count`. Wer geht, zählt sofort nicht mehr im alten Raum. Eine
 Person, die für einen dunklen Raum noch nicht sicher genug ist, zählt nicht: Der Raum zeigt 0 und bleibt aus, in der
-Karte steht nur ihre Wolke. Die Vorhersagen *wird betreten* und *Ziel* hängen nicht daran, sie sagen, wo jemand
-gleich sein wird.
+Karte steht nur ihre Wolke. Die Vorhersage *Ziel* hängt nicht daran, sie sagt, wohin jemand gleich geht.
 
-**Wird betreten** ist eine Vorhersage: Das Modell rechnet jede Person, die gerade geht, mit seinem
-eigenen Bewegungsmodell voraus (sie kann umdrehen, anhalten, abbiegen; Wände halten sie auf, Türen
-nicht) und rechnet aus, wie wahrscheinlich sie binnen der *Vorausschau* in die Zone kommt, über alle
-Hypothesen des Modells. Es ist an, wenn diese Wahrscheinlichkeit über der Schwelle aus *Kosten:
-Einschalten auf Verdacht* liegt. Für Räume ohne Sensor gibt es keine Vorhersage (aus). Attribute:
-
-| Attribut | Bedeutung |
-|---|---|
-| `p_enter` | Wahrscheinlichkeit, dass binnen der Vorausschau jemand hereinkommt (5-%-Schritte; in Home Assistant nur, solange *wird betreten* an ist, sonst 0, siehe *Recorder*) |
-| `eta` | in wie vielen Sekunden die wahrscheinlichste Person drin ist, bei ihrem Tempo |
-| `distance` | wie viele Meter sie noch hat |
-| `person` | ihre Nummer in der Anzeige (Tab *Live*) |
-
-Die App schaltet selbst keine Lichter. Was aus den beiden Sensoren wird (Licht an, Verzögerung beim
+Die App schaltet selbst keine Lichter. Was aus den Sensoren wird (Licht an, Verzögerung beim
 Ausschalten, Nachtmodus, Helligkeit), entscheidet die Automation in Home Assistant oder Node-RED.
 Eine einfache Regel je Raum, die nie schlechter ist als *besetzt* allein:
 - *besetzt* an → Licht an, ein laufendes Ausschalten abbrechen;
-- *wird betreten* an, Licht aus → Licht an „auf Verdacht“; wird der Raum binnen 30 s nicht *besetzt*,
-  wieder aus;
-- *besetzt* aus → nach 2 min aus, wenn bis dahin weder *besetzt* noch *wird betreten* wieder an war.
+- *Ziel* an, Licht aus → Licht an „auf Verdacht“; wird der Raum binnen 30 s nicht *besetzt*, wieder aus;
+- *besetzt* aus → nach 2 min aus, wenn bis dahin weder *besetzt* noch *Ziel* wieder an war.
 
-*Wird betreten* irrt öfter als *besetzt*: Wer nah an einer Tür vorbeigeht oder davor umdreht, kann das
-Licht für 30 s einschalten. Gemessen (MODEL.md 6, 10) mit den Vorgaben (*Vorausschau* 2 s, *Kosten:
-Einschalten auf Verdacht* 0,05): Das Licht brennt vor 60 % der Eintritte mindestens 1 s (1 m) vorher,
-dafür im Tagesmittel etwa 4 vergebliche Verdachte je Stunde; die meisten an offenen Raumgrenzen ohne
-Wand (Wohn-/Essbereich), dort besser ohne *wird betreten*. Höhere Kosten: weniger Verdachte, weniger
-Vorlauf. Wer nicht vorausschauen will, nimmt nur *besetzt*.
+**Ziel** ist die Vorhersage: Wie wahrscheinlich geht ein Gehender *als Nächstes* in diesen Raum oder
+Bereich? Die App lernt dafür selbst eine Karte, wohin die Gänge von jeder Stelle, in jeder Richtung und
+bei jedem Tempo bisher gingen (aus ihren eigenen Gehenden, vergessen über 14 Tage, gespeichert in
+`/data/destinations.json`; ändern sich Räume, Türen oder Zonen, beginnt sie leer). Ein Gang endet am Raum
+hinter der ersten Tür, in einem Raum ohne Sensor, außer Haus, in dem Bereich, in dem er stehen bleibt oder
+seine Spur endet (etwa eine Speisekammer, die der Sensor nur zum Teil sieht), oder er bleibt (stehen
+geblieben, in keinem Bereich). Ein Gang durch mehrere Räume zählt je Raum für den nächsten: die Schritte
+in der Küche für das Esszimmer, die im Esszimmer für den Flur. Sie lernt nur aus dem, was die App nach
+dem Update live sieht: Nach dem Update ist sie leer, aus alten Aufnahmen kommt nichts hinein.
 
-**Ziel** ist die zweite Vorhersage, ohne Horizont: Wie wahrscheinlich geht ein Gehender *als Nächstes* in
-diesen Raum? Die App lernt dafür selbst eine Karte, wohin die Gänge von jeder Stelle, in jeder Richtung
-und bei jedem Tempo bisher gingen (aus ihren eigenen Gehenden, vergessen über 14 Tage, gespeichert in
-`/data/destinations.json`; ändern sich Räume oder Türen, beginnt sie leer). Sie lernt nur aus dem, was
-die App nach dem Update live sieht: Nach dem Update ist sie leer, aus alten Aufnahmen kommt nichts hinein.
-Wo die Karte noch nichts weiß, ist *Ziel* **genau** *wird betreten* (Zustand für Zustand, auch in Home
-Assistant): Man kann es vom ersten Tag an statt *wird betreten* nehmen. Je mehr Gänge sie an einer Stelle
-kennt, desto mehr entscheidet sie: Auf einem Weg, der Routine ist (vom Schreibtisch zur Tür), geht *Ziel*
-früher an als *wird betreten*; wo Gänge oft im Türrahmen enden (Küche), seltener. Über einen Raumteiler sagt die Karte nichts voraus (Wohn- und
-Esszimmer gelten für die Gänge als ein Raum). Attribute:
+*Ziel* kommt allein aus der Karte. Wo sie noch nichts weiß, ist es aus; die Bewegung allein schaltet nichts.
+Je Gehendem zählt sie die Gänge an seiner Stelle in seiner Richtung, und ein angenommener Gang, der nirgends
+hinging, zählt dagegen: Die Wahrscheinlichkeit ist der Anteil der Gänge dorthin, mal n / (n + 1) bei n
+Gängen. Zwei gleiche Gänge ergeben 0,67, vier 0,8. Auf einem Weg, der Routine ist (vom Schreibtisch zur
+Tür), geht *Ziel* nach wenigen Tagen früh an; wo Gänge oft im Türrahmen enden (Küche), seltener. Über einen
+Raumteiler sagt die Karte nichts voraus (Wohn- und Esszimmer gelten für die Gänge als ein Raum). Attribute:
 
 | Attribut | Bedeutung |
 |---|---|
-| `probability` | die Wahrscheinlichkeit, die entscheidet (an ab der Schwelle des Raums) |
+| `probability` | die Wahrscheinlichkeit, die entscheidet (an ab der Schwelle der Zone) |
 | `from` | der Raum des Gehenden, der am wahrscheinlichsten hingeht |
-| `distance`, `eta` | sein Abstand zur Tür (Luftlinie, m) und die Zeit bei seinem Tempo (s) |
+| `distance`, `eta` | sein Abstand zur Tür (ein Bereich: zu seinem nächsten Teil; Luftlinie, m) und die Zeit bei seinem Tempo (s) |
 | `person` | seine Nummer in der Anzeige |
 | `walks` | wie viele gelernte Gänge hinter der Vorhersage stehen |
-| `source`, `weight` | was entschied: `bewegung` (wie *wird betreten*) oder `karte`; `weight` das Gewicht der Karte (0 … 1) |
 
-Die Schwelle (*Schwelle „Ziel“*, je Raum einstellbar, Tab *Einstellungen*) ist
-K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein Licht ohne Person ist so schlimm wie 4 späte Lichter. Sie
-wirkt nur, wo die Karte etwas weiß. Gemessen (MODEL.md 10, „Ziel“; Aufnahmen 6.10. 18:30 – 7.10. 20:40,
-Karte von leer an gelernt, *Vorausschau* 1 s wie in der App, 342 Eintritte in dunkle Räume; Licht
-mindestens 1 s / 2 s vorher, kurze Fehl-Ein je Stunde):
+Die Schwelle (*Schwelle „Ziel“*, je Raum und Bereich einstellbar, Tab *Einstellungen*) ist
+K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein Licht ohne Person ist so schlimm wie 4 späte Lichter.
 
-| Signal | ≥ 1 s | ≥ 2 s | ≥ 1 m | Fehl-Ein je h |
-|---|---|---|---|---|
-| *wird betreten* | 39 % | 6 % | 52 % | 15,2 |
-| *Ziel*, Schwelle 0,8 (Vorgabe) | 26 % | 3 % | 37 % | 8,1 |
-| *Ziel*, Schwelle 0,7 | 34 % | 4 % | 45 % | 9,0 |
-| *Ziel*, Schwelle 0,5 | 46 % | 8 % | 55 % | 11,3 |
-
-Mit 0,8 halbiert *Ziel* die vergeblichen Lichter und kommt dafür seltener früh; mit 0,5 ist es in beiden
-besser als *wird betreten*. Wer früh Licht will, stellt 0,5 ein; wem ein Licht ohne Person schlimmer
-ist, bleibt bei 0,8.
-
-**Ziel statt wird betreten in Node-RED:** im Subflow den Eingang *wird betreten* durch
-`binary_sensor.presence_<raum>_ziel` ersetzen, sonst nichts. Die Regel bleibt dieselbe (auf Verdacht an,
-ohne *besetzt* nach 30 s wieder aus). Beide Entitäten laufen nebeneinander; *wird betreten* bleibt zum
-Vergleich. Nachts im Schlafzimmer sperrt man *Ziel* wie bisher *wird betreten* in Node-RED. Ob *Ziel*
-im Alltag besser ist, zeigt `tools/entries.py` auf den Aufnahmen (Vorlauf vor jedem Eintritt und
-vergebliche Lichter je Stunde, für beide).
+Bis 0.55 gab es daneben *wird betreten* (`binary_sensor.presence_<zone>_approaching`): das eigene
+Bewegungsmodell 2 s vorausgerechnet, und *Ziel* nahm es, wo die Karte wenig wusste. Beides ist weg; die
+Entitäten *wird betreten* entfernt die App beim nächsten Verbinden mit dem Broker. Eine Automation, die
+*wird betreten* las, nimmt `binary_sensor.presence_<zone>_ziel`.
 
 **Recorder:** Home Assistant schreibt bei jeder Änderung des Zustands *oder eines Attributs* einer
 Entität eine Zeile in seine Datenbank. Die App rundet deshalb grob (Wahrscheinlichkeiten auf 5 %, Zeiten
 auf 0,5 s, Wege auf 0,5 m) und schickt die Attribute einer Entität nur neu, wenn ihr Zustand umschaltet
 oder sich eines um mindestens zwei Stufen geändert hat und die letzte Änderung mindestens 10 s her ist
-(Personenzähler: 60 s). Solange *besetzt*, *wird betreten* oder *Ziel* aus ist, sind ihre Attribute fest
+(Personenzähler: 60 s). Solange *besetzt* oder *Ziel* aus ist, sind ihre Attribute fest
 (Wahrscheinlichkeit 0, der Rest leer). Die Zustände selbst schalten genau wie vorher, im selben Moment.
-Nachgespielt auf 26 h (6./7.10., alle Zonen zusammen): 0.16.0 31 500 Zeilen am Tag, jetzt 14 600, mit
-*Ziel*; in der vollsten Stunde 4 950 → 2 640 (Personenzähler 2 970 → 980, *wird betreten* 840 → 270,
-*Ziel* 240; *besetzt* 210 und *Bewegung* 930 unverändert, das sind nur Zustände). Wer die Vorhersagen
+Nachgespielt auf 26 h (6./7.10., alle Zonen zusammen, damals noch mit *wird betreten*): 0.16.0 31 500
+Zeilen am Tag, dann 14 600; in der vollsten Stunde 4 950 → 2 640 (Personenzähler 2 970 → 980, *Ziel* 240;
+*besetzt* 210 und *Bewegung* 930 unverändert, das sind nur Zustände). Wer die Vorhersagen
 und Zähler trotzdem nicht im Verlauf haben will, schließt sie in `configuration.yaml` aus (Node-RED
 sieht sie weiter, denn es liest die Zustände live; die Personenzähler haben dann auch keine
 Langzeitstatistik mehr, wer die will, lässt `sensor.presence_*_count` weg):
@@ -336,7 +305,6 @@ Langzeitstatistik mehr, wer die will, lässt `sensor.presence_*_count` weg):
 recorder:
   exclude:
     entity_globs:
-      - binary_sensor.presence_*_approaching
       - binary_sensor.presence_*_ziel
       - sensor.presence_*_count
 ```

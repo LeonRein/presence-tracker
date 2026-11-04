@@ -370,7 +370,7 @@ def test_a_nan_is_a_model_failure_never_nobody_there(tmp_path, caplog):
     assert app.tracker is not tracker and "not finite" in caplog.text
     with pytest.raises(FloatingPointError):
         tracker.core.normalize(0.0)  # the core normalizing the weights
-    st = ZoneState(probability=math.nan, p_enter=math.nan, eta=math.inf, approaching=True)
+    st = ZoneState(probability=math.nan, p_target=math.nan, target_eta=math.inf, target=True)
     assert not st.finite() and st.to_dict()["probability"] is None  # never raises
 
 

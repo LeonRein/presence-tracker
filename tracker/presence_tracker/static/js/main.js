@@ -129,8 +129,8 @@ function connect() {
     if (!liveFrame) liveFrame = requestAnimationFrame(() => {
       liveFrame = 0;
       view.renderLive();
-      // zone fills and labels follow the occupancy and the held "wird betreten"
-      const key = JSON.stringify(msg.zones) + Object.keys(state.live.zones || {}).map(id => !!heldBadges(id).approach).join();
+      // zone fills and labels follow the occupancy and the held "Ziel"
+      const key = JSON.stringify(msg.zones) + Object.keys(state.live.zones || {}).map(id => !!heldBadges(id).target).join();
       if (state.tab === 'live' && key !== zoneKey) { zoneKey = key; view.render(); }
       const now = performance.now();
       if (now - panelAt > 450) { panelAt = now; updateLive(panel); }

@@ -19,9 +19,7 @@ use crate::ld2450::tracks::{LOST, SegIds, Sighting};
 use crate::learn::destination::Target;
 use crate::learn::pauses::Pauses;
 use crate::learn::{Learned, LearnedError};
-use crate::outputs::{
-    self, Cloud, Distributions, Entering, HouseNumbers, Occupied, OutputCache, Person, ZoneNumbers, ZoneState,
-};
+use crate::outputs::{self, Cloud, Distributions, HouseNumbers, Occupied, OutputCache, Person, ZoneNumbers, ZoneState};
 use crate::params::{FRAME, IDLE, OutputParams};
 use crate::plan::Place;
 use crate::sensors::{LdShown, SensorFrame, SensorSet, SensorState};
@@ -872,14 +870,8 @@ impl Tracker {
         self.outputs.at(self.filter.epoch()).places(&self.filter)
     }
 
-    /// "wird betreten" per zone of the world's targets; once per epoch (Tracker.entering). Its
-    /// look-ahead is the world's: a new one comes with a new world, and that voids the cache.
-    pub fn entering(&mut self) -> &[Entering] {
-        self.outputs.at(self.filter.epoch()).entering(&self.filter, &self.world)
-    }
-
-    /// "Ziel" per observed room (Tracker.targets): the walkers' own motion with the learned
-    /// destination map; once per epoch.
+    /// "Ziel" per observed room, then per area (Tracker.targets): from the learned destination map; once
+    /// per epoch.
     pub fn targets(&mut self) -> &[Target] {
         let Self {
             outputs,

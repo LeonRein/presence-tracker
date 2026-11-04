@@ -55,8 +55,6 @@ pub struct PlanShown {
 pub struct Thresholds {
     /// P(somebody there) above which a room is occupied (light_cost)
     pub occupied: f64,
-    /// p_enter above which "wird betreten" holds (approach_cost)
-    pub entering: f64,
 }
 
 /// The model's view of a configuration (`derive`).
@@ -78,7 +76,6 @@ pub fn derive(config: &Config) -> Derived {
         plan: plan_shown(&plan, door_openings(config)),
         thresholds: Thresholds {
             occupied: outputs.occupied_above(),
-            entering: outputs.entering_above(),
         },
         ld2410_gate: crate::ld2410::GATE,
         output_params: OUTPUT_FIELDS,
@@ -317,11 +314,10 @@ mod tests {
     #[test]
     fn shares_thresholds_and_the_numbers_the_editor_reads() {
         let d = derive(&room());
-        // the sensor sees most of the room: observed; light_cost 2: occupied above 2/3, approach_cost 0.05: 1/21
+        // the sensor sees most of the room: observed; light_cost 2: occupied above 2/3
         assert_eq!(d.plan.observed, ["r"]);
         assert!(d.plan.shares["r"] >= OBSERVED_SHARE && d.plan.in_use == ["s"]);
         assert!((d.thresholds.occupied - 2.0 / 3.0).abs() < 1e-12);
-        assert!((d.thresholds.entering - 0.05 / 1.05).abs() < 1e-12);
         assert_eq!(
             (d.plan.door_on_wall, d.ld2410_gate),
             (DOOR_ON_WALL, crate::ld2410::GATE)

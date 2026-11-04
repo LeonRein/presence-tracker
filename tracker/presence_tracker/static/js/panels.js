@@ -113,13 +113,11 @@ const LIVE = {
       const color = ZONE_KINDS[z.kind].color;
       const occ = !!st?.occupied;
       const gone = (live?.unavailable || []).includes(z.id);
-      // "wird betreten" / "Ziel" (held 2 s) matter for a dark room only: where somebody already is,
-      // the light is on anyway
+      // "Ziel" (held 2 s) matters for a dark room only: where somebody already is, the light is on anyway
       const held = occ ? {} : heldBadges(z.id);
       const extra = st ? [
         st.count ? `<span>${people(st.count)}${st.moving ? ` · ${st.moving} bewegt` : ''}${st.still ? ` · ${st.still} ruhig` : ''}</span>` : '',
-        held.approach ? `<span class="badge warn" title="Jemand Gehendes kommt gleich herein: ${pct(held.approach.p ?? 0)} (Vorausschau in den Einstellungen)">wird betreten${held.approach.eta > 0 ? ` · in ${fmt(held.approach.eta, 1)}\u00a0s` : ''}</span>` : '',
-        held.target ? `<span class="badge warn" title="Jemand Gehendes geht als Nächstes hierher. Entschieden von ${held.target.source === 'karte' ? 'der gelernten Karte, wohin Gänge von dort gingen' : 'der Bewegung (wie „wird betreten“)'}">Ziel ${pct(held.target.p ?? 0)} · ${held.target.source === 'karte' ? 'Karte' : 'Bewegung'}</span>` : '',
+        held.target ? `<span class="badge warn" title="Jemand Gehendes geht als Nächstes hierher, nach der gelernten Karte, wohin Gänge von dort gingen">Ziel ${pct(held.target.p ?? 0)} · ${fmt(held.target.walks ?? 0, 0)} Gänge</span>` : '',
       ].filter(Boolean).join('') : '';
       return [z.id, `<div class="item room-row${occ ? ' occupied' : ''}"><span class="swatch" style="background:${color}"></span>
         <span class="grow">${esc(z.name)}</span>
@@ -186,8 +184,7 @@ const LIVE = {
     const st = state.live?.zones?.[ds.id];
     if (!st) return '';
     return `<dl class="kv"><dt>Personen</dt><dd>${st.count}</dd><dt>bewegt / ruhig</dt><dd>${st.moving} / ${st.still}</dd>
-      <dt>wird betreten</dt><dd>${st.approaching ? 'ja' : 'nein'}${st.p_enter != null ? `, ${Math.round(st.p_enter * 100)} %` : ''}${st.eta != null ? ` · in ${fmt(st.eta, 1)} s, ${fmt(st.distance, 1)} m${st.person != null ? ` (Person ${st.person})` : ''}` : ''}</dd>
-      <dt>Ziel</dt><dd>${st.target ? 'ja' : 'nein'}${st.p_target != null ? `, ${Math.round(st.p_target * 100)} %` : ''}${st.target_from ? ` · aus ${esc(roomName(st.target_from))}${st.target_distance != null ? `, ${fmt(st.target_distance, 1)} m zur Tür` : ''}${st.target_person != null ? ` (Person ${st.target_person})` : ''}` : ''}${st.target_source ? ` · ${st.target_source === 'karte' ? 'Karte' : 'Bewegung'} (Karte ${Math.round((st.target_weight ?? 0) * 100)} %, ${st.target_walks ?? 0} Gänge)` : ''}</dd></dl>`;
+      <dt>Ziel</dt><dd>${st.target ? 'ja' : 'nein'}${st.p_target != null ? `, ${Math.round(st.p_target * 100)} %` : ''}${st.target_from ? ` · aus ${esc(roomName(st.target_from))}${st.target_distance != null ? `, ${fmt(st.target_distance, 1)} m zur Tür` : ''}${st.target_person != null ? ` (Person ${st.target_person})` : ''}` : ''}${st.target_walks != null ? ` · ${st.target_walks} Gänge` : ''}</dd></dl>`;
   },
   // the LD2410C's background as learned (api/learned) next to its energies now (live), per gate
   learnedGates(ds) {
@@ -274,7 +271,6 @@ export function learnedBars(b, ld) {
 const DERIVED_PARTS = {
   occupied: () => (state.derived ? pct(state.derived.thresholds.occupied) : '–'),
   occupiedText: () => (state.derived ? `Damit: Ein Raum geht an, wenn eine Person dort mindestens ${pct(state.derived.thresholds.occupied)} erreicht.` : ''),
-  enteringText: () => (state.derived ? `Damit: „wird betreten“ ab ${pct(state.derived.thresholds.entering)}.` : ''),
   roomRow: ds => {
     const d = state.derived;
     if (!d || ds.entry) return '';
@@ -847,6 +843,7 @@ const span = hours => (hours >= 48 ? `${fmt(hours / 24, 0)} Tage` : `${fmt(hours
 // a room, a region or "outside" (the core's ids, as the destination map and the measured view name them) in words
 function placeName(id) {
   if (id === 'outside') return 'außer Haus';
+  if (id === 'stays') return 'bleibt';
   return state.config.zones.find(z => z.id === id)?.name || state.derived?.plan.regions[id]?.name || id;
 }
 
@@ -895,20 +892,17 @@ function learnedPanel(panel) {
     },
     destinations: () => {
       const d = L.destinations;
-      const likely = [...new Set(d.cells.map(c => c.likely).filter(k => k != null))].sort((a, b) => a - b);
-      return `<p class="note">Wohin Gänge führten: je Zelle ein Pfeil in die häufigste Gehrichtung, so lang wie schnell dort gegangen wurde, umso kräftiger, je mehr Gänge. Ausgang eines Gangs ist der Raum hinter der ersten Tür, ein Bereich ohne Sensor, außer Haus, oder er bleibt (stehen geblieben). Daraus entsteht nur die Ausgabe „Ziel“; den Filter ändert die Karte nicht. Sie gilt für alle Sensoren zusammen.</p>
-        <label class="check"><input type="checkbox" id="lcolors" ${state.learnedColors ? 'checked' : ''}> Zellen nach dem häufigsten Ziel färben</label>
-        ${state.learnedColors ? '<p class="note">Farbe: wohin Gänge von hier am häufigsten weitergingen (über alle Richtungen, ohne „bleibt“), umso kräftiger, je größer ihr Anteil; ohne Farbe: alle blieben.</p>' : ''}
-        ${state.learnedColors && likely.length ? `<div class="legend">${likely.map(k =>
+      const likely = [...new Set(d.cells.flatMap(c => c.arrows.map(a => a.likely)))].sort((a, b) => a - b);
+      return `<p class="note">Wohin Gänge führten: je Zelle ein Pfeil für jeden Weg hindurch (jede Richtung, in die dort mindestens ${pct(d.arrow_min)} der Gänge gingen, höchstens ${d.arrows} Pfeile), in der Farbe, wohin die Gänge in dieser Richtung am häufigsten weitergingen, umso kräftiger, je mehr Gänge. Sich kreuzende Wege sind Pfeile verschiedener Farbe in derselben Zelle. Ausgang eines Gangs ist der Raum hinter der ersten Tür, ein Bereich ohne Sensor, außer Haus, der Bereich, in dem er endete, oder er bleibt (stehen geblieben). Daraus entsteht nur die Ausgabe „Ziel“; den Filter ändert die Karte nicht. Sie gilt für alle Sensoren zusammen.</p>
+        ${likely.length ? `<div class="legend">${likely.map(k =>
           `<span><span class="swatch" style="background:${outcomeColor(d.outcomes, k)}"></span>${esc(placeName(d.outcomes[k]))}</span>`).join('')}</div>` : ''}
         <dl class="kv"><dt>gezählt</dt><dd>${d.cells.length ? `${fmt(d.walks, 0)} Gänge` : 'noch keine Gänge'}; Älteres verblasst (Zeitkonstante ${span(d.forget_hours)})</dd>
-        <dt>am meisten</dt><dd>${fmt(Math.max(0, ...d.cells.map(c => c.walks)), 1)} Gänge durch eine Zelle in ihrer häufigsten Richtung</dd></dl>`;
+        <dt>am meisten</dt><dd>${fmt(Math.max(0, ...d.cells.map(c => c.walks)), 1)} Gänge durch eine Zelle</dd></dl>`;
     },
   }[layer]();
   for (const r of text.querySelectorAll('[data-sid]')) {
     clickable(r, () => select(r.dataset.sid === sel ? null : { kind: 'sensor', id: r.dataset.sid }));
   }
-  panel.querySelector('#lcolors')?.addEventListener('change', e => { state.learnedColors = e.target.checked; emit('learned'); });
 }
 
 // --------------------------------------------------------------- settings
@@ -932,9 +926,7 @@ const PARAMS = [
   ['Ausgabe', [
     ['light_cost', '×', 'Eine Sekunde Licht ohne Person ist so schlimm wie so viele Sekunden Dunkel mit Person. Ein Raum geht an, wenn die Wahrscheinlichkeit, dass eine ihm zugeordnete Person wirklich dort ist, Kosten / (Kosten + 1) erreicht.', 0.5],
     ['occupied_off', '', 'Ein Raum, der an ist, bleibt an, solange eine ihm zugeordnete Person mindestens diese Wahrscheinlichkeit hat. Darunter zählt sie nicht mehr. Niedriger als die Schwelle zum Angehen, damit Räume nicht flackern. Eine Nachlaufzeit gehört nicht hierher, die macht Node-RED.', 0.05],
-    ['lead_time', 's', 'So weit rechnet das Modell jeden Gehenden mit seinem eigenen Bewegungsmodell voraus (Wände halten auf, Türen nicht). Weil es Richtung und Tempo mit der Zeit vergisst, kommt das Signal später als diese Zeit vor dem Eintritt: gemessen mit 2 s: bei 60 % der Eintritte mindestens 1 s (1 m) vorher.', 0.1],
-    ['approach_cost', '×', 'Ein Einschalten auf Verdacht, nach dem niemand hereinkommt, ist so schlimm wie so viele Eintritte in einen dunklen Raum. „Wird betreten“ gilt, wenn die Wahrscheinlichkeit über Kosten / (Kosten + 1) liegt.', 0.01],
-    ['target_threshold', '', '„Ziel“ ist an, wenn die Wahrscheinlichkeit, dass ein Gehender als Nächstes in den Raum geht, mindestens so hoch ist. Sie entsteht aus der Bewegung (wie „wird betreten“) und der gelernten Karte, wohin die Gänge von dort bisher gingen; wo die Karte noch nichts weiß, ist „Ziel“ genau „wird betreten“. Schwelle = K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein vergebliches Licht ist so schlimm wie 4 späte. Je Raum unten anders einstellbar.', 0.05],
+    ['target_threshold', '', '„Ziel“ ist an, wenn die Wahrscheinlichkeit, dass ein Gehender als Nächstes in den Raum oder Bereich geht, mindestens so hoch ist. Sie kommt allein aus der gelernten Karte, wohin die Gänge von dort bisher gingen; wo die Karte noch nichts weiß, ist „Ziel“ aus. Ein gelernter Gang zählt gegen einen angenommenen, der nirgends hinging: Bei 0,66 reichen zwei gleiche Gänge. Schwelle = K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein vergebliches Licht ist so schlimm wie 4 späte. Je Raum und Bereich unten anders einstellbar.', 0.05],
   ]],
 ];
 
@@ -942,16 +934,16 @@ const PARAMS = [
 const HOME_GROUPS = ['Ausgabe'];
 
 // the threshold that follows from a cost (the core's, of the configuration as edited), shown next to it
-const THRESHOLD_OF = { light_cost: 'occupied', approach_cost: 'entering' };
+const THRESHOLD_OF = { light_cost: 'occupied' };
 
 function roomName(id) {
   return state.config.zones.find(z => z.id === id)?.name || id;
 }
 
-// the threshold of "Ziel" per room: empty = the default above
+// the threshold of "Ziel" per room and area: empty = the default above
 function targetRooms(p) {
-  const el = h(`<div><h3>Schwelle „Ziel“ je Raum</h3><p class="note">Leer: die Schwelle oben. Gemessen: 0,8 halbiert die vergeblichen Lichter gegenüber „wird betreten“, kommt aber seltener früh; 0,5 kommt öfter früh und ist trotzdem seltener vergeblich.</p></div>`);
-  for (const z of roomsWithSensor(state.config, state.derived)) {
+  const el = h(`<div><h3>Schwelle „Ziel“ je Raum und Bereich</h3><p class="note">Leer: die Schwelle oben.</p></div>`);
+  for (const z of [...roomsWithSensor(state.config, state.derived), ...state.config.zones.filter(z => z.kind === 'area')]) {
     const v = (p.target_thresholds || {})[z.id];
     const row = h(`<div class="param"><label class="field">${esc(z.name)}
       <input type="number" step="0.05" min="0" max="1" placeholder="${p.target_threshold}" value="${v ?? ''}"></label></div>`);

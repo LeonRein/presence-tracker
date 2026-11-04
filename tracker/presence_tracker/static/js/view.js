@@ -1,6 +1,6 @@
 // SVG map: projection, pan/zoom, and drawing of the plan, sensors, zones and live data.
 // Everything is drawn in screen pixels; world coordinates are meters with y pointing up.
-import { api, coverageNow, heldBadges, learnedSelected, openingsNow, state, sensorColor, unsaved } from './store.js';
+import { api, coverageNow, heldBadges, openingsNow, state, sensorColor, unsaved } from './store.js';
 import { PERSON_COLORS, ZONE_KINDS, crossesWall, dist, esc, fmt, outcomeColor, personColor, rad, zoneCenter, zoneOutline } from './util.js';
 
 // coverage: tiles that no sensor, one, two or more see (the core's count per tile); a room the sensors don't
@@ -8,7 +8,7 @@ import { PERSON_COLORS, ZONE_KINDS, crossesWall, dist, esc, fmt, outcomeColor, p
 const COVERAGE_COLORS = ['rgba(214,69,69,0.59)', 'rgba(240,180,41,0.22)', 'rgba(31,157,85,0.18)'];
 
 // s: an arrow of the destination map is as long as a walk at its speed goes in this time
-const ARROW_S = 0.2;
+const ARROW_L = 0.13; // m: an arrow of the destination map, from the centre of its 0.3 m cell
 
 // m: a trail breaks where the person was shown this much farther than the point before (or through a wall):
 // a line there would draw a way nobody walked
@@ -187,9 +187,9 @@ export class MapView {
       const dataKind = z.kind === 'room' ? 'room' : 'zone';
       const selected = sel?.kind === dataKind && sel.id === z.id;
       const fillOpacity = occupied ? 0.28 : selected ? 0.16 : (z.kind === 'room' ? 0.05 : 0.12);
-      // "wird betreten" pulses (held 2 s), only where nobody is yet
-      const approaching = state.tab === 'live' && !zs?.occupied && heldBadges(z.id).approach;
-      const cls = `zone${selected ? ' selected' : ''}${occupied ? ' occupied' : ''}${approaching ? ' approaching' : ''}`;
+      // "Ziel" pulses (held 2 s), only where nobody is yet
+      const expected = state.tab === 'live' && !zs?.occupied && heldBadges(z.id).target;
+      const cls = `zone${selected ? ' selected' : ''}${occupied ? ' occupied' : ''}${expected ? ' expected' : ''}`;
       const common = `class="${cls}" fill="${kind.color}" fill-opacity="${fillOpacity}" stroke="${kind.color}" data-kind="${dataKind}" data-id="${esc(z.id)}" ${pe(dataKind)}`;
       if (z.shape === 'circle') {
         const [x, y] = this.P(...z.center);
@@ -490,39 +490,26 @@ MapView.prototype._sight = function (cv, selected) {
 };
 
 // What the model learned (the core's, api/learned), the layer chosen in the tab "Gelerntes": the destination map
-// per cell an arrow in its most frequent velocity, as strong as its walks, and if asked the cell in the colour of where its walks most often went next (the core's), as strong as their
-// share; the chosen sensor's measured LD2410C view per room in its colour as strong as the share it gets. The
-// LD2410C's background has no map: its bars are in the panel.
+// per cell an arrow from its centre for each way through it (the core's lobes of directions), in the colour of where
+// its walks most often went next, as strong as its walks. The LD2410C's background has no map: its bars are in
+// the panel.
 MapView.prototype._learned = function (L) {
   const out = [];
-  const zones = new Map(state.config.zones.map(z => [z.id, z]));
-  const clips = rooms => `<defs>${[...new Set(rooms)].filter(id => zones.has(id)).map(id =>
-    `<clipPath id="lrn-${esc(id)}"><polygon points="${this.pts(zoneOutline(zones.get(id)))}"/></clipPath>`).join('')}</defs>`;
-  const square = ([x0, y0], size, room, attrs) => {
-    const [x, y] = this.P(x0, y0 + size);
-    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(size * this.s).toFixed(1)}" height="${(size * this.s).toFixed(1)}"
-      ${attrs} clip-path="url(#lrn-${esc(room)})" pointer-events="none"/>`;
-  };
-  const sel = learnedSelected();
   if (state.learnedLayer === 'destinations') {
     const d = L.destinations;
-    const top = Math.max(1e-9, ...d.cells.map(c => c.walks));
-    if (state.learnedColors) {
-      out.push(clips(d.cells.map(c => c.room)));
-      for (const c of d.cells) {
-        if (c.likely == null) continue;
-        out.push(square(c.square, d.cell, c.room, `fill="${outcomeColor(d.outcomes, c.likely)}" fill-opacity="${(0.15 + 0.6 * c.shares[c.likely]).toFixed(3)}"`));
-      }
-    }
+    const top = Math.max(1e-9, ...d.cells.flatMap(c => c.arrows.map(a => a.walks)));
     for (const c of d.cells) {
-      const w = c.walks / top;
-      if (w < 0.02) continue;
-      const [vx, vy] = c.velocity.map(v => v * ARROW_S / 2);
-      const [x0, y0] = this.P(c.at[0] - vx, c.at[1] - vy), [x1, y1] = this.P(c.at[0] + vx, c.at[1] + vy);
-      const len = Math.hypot(x1 - x0, y1 - y0) || 1, ux = (x1 - x0) / len, uy = (y1 - y0) / len, k = Math.min(5, 0.4 * len);
-      const head = sgn => `${(x1 - k * (ux - sgn * 0.5 * uy)).toFixed(1)},${(y1 - k * (uy + sgn * 0.5 * ux)).toFixed(1)}`;
-      out.push(`<path d="M${x0.toFixed(1)},${y0.toFixed(1)}L${x1.toFixed(1)},${y1.toFixed(1)}M${head(1)}L${x1.toFixed(1)},${y1.toFixed(1)}L${head(-1)}"
-        fill="none" stroke="var(--text)" stroke-opacity="${(0.15 + 0.85 * w).toFixed(3)}" stroke-width="1.4" stroke-linecap="round" pointer-events="none"/>`);
+      for (const a of c.arrows) {
+        const w = a.walks / top;
+        if (w < 0.02) continue;
+        // from the centre, so that both directions of a way show; the length is the arrow's, not its speed
+        const speed = Math.hypot(...a.velocity) || 1;
+        const [x0, y0] = this.P(...c.at), [x1, y1] = this.P(c.at[0] + ARROW_L * a.velocity[0] / speed, c.at[1] + ARROW_L * a.velocity[1] / speed);
+        const len = Math.hypot(x1 - x0, y1 - y0) || 1, ux = (x1 - x0) / len, uy = (y1 - y0) / len, k = Math.min(5, 0.45 * len);
+        const head = sgn => `${(x1 - k * (ux - sgn * 0.5 * uy)).toFixed(1)},${(y1 - k * (uy + sgn * 0.5 * ux)).toFixed(1)}`;
+        out.push(`<path d="M${x0.toFixed(1)},${y0.toFixed(1)}L${x1.toFixed(1)},${y1.toFixed(1)}M${head(1)}L${x1.toFixed(1)},${y1.toFixed(1)}L${head(-1)}"
+          fill="none" stroke="${outcomeColor(d.outcomes, a.likely)}" stroke-opacity="${(0.2 + 0.8 * w).toFixed(3)}" stroke-width="1.6" stroke-linecap="round" pointer-events="none"/>`);
+      }
     }
   }
   return out.join('');

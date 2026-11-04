@@ -48,7 +48,7 @@ def app(tmp_path):
 
 @pytest.mark.parametrize("key, value", [
     ("light_cost", 0), ("light_cost", -1), ("light_cost", None), ("light_cost", float("nan")),
-    ("light_cost", "2"), ("approach_cost", 0), ("lead_time", 0), ("lead_time", float("inf")),
+    ("light_cost", "2"), ("occupied_off", 2), ("ld2410_hold", float("inf")),
     ("target_threshold", 0), ("target_threshold", 1), ("dwell_spread", 0), ("range_sigma_base", 0),
 ])
 def test_out_of_range_params_are_refused(app, tmp_path, key, value):

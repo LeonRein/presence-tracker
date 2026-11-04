@@ -180,14 +180,15 @@ def test_home_assistant_gets_a_silent_room_unavailable_through_its_own_topic():
     topic = ha.zone_availability("wohn")
     assert topic == "presence-tracker/zone/wohn/availability"
     entities = (("binary_sensor", "occupancy"), ("sensor", "count"), ("binary_sensor", "moving"),
-                ("binary_sensor", "approaching"), ("binary_sensor", "ziel"))
+                ("binary_sensor", "ziel"))
     for comp, suffix in entities:
         c = cfg(comp, "wohn", suffix)
         assert c["availability"] == [{"topic": ha.AVAILABILITY}, {"topic": topic}]
         assert c["availability_mode"] == "all" and "availability_topic" not in c
-        # a room without its own availability (here ess), an area and the house: as before
+        # a room without its own availability (here ess), an area and the house (no "Ziel"): as before
         for zone in ("ess", "sofa", "total"):
-            if suffix == "ziel" and zone != "ess":
+            if suffix == "ziel" and zone == "total":
+                assert f"homeassistant/{comp}/presence_tracker/presence_tracker_total_ziel/config" not in configs
                 continue
             c = cfg(comp, zone, suffix)
             assert c["availability_topic"] == ha.AVAILABILITY and "availability" not in c

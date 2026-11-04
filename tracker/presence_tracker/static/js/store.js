@@ -16,12 +16,11 @@ export const state = {
   selectable: [],       // element kinds that can be selected in the current tab
   showCoverage: false,
   // the tab "Gelerntes": what the model learned (api/learned, the core's; null: not fetched since the tab opened),
-  // the layer shown (remembered per browser), the destination cells coloured by their likeliest outcome
+  // the layer shown (remembered per browser)
   learned: null,
   learnedLayer: loadPref('learnedLayer', 'background'),
-  learnedColors: false,
   showRaw: loadPref('showRaw', false),  // the raw sensor data on the live map (remembered per browser)
-  holds: {},            // zone id -> {approach, target}: badges held for HOLD_MS after they went off
+  holds: {},            // zone id -> {target}: the badge held for HOLD_MS after it went off
   calibResult: null,
   limits: {},           // allowed values of the number fields the model reads (the core's, presence_core.config_limits)
   defaults: {},         // what a configuration may leave out (the core's, config_defaults): a new sensor's values
@@ -47,23 +46,19 @@ export function savePref(key, value) {
   try { localStorage.setItem('presence.' + key, JSON.stringify(value)); } catch { /* not remembered */ }
 }
 
-// "wird betreten" and "Ziel" are often on for a single message (0.2 s): held for HOLD_MS so that they
-// can be seen, with the values of their last moment on
+// "Ziel" is often on for a single message (0.2 s): held for HOLD_MS so that it can be seen, with the values
+// of its last moment on
 export const HOLD_MS = 2000;
 export function updateHolds(zones, now = performance.now()) {
   for (const [id, st] of Object.entries(zones || {})) {
     const hold = state.holds[id] ??= {};
-    if (st.approaching) hold.approach = { until: now + HOLD_MS, p: st.p_enter, eta: st.eta, person: st.person };
-    if (st.target) hold.target = { until: now + HOLD_MS, p: st.p_target, source: st.target_source, from: st.target_from };
+    if (st.target) hold.target = { until: now + HOLD_MS, p: st.p_target, walks: st.target_walks, from: st.target_from };
   }
 }
-// {approach, target} of a zone, as now or held; null where off
+// {target} of a zone, as now or held; null where off
 export function heldBadges(id, now = performance.now()) {
   const hold = state.holds[id] || {};
-  return {
-    approach: hold.approach && hold.approach.until > now ? hold.approach : null,
-    target: hold.target && hold.target.until > now ? hold.target : null,
-  };
+  return { target: hold.target && hold.target.until > now ? hold.target : null };
 }
 
 export function onChange(fn) { listeners.add(fn); }
