@@ -268,7 +268,8 @@ dem Update live sieht: Nach dem Update ist sie leer, aus alten Aufnahmen kommt n
 *Ziel* kommt allein aus der Karte. Wo sie noch nichts weiß, ist es aus; die Bewegung allein schaltet nichts.
 Je Gehendem zählt sie die Gänge an seiner Stelle in seiner Richtung, und ein angenommener Gang, der nirgends
 hinging, zählt dagegen: Die Wahrscheinlichkeit ist der Anteil der Gänge dorthin, mal n / (n + 1) bei n
-Gängen. Zwei gleiche Gänge ergeben 0,67, vier 0,8. Auf einem Weg, der Routine ist (vom Schreibtisch zur
+Gängen. Zwei Gänge genau durch diese Stelle in dieser Richtung ergeben 0,67, vier 0,8; Gänge daneben zählen
+weniger (im Test nach 10 gleichen Wegen n = 2–5 an einer Stelle, nach 20 n = 5–10). Auf einem Weg, der Routine ist (vom Schreibtisch zur
 Tür), geht *Ziel* nach wenigen Tagen früh an; wo Gänge oft im Türrahmen enden (Küche), seltener. Über einen
 Raumteiler sagt die Karte nichts voraus (Wohn- und Esszimmer gelten für die Gänge als ein Raum). Attribute:
 

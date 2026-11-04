@@ -14,7 +14,7 @@ Baselines (no model, per observed room, on a grid of 1 s):
       the background per sensor and ring the median of the seconds without an LD2450 target in the
       sensor's room for 60 s on both sides; 3x as in MODEL.md 4.3, echo sources).
   B3  B1 (measured) with a latch: occupied from a measured target in the room until a track leaves
-      through a door of the room (a door crossing of tools/entries.py out of it, and no other target
+      through a door of the room (a door crossing of the deleted tools/entries.py out of it, and no other target
       in the room within 3 s after it), at most HMAX s after the last target.
   F   the filter: P(occupied) > light_cost / (light_cost + 1) (MODEL.md 6), replayed the way the app
       ran it (as tools/report_eval.py: a fresh model at each app start, the learned maps carried on,

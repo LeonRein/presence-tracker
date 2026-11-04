@@ -184,7 +184,7 @@ const LIVE = {
     const st = state.live?.zones?.[ds.id];
     if (!st) return '';
     return `<dl class="kv"><dt>Personen</dt><dd>${st.count}</dd><dt>bewegt / ruhig</dt><dd>${st.moving} / ${st.still}</dd>
-      <dt>Ziel</dt><dd>${st.target ? 'ja' : 'nein'}${st.p_target != null ? `, ${Math.round(st.p_target * 100)} %` : ''}${st.target_from ? ` · aus ${esc(roomName(st.target_from))}${st.target_distance != null ? `, ${fmt(st.target_distance, 1)} m zur Tür` : ''}${st.target_person != null ? ` (Person ${st.target_person})` : ''}` : ''}${st.target_walks != null ? ` · ${st.target_walks} Gänge` : ''}</dd></dl>`;
+      <dt>Ziel</dt><dd>${st.target ? 'ja' : 'nein'}${st.p_target != null ? `, ${Math.round(st.p_target * 100)} %` : ''}${st.target_from ? ` · aus ${esc(roomName(st.target_from))}${st.target_distance != null ? `, ${fmt(st.target_distance, 1)} m ${state.config.zones.find(z => z.id === ds.id)?.kind === 'area' ? 'bis zum Bereich' : 'zur Tür'}` : ''}${st.target_person != null ? ` (Person ${st.target_person})` : ''}` : ''}${st.target_walks != null ? ` · ${st.target_walks} Gänge` : ''}</dd></dl>`;
   },
   // the LD2410C's background as learned (api/learned) next to its energies now (live), per gate
   learnedGates(ds) {
@@ -926,7 +926,7 @@ const PARAMS = [
   ['Ausgabe', [
     ['light_cost', '×', 'Eine Sekunde Licht ohne Person ist so schlimm wie so viele Sekunden Dunkel mit Person. Ein Raum geht an, wenn die Wahrscheinlichkeit, dass eine ihm zugeordnete Person wirklich dort ist, Kosten / (Kosten + 1) erreicht.', 0.5],
     ['occupied_off', '', 'Ein Raum, der an ist, bleibt an, solange eine ihm zugeordnete Person mindestens diese Wahrscheinlichkeit hat. Darunter zählt sie nicht mehr. Niedriger als die Schwelle zum Angehen, damit Räume nicht flackern. Eine Nachlaufzeit gehört nicht hierher, die macht Node-RED.', 0.05],
-    ['target_threshold', '', '„Ziel“ ist an, wenn die Wahrscheinlichkeit, dass ein Gehender als Nächstes in den Raum oder Bereich geht, mindestens so hoch ist. Sie kommt allein aus der gelernten Karte, wohin die Gänge von dort bisher gingen; wo die Karte noch nichts weiß, ist „Ziel“ aus. Ein gelernter Gang zählt gegen einen angenommenen, der nirgends hinging: Bei 0,66 reichen zwei gleiche Gänge. Schwelle = K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein vergebliches Licht ist so schlimm wie 4 späte. Je Raum und Bereich unten anders einstellbar.', 0.05],
+    ['target_threshold', '', '„Ziel“ ist an, wenn die Wahrscheinlichkeit, dass ein Gehender als Nächstes in den Raum oder Bereich geht, mindestens so hoch ist. Sie kommt allein aus der gelernten Karte, wohin die Gänge von dort bisher gingen; wo die Karte noch nichts weiß, ist „Ziel“ aus. Die gelernten Gänge an der Stelle zählen gegen einen angenommenen, der nirgends hinging: Bei 0,66 reichen zwei, die genau hier in dieser Richtung entlangführten; Gänge daneben zählen weniger, im Alltag braucht ein Weg einige mehr. Schwelle = K_Fehl / (K_Fehl + K_spät): 0,8 heißt, ein vergebliches Licht ist so schlimm wie 4 späte. Je Raum und Bereich unten anders einstellbar.', 0.05],
   ]],
 ];
 

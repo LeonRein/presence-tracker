@@ -439,7 +439,7 @@ class Tracker:
     def learned_view(self) -> dict:
         """What the running model learned, for the web UI (the core's, computed when asked): per sensor in use its
         LD2410C's background per gate; the destination map per cell. Rounded for the web UI:
-        positions to mm, rates and energies to two or four places, shares to three."""
+        positions to mm, rates and energies to two or four places, walks and shares to three."""
         v = json.loads(self.core.learned_view())
         r = round
         xy = lambda p: [r(p[0], 3), r(p[1], 3)]  # noqa: E731
@@ -453,8 +453,9 @@ class Tracker:
         d = v["destinations"]
         d.update(cell=r(d["cell"], 3), walks=r(d["walks"], 2), forget_hours=r(d["forget_hours"], 2))
         for c in d["cells"]:
-            c.update(at=xy(c["at"]), square=xy(c["square"]), walks=r(c["walks"], 3), velocity=xy(c["velocity"]),
-                     shares=[r(x, 3) for x in c["shares"]])
+            c.update(at=xy(c["at"]), square=xy(c["square"]), walks=r(c["walks"], 3))
+            for a in c["arrows"]:
+                a.update(velocity=xy(a["velocity"]), walks=r(a["walks"], 3), share=r(a["share"], 3))
         return v
 
     def learned_snapshot(self):

@@ -125,6 +125,22 @@ def test_the_map_learns_a_routine_and_predicts_it_earlier():
     assert not any(st.target for t, st, _, _ in out if t > t_door + 2.0)
 
 
+def test_the_learned_map_is_shown_with_an_arrow_per_way():
+    # a learned map as the tab "Gelerntes" gets it (filter.Tracker.learned_view, rounded): halfway to the door
+    # both ways show: towards b in b's colour, back to the desk "stays" (that walk ends in a)
+    a = routine(4)
+    tr, _ = run(a, a.waypoints[-1][0] + 1)
+    d = tr.learned_view()["destinations"]
+    assert d["walks"] > 0 and d["arrows"] == 6 and d["arrow_min"] == 0.15
+    assert d["outcomes"] == ["a", "b", "outside", "stays"]
+    c = min(d["cells"], key=lambda c: abs(c["at"][0] - 3.5) + abs(c["at"][1] - 2.5))
+    ways = {round(w["velocity"][0] > 0): w for w in c["arrows"]}
+    assert set(ways) == {0, 1}, c["arrows"]
+    assert d["outcomes"][ways[1]["likely"]] == "b" and d["outcomes"][ways[0]["likely"]] == "stays"
+    assert all(0 < w["share"] <= 1 and w["walks"] > 0 for w in c["arrows"])
+    json.dumps(d)
+
+
 def test_the_map_is_saved_restored_and_belongs_to_its_floor_plan():
     a = routine(2)
     tr, _ = run(a, a.waypoints[-1][0] + 1)

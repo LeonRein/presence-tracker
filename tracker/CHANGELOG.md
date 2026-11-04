@@ -2,6 +2,23 @@
 
 ## Unveröffentlicht
 
+## 0.56.1 (Fehler aus 0.56.0: Tab *Gelerntes* → *Ziele* brach ab)
+
+- **`KeyError('velocity')` im Tab *Gelerntes***, sobald die Zielkarte die ersten Gänge hatte (live am 4.11. um 9:25): Die Hülle
+  (`filter.Tracker.learned_view`) rundete noch die Felder der alten Zellen (`velocity`, `shares`); jetzt die Pfeile
+  (`arrows[]`: `velocity`, `walks`, `share`). Die Tests hatten den Tab nur mit leerer Karte aufgerufen; neu
+  `test_destination.test_the_learned_map_is_shown_with_an_arrow_per_way` mit gelernter Karte.
+- Nachgeprüft, bevor das hier hinausging: alle entfernten Namen im Repo (keiner mehr außer in Geschichte); ein unabhängiger Durchgang
+  über Kern → Bindung → Hülle → APIs → Oberfläche → Home Assistant → Nachspiel (keine weitere Stelle); die App lokal mit einer
+  Aufnahme (zwei Räume, ein Bereich „Kammer“, 12 Runden) durch alle Tabs: Karte 61 Gänge, 228 Zellen, 382 Pfeile, *Ziel* an
+  in a, b und der Kammer (Schwelle 0,6), Plakette und Pulsieren in der Live-Ansicht, Bericht geschrieben und mit
+  `tools/replay.py --report` nachgespielt, keine Fehler in Konsole und Server. Auf derselben Aufnahme sind Hypothesen, Gewichte,
+  Zähl- und Ortsverteilungen und *besetzt* von 0.55.1 und 0.56.1 gleich (393 s, keine Abweichung): Der Filter ist unverändert.
+- Texte: „Bei 0,66 reichen zwei gleiche Gänge“ gilt nur für Gänge genau durch diese Stelle in dieser Richtung (Einstellungen, DOCS);
+  der Abstand eines Bereichs heißt „bis zum Bereich“, nicht „zur Tür“.
+- Bekannt, nicht von diesem Release: `tools/baseline_eval.py` und `tools/ld2410/{clutter_hmm,events,diag,hypstats}.py` importieren
+  Module, die es seit dem Rust-Port nicht mehr gibt (`sensortracks`, `filtermodel`, `hidden`).
+
 ## 0.56.0 (Branch `rust-core`: „Ziel“ allein aus der Karte, Bereiche als Ziel, Pfeile je Weg)
 
 Leon 4.11.: die Speisekammer hinter der Küche („Vorratszimmer“, ein Bereich: ohne Tür, der Küchensensor sieht durch die Lücke

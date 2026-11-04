@@ -10,7 +10,7 @@ The token is read from the environment and never written anywhere. --history: th
 Assistant's REST API gives them (/api/history/period, a list of {"state", "last_changed"}, or the list
 of such lists), e.g. saved by hand. Active: every state but INACTIVE; "unavailable" and "unknown" keep
 the state before (the integration reconnects while the robot stays where it is). The output (private:
-it says when somebody started the robot) is read by tools/report_eval.py, entries.py, replay.py,
+it says when somebody started the robot) is read by tools/report_eval.py, replay.py,
 calibrate_offline.py and ld2410/phantom.py with --pauses: {"entity", "margin", "intervals": [[start, end
 (None: still out)], ...] (Unix time), "local": the same as local time, for reading}.
 """
