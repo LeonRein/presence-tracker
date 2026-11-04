@@ -14,12 +14,12 @@
   </div>
   <nav id="tabs">
     <button data-tab="live" class="active">Live</button>
-    <button data-tab="plan">Grundriss</button>
-    <button data-tab="sensors">Sensoren</button>
-    <button data-tab="zones">Zonen</button>
-    <button data-tab="calibration">Kalibrierung</button>
+    <button data-tab="plan" class="admin-only">Grundriss</button>
+    <button data-tab="sensors" class="admin-only">Sensoren</button>
+    <button data-tab="zones" class="admin-only">Zonen</button>
+    <button data-tab="calibration" class="admin-only">Kalibrierung</button>
     <button data-tab="learned">Gelerntes</button>
-    <button data-tab="settings">Einstellungen</button>
+    <button data-tab="settings" class="admin-only">Einstellungen</button>
   </nav>
   <div id="status" class="status" role="status" aria-live="polite"></div>
 </header>
@@ -29,9 +29,9 @@
     <div id="hint" class="hint" hidden></div>
     <div id="stale" class="stale-bar" role="alert" hidden></div>
     <div class="map-tools">
-      <button id="save" title="Speichern (Strg+S)" hidden>Speichern</button>
-      <button id="undo" title="Rückgängig (Strg+Z)" aria-label="Rückgängig" hidden>↶</button>
-      <button id="redo" title="Wiederholen (Strg+Y)" aria-label="Wiederholen" hidden>↷</button>
+      <button id="save" class="admin-only" title="Speichern (Strg+S)" hidden>Speichern</button>
+      <button id="undo" class="admin-only" title="Rückgängig (Strg+Z)" aria-label="Rückgängig" hidden>↶</button>
+      <button id="redo" class="admin-only" title="Wiederholen (Strg+Y)" aria-label="Wiederholen" hidden>↷</button>
       <button id="zoom-fit" title="Alles zeigen" aria-label="Alles zeigen">⤢</button>
       <button id="zoom-in" title="Vergrößern" aria-label="Vergrößern">+</button>
       <button id="zoom-out" title="Verkleinern" aria-label="Verkleinern">−</button>

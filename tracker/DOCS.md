@@ -374,6 +374,13 @@ Nicht `gunzip`: Das löscht bei einer abgeschnittenen Datei (die letzte eines Ab
 die Ausgabe; `zcat` meldet dort *unexpected end of file*, und alles bis zur letzten Leerung ist da. Für die Wiedergabe
 dann die letzte, unvollständige Zeile entfernen, falls es eine gibt.
 
+## Nutzer
+
+Das Panel *Präsenz* steht in der Seitenleiste jedes Home-Assistant-Nutzers. Wer kein Administrator ist, sieht die Tabs
+*Live* und *Gelerntes* und kann einen Fehler melden; Bearbeiten, Kalibrierung, Einstellungen, Aufnahmen, *Neu beginnen* und das
+Löschen von Meldungen bleiben Administratoren vorbehalten, auch auf dem Server (403). Die Rolle meldet der Supervisor
+(Header `X-Remote-User-Groups`, ab Supervisor 2026.10.4); mit einem älteren hat niemand Schreibrechte.
+
 ## Optionen
 
 | Option | Bedeutung |

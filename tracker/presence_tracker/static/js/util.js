@@ -225,6 +225,7 @@ export function bindNumber(input, lim, apply, { allowEmpty = false } = {}) {
 // The server's errors ({error: key, detail}: app.py, calibration's no_walking from the core) in words; an
 // unknown key as it is
 const ERRORS = {
+  admin_only: 'Nur für Administratoren.',
   model_down: 'Das Modell läuft gerade nicht: {detail}',
   model_refused: 'Das Modell läuft mit dieser Konfiguration nicht: {detail}. Es gilt die vorige.',
   not_json: 'Keine gültige Konfiguration (JSON).',

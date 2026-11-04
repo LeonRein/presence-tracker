@@ -39,6 +39,10 @@ REPORT_WINDOW = 15 * 60.0  # s of sensor data kept for an error report
 CODE = code_hash()
 REPORT_KIND = re.compile(r"[a-z_]{1,32}")  # a report's kind: a key (in its file name), worded by the web UI (util.js REPORT_KINDS)
 REPORT_NAME = re.compile(r"[A-Za-z0-9_-]+\.jsonl\.gz")  # a report's file (h_report: time-room-kind)
+# what a Home Assistant user who is no admin may call (App._roles: method, the route's canonical path)
+USER_ROUTES = {("GET", path) for path in ("/", "/static/{stamp}/{path}", "/images/{name}", "/api/config", "/api/coverage",
+                                          "/api/live", "/api/learned", "/api/tiles", "/api/reports", "/api/reports/{name}")}
+USER_ROUTES.add(("POST", "/api/reports"))
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}
 SEND_TIMEOUT = 5.0  # s a browser may take for one live message; a slower one is cut off
 DOWN_AFTER = 3  # model failures without RETRY s of running between: the model is down
@@ -82,8 +86,9 @@ class LiveClient:
 class App:
     def __init__(self, data_dir: pathlib.Path, prefix: str = "presence", publish: bool = True,
                  replay: list | None = None, speed: float = 1.0, mqtt: dict | None = None,
-                 ha_url: str | None = None, ha_token: str | None = None):
+                 ha_url: str | None = None, ha_token: str | None = None, ingress: bool = False):
         self.data_dir = data_dir
+        self.ingress = ingress
         self.images = data_dir / "images"
         self.images.mkdir(parents=True, exist_ok=True)
         self.config_path = data_dir / "tracker.json"
@@ -615,7 +620,7 @@ class App:
     # ------------------------------------------------------------------- web
 
     def web_app(self) -> web.Application:
-        app = web.Application(client_max_size=20 * 1024 * 1024)
+        app = web.Application(client_max_size=20 * 1024 * 1024, middlewares=[self._roles])
         app.router.add_get("/", self.h_index)
         app.router.add_get("/static/{stamp}/{path:.+}", self.h_static)
         app.router.add_get("/images/{name}", self.h_image)
@@ -639,6 +644,21 @@ class App:
         app.router.add_delete("/api/recording", self.h_recording_delete)
         app.router.add_get("/api/recording/download", self.h_recording_download)
         return app
+
+    def is_admin(self, request) -> bool:
+        """Behind ingress the Supervisor (2026.10.4 on) names the user's Core groups and drops any the browser sent;
+        without the header (an older Supervisor, a session from while Core was down) the user is no admin. Started
+        outside the Supervisor (development, replay) there is no ingress: everyone is."""
+        return not self.ingress or "system-admin" in request.headers.get("X-Remote-User-Groups", "").split(",")
+
+    @web.middleware
+    async def _roles(self, request, handler):
+        """Every Home Assistant user sees the live map and what was learned and may report an error; the rest
+        (editing, calibration, recordings, Home Assistant's cameras) is for admins. New routes are admin only."""
+        route = (request.method, getattr(request.match_info.route.resource, "canonical", None))
+        if route not in USER_ROUTES and not self.is_admin(request):
+            return web.json_response({"error": "admin_only"}, status=403)
+        return await handler(request)
 
     async def h_index(self, request):
         html = (STATIC / "index.html").read_text()
@@ -670,7 +690,7 @@ class App:
         known = sorted(set(self.tracker.runtime) | set(self.config.sensor_ids))
         config = self.config.to_dict()
         return web.json_response({"config": config, "derived": model.derive(config), "sensors_seen": known,
-                                  "status": self.sensor_status, "replay": bool(self.replay),
+                                  "admin": self.is_admin(request), "status": self.sensor_status, "replay": bool(self.replay),
                                   "ha": bool(self.ha_url), "limits": model.limits(), "defaults": model.defaults()})
 
     async def h_coverage(self, request):

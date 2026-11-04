@@ -341,8 +341,10 @@ function livePanel(panel, view) {
       <span><svg width="12" height="12"><circle cx="6" cy="6" r="3.5" fill="none" stroke="var(--muted)" stroke-width="1.5"/></svg>verworfen (hinter einer Wand oder eingefroren)</span>
       <span><svg width="16" height="12"><path d="M1 10 A 9 9 0 0 1 15 10" stroke="var(--muted)" stroke-dasharray="2 3" fill="none" stroke-width="2"/></svg>LD2410C-Abstand</span>
     </div>
-    <div class="row" style="margin-top:12px"><button class="btn" id="reset">Neu beginnen</button></div>
-    <p class="note">Das Modell vergisst, wo wer ist: Jede Person kann wieder überall sein, auch außer Haus. Die nächsten Messungen entscheiden neu.</p>
+    <div class="admin-only">
+      <div class="row" style="margin-top:12px"><button class="btn" id="reset">Neu beginnen</button></div>
+      <p class="note">Das Modell vergisst, wo wer ist: Jede Person kann wieder überall sein, auch außer Haus. Die nächsten Messungen entscheiden neu.</p>
+    </div>
   </div>`));
   panel.querySelector('#raw').onchange = e => {
     state.showRaw = e.target.checked;
@@ -380,7 +382,7 @@ async function reportForm(el) {
       const what = `${when} · ${names[r.room] || 'Haus'} · ${REPORT_KINDS[r.kind] ?? r.kind}`;
       const row = h(`<div class="item"><span class="grow">${esc(what)}${r.text ? ` · <i>${esc(r.text)}</i>` : ''}</span>
         <a class="meta" href="api/reports/${encodeURIComponent(r.name)}" download>${sizeText(r.size)}</a>
-        <button class="btn danger small rep-del" title="Meldung löschen" aria-label="Meldung löschen">Löschen</button></div>`);
+        <button class="btn danger small rep-del admin-only" title="Meldung löschen" aria-label="Meldung löschen">Löschen</button></div>`);
       // a report made by mistake, or while sensors were offline, is no truth: deleted for good
       row.querySelector('.rep-del').onclick = async () => {
         if (!confirm(`Meldung „${what}“ löschen? Die gespeicherten Sensordaten dieser Meldung gehen verloren, das lässt sich nicht rückgängig machen.`)) return;

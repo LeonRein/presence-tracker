@@ -180,6 +180,9 @@ function updateStatus() {
     toast('Konfiguration nicht geladen: ' + e.message, 8000);
     return;
   }
+  // a user who is no admin: Live and Gelerntes only (the server refuses the rest, app.App._roles)
+  document.body.classList.toggle('admin', state.admin);
+  if (!state.admin) for (const b of document.querySelectorAll('#tabs .admin-only')) delete SELECTABLE[b.dataset.tab];
   const tab = location.hash.slice(1);
   if (SELECTABLE[tab] && tab !== state.tab) showTab(tab);
   else emit('tab');

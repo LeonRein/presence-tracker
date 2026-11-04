@@ -2,6 +2,20 @@
 
 ## Unveröffentlicht
 
+## 0.57.0 (Panel für alle Nutzer, nur Admins ändern etwas)
+
+- `panel_admin: false`: Das Panel steht in der Seitenleiste jedes Nutzers. Wer kein Administrator ist, sieht *Live* und
+  *Gelerntes* und kann Fehler melden; die übrigen Tabs, Speichern/Rückgängig, *Neu beginnen* und das Löschen von Meldungen sind
+  ausgeblendet.
+- Der Server prüft die Rolle selbst (`App._roles`): Die Gruppen des Nutzers kommen vom Supervisor im Header
+  `X-Remote-User-Groups` (ab Supervisor 2026.10.4, PR home-assistant/supervisor#7398; einen vom Browser gesendeten verwirft er).
+  Ohne `system-admin` darin, auch ohne den Header, gibt es nur die Routen in `USER_ROUTES` (GET der Live-Daten, des Gelernten,
+  der Konfiguration und der Meldungen, POST `/api/reports`), alles andere ist 403 `admin_only`; neue Routen sind Admin-only.
+  Außerhalb des Supervisors (Entwicklung, Wiedergabe) ist jeder Admin. `/api/config` sagt der Oberfläche die Rolle (`admin`).
+- Lokal geprüft mit einer Aufnahme: als Nutzer zwei Tabs, `#plan` bleibt auf *Live*, Meldung gespeichert, PUT `/api/config` und
+  `/api/recording` 403; als Admin alle Tabs und Knöpfe wie bisher, keine Fehler in der Konsole. Neu
+  `test_app.test_behind_ingress_only_admins_change_anything`.
+
 ## 0.56.1 (Fehler aus 0.56.0: Tab *Gelerntes* → *Ziele* brach ab)
 
 - **`KeyError('velocity')` im Tab *Gelerntes***, sobald die Zielkarte die ersten Gänge hatte (live am 4.11. um 9:25): Die Hülle

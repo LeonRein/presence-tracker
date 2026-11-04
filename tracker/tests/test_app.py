@@ -423,3 +423,35 @@ def test_a_refused_floor_plan_keeps_the_people(tmp_path, monkeypatch):
     assert r.status == 400 and app.config.to_dict() == config.to_dict()
     assert json.loads((tmp_path / "people.json").read_text())["tiles"] == fingerprint
     assert app.tracker.started_from is not None and app.tracker.tiles()["id"] == fingerprint
+
+
+def test_behind_ingress_only_admins_change_anything(tmp_path):
+    """Behind ingress the Supervisor names the user's groups (X-Remote-User-Groups): a user who is no admin sees
+    Live and Gelerntes and may report an error; everything else is refused, also without the header."""
+    flat_config(entry=True).save(tmp_path / "tracker.json")
+    app = App(tmp_path, publish=False, ingress=True)
+    admin = {"X-Remote-User-Groups": "system-users,system-admin"}
+    user = {"X-Remote-User-Groups": "system-users"}
+
+    async def main():
+        async with TestClient(TestServer(app.web_app())) as client:
+            got = {}
+            for who, headers in (("admin", admin), ("user", user), ("none", {})):
+                r = await client.get("/api/config", headers=headers)
+                config = (await r.json())
+                got[who] = {
+                    "admin": config["admin"],
+                    "learned": (await client.get("/api/learned", headers=headers)).status,
+                    "report": (await client.post("/api/reports", json={"kind": "other", "room": ""}, headers=headers)).status,
+                    "save": (await client.put("/api/config", json=config["config"], headers=headers)).status,
+                    "reset": (await client.post("/api/tracks/reset", headers=headers)).status,
+                    "recording": (await client.get("/api/recording", headers=headers)).status,
+                }
+            return got
+
+    got = asyncio.run(main())
+    assert got["admin"] == {"admin": True, "learned": 200, "report": 200, "save": 200, "reset": 200, "recording": 200}
+    for who in ("user", "none"):
+        assert got[who] == {"admin": False, "learned": 200, "report": 200, "save": 403, "reset": 403, "recording": 403}, who
+    # started outside the Supervisor (development, replay): no ingress, everyone is admin
+    assert App(tmp_path, publish=False).is_admin(type("R", (), {"headers": {}})())

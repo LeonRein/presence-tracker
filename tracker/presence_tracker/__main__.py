@@ -74,7 +74,8 @@ def main():
 
     app = App(args.data, prefix=options.get("topic_prefix", "presence"),
               publish=not args.no_publish and not args.replay,
-              replay=args.replay, speed=args.speed, mqtt=mqtt, ha_url=ha_url, ha_token=ha_token)
+              replay=args.replay, speed=args.speed, mqtt=mqtt, ha_url=ha_url, ha_token=ha_token,
+              ingress=bool(supervisor_token))
     try:
         asyncio.run(app.run(args.host, args.port))
     except KeyboardInterrupt:

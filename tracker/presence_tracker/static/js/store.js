@@ -88,6 +88,7 @@ export async function loadConfig() {
   state.config.background.layers ??= [];
   state.sensorsSeen = data.sensors_seen;
   state.replay = data.replay;
+  state.admin = data.admin;
   state.haAvailable = data.ha;
   state.limits = data.limits || {};
   state.defaults = data.defaults || {};

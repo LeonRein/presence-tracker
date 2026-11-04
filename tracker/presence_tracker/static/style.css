@@ -258,3 +258,6 @@ details.card > summary { cursor: pointer; }
 .calib-progress progress { flex-basis: 100%; height: 4px; accent-color: var(--ok); margin: 2px 0 0 18px; width: calc(100% - 18px); }
 details.pairs { margin-top: 12px; }
 details.pairs > summary { cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+
+/* parts only an admin uses (main.js sets body.admin from /api/config); hidden until the role is known */
+body:not(.admin) .admin-only { display: none !important; }
