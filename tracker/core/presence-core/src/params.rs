@@ -154,6 +154,10 @@ pub struct Params {
     // echo sources: mean life s, its stages, the slants (from, to, step m) and amplitudes
     #[serde(deserialize_with = "real")]
     pub ld_echo_life: f64,
+    /// the long-lived echo sources: their share of those that begin, their mean life (s); measured 4.11.
+    /// (episodes of still energy over 3 x its level without an LD2450 target, 103 h): 0.89 with 12 s, 0.11
+    /// with 245 s, the longest 26 min (the washing machine in the bath)
+    pub ld_echo_long: [f64; 2],
     pub ld_echo_stages: usize,
     pub ld_echo_ranges: Slants,
     pub ld_echo_amps: Vec<f64>,
@@ -282,6 +286,7 @@ impl Default for Params {
             ld_frame: 0.089,
             ld_memory: 2.0,
             ld_echo_life: 20.0,
+            ld_echo_long: [0.11, 245.0],
             ld_echo_stages: 2,
             ld_echo_ranges: Slants {
                 from: 0.75,
@@ -353,6 +358,7 @@ impl Params {
             ("res_range", positive(self.res_range)),
             ("res_cross", positive(self.res_cross)),
             ("const_share", (0.0..=1.0).contains(&self.const_share)),
+            ("ld_echo_long", (0.0..1.0).contains(&self.ld_echo_long[0]) && self.ld_echo_long[1] > 0.0 && self.ld_echo_long[1].is_finite()),
             ("walker_ghosts", at_least_0(self.walker_ghosts)),
             ("offset_wide", (0.0..1.0).contains(&self.offset_wide[0]) && at_least_0(self.offset_wide[1])),
             ("tau", positive(self.tau)),

@@ -1,7 +1,8 @@
 //! The LD2410C's echo sources (MODEL.md 4.3): energy that is not a person's. Per
 //! sensor off, or one source on - the profile of a standing person on the axis at a slant, times an
-//! amplitude - in one of K stages: it begins at a rate (uniform over the sources), lives an Erlang(K)
-//! time and ends. What tells it from a person is how it begins and ends: a person must come in, and
+//! amplitude - in one of K stages of one of its lives: it begins at a rate (uniform over the sources),
+//! is short-lived or (with the share ld_echo_long[0]) long-lived, lives an Erlang(K) time of that mean
+//! and ends. What tells it from a person is how it begins and ends: a person must come in, and
 //! stays.
 //!
 //! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
@@ -17,10 +18,12 @@ pub struct Echoes {
     src: Vec<[f64; CELLS]>,
     /// stages
     k: usize,
-    /// [off, (stage, source) ...]
+    /// per life: its share of the sources that begin, its mean (s)
+    lives: Vec<(f64, f64)>,
+    /// [off, (life, stage, source) ...]
     p: Vec<f64>,
-    /// per source what began in the last step, and the first stage after it (for learning the rate)
-    fresh: f64,
+    /// per life and source what began in the last step, and the first stage after it (for learning the rate)
+    fresh: Vec<f64>,
     first: Vec<f64>,
 }
 
@@ -38,13 +41,19 @@ impl Echoes {
             .flat_map(|&amp| profiles.iter().map(move |row| row.map(|x| amp * x)))
             .collect();
         let k = p.ld_echo_stages;
-        let mut probs = vec![0.0; 1 + k * src.len()];
+        let [long, long_life] = p.ld_echo_long;
+        let lives: Vec<(f64, f64)> = [(1.0 - long, p.ld_echo_life), (long, long_life)]
+            .into_iter()
+            .filter(|&(share, _)| share > 0.0)
+            .collect();
+        let mut probs = vec![0.0; 1 + lives.len() * k * src.len()];
         probs[0] = 1.0;
         Self {
             src,
             k,
+            fresh: vec![0.0; lives.len()],
+            lives,
             p: probs,
-            fresh: 0.0,
             first: Vec::new(),
         }
     }
@@ -53,47 +62,63 @@ impl Echoes {
         self.src.len()
     }
 
+    /// Where the states of a life's stage begin in p.
+    fn at(&self, life: usize, stage: usize) -> usize {
+        1 + (life * self.k + stage) * self.sources()
+    }
+
     /// Moves on by dt: sources begin with `rate` (per s), age, end.
-    pub fn predict(&mut self, params: &Params, dt: f64, rate: f64) {
+    pub fn predict(&mut self, _params: &Params, dt: f64, rate: f64) {
         let j = self.sources();
         let p = &self.p;
         let mut q = vec![0.0; p.len()];
         let on = p[0] * -(-rate * dt).exp_m1();
         q[0] = p[0] - on;
-        for x in &mut q[1..1 + j] {
-            *x += on / j as f64;
-        }
-        self.fresh = on / j as f64;
-        let go = -(-(self.k as f64) / params.ld_echo_life * dt).exp_m1();
-        for stage in 0..self.k {
-            let part = &p[1 + stage * j..][..j];
-            for (x, &v) in q[1 + stage * j..][..j].iter_mut().zip(part) {
-                *x += v * (1.0 - go);
+        let mut first = Vec::with_capacity(self.lives.len() * j);
+        for (life, &(share, mean)) in self.lives.iter().enumerate() {
+            let fresh = on * share / j as f64;
+            self.fresh[life] = fresh;
+            let start = self.at(life, 0);
+            for x in &mut q[start..start + j] {
+                *x += fresh;
             }
-            if stage + 1 < self.k {
-                for (x, &v) in q[1 + (stage + 1) * j..][..j].iter_mut().zip(part) {
-                    *x += v * go;
+            let go = -(-(self.k as f64) / mean * dt).exp_m1();
+            for stage in 0..self.k {
+                let from = self.at(life, stage);
+                let part = &p[from..from + j];
+                for (x, &v) in q[from..from + j].iter_mut().zip(part) {
+                    *x += v * (1.0 - go);
                 }
-            } else {
-                q[0] += pairwise_sum(part) * go;
+                if stage + 1 < self.k {
+                    let next = self.at(life, stage + 1);
+                    for (x, &v) in q[next..next + j].iter_mut().zip(part) {
+                        *x += v * go;
+                    }
+                } else {
+                    q[0] += pairwise_sum(part) * go;
+                }
             }
+            first.extend_from_slice(&q[start..start + j]);
         }
-        self.first = q[1..1 + j].to_vec();
+        self.first = first;
         self.p = q;
     }
 
     /// After weigh: the expected number of sources that began in the last step.
     pub fn began(&self) -> f64 {
         let j = self.sources();
-        self.p[1..1 + j]
-            .iter()
-            .zip(&self.first)
-            .fold(0.0, |s, (p, &f)| s + p * if f > 0.0 { self.fresh / f } else { 0.0 })
+        (0..self.lives.len()).fold(0.0, |s, life| {
+            let start = self.at(life, 0);
+            self.p[start..start + j]
+                .iter()
+                .zip(&self.first[life * j..][..j])
+                .fold(s, |s, (p, &f)| s + p * if f > 0.0 { self.fresh[life] / f } else { 0.0 })
+        })
     }
 
     /// The masses of the states that are on, and what each puts into the cells x scale.
     pub fn points(&self, scale: &[f64; CELLS]) -> (Vec<f64>, Vec<[f64; CELLS]>) {
-        let put = (0..self.k)
+        let put = (0..self.lives.len() * self.k)
             .flat_map(|_| self.src.iter().map(|row| std::array::from_fn(|c| row[c] * scale[c])))
             .collect();
         (self.p[1..].to_vec(), put)
@@ -136,11 +161,17 @@ mod tests {
         let on = 1.0 - e.off();
         assert!((on - -(-rate).exp_m1()).abs() < 1e-15);
         assert!((e.began() - on).abs() < 1e-15);
-        // a source on, then nothing: after many lives it is over
+        // a source on, then nothing: after 600 s only the long-lived ones (mean 245 s) may be on,
+        // after many of their lives it is over
         let n = e.p.len();
         e.weigh(&vec![50.0; n - 1]);
         assert!(e.off() < 1e-6);
         for _ in 0..600 {
+            e.predict(&p, 1.0, 0.0);
+        }
+        let short_on: f64 = e.p[1..e.at(1, 0)].iter().sum();
+        assert!(short_on < 1e-9 && e.off() < 0.999, "{short_on} {}", e.off());
+        for _ in 0..6000 {
             e.predict(&p, 1.0, 0.0);
         }
         assert!(e.off() > 0.999);

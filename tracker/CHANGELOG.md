@@ -2,6 +2,15 @@
 
 ## Unveröffentlicht
 
+## 0.59.0 (Echoquellen kurz und lang, Messung nach dem Präsenzlicht)
+
+- **Langlebige Echoquellen** (MODEL.md 4.3, `ld_echo_long` = [0,11; 245 s], gemessen auf 103 h Aufnahmen): Neben den kurzen
+  (20 s) gibt es Quellen, die Minuten leben (Waschmaschine, Restwärme nach dem Kochen). Bisher hielt nach 20 s nur eine
+  Person beständige Energie. Mittel über mehrere Starts: 4.11. Personen zu viel 83 → 48, Licht zu viel 110 → 102 Raumminuten;
+  3.11. 224 → 201; Bad „plötzlich zwei“ P(≥ 2) 0,95 → 0,36; leeres Haus in 16 Starts kein Licht; Bad „eine bleibt“ 0 s falsch.
+- Bewertung neu (MODEL.md 10 „0.59“): Licht wie das Präsenzlicht (2 min Nachlauf), leeres Haus, je Fenster mehrere Starts.
+- Offen: Dobby + Waschmaschine im Bad (3.11.), Spiegelbild am Esstisch beim Kochen, die zweite Schlafende.
+
 ## 0.58.0 (Personen entstehen nicht mehr aus einer Sekunde Sensorabweichung)
 
 Erster Schritt von „Personen entstehen und verschwinden nur, wenn das Bewegungsmuster es begründet“ (Meldungen

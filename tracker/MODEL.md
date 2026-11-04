@@ -484,6 +484,15 @@ Das Modell, je Sensor:
   ging). Wie die Geister des LD2450 (4.2) unterscheidet sie, wie sie beginnt und endet: Je Sensor aus
   oder eine Quelle an – das Profil einer Stehenden auf der Achse in 0,75–6,5 m (Schritt 0,5 m) mal
   0,3 / 1 / 3 –, Beginn mit der Rate ρ (gleich über die Quellen), Lebensdauer Erlang(2) mit Mittel 20 s.
+  **Kurz- und langlebige Quellen** (seit 0.59.0, `ld_echo_long` = [0,11; 245 s]): Eine beginnende Quelle lebt mit 0,89
+  Erlang(2) mit Mittel 20 s, mit 0,11 Erlang(2) mit Mittel 245 s (zwei parallele Ketten, Mischung wie bei den Geistern 4.2).
+  Gemessen 4.11. über 103 h App-Aufnahmen: Episoden mit der Summe der ruhigen Ringe 2–4 über 3 × ihrem Pegel ohne
+  LD2450-Ziel des Sensors ±60 s (ohne Dobby), Lücken < 3 s überbrückt: Mischung zweier Exponentialverteilungen 0,89 mit
+  12 s, 0,11 mit 245 s (n = 179; die längste 26 min, die Waschmaschine im Bad 3.11. 12:00–15:55). Mit Lücken < 60 s
+  überbrückt 0,93 mit 52 s, 0,07 mit 36 min: Die Waschmaschine zerfällt an der Schwelle in Stücke, die lange Lebensdauer
+  liegt also zwischen 4 und 36 min. Bis 0.58 erklärte nach 20 s nur noch eine Person beständige Energie ohne Person (9,
+  „Lang anhaltende Energie ohne Person“). Mit 0,07 × 36 min blieb bei einem von sechs Starts im leeren Haus (1.11.) der
+  Flur 5,5 h belegt; mit 0,11 × 245 s in allen 16 Starts der vier Leer-Fenster kein Licht.
   Gemessen in der leeren Nacht 22:56–02:15 (3,3 h, Ruhig-Energie über 3× ihrem Pegel ≥ 3 s, ohne
   LD2450-Ziel ±60 s): Küche 3,6 je Stunde (Dauer Median 10 s, Mittel 15 s, bis 59 s), die anderen vier
   Sensoren keine. ρ lernt die App je Sensor mit dem Hintergrund (Gamma-Poisson: erwartete Zahl
@@ -2834,6 +2843,24 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   solange jemand an der Arbeitsplatte hinter dem Esszimmer-Sensor steht, und die zweite Schlafende: Sie verliert nachts ihre
   Existenz durch das LD2410C und das Nicht-Erfassen (ohne das Schlafzimmer-LD2410C hält sie Minuten länger), nicht durch
   den Ablauf (`unseen_life` = ∞ ändert nichts).
+- **0.59: Licht nach Node-RED, leeres Haus, mehrere Starts** (4.11. abends; Leon: Licht aus, während jemand im Raum ist,
+  ist schlimmer als Licht im leeren Raum; im leeren Haus darf nirgends Licht sein). `dev/personenzahl/evalp.py` simuliert
+  das Präsenzlicht (an bei belegt, aus nach 120 s ohne) und spielt jedes Fenster von 2–6 Startzeiten nach: Die Kennzahlen
+  hängen chaotisch von der Vorgeschichte der Hypothesen ab (3.11. „Licht zu viel“ 0.58 zwischen 172 und 285 Raumminuten
+  je Start; die Zahlen der Tabelle oben aus einem Start waren deshalb irreführend). Leere Fenster (stundenlang kein
+  LD2450-Ziel; von Leon zu bestätigen): 31.10. 12:40–14:30, 1.11. 13:00–19:15, 2.11. 13:15–16:10 und 19:30–22:15.
+  | Mittel über die Starts | 0.57 | 0.58 | 0.59 |
+  |---|---|---|---|
+  | leeres Haus, Licht (Raumminuten) | 0 | 0 | 0 (16 Starts) |
+  | 3.11. Licht zu viel | 180 [121–242] | 224 [172–285] | 201 [201–202] |
+  | 4.11. Licht zu viel / Personen zu viel | 105 / 76 | 110 / 83 | 102 / 48 |
+  | 4.11. dunkel mit ruhender LD2450-Spur (min) | 3,7 | 0,1 | 1,5 (das Spiegelbild am Esstisch beim Kochen) |
+  | Bad „eine bleibt“ falsch / „plötzlich zwei“ P(≥ 2) | 5 s / 0,97 | 0 s / 0,95 | 0 s / 0,36 |
+  „Licht zu viel“ enthält die gewollten 2 min Nachlauf bei jedem Raumwechsel. Verworfen: κ Gamma(2), κ neu gezogen alle
+  3 min (beide im Rauschen), eine einzige Lebensdauer von 600 s (gut, aber nicht gemessen), 0,07 × 36 min (Licht im
+  leeren Haus). Der Rest am 3.11. ist das Bad: Aus Dobbys Spuren (13:18–13:53) wird eine Person, die die Energie der
+  Waschmaschine bis 15:55 hält. Die zweite Schlafende: Ihr r fällt nachts durch die Existenzaktualisierung (alle
+  Hypothesen hatten sie mit r = 1); weder breitere Amplituden (Gamma(1)) noch κ Gamma(0,3) ohne Neuziehen halten sie.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.
