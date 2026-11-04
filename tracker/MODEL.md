@@ -240,6 +240,16 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 57 % der Versatzvarianz bleibt, 43 % wandert (gemessen). Gesamtstreuung entlang 0,15 m + 2 %, quer
 0,10 m + 5 % der Entfernung; im Filter je Achse ihr Mittel. c und o sind Teil des Kalman-Zustands
 (E_BrysonHenrikson1967). Verwendet wird höchstens alle 0,25 s eine Position.
+**Breiter Versatz einer neuen Spur** (seit 0.58.0, `offset_wide`): Beginnt eine Spur auf einer Person, die schon eine
+Spur hat, sitzt sie mit 0,8 auf dem engen Versatz oben und mit 0,2 auf einem breiten, σ = 2,0 m je Achse auf c
+(Skalenmischung, die Form eines Ausläufers wie bei einer t-Verteilung). Behalten wird der Anteil, der die Spur besser
+erklärt, gewogen mit beiden. Gemessen 4.11. in Zeiten mit nur einer Person zu Hause (lange gehende Spuren zweier
+Sensoren, gehaltene Frames verworfen, ohne Dobby): Abstand zweier Sensoren auf der einen Person im Median 0,64 m, 27 %
+über 1 m; Mischung zweier Rayleigh-Verteilungen 0,79 mit 0,47 m und 0,21 mit 2,5 m je Achse (beim Beginn einer Spur
+0,61 / 0,48 m und 0,39 / 1,9 m, n = 54). Der enge Teil des Modells ergibt etwa 0,3 m. Bis 0.57 machte ein Versatz von
+1–1,5 m beim Gang durch eine Tür eine neue Person (4.11. 17:13:55, später ein Geist im Esszimmer). Wirkung (Aufnahmen
+3.11./4.11., Kennzahlen in 10 „Personen nur mit Bewegungsmuster“): Minuten mit zwei belegten Räumen, während nur
+eine Person zu Hause war, 3.11. 65 → 5.
 
 **Start und Datenlücken:** Was ein Sensor beim ersten Frame (oder nach einer Lücke) schon verfolgt,
 wird nicht als Geburt gewertet: Eine Person ist zu einem beliebigen Zeitpunkt mit dem Anteil
@@ -252,6 +262,11 @@ Eine Spur, die zu keiner Person gehört.
 - **Entstehen** je Sensor mit einer festen Rate `λ` = 1,8·10⁻⁵ je m² und s, überall in seinem Blick (Sicht
   über 0,05), für alle Sensoren gleich, unabhängig davon, wo Personen sind. Das ist die gemessene mittlere Rate:
   692 Geister in 437 Sensorstunden, 1,6 je Sensorstunde, bei 17–26 m² Blick. Keine Karte, nichts wird gelernt.
+- **Dazu, während jemand geht** (seit 0.58.0, `walker_ghosts`): je Sensor und gehender Person (Gewicht ihrer
+  Gehen-Komponente) 0,0057 Geister je s, gleich über seinen Blick verteilt, von der kurzen Art (3 s). Gemessen 4.11.
+  in Zeiten mit nur einer Person zu Hause: Spuren ≤ 10 s, die > 1,5 m von jedem anderen Ziel beginnen, während eine
+  Spur geht: 62 in 1 545 Gehsekunden (Küche 0,014, Wohnzimmer 0,012, Bad 0,002 je s). Damit ist eine zweite gehende
+  Spur neben einer Gehenden zuerst ein Geist; eine eigene Person wird sie, wenn sie sich länger wie eine verhält.
 - **Lebensdauer:** Mischung zweier Exponentialverteilungen, 40 % mit 3 s, 60 % mit 39 s (geschätzt
   per EM 6.10. offline). Fest: Die App lernt sie nicht weiter (bis 0.12.0 tat sie das, 10). Die Lebensdauer ist, was Geister von Sitzenden trennt; aus dem eigenen
   Urteil gelernt, folgte sie den Personen, die der Filter für Geister hielt.
@@ -2803,6 +2818,22 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   min). CPU gegen 0.54.4 (`presence-replay prof`, eine Stunde): 10.10. 12 Uhr 2,73 → 2,66 % eines Kerns, 8.10. 19 Uhr 0,94
   → 1,16 %. Gespeichertes bleibt: `tracker.json` mit `seen_hold` und `ld_view` startet, gleicher Geometrieschlüssel,
   Hintergrund und Zielkarte gleich übernommen.
+- **Personen nur mit Bewegungsmuster** (4.11.; Meldungen 31.10.–4.11.; Leon: Personen dürfen in der Wohnung entstehen und
+  verschwinden, aber nur, wenn das Bewegungsmuster es begründet, damit sich Fehler nicht endlos fortführen). Gemessen auf
+  den App-Aufnahmen (`dev/personenzahl/evalp.py`): 3.11. 08:30–15:45 nur die zweite Person zu Hause (ohne Dobby 11:25–14:00),
+  4.11. 11:30–17:25 nur Leon, zwei Nächte (beide im Schlafzimmer angenommen), die Meldungsfenster.
+  | | 3.11. zu viel / 2 Räume (min) | 4.11. zu viel / 2 Räume | Nacht Schlafzimmer (Ziel 2) | Bad „eine bleibt“ falsch |
+  |---|---|---|---|---|
+  | 0.57 | 90 / 65 | 88 / 39 | 1,00 / 0,99 | 5 s |
+  | + breiter Versatz (4.1) | 87 / 5 | 83 / 40 | gleich | 0 s |
+  | + Geister an Gehenden (4.2) = 0.58.0 | 89 / 6 | 81 / 38 | gleich | 0 s |
+  Verworfen: Erkennbarkeit κ strenger (α 2/4: Bad 3.11. mit Waschmaschine 110 → 158 min belegt), Echoquellen 10/60 min
+  (Esszimmer und Bad-„zwei“ weg, aber die Frau im Bad verloren, 0,97 → 0,20), Topf der Unbekannten kleiner beim Start
+  (`start_unknown` 0,01) oder schneller vergessen (10 min): 3.11. jeweils schlechter (zu viel 118 / 132). Der Rest von
+  0.58.0 sind die Waschmaschine (3.11. 14–15:30, Ring 2 ruhig ≈ 55, kein LD2450-Ziel), das ruhende Ziel am Esstisch,
+  solange jemand an der Arbeitsplatte hinter dem Esszimmer-Sensor steht, und die zweite Schlafende: Sie verliert nachts ihre
+  Existenz durch das LD2410C und das Nicht-Erfassen (ohne das Schlafzimmer-LD2410C hält sie Minuten länger), nicht durch
+  den Ablauf (`unseen_life` = ∞ ändert nichts).
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

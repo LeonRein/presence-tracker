@@ -454,10 +454,11 @@ impl Mixture {
         [ln(s), ln(f_walk)]
     }
 
-    /// A new track on this person: its offset (c, o), a priori independent of the rest.
-    pub fn add_track(&mut self, seg: SegId, var: f64, const_share: f64) {
+    /// A new track on this person: its offset (c, o), a priori independent of the rest; `wide` is added to
+    /// the variance of c (the broad part of a track's offset, MODEL.md 4.1).
+    pub fn add_track(&mut self, seg: SegId, var: f64, const_share: f64, wide: f64) {
         let d = self.dim();
-        let (v_c, v_o) = (var * const_share, var * (1.0 - const_share));
+        let (v_c, v_o) = (var * const_share + wide, var * (1.0 - const_share));
         self.modes = self.modes.each_ref().map(|g| g.extended(v_c, v_o));
         self.slots.insert(seg, Slot { index: d, var });
     }
@@ -1156,7 +1157,7 @@ mod tests {
         });
         let mut g = walker([0.3, 0.0]);
         g.logw = [0.5f64.ln(); 2];
-        g.add_track(SegId(4), 0.04, p.const_share);
+        g.add_track(SegId(4), 0.04, p.const_share, 0.0);
         assert_eq!(g.dim(), 4);
         let z = [0.1, -0.05];
         let before = g.modes.clone();

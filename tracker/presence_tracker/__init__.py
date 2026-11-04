@@ -5,7 +5,7 @@ import pathlib
 
 import presence_core
 
-__version__ = "0.57.0"  # as in config.yaml
+__version__ = "0.58.0"  # as in config.yaml
 
 
 def code_hash() -> str:

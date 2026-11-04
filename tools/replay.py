@@ -2,7 +2,7 @@
 
 usage: python tools/replay.py --config FILE --from "YYYY-MM-DD HH:MM:SS" --to "..." [--show FROM]
                               [--every S] [--learned FILE] [--people FILE] [--recordings DIR]
-                              [--tracker DIR] [--pauses FILE]
+                              [--tracker DIR] [--pauses FILE] [--model JSON]
        python tools/replay.py --report FILE.jsonl.gz [--from ...] [--to ...] [--show ...] [--every S]
 
 The model starts at --from with nothing known, or with --people (the app's people.json, moved on from
@@ -51,6 +51,7 @@ def main():
     ap.add_argument("--show")
     ap.add_argument("--every", type=float, default=1.0)
     ap.add_argument("--pauses", help="intervals in which learning was paused (tools/vacuum_history.py)")
+    ap.add_argument("--model", help="numbers of the model that differ from the core's (its Params), as JSON")
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(a.tracker))
     from presence_tracker import code_hash
@@ -75,7 +76,7 @@ def main():
         ap.error("--config, --from and --to (or --report)")
     else:
         config = Config.from_dict(json.load(open(a.config)))
-    crowd = Tracker(config)
+    crowd = Tracker(config, model=json.loads(a.model) if a.model else None)
     # Lernen pausieren: in a report the app's intervals, else the recorded switch and --pauses
     crowd.pauses = pause.Pauses(meta.get("pauses")) if a.report else pause.load(a.pauses)
     if a.report:
@@ -122,6 +123,8 @@ def main():
             t += 3600
             if os.path.exists(path):
                 yield (json.loads(line) for line in open(path) if line.strip())
+            elif os.path.exists(path + ".gz"):  # the app's own recordings (recording.py)
+                yield (json.loads(line) for line in gzip.open(path + ".gz", "rt") if line.strip())
 
     # configurations the app took over without starting its model over (a sensor recalibrated): at the
     # same model times here

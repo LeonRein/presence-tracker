@@ -18,7 +18,7 @@ use crate::filter::tracks::{Lost, TrackInfo, Tracks};
 use crate::filter::{Filter, GroupIds, NotFinite};
 use crate::ld2450::rates::TrackSpot;
 use crate::params::{FRAME, STILL, WALK};
-use crate::vmath::logsumexp;
+use crate::vmath::{logaddexp, logsumexp};
 use crate::world::World;
 
 /// What a child of a branch says the track is (for the shell's listeners).
@@ -315,6 +315,10 @@ impl Branching<'_> {
             }
             Chance::New { .. } => {
                 let mut lam = ghost_rates;
+                // ghosts that come with somebody walking (MODEL.md 4.2): of the short kind, spread over
+                // the sensor's view, walker_ghosts per s and walking person
+                let walking: f64 = hy.people.values().map(|&m| self.objects.mixtures.get(m).weights()[WALK]).sum();
+                lam[0] += p.walker_ghosts * walking / world.sights[self.frame.si].area.max(1.0);
                 if self.frame.censored {
                     // ghosts there now: born at any time before
                     for (k, &[_, life]) in p.ghost_types.iter().enumerate() {
@@ -444,20 +448,40 @@ impl Branching<'_> {
         let objects = &mut *self.objects;
         let hit = match obj {
             Obj::Mixture(m) => {
-                // somebody with tracks: the person differs in this child, a new object
-                let mut new = objects.mixtures.get(m).fork(&mut objects.densities);
-                if !new.slots.contains_key(&track.seg) {
-                    new.add_track(track.seg, track.var, p.const_share);
-                }
-                let l = new.update(&mut objects.densities, track.seg, track.z, p.white);
-                new.in_sight(world, origin);
-                if l > f64::NEG_INFINITY {
-                    let dlog = self.start_chance(&mut new);
-                    let l = l + new.reweigh(dlog, 0.0);
-                    (l > f64::NEG_INFINITY).then(|| (self.objects.mixtures.insert(new), l))
+                // somebody with tracks: the person differs in this child, a new object. A track new on
+                // them sits on them with the narrow offset of its error or, with the share offset_wide,
+                // a broad one (MODEL.md 4.1): two sensors on one walking person differ by metres at
+                // times. Kept is the part that explains the track better, weighed with both.
+                let fresh = !objects.mixtures.get(m).slots.contains_key(&track.seg);
+                let [share, sigma] = p.offset_wide;
+                let parts: &[(f64, f64)] = if fresh && share > 0.0 {
+                    &[(1.0 - share, 0.0), (share, sigma * sigma)]
                 } else {
-                    None
+                    &[(1.0, 0.0)]
+                };
+                let mut best: Option<(Mixture, f64)> = None;
+                let mut total = f64::NEG_INFINITY;
+                for &(w, wide) in parts {
+                    let mut new = self.objects.mixtures.get(m).fork(&mut self.objects.densities);
+                    if fresh {
+                        new.add_track(track.seg, track.var, p.const_share, wide);
+                    }
+                    let mut l = new.update(&mut self.objects.densities, track.seg, track.z, p.white);
+                    new.in_sight(world, origin);
+                    if l > f64::NEG_INFINITY {
+                        let dlog = self.start_chance(&mut new);
+                        l += new.reweigh(dlog, 0.0);
+                    }
+                    if l == f64::NEG_INFINITY {
+                        continue;
+                    }
+                    let lw = l + w.ln();
+                    total = logaddexp(total, lw);
+                    if best.as_ref().is_none_or(|(_, b)| lw > *b) {
+                        best = Some((new, lw));
+                    }
                 }
+                best.map(|(new, _)| (self.objects.mixtures.insert(new), total))
             }
             Obj::Density(_) if world.tiles.n == 0 => None,
             Obj::Density(d) => {

@@ -2,6 +2,18 @@
 
 ## Unveröffentlicht
 
+## 0.58.0 (Personen entstehen nicht mehr aus einer Sekunde Sensorabweichung)
+
+Erster Schritt von „Personen entstehen und verschwinden nur, wenn das Bewegungsmuster es begründet“ (Meldungen
+31.10.–4.11.). Gemessen auf den App-Aufnahmen 3./4.11. in Zeiten mit nur einer Person zu Hause.
+- **Breiter Versatz einer neuen Spur** (MODEL.md 4.1, `offset_wide` = [0,2; 2,0 m]): Zwei Sensoren auf derselben gehenden
+  Person liegen öfter 1–3 m auseinander, als das Modell annahm. Bisher wurde daraus eine zweite Person (4.11. 17:13:55 beim
+  Gang durch die Tür Flur–Esszimmer, später der Geist im Esszimmer). 3.11.: Minuten mit zwei belegten Räumen 65 → 5;
+  Bad 31.10. 19:22 (eine geht, eine bleibt) falsch 5 → 0 s.
+- **Geister, während jemand geht** (MODEL.md 4.2, `walker_ghosts` = 0,0057 je s, Sensor und gehender Person).
+- `tools/replay.py`: `--model JSON` (Modellzahlen ändern), liest auch die gz-Aufnahmen der App.
+- Noch offen: Waschmaschine im Bad, Spiegelbild am Esstisch beim Kochen, zweite Schlafende im Bett (MODEL.md 9).
+
 ## 0.57.0 (Panel für alle Nutzer, nur Admins ändern etwas)
 
 - `panel_admin: false`: Das Panel steht in der Seitenleiste jedes Nutzers. Wer kein Administrator ist, sieht *Live* und

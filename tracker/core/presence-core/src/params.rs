@@ -91,6 +91,10 @@ pub struct Params {
     pub res_cross: f64,
     #[serde(deserialize_with = "real")]
     pub const_share: f64,
+    /// 4.1 a new track's offset from the person it begins on: besides the narrow one of its position's
+    /// error, with this share a broad one of this sigma (m per axis); measured between two sensors on one
+    /// walking person (4.11.: 0.79 at 0.47 m, 0.21 at 2.5 m)
+    pub offset_wide: [f64; 2],
     #[serde(deserialize_with = "real")]
     pub tau: f64,
     /// m: frame jitter of a track's position
@@ -108,6 +112,10 @@ pub struct Params {
     pub refind: Refind,
     // 4.2 ghosts: the kinds (rate per m^2 and s, mean life s)
     pub ghost_types: Vec<[f64; 2]>,
+    /// 4.2 ghosts that come with somebody walking: per s, sensor and walking person, of the first kind
+    /// (measured 4.11. with one person home: 0.0057, Küche 0.014, Bad 0.002)
+    #[serde(deserialize_with = "real")]
+    pub walker_ghosts: f64,
     // 5.3 nothing known: the unknown people expected at a start
     #[serde(deserialize_with = "real")]
     pub start_unknown: f64,
@@ -235,6 +243,7 @@ impl Default for Params {
             res_range: 0.6,
             res_cross: 0.9,
             const_share: 0.57,
+            offset_wide: [0.2, 2.0],
             tau: 3.5,
             white: 0.05,
             pos_every: 0.25,
@@ -245,6 +254,7 @@ impl Default for Params {
                 frozen: [0.2, 2.0, 0.02],
             },
             ghost_types: vec![[0.4 * 1.8e-5, 3.0], [0.6 * 1.8e-5, 39.0]],
+            walker_ghosts: 0.0057,
             start_unknown: 1.0,
             unseen_life: 120.0,
             max_hyps: 12,
@@ -343,6 +353,8 @@ impl Params {
             ("res_range", positive(self.res_range)),
             ("res_cross", positive(self.res_cross)),
             ("const_share", (0.0..=1.0).contains(&self.const_share)),
+            ("walker_ghosts", at_least_0(self.walker_ghosts)),
+            ("offset_wide", (0.0..1.0).contains(&self.offset_wide[0]) && at_least_0(self.offset_wide[1])),
             ("tau", positive(self.tau)),
             ("white", positive(self.white)),
             ("pos_every", positive(self.pos_every)),

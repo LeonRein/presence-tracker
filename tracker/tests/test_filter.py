@@ -278,3 +278,20 @@ def test_the_display_tells_how_long_people_stay_in_a_region():
     crowd = Tracker(flat_config(), start=0.0, people=["flur"])
     assert {r["dwell"]["median"] for r in crowd.snapshot()["regions"].values()} == {120}
     assert {r["dwell"]["p90"] for r in crowd.snapshot()["regions"].values()} == {820}
+
+
+def test_two_sensors_far_apart_on_one_walker_are_one_person():
+    # MODEL.md 4.1 "Breiter Versatz": sensor b sees the one walker a metre and more off (4.11. 17:13:55 the
+    # flur and the living room sensor 1.1-1.5 m apart); the broad part keeps that one person (the simulation
+    # does not show the old error: there it stays one person with the narrow offset alone, too)
+    from sim import SimSensor
+    config = flat_config(entry=True)
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3, 2.5), (1.0, 1.0), (4.5, 3.5), (2.0, 3.0), start=3))
+    sensors = [SimSensor(s, bias=1.4 if s["id"] == "b" else 0.0, bias_time=1e6) for s in config.data["sensors"]]
+    crowd = Tracker(config, start=0.0, people=None)
+    counts = set()
+    for t, sid, frame in simulate([a], sensors, a.waypoints[-1][0], plan=config):
+        crowd.process_frame(sid, t, Frame.of(frame))
+        if t > 15:
+            counts.add(int(np.argmax(crowd.core.count_distribution()["_observed"])))
+    assert counts == {1}
