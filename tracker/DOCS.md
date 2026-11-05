@@ -65,7 +65,8 @@ Das vollständige Modell mit jeder Wahrscheinlichkeit und ihrer Herkunft steht i
   Energie machen müsste und keine ist, ist niemand; Energie, die niemand erklärt, spricht für jemanden in
   diesem Ring, auch wenn der LD2450 ihn verloren hat. Was eine andere Person schon erklärt, sagt über die
   übrigen nichts. Was jeder LD2410C ohne Personen sieht (Hintergrund), **lernt die App selbst**, nur für
-  Sensoren und Grundriss, wie sie sind. Seine Flags und die gemeldete Entfernung zählen nicht mehr.
+  Sensoren und Grundriss, wie sie sind. Sieht der LD2450 im selben Gehäuse 10 Minuten lang niemanden, wird
+  bleibende Energie (eine laufende Waschmaschine) Hintergrund, statt eine unsichtbare Person zu halten. Seine Flags und die gemeldete Entfernung zählen nicht mehr.
 - **Wände**: Die Radare sehen nicht durch die Betonwände. Ein Messpunkt hinter einer Wand oder außerhalb aller
   Räume ist eine Reflexion und wird verworfen (*Toleranz an Wänden*).
 - **Personen**: Wie viele es sind, wird nirgends eingestellt. Nach einem Neustart der App macht das Modell

@@ -442,7 +442,23 @@ Das Modell, je Sensor:
   erklärt, wurde Hintergrund. Ohne beides lernte der Hintergrund Sitzende und Schlafende (10
   „Lernschleifen“). Nicht nach dem Urteil des Filters über Personen ohne Spur: Dort halten die Energien
   selbst eine Person, wenn b zu klein ist, und das Lernen stünde still (gemessen: 4 h Licht im leeren
-  Schlafzimmer, 10). Prior: bewegt Ring 0
+  Schlafzimmer, 10).
+  **Nach langer Stille zählen Personen ohne Spur nicht** (seit 0.61.0): Der Anteil des Hintergrunds `b/μ` nahm μ mit
+  allen Personen, auch denen ohne Spur. Hielt die Energie selbst einen Eintrag (eine Person ohne Spur), erklärte er,
+  was über b lag, b lernte nur seinen eigenen Wert zurück, und der Eintrag blieb: ein Fixpunkt des EM (3.11.
+  14:00–15:00: die Waschmaschine im Bad, ruhig Ring 2 um 55 statt 4,5, gelernt blieb 7; kein Ziel des Bad-LD2450 in
+  einer Stunde). Jetzt nimmt μ nur die Personen mit Spur, sobald der LD2450 im selben Gehäuse seit `ld_anchor_quiet`
+  (10 min, wie für den Anker) nichts in Sicht hatte: So lange sieht er niemanden, der in seinem Blick ist (gemessen
+  5.11., `dev/personenzahl/luecken.py`: in 46 Aufenthalten einer Person die längste Lücke 240 s, im Bad 98 s). Was dann
+  an Energie bleibt, lernt b mit seinem Vergessen (0,7 h), und der Eintrag hängt wieder an den Messungen des LD2450.
+  Gemessen (alle Fenster, je mehrere Starts, gegen 0.60): Bad 3.11. 69 → 59 belegte Minuten, Licht zu viel 464 → 453
+  Raumminuten, Personen zu viel 167 → 145; leeres Haus, Nächte, Morgen und Meldungen gleich. Schneller geht es nicht:
+  b folgt mit 0,7 h, und jedes Ziel des LD2450 (3.11. 14:45 eines an der Badtür) beginnt die Stille neu. Der Preis:
+  Wer im Blick eines Sensors länger als 10 min ohne ein Ziel seines LD2450 sitzt oder liegt, dessen Energie wird nach
+  etwa 0,7 h Hintergrund; ihn hält dann nur noch κ. Bei wachen Personen kam das in den Aufnahmen nicht vor (s. o.),
+  bei einer Schlafenden allein im Zimmer kann es vorkommen (zu zweit sieht der LD2450 den anderen; Leon 9.10.:
+  Schlafende wollen das Licht ohnehin aus). Die Tests mit einer Sitzenden (`tests/test_learning.py`) nehmen seitdem
+  die gemessene längste Lücke (240 s) statt 15 min. Prior: bewegt Ring 0
   13, Ring 1 9, sonst 4,5, ruhig 5 mit dem Gewicht 10 min (gemessen 6.10., 4,3 h; auf 19 h 16 / 9 /
   4,3 / 4,9, gleiche Lichtfehler, 10 „Die Stille vor einem Frame“). **Vergessen 0,7 h** (seit 9.10.,
   gemessen): Der Hintergrund wandert; im Flur springt bewegt Ring 4 morgens von 1,7 auf 5,1 und Ring 5 von

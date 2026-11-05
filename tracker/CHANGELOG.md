@@ -2,6 +2,19 @@
 
 ## Unveröffentlicht
 
+## 0.61.0 (Hintergrund lernt nach langer Stille ohne Personen ohne Spur)
+
+Gegen 0.60 auf allen Fenstern mit mehreren Starts (Leons Maßstab: Licht zu viel + 5 × dunkel mit Sitzer, Ein-Personen-
+und Morgenfenster): 600 → 589; Licht zu viel 464 → 453 Raumminuten (3.11. 146 → 136, Bad 69 → 59 belegte Minuten),
+dunkel mit Sitzer gleich (27,3 min), Personen zu viel 167 → 145; leeres Haus (16 Starts) weiter ohne Licht, Meldungen
+gleich (Bad 31.10. 19:22 0 s falsch). Rechenzeit gleich (nebeneinander gemessen 1,00 / 0,83).
+- **Nach 10 min ohne Ziel des LD2450 zählen beim Lernen des LD2410C-Hintergrunds nur Personen mit Spur** (MODEL.md 4.3):
+  Der Anteil des Hintergrunds an einer Energie (`b/μ`) nahm μ mit allen Personen. Hielt die Energie selbst eine Person ohne
+  Spur, erklärte sie den Überschuss, und der Hintergrund lernte nur sich selbst zurück (die Waschmaschine im Bad 3.11.:
+  ruhig Ring 2 um 55, gelernt blieb 7, eine Stunde lang eine Person im Bad ohne ein Ziel des Bad-LD2450). Nach
+  `ld_anchor_quiet` (10 min) Stille sieht der LD2450 niemanden, der in seinem Blick ist (gemessen: die längste Lücke echter
+  Aufenthalte 240 s); dann lernt b, was bleibt, mit seinem Vergessen von 0,7 h.
+
 ## 0.60.0 (Kein Eintrag ist gewiss, Echoquellen so beweglich wie Personen, Erkennbarkeit gemessen)
 
 Gegen 0.57 (main) und 0.59 auf allen Fenstern mit Wahrheit aus den Telefonen (4 leere, 5 mit einer Person, 2 Nächte),

@@ -198,7 +198,11 @@ impl Background {
             e.began *= k;
             e.quiet *= k;
         }
-        let gained = gained(w.learn, w.b, w.alpha);
+        // after ld_anchor_quiet s without a target of the housing's LD2450 the people without a track are
+        // not counted: in view nobody goes that long unseen (MODEL.md 4.3, measured: at most 240 s), and
+        // what such a record put in would hold the background where it was (the record held by energy)
+        let mus = if w.quiet >= p.ld_anchor_quiet { &w.learn.tracked } else { &w.learn.mus };
+        let gained = gained(w.learn, mus, w.b, w.alpha);
         let w_bg = if st.time > 0.0 {
             w.learn.echo_off * (1.0 - st.t_target / st.time)
         } else {
@@ -341,11 +345,11 @@ fn ld_pose(v: &Value) -> Result<Pose, LearnedError> {
 
 /// s x the background's share of the energies of these frames: of the uncensored ones b / mu, of the
 /// capped ones b Q(alpha + 1, x) / Q(alpha, x) with x = alpha CAP / mu (until 0.20 a capped energy
-/// counted as 100), each mixed over the hypotheses with their weights before.
-fn gained(l: &LdLearn, b: &Cells, alpha: &Cells) -> Cells {
+/// counted as 100), each mixed over the hypotheses (their means `mus`) with their weights before.
+fn gained(l: &LdLearn, mus: &[Cells], b: &Cells, alpha: &Cells) -> Cells {
     let st: &Stats = &l.stats;
     let mix = |f: &dyn Fn(&Cells, usize) -> f64, c: usize| {
-        l.prior_w.iter().zip(&l.mus).fold(0.0, |s, (w, mu)| s + w * f(mu, c))
+        l.prior_w.iter().zip(mus).fold(0.0, |s, (w, mu)| s + w * f(mu, c))
     };
     let censored = st.t_cens.iter().any(|&t| t != 0.0);
     std::array::from_fn(|c| {
@@ -368,6 +372,7 @@ mod tests {
 
     fn learning(stats: Stats, mus: Vec<Cells>, prior_w: Vec<f64>) -> LdLearn {
         LdLearn {
+            tracked: mus.clone(),
             mus,
             prior_w,
             nobody: 0.5,
@@ -431,6 +436,33 @@ mod tests {
         let anchor = bg.anchor(0, p);
         let want = (anchor[0] * p.ld_prior_time + level.num[0]) / (p.ld_prior_time + level.den);
         assert_eq!(bg.b(0, p)[0], want);
+    }
+
+    #[test]
+    fn after_a_long_quiet_the_people_without_a_track_are_not_counted() {
+        // as above, but the somebody of the second hypothesis has no track: held by the energies alone it
+        // would keep b where it is; quiet for ld_anchor_quiet s the background's share is all
+        let p = &background().1.params;
+        let b = [10.0; CELLS];
+        let alpha = [2.0; CELLS];
+        let learned = |quiet: f64| {
+            let (mut bg, _) = background();
+            let mut st = Stats::default();
+            st.add(&[10.0; CELLS], 2.0, false);
+            let mut l = learning(st, vec![[10.0; CELLS], [20.0; CELLS]], vec![0.75, 0.25]);
+            l.tracked = vec![b, b];
+            let w = Weighed {
+                learn: &l,
+                b: &b,
+                rate: p.ld_echo_rate,
+                alpha: &alpha,
+                quiet,
+            };
+            bg.learn(0, &w, p);
+            bg.part(0).level.expect("learned").num[0]
+        };
+        assert!((learned(p.ld_anchor_quiet - 1.0) - 0.8 * 0.875 * 20.0).abs() < 1e-12);
+        assert!((learned(p.ld_anchor_quiet) - 0.8 * 20.0).abs() < 1e-12);
     }
 
     #[test]
@@ -595,6 +627,7 @@ mod tests {
     fn em(stats: Stats, off: f64) -> LdLearn {
         LdLearn {
             mus: Vec::new(),
+            tracked: Vec::new(),
             prior_w: vec![1.0],
             nobody: 0.0,
             echo_off: off,
@@ -608,6 +641,7 @@ mod tests {
     /// `quiet` s.
     fn step(bg: &mut Background, l: &mut LdLearn, b: Cells, mu: Cells, quiet: f64, p: &Params) {
         l.mus = vec![mu];
+        l.tracked = vec![mu];
         let alpha = alpha(p);
         bg.learn(
             0,
@@ -788,6 +822,7 @@ mod tests {
             st.add(&times(2.0, &b), 3600.0, false);
             let mut l = em(st, 1.0);
             l.mus = vec![b];
+            l.tracked = vec![b];
             let alpha = alpha(p);
             let weighed = Weighed {
                 learn: &l,
