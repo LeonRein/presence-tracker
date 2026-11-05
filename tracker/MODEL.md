@@ -583,16 +583,24 @@ D_Mahler2011 (Abschn. III-A, Gl. 13–18: eigene Geburt, eigenes Überleben, eig
 Störquellen und umgekehrt), im PMBM wie die Personen (B_GarciaFernandez2018; `filter/clutter.rs`):
 - **Gehört zu einem LD2450** und macht nur in ihm Spuren. Die anderen Sensoren und das LD2410C sehen sie nicht, sie geht
   nicht, braucht keine Tür, gibt kein Licht und zählt nicht.
-- **Ort fest**, ihre Spuren sitzen auf ihr wie auf einer Person (4.1: `z = y + c + o + w`, derselbe Versatz); ein
-  Kalman-Filter über (y, c, o) je Achse, y ohne Bewegung. Gemessen am Luftentfeuchter (Ziele je 10 s gemittelt,
-  08:30–11:25): Streuung 0,06 m je Achse, also enger als der Versatz einer Spur auf einer Person (0,2–0,3 m); das
-  Modell nimmt den Versatz der Personen.
+- **Ort:** ihre Spuren sitzen auf ihr wie auf einer Person (4.1: `z = y + c + o + w`, derselbe Versatz); ein
+  Kalman-Filter über (y, c, o) je Achse. y zittert wie der Ort einer Stehenden (3.1, 0,02 m/√s), geht aber nie, und wird
+  wie eine Person auf die Sicht ihres Sensors beschnitten (4.1 „Wer gemessen wird, ist in Sicht“): Wie beim Geist (4.2)
+  unterscheiden sich Störquelle und Person nicht durch ein anderes Rauschen. Mit festem y gewann bei jeder ruhenden Spur
+  die Störquelle je Position um etwa 0,016 (0,07 je s): Die Diffusion der Person verbreitert ihre Vorhersage, ein fester
+  Ort nicht (Kaltstart einer Sitzenden, die nur ein Sensor sieht: P(belegt) nach 60 s 0,02; mit Zittern bleibt es beim
+  Verhältnis der Anfangsdichten, 0,72). Der gemessene Ort des Luftentfeuchters streut weniger als der Versatz einer
+  Person (je Achse 0,07 m innerhalb von 10 s, 0,05 m die 10-s-Mittel), aber ruhende Spuren von Personen ebenso
+  (0,04–0,08 m und 0,05–0,11 m, Ein-Personen-Fenster 2.–4.11.); ein eigener, enger Versatz der Störquelle (0,047 /
+  0,05 m) machte eine Sitzende mit gemessenem Zittern in 10 s zur Störquelle (P(belegt) 0,06) und ist verworfen.
 - **Entstehen** überall im Blick ihres Sensors mit `clutter_birth` = 2,2·10⁻⁷ je m² und s, gleich verteilt, keine Karte.
   Gemessen in den leeren Fenstern (17 h ohne Dobby, 7 Sensoren, im Mittel 21 m² Blick): zwei Orte, an denen eine Spur
   länger als jeder Geist lebte, der Luftentfeuchter (Esszimmer) und 25 min an einer Stelle 0,3 m vor dem
   Wohnzimmer-Sensor; 2 / (120 Sensorstunden × 21 m²). Unsicher (2 Ereignisse, ein Faktor 3 nach jeder Seite).
-- **Lebensdauer** exponentiell, Mittel `clutter_life` = 5,3 h (die zwei Orte: 25 min und ≥ 4,9 h bis zum Ende der
-  Aufnahme; Maximum-Likelihood mit Zensur).
+- **Lebensdauer** exponentiell, Mittel `clutter_life` = 1,9 h: die Zeit, in der die zwei Orte in den leeren Fenstern da
+  waren (3,4 h und 0,4 h), je Geburt (Little). So ist die Dichte der Störquellen beim Start ohne Wissen
+  (`clutter_birth` × `clutter_life` × Anteil mit Spur ≈ 1,5·10⁻³ je m²) die gemessene Belegung. Die Maximum-Likelihood mit
+  Zensur gab 5,3 h und damit beim Start die dreifache Dichte.
 - **Erfassung:** Ohne laufende Spur beginnt ihr Sensor eine mit `clutter_acquire` = 0,115 /s (gemessen am Luftentfeuchter:
   21 Lücken zwischen den Spuren der App, zusammen 182 s, Median 5 s; 24 weitere Spuren begannen, während die vorige
   noch gehalten wurde), überall gleich (die feste Erfassung bei D_Mahler2011), weniger neben seinen laufenden Zielen
@@ -2987,6 +2995,33 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   wiedergefunden werden: `leer0511` 132 bzw. 48 Raumminuten statt 41); das Wiederfinden mit 1 wie beim Geist statt mit
   dem Kern um die gehaltene Stelle (72). Offen: dieselbe Spur kehrt nach langen Haltezeiten zur Person zurück; ein Störquellen-Ort, der zwei
   Personen trennt; das Speichern der Störquellen über einen Neustart.
+  **Zweiter Durchgang** (5.11. abends; Leon: die Zahl der Schlafenden nachts ist egal, solange die Bleibende morgens wieder
+  eine Person ist; Kaltstart einer Sitzenden ist das Hauptproblem). Drei Änderungen, alle in 4.5: Der Ort einer Störquelle
+  zittert wie der einer Stehenden (0,02 m/√s) und wird auf die Sicht ihres Sensors beschnitten; `clutter_life` 1,9 h
+  (Little: gemessene Belegung je Geburt) statt 5,3 h. Der Kaltstart (`test_somebody_at_the_wall_…`, ohne LD2410C) bleibt
+  damit beim Verhältnis der Anfangsdichten, P(belegt) 0,72 statt 0,02, das Licht ist an; die Schwelle des Tests ist von
+  0,9 auf 0,6 gesenkt. Ursache war nicht die Anfangsdichte, sondern die Lage: Ein fester Ort sagt eine ruhende Spur
+  besser voraus als eine Person, deren Ort zittert (mit `still_noise` 10⁻⁶ für die Person blieb P(belegt) bei 0,73),
+  bei jeder ruhenden Spur, auch einer echten Sitzenden. Der Test der zwei Liegenden prüft jetzt Leons Anforderung
+  (`test_when_one_of_two_lying_together_gets_up_the_other_is_still_there`, beide Reihenfolgen: P(belegt) > 0,9 nach dem
+  Hinausgehen). Volle Bewertung (Lauf `stoer-full2`, score = Licht zu viel + 5 × dunkel mit Sitzer):
+  | Fenster | 0.60 | Störquellen |
+  |---|---|---|
+  | leer0511 / leer0511b (Licht) | 159,2 / 23,6 | **0 / 0** |
+  | leer0111 (Licht, schlechtester Start) | 0 (0) | 39,3 (236, Start 12:00) |
+  | leer3110, leer0211a, leer0211b | 0 | 0 |
+  | ein0211a / ein0211b / ein0311 / ein0311b / ein0411 (score) | 60,0 / 79,1 / 147,4 / 21,2 / 171,6 | 60,0 / 78,5 / 147,1 / 21,2 / 170,2 |
+  | morgen0211 / 0311 / 0411 / 0511 (score) | 46,4 / 82,7 / 270,7 / 91,3 | 46,4 / 87,3 / 263,3 / 91,3 |
+  | Nacht 1./2.11. / 2./3.11. Schlafzimmer dunkel (min) | 0,5 / 3,3 | 0,8 / 3,2 |
+  | Meldung 5.11. 13:51 / Spiegel 4.11. 11:33, 17:25 (s falsch) | 756 / 515, 182 | 0 / 515, 213 |
+  Summe score 970,5 → 965,3. Rechenzeit, gepaart unter gleicher Last gegen `clutter_birth` = 0 (ein0411, ein0311,
+  nacht0102, leer0111): 8 070 → 9 421 CPU-s, 1,17×. Das Mehr an „dunkel mit Sitzer“ in ein0411 (07:30) ist das Spiegelbild am Esstisch (die Person
+  war in der Küche, richtig dunkel); morgen0311 / morgen0511 ist das Schlafzimmer 06:55–07:03 bzw. 06:51–06:54 leer, beides
+  während der Nachtruhe. Das Wohnzimmer 5.11. 10:20–11:00 und 3.11. 10:04 sind weg. **Nicht freigegeben:** leer0111 Start
+  12:00 hält 236 min Licht im Flur. Unter 0.60 ist dieser Start 0; ausgelöst wird es beim Aufbruch: Eine Störquelle nimmt
+  um 12:52 die Spur einer an der Wohnungstür Stehenden (Gewicht 0,3), danach bleibt ein Eintrag bei (−0,6 | 6,0) mit r
+  0,5–0,7 sechs Stunden, ohne eine einzige Spur; was r wieder hebt, kann nur das LD2410C des Flurs sein (dessen Energien in der Stunde
+  gewöhnlich sind; der offene Punkt „Einträge an der Wohnungstür nach dem Aufbruch“ aus 0.60).
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

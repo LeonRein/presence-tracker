@@ -7,13 +7,13 @@
 //! nicht, braucht keine Tür, gibt kein Licht und zählt nicht.
 //!
 //! Ihr Zustand je Achse: wo sie ist (y) und, solange sie eine Spur hat, deren Versatz auf ihr (c, o) wie
-//! auf einer Person (MODEL.md 4.1: z = y + c + o + w); ein Kalman-Filter über (y, c, o), y fest.
+//! auf einer Person (MODEL.md 4.1: z = y + c + o + w); ein Kalman-Filter über (y, c, o). y zittert wie der Ort
+//! einer Stehenden (3.1), geht aber nie.
 
 use crate::filter::Filter;
-use crate::filter::mixture::{NewTrack, SegId};
+use crate::filter::mixture::{Kalman, NewTrack, SegId, cut_to_sight};
 use crate::geometry::Point;
 use crate::ld2450::rates::TrackSpot;
-use crate::params::Params;
 use crate::sensors::{SensorState, live};
 use crate::world::World;
 
@@ -33,7 +33,7 @@ pub struct Clutter {
     pub r: f64,
     pub mean: [[f64; 3]; 2],
     pub cov: [[f64; 9]; 2],
-    /// ihre Spur und deren Varianz je Achse (wo eine Spur auf ihr sitzt, MODEL.md 4.1), bis wann o vorgerückt ist
+    /// ihre Spur und die Varianz ihres wandernden Versatzes o je Achse, bis wann o vorgerückt ist
     pub track: Option<(SegId, f64)>,
     pub t: f64,
 }
@@ -41,17 +41,35 @@ pub struct Clutter {
 impl Clutter {
     /// Eine neue Störquelle aus der ersten Position ihrer Spur: gleich wahrscheinlich überall im Blick,
     /// also y = z - c - o - w (wie die Quelle eines Geists, mixture::ghost_source).
-    pub fn born(si: usize, track: NewTrack, t: f64, p: &Params) -> Self {
+    pub fn born(si: usize, track: NewTrack, t: f64, world: &World) -> Self {
+        let p = &world.params;
         let (vc, vo) = (track.var * p.const_share, track.var * (1.0 - p.const_share));
         let s2 = track.var + p.white * p.white;
         let cov = [s2, -vc, -vo, -vc, vc, 0.0, -vo, 0.0, vo];
-        Self {
+        let mut new = Self {
             si,
             r: 1.0,
             mean: [[track.z[0], 0.0, 0.0], [track.z[1], 0.0, 0.0]],
             cov: [cov, cov],
-            track: Some((track.seg, track.var)),
+            track: Some((track.seg, vo)),
             t,
+        };
+        new.in_sight(world);
+        new
+    }
+
+    /// Was ihr Sensor misst, ist in seiner Sicht: der Radar sieht nicht durch Wände, auch keine Störquelle (MODEL.md
+    /// 4.1 „Wer gemessen wird, ist in Sicht“); derselbe Schnitt wie für eine Person (mixture::cut_to_sight).
+    fn in_sight(&mut self, world: &World) {
+        let mut g = Kalman {
+            mean: self.mean.concat(),
+            cov: self.cov.concat(),
+        };
+        cut_to_sight(world, world.sights[self.si].origin, &mut g);
+        for ax in 0..2 {
+            let (mean, cov) = g.axis(ax);
+            self.mean[ax].copy_from_slice(mean);
+            self.cov[ax].copy_from_slice(cov);
         }
     }
 
@@ -61,28 +79,33 @@ impl Clutter {
 
     /// Eine Spur beginnt auf ihr (oder wird auf ihr wiedergefunden, dann mit ihrem Versatz): die Störquelle
     /// danach und der Log der Dichte von z.
-    pub fn attach(&self, track: NewTrack, t: f64, p: &Params) -> (Self, f64) {
+    pub fn attach(&self, track: NewTrack, t: f64, world: &World) -> (Self, f64) {
+        let p = &world.params;
         let mut new = self.clone();
         if new.track.is_none() {
             let (vc, vo) = (track.var * p.const_share, track.var * (1.0 - p.const_share));
             for cov in &mut new.cov {
                 (cov[4], cov[8]) = (vc, vo);
             }
-            (new.track, new.t) = (Some((track.seg, track.var)), t);
+            new.jitter(world, t);
+            new.track = Some((track.seg, vo));
         }
-        let l = new.update(track.z, t, p);
+        let l = new.update(track.z, t, world);
         (new, l)
     }
 
     /// Eine Position ihrer Spur: o wandert seit der letzten (OU, tau), dann das Kalman-Update mit z = y + c +
-    /// o + w; gibt den Log der Vorhersagedichte von z zurück.
-    pub fn update(&mut self, z: Point, t: f64, p: &Params) -> f64 {
-        let (_, var) = self.track.expect("a Störquelle with a track");
-        let a = (-(t - self.t).max(0.0) / p.tau).exp();
-        let wander = var * (1.0 - p.const_share) * (1.0 - a * a);
+    /// o + w und der Schnitt auf die Sicht ihres Sensors; gibt den Log der Vorhersagedichte von z zurück.
+    pub fn update(&mut self, z: Point, t: f64, world: &World) -> f64 {
+        let p = &world.params;
+        let (_, vo) = self.track.expect("a Störquelle with a track");
+        let dt = (t - self.t).max(0.0);
+        let a = (-dt / p.tau).exp();
+        let wander = vo * (1.0 - a * a);
         self.t = t;
         let mut ll = 0.0;
         for ((mean, cov), &za) in self.mean.iter_mut().zip(&mut self.cov).zip(&z) {
+            cov[0] += p.still_noise * p.still_noise * dt;
             mean[2] *= a;
             for i in 0..3 {
                 cov[i * 3 + 2] *= a;
@@ -101,7 +124,18 @@ impl Clutter {
                 }
             }
         }
+        self.in_sight(world);
         ll
+    }
+
+    /// Ohne Spur bis t: ihr Ort zittert wie der einer Stehenden (MODEL.md 3.1; wie beim Geist unterscheidet sie
+    /// sich von einer Person nicht durch ein anderes Rauschen, 4.2), aber sie geht nie.
+    fn jitter(&mut self, world: &World, t: f64) {
+        let q = world.params.still_noise.powi(2) * (t - self.t).max(0.0);
+        for cov in &mut self.cov {
+            cov[0] += q;
+        }
+        self.t = t;
     }
 
     /// Ihre Spur endete (oder gehört jetzt einem anderen): der Versatz wird herausintegriert.
@@ -178,6 +212,7 @@ impl Filter {
         for hy in &mut self.hyps {
             for c in hy.clutter.values_mut().filter(|c| c.track.is_none()) {
                 c.r *= survive;
+                c.jitter(world, t);
                 if watching.contains(c.si) {
                     let miss = (-c.rate(world, self.tracks.spots()) * dt).exp();
                     let f = 1.0 - c.r + c.r * miss;
@@ -217,9 +252,10 @@ mod tests {
 
     #[test]
     fn a_new_track_on_it_is_the_kalman_update_of_y_plus_the_offsets() {
-        // die Vorhersagedichte je Achse N(z; y, P_y + vc + vo + w^2), danach liegt y zwischen Ort und Messung
-        let p = Params::default();
-        let mut c = Clutter::born(0, track([1.0, 2.0]), 0.0, &p);
+        // die Vorhersagedichte je Achse N(z; y, P_y + q + vc + vo + w^2), danach liegt y zwischen Ort und Messung
+        let world = crate::testing::flat();
+        let p = &world.params;
+        let mut c = Clutter::born(0, track([1.0, 2.0]), 0.0, &world);
         c.drop_track();
         let vy = c.cov[0][0];
         let (new, l) = c.attach(
@@ -228,19 +264,20 @@ mod tests {
                 ..track([1.3, 2.0])
             },
             5.0,
-            &p,
+            &world,
         );
-        let s = vy + 0.04 + p.white * p.white;
+        // y zittert bis zur neuen Spur 5 s lang wie eine Stehende
+        let s = vy + p.still_noise.powi(2) * 5.0 + 0.04 + p.white * p.white;
         let want = 2.0 * (-0.5 * s.ln() - 0.5 * LOG2PI) - 0.5 * 0.09 / s;
         assert!((l - want).abs() < 1e-12, "{l} against {want}");
-        assert!(new.pos()[0] > 1.0 && new.pos()[0] < 1.3 && new.cov[0][0] < vy);
-        assert_eq!(new.track, Some((SegId(2), 0.04)));
+        assert!(new.pos()[0] > 1.0 && new.pos()[0] < 1.3 && new.cov[0][0] < vy + p.still_noise.powi(2) * 5.0);
+        assert_eq!(new.track.map(|(s, _)| s), Some(SegId(2)));
     }
 
     #[test]
     fn hypotheses_without_it_mix_in_as_nobody() {
-        let p = Params::default();
-        let mut a = Clutter::born(0, track([1.0, 2.0]), 0.0, &p);
+        let world = crate::testing::flat();
+        let mut a = Clutter::born(0, track([1.0, 2.0]), 0.0, &world);
         a.drop_track();
         let mut b = a.clone();
         b.mean[0][0] = 2.0;

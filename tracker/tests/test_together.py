@@ -3,6 +3,8 @@ einer Stelle", "Bewegung als Merkmal"): two who stand together stay two, a multi
 does not become a second person who walks along, and somebody walking in alone is a person within
 seconds."""
 
+import pytest
+
 from presence_tracker.filter import Tracker
 from sim import Person, simulate
 from presence_tracker.frames import Frame
@@ -31,21 +33,26 @@ def test_two_standing_together_stay_two():
     assert abs(in_house(crowd) - 2) < 0.1, in_house(crowd)
 
 
-def test_two_lying_together_stay_two_for_long():
+@pytest.mark.parametrize("leaver", ["a", "b"])
+def test_when_one_of_two_lying_together_gets_up_the_other_is_still_there(leaver):
     # two come in one after the other and lie 0.3 m apart for half an hour (two in bed); both LD2450
-    # merge them into one target. Nothing supports the second one on their own, nothing contradicts
-    # them (MODEL.md 9, "Zwei in einer Spur"): still two, and nobody else is invented. Until 0.22 the
-    # existence of who had no track of their own faded (2 min) and the second one was lost
+    # merge them into one target. How many lie there does not matter (Leon 5.11.: the second sleeper may be
+    # lost at night, or be a Störquelle's, MODEL.md 4.5); what matters is the morning: one of them gets up
+    # and goes out, and the room stays occupied by the other one
     config = flat_config(entry=True)
-    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3.0, 2.5), (3.0, 2.5), start=5, pauses={3: 2000}))
-    b = Person(walk((-1.0, 4.2), FLUR_DOOR, (3.3, 2.5), (3.3, 2.5), start=15, pauses={3: 2000}))
+    lie, out = 2000, [FLUR_DOOR, (-1.0, 4.0)]
+    pa = [(-1.0, 4.0), FLUR_DOOR, (3.0, 2.5), (3.0, 2.5)] + (out if leaver == "a" else [])
+    pb = [(-1.0, 4.2), FLUR_DOOR, (3.3, 2.5), (3.3, 2.5)] + (out if leaver == "b" else [])
+    a = Person(walk(*pa, start=5, pauses={3: lie + (10 if leaver == "a" else 4000)}))
+    b = Person(walk(*pb, start=15, pauses={3: lie + (0 if leaver == "b" else 4000)}))
+    t_out = (a if leaver == "a" else b).waypoints[-1][0]
     crowd = Tracker(config, start=0.0, people=["outside", "outside"])
-    end = b.waypoints[3][0] + 1800
-    for t, sid, frame in simulate([a, b], sim_sensors(config, resolution=0.6), end, rate=4.0, plan=config):
+    least = 1.0
+    for t, sid, frame in simulate([a, b], sim_sensors(config, resolution=0.6), t_out + 900, rate=4.0, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
-    d = crowd.core.count_distribution()["wohn"]
-    assert d[2] > 0.9, d
-    assert abs(in_house(crowd) - 2) < 0.1, in_house(crowd)
+        if t > t_out:
+            least = min(least, 1 - crowd.core.count_distribution()["wohn"][0])
+    assert least > 0.9, least
 
 
 def test_a_copy_beside_a_walker_does_not_walk_along():

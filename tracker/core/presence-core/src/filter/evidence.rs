@@ -95,11 +95,7 @@ impl Filter {
         // a Störquelle's track: its own Kalman update in each hypothesis (MODEL.md 4.5)
         for hy in &mut self.hyps {
             if let Some(Owner::Clutter(c)) = hy.owner_of(seg) {
-                hy.logw += hy
-                    .clutter
-                    .get_mut(&c)
-                    .expect("its Störquelle")
-                    .update(z, t, &world.params);
+                hy.logw += hy.clutter.get_mut(&c).expect("its Störquelle").update(z, t, world);
             }
         }
         self.tracks.update(seg, |i| (i.t, i.zt, i.z) = (t, t, z));

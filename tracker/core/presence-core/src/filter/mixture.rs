@@ -528,63 +528,8 @@ impl Mixture {
         if self.phantom {
             return;
         }
-        let var = self.modes.each_ref().map(|g| g.pos_var().map(|v| v.max(0.0)));
-        let mut pts = [[[0.0; 2]; 25]; 2];
-        for (k, g) in self.modes.iter().enumerate() {
-            let (pos, sd) = (g.pos(), var[k].map(f64::sqrt));
-            for (p, q) in pts[k].iter_mut().enumerate() {
-                *q = [pos[0] + SIGHT_NODES[p / 5] * sd[0], pos[1] + SIGHT_NODES[p % 5] * sd[1]];
-            }
-        }
-        let flat: Vec<Point> = pts.iter().flatten().copied().collect();
-        let from = vec![at; flat.len()];
-        let hidden = world.walls.crosses(&from, &flat);
-        if !hidden.iter().any(|&h| h) {
-            return;
-        }
-        let (mut mirrored, mut normal) = (vec![[0.0; 2]; flat.len()], vec![[0.0; 2]; flat.len()]);
-        world.walls.reflect(&from, &flat, &mut mirrored, &mut normal);
-        for (k, g) in self.modes.iter_mut().enumerate() {
-            let hid = &hidden[k * 25..][..25];
-            if !hid.iter().any(|&h| h) {
-                continue;
-            }
-            let (q, w): (Vec<Point>, Vec<f64>) = if hid.iter().all(|&h| h) {
-                (mirrored[k * 25..][..25].to_vec(), SIGHT_W.to_vec())
-            } else {
-                (0..25).filter(|&p| !hid[p]).map(|p| (pts[k][p], SIGHT_W[p])).unzip()
-            };
-            let total = pairwise_sum(&w);
-            let w: Vec<f64> = w.iter().map(|x| x / total).collect();
-            let mut mx = [0.0; 2];
-            for (wi, p) in w.iter().zip(&q) {
-                mx = [mx[0] + wi * p[0], mx[1] + wi * p[1]];
-            }
-            let mut px = [0.0; 2];
-            for (wi, p) in w.iter().zip(&q) {
-                px = [
-                    px[0] + wi * (p[0] - mx[0]).powf(2.0),
-                    px[1] + wi * (p[1] - mx[1]).powf(2.0),
-                ];
-            }
-            let d = g.dim();
-            for ax in 0..2 {
-                let px = px[ax].max(var[k][ax].min(SIGHT_MIN_VAR));
-                let (mean, cov) = g.axis_mut(ax);
-                let pxx = cov[X * d + X];
-                if !(pxx > 0.0) {
-                    continue;
-                }
-                // the rest of the state by its regression on the position
-                let gain: Vec<f64> = cov.chunks_exact(d).map(|row| row[X] / pxx).collect();
-                let shift = mx[ax] - mean[X];
-                for ((m, row), &gi) in mean.iter_mut().zip(cov.chunks_exact_mut(d)).zip(&gain) {
-                    *m += gi * shift;
-                    for (c, &gj) in row.iter_mut().zip(&gain) {
-                        *c += gi * gj * (px - pxx);
-                    }
-                }
-            }
+        for g in &mut self.modes {
+            cut_to_sight(world, at, g);
         }
     }
 
@@ -791,6 +736,62 @@ struct Moments {
     w: [f64; 2],
     mean: [Point; 2],
     var: [Point; 2],
+}
+
+/// One Gaussian with the position at state index X, measured by a sensor whose sight lines start at `at`,
+/// cut to its sight (Mixture::in_sight; MODEL.md 4.1): N(mean, diag var) on a grid of Gauss-Hermite points,
+/// the points behind a wall dropped (all behind: mirrored at the wall), matched again; the rest of the state
+/// follows by its regression on the position.
+pub(crate) fn cut_to_sight(world: &World, at: Point, g: &mut Kalman) {
+    let var = g.pos_var().map(|v| v.max(0.0));
+    let (pos, sd) = (g.pos(), var.map(f64::sqrt));
+    let mut pts = [[0.0; 2]; 25];
+    for (p, q) in pts.iter_mut().enumerate() {
+        *q = [pos[0] + SIGHT_NODES[p / 5] * sd[0], pos[1] + SIGHT_NODES[p % 5] * sd[1]];
+    }
+    let from = [at; 25];
+    let hidden = world.walls.crosses(&from, &pts);
+    if !hidden.iter().any(|&h| h) {
+        return;
+    }
+    let (q, w): (Vec<Point>, Vec<f64>) = if hidden.iter().all(|&h| h) {
+        let (mut mirrored, mut normal) = ([[0.0; 2]; 25], [[0.0; 2]; 25]);
+        world.walls.reflect(&from, &pts, &mut mirrored, &mut normal);
+        (mirrored.to_vec(), SIGHT_W.to_vec())
+    } else {
+        (0..25).filter(|&p| !hidden[p]).map(|p| (pts[p], SIGHT_W[p])).unzip()
+    };
+    let total = pairwise_sum(&w);
+    let w: Vec<f64> = w.iter().map(|x| x / total).collect();
+    let mut mx = [0.0; 2];
+    for (wi, p) in w.iter().zip(&q) {
+        mx = [mx[0] + wi * p[0], mx[1] + wi * p[1]];
+    }
+    let mut px = [0.0; 2];
+    for (wi, p) in w.iter().zip(&q) {
+        px = [
+            px[0] + wi * (p[0] - mx[0]).powf(2.0),
+            px[1] + wi * (p[1] - mx[1]).powf(2.0),
+        ];
+    }
+    let d = g.dim();
+    for ax in 0..2 {
+        let px = px[ax].max(var[ax].min(SIGHT_MIN_VAR));
+        let (mean, cov) = g.axis_mut(ax);
+        let pxx = cov[X * d + X];
+        if !(pxx > 0.0) {
+            continue;
+        }
+        // the rest of the state by its regression on the position
+        let gain: Vec<f64> = cov.chunks_exact(d).map(|row| row[X] / pxx).collect();
+        let shift = mx[ax] - mean[X];
+        for ((m, row), &gi) in mean.iter_mut().zip(cov.chunks_exact_mut(d)).zip(&gain) {
+            *m += gi * shift;
+            for (c, &gj) in row.iter_mut().zip(&gain) {
+                *c += gi * gj * (px - pxx);
+            }
+        }
+    }
 }
 
 /// Given the position's posterior N(mx, px) per axis and a track's first position z: the joint

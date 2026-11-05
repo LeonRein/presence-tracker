@@ -271,7 +271,7 @@ impl Default for Params {
             ghost_types: vec![[0.4 * 1.8e-5, 3.0], [0.6 * 1.8e-5, 39.0]],
             walker_ghosts: 0.0057,
             clutter_birth: 2.2e-7,
-            clutter_life: 5.3 * 3600.0,
+            clutter_life: 1.9 * 3600.0,
             clutter_acquire: [0.115, 420.0],
             start_unknown: 1.0,
             unseen_life: 120.0,

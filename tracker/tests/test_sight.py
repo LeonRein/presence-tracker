@@ -53,7 +53,10 @@ def test_somebody_at_the_wall_the_sensor_hangs_on_is_measured_in_the_room():
         x, y = -0.05 + rng.normal(0, 0.02), 2.0 + rng.normal(0, 0.02)
         crowd.process_frame(bad["id"], t, Frame.of({"targets": [target(bad, x, y)]}))
         crowd.process_frame(buero["id"], t + 0.05, Frame.of({"targets": []}))
-    assert 1 - crowd.core.count_distribution()["bad"][0] > 0.9
+    # a target seen by one sensor only, from the start on, with nothing else (no LD2410C here) for it: it may
+    # also be a Störquelle that was there before the start (MODEL.md 4.5, measured densities: about 0.3), the
+    # person is the likelier and the light is on
+    assert 1 - crowd.core.count_distribution()["bad"][0] > 0.6
     assert crowd.core.occupancy()["bad"]
     (p,) = [p for p in crowd.persons() if p.get("x") is not None]
     assert 0.0 <= p["x"] < 0.5 and 1.5 < p["y"] < 2.5

@@ -319,7 +319,7 @@ impl Branching<'_> {
                         }
                         if let Owner::Clutter(c) = owner {
                             let known = hy.clutter.get(&c).expect("its Störquelle");
-                            let (new, l) = known.attach(self.track, self.frame.t, p);
+                            let (new, l) = known.attach(self.track, self.frame.t, world);
                             let mut ch = hy.child(hy.logw + pf + own.ln() + l);
                             ch.clutter.insert(c, new);
                             out.push(ch, Category::Owner);
@@ -454,7 +454,7 @@ impl Branching<'_> {
             } else {
                 (a * frame.last).exp_m1()
             };
-            let (new, l) = known.attach(track, frame.t, p);
+            let (new, l) = known.attach(track, frame.t, self.world);
             let mut ch = hy.child(hy.logw + (known.r * start).ln() + l);
             ch.clutter.insert(c, Clutter { r: 1.0, ..new });
             ch.tracks.insert(track.seg, Owner::Clutter(c));
@@ -471,7 +471,8 @@ impl Branching<'_> {
         }
         let id = ClutterId(track.seg.0);
         let mut ch = hy.child(hy.logw + (birth * frame.last).ln());
-        ch.clutter.insert(id, Clutter::born(frame.si, track, frame.t, p));
+        ch.clutter
+            .insert(id, Clutter::born(frame.si, track, frame.t, self.world));
         ch.tracks.insert(track.seg, Owner::Clutter(id));
         out.push(ch, Category::NewClutter);
     }
