@@ -2919,6 +2919,29 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   31 min), die Badperson 3.11. 14:00–14:40 (Dobby + Waschmaschine), Einträge an der Wohnungstür nach dem Aufbruch
   (1.11. 12:55: draußen läuft ein Eintrag in 2 min ab, an der halb gesehenen Türkachel langsamer; was bleibt, steht
   innen an der Tür), die zweite Schlafende.
+- **0.61: Woher „Licht zu viel“ und „Personen zu viel“ kommen** (5.11. abends, Branch `lichtzuviel`). Bezug 0.60 auf allen
+  Fenstern mit allen Starts (Lauf `lzv-base`; Maßstab Licht zu viel der Ein-Personen-Fenster + 5 × dunkel mit Sitzer der
+  Ein-Personen- und Morgenfenster: 600). Zerlegt je Sekunde gegen das ideale Licht (`lichtideal.py`: Raum der eigenen
+  Sensorspur ≥ 10 s, 2 min Nachlauf), je Ein-Personen-Fenster ein Start, Raumminuten Licht ohne ideales Licht nach der
+  Person, die den Raum zuletzt belegte (`zerleg.py` im Scratchpad):
+  | Ursache | Raummin |
+  |---|---|
+  | eine Person, nur Durchgang oder Raumwahl (meist echt: das Ideal kennt keine Durchgänge unter 10 s) | 98 |
+  | zweite Person mit junger Spur (< 60 s), geboren als „gehört einer Person mit Spur“ (gehaltene Spur des LD2450 am Ausgang des alten Raums, ein Geist oder ein Halten eines zweiten Sensors am selben Fleck) oder als wiederbelebter Rest-Eintrag | 93 |
+  | zweite Person ohne Spur: Bad 3.11. (Dobby + Waschmaschine) 61, Küche 4.11. 12:10 (Energie nach dem Kochen, Eintrag in der Vorratsecke, Sicht 0,1) 12, Rest 21 | 94 |
+  | zweite Person mit alter Spur: Spiegelbild am Esstisch beim Kochen, Fenster offen 4.11. 11:18 | 39 |
+  Nach Dauer: 51 Belegungen einer zweiten Person unter 10 s kosten mit ihrem Nachlauf 57 Raumminuten, 27 von 10–60 s 61.
+  „Personen zu viel“ sind vor allem kleine r-Reste ohne Licht (2.11. morgens) und die Badperson. Die Morgen: Die zweite
+  Schlafende ist schon abends verloren (2.11. 22:49 r 1,0 → 0,07 in 2 min); wer liegen bleibt, ist nach dem Aufstehen des
+  anderen minutenlang ein Geist. Gemessen 2./3.11. 01–06 Uhr: der Schlafzimmer-LD2450 meldet das zweite Ziel nur in
+  Schüben, Lücken dazwischen Median 869 s / 60 s, 90 % 53 / 40 min, 168 / 114 min der 300 in Lücken über 4 min; mit κ ≥ 0,105
+  (unterste Stufe des Gitters, α = 3) und q ≈ 0,6 neben dem Partner erwartet das Modell eine Erfassung etwa alle 8 min.
+  Verworfen: `kappa_switch` 1/3600 s statt 1/600 s (Maßstab 600 → 584, nicht gemessen, morgens 24,2 → 20,8, tags 3,1 →
+  4,0 min dunkel); lange Echoquellen 0,07 × 36 min (gemessen mit 60-s-Lücken, 4.3) zusammen mit 0.61: Maßstab 589 → 527,
+  3.11. 136 → 86, Personen zu viel 145 → 79, Bad 31.10. 19:22 weiter 0 s (in 0.60 107 s dunkel), aber das leere Haus 1.11.
+  bei einem von sechs Starts (11:00) 4,7 min Licht im Flur: ein Eintrag an der Wohnungstür (Sicht 0,4–0,56) nach dem
+  Aufbruch, gehalten von Breitband-Energie der bewegten Ringe (10–20 statt 3–5, in Flur, Wohn- und Arbeitszimmer zugleich,
+  12:53–13:05), bis die Stille von 10 min ihn freigibt. Offen.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.
