@@ -15,14 +15,16 @@ from test_frames import walk
 
 
 def _sit(seat, minutes, leave=0.0):
-    """Somebody comes in and sits at seat for minutes; the LD2450s see them for about a second every
-    15 minutes (still_dropout). Returns the tracker, P(occupied) every 10 min while they sit, and the
+    """Somebody comes in and sits at seat for minutes; the LD2450s see them for about a frame every
+    4 minutes (still_dropout; the longest gap measured in real stays, 240 s, MODEL.md 4.3: until 0.60
+    every 15 minutes, but after 10 min without a target the background learns what no track confirms).
+    Returns the tracker, P(occupied) every 10 min while they sit, and the
     largest P(occupied) from 20 s after they left."""
     config = flat_config(entry=True)
     pts = [(-1.0, 4.0), FLUR_DOOR, seat, (seat[0] + 0.05, seat[1])] + ([FLUR_DOOR, (-1.0, 4.0)] if leave else [])
     p = Person(walk(*pts, start=5, pauses={3: minutes * 60}))
     tr = Tracker(config, start=0.0, people=["outside"])
-    sensors = [SimSensor(s, still_dropout=1.0, still_gap=900.0) for s in config.data["sensors"]]
+    sensors = [SimSensor(s, still_dropout=1.0, still_gap=240.0) for s in config.data["sensors"]]
     sat, gone = p.waypoints[3][0], p.waypoints[-1][0]
     occupied, after, nxt = [], 0.0, sat + 600
     for t, sid, frame in simulate([p], sensors, gone + leave, plan=config):
@@ -37,7 +39,7 @@ def _sit(seat, minutes, leave=0.0):
 
 def test_a_sitter_for_an_hour_is_not_learned_as_background():
     # MODEL.md 4.3, 10: somebody sits 1.8 m in front of sensor a for an hour, the LD2450s rarely see
-    # them. The background stays what the empty room gives (until 0.20: gate 2 of sensor a 5.0 ->
+    # them (as rarely as measured). The background stays what the empty room gives (until 0.20: gate 2 of sensor a 5.0 ->
     # 2.2, its echo rate 0.33 -> 0.73 per hour), the person stays, and when they leave nobody is left
     c = 2 / 3
     tr, occupied, after = _sit((1.3, 1.3), 60, leave=60.0)
@@ -81,7 +83,8 @@ def test_a_sitter_the_model_starts_with_is_found_and_not_learned():
     seat = (1.3, 1.3)
     p = Person([(0.0, *seat), (3600.0, seat[0] + 0.05, seat[1])])
     tr = Tracker(config, start=0.0)
-    sensors = [SimSensor(s, still_dropout=1.0, still_gap=900.0) for s in config.data["sensors"]]
+    # seen about once in 4 minutes, as rarely as measured (_sit)
+    sensors = [SimSensor(s, still_dropout=1.0, still_gap=240.0) for s in config.data["sensors"]]
     found = []
     for t, sid, frame in simulate([p], sensors, 3600, plan=config):
         tr.process_frame(sid, t, Frame.of(frame))

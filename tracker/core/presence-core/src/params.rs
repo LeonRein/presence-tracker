@@ -177,8 +177,8 @@ pub struct Params {
     pub ld_tile_mass: f64,
     /// the background before anything is learned: moving gates 0, 1, the other moving gates, the still
     /// gates; its weight (s), forgotten with ld_forget s towards the sensor's own level, which is learned
-    /// forgotten with ld_anchor_forget s from frames after ld_anchor_quiet s with nothing in sight; the
-    /// echo sources' rate (per s) with the weight ld_echo_prior_time s (MODEL.md 4.3)
+    /// forgotten with ld_anchor_forget s from frames after ld_anchor_quiet s with nothing in sight (after
+    /// as long both learn without the people without a track); the echo sources' rate (per s) with the weight ld_echo_prior_time s (MODEL.md 4.3)
     pub ld_background: [f64; 4],
     #[serde(deserialize_with = "real")]
     pub ld_prior_time: f64,

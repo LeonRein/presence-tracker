@@ -445,7 +445,23 @@ Das Modell, je Sensor:
   erklärt, wurde Hintergrund. Ohne beides lernte der Hintergrund Sitzende und Schlafende (10
   „Lernschleifen“). Nicht nach dem Urteil des Filters über Personen ohne Spur: Dort halten die Energien
   selbst eine Person, wenn b zu klein ist, und das Lernen stünde still (gemessen: 4 h Licht im leeren
-  Schlafzimmer, 10). Prior: bewegt Ring 0
+  Schlafzimmer, 10).
+  **Nach langer Stille zählen Personen ohne Spur nicht** (seit 0.61.0): Der Anteil des Hintergrunds `b/μ` nahm μ mit
+  allen Personen, auch denen ohne Spur. Hielt die Energie selbst einen Eintrag (eine Person ohne Spur), erklärte er,
+  was über b lag, b lernte nur seinen eigenen Wert zurück, und der Eintrag blieb: ein Fixpunkt des EM (3.11.
+  14:00–15:00: die Waschmaschine im Bad, ruhig Ring 2 um 55 statt 4,5, gelernt blieb 7; kein Ziel des Bad-LD2450 in
+  einer Stunde). Jetzt nimmt μ nur die Personen mit Spur, sobald der LD2450 im selben Gehäuse seit `ld_anchor_quiet`
+  (10 min, wie für den Anker) nichts in Sicht hatte: So lange sieht er niemanden, der in seinem Blick ist (gemessen
+  5.11., `dev/personenzahl/luecken.py`: in 46 Aufenthalten einer Person die längste Lücke 240 s, im Bad 98 s). Was dann
+  an Energie bleibt, lernt b mit seinem Vergessen (0,7 h), und der Eintrag hängt wieder an den Messungen des LD2450.
+  Gemessen (alle Fenster, je mehrere Starts, gegen 0.60): Bad 3.11. 69 → 59 belegte Minuten, Licht zu viel 464 → 453
+  Raumminuten, Personen zu viel 167 → 145; leeres Haus, Nächte, Morgen und Meldungen gleich. Schneller geht es nicht:
+  b folgt mit 0,7 h, und jedes Ziel des LD2450 (3.11. 14:45 eines an der Badtür) beginnt die Stille neu. Der Preis:
+  Wer im Blick eines Sensors länger als 10 min ohne ein Ziel seines LD2450 sitzt oder liegt, dessen Energie wird nach
+  etwa 0,7 h Hintergrund; ihn hält dann nur noch κ. Bei wachen Personen kam das in den Aufnahmen nicht vor (s. o.),
+  bei einer Schlafenden allein im Zimmer kann es vorkommen (zu zweit sieht der LD2450 den anderen; Leon 9.10.:
+  Schlafende wollen das Licht ohnehin aus). Die Tests mit einer Sitzenden (`tests/test_learning.py`) nehmen seitdem
+  die gemessene längste Lücke (240 s) statt 15 min. Prior: bewegt Ring 0
   13, Ring 1 9, sonst 4,5, ruhig 5 mit dem Gewicht 10 min (gemessen 6.10., 4,3 h; auf 19 h 16 / 9 /
   4,3 / 4,9, gleiche Lichtfehler, 10 „Die Stille vor einem Frame“). **Vergessen 0,7 h** (seit 9.10.,
   gemessen): Der Hintergrund wandert; im Flur springt bewegt Ring 4 morgens von 1,7 auf 5,1 und Ring 5 von
@@ -576,7 +592,7 @@ aufgehalten werden:
   den gestauten der anderen, die das Modell dann überholt hat).
 
 ### 4.5 Störquellen
-**Zweig `stoerquelle`, nicht freigegeben** (5.11.; schlägt 0.60 nicht, 10 „Störquellen“). Ein Objekt, das keine Person
+**Seit 0.61** (5.11.; 10 „Störquellen“). Ein Objekt, das keine Person
 ist und an einem festen Ort immer wieder Spuren eines LD2450 macht: ein Luftentfeuchter
 (5.11., Esszimmer-LD2450 auf ein Gerät im Wohnzimmer, 08:23–13:50+, 46 Spuren der App, eine bis 71 min), ein
 Spiegelbild. Bis 0.60 war im Modell das einzige dauerhafte Objekt die Person: Ein Geist lebt 3 / 39 s (4.2), also
@@ -636,7 +652,7 @@ Frame jedes Sensors alles vorgerückt: etwa 23-mal je Sekunde, ein Hauptteil der
   Hypothese mit exaktem Gewicht (Datenassoziation eines PMBM, B_GarciaFernandez2018; δ-GLMB,
   B_Reuter2014).
 - Eine neue Spur verzweigt jede Hypothese: Geist; eine bekannte Störquelle ihres Sensors ohne Spur (mit ihrem r und
-  `1 − e^(−a·Δt)`, mal der Dichte von z) oder eine neue (`clutter_birth`, gleich verteilt wie ein Geist; Zweig `stoerquelle`, 4.5);
+  `1 − e^(−a·Δt)`, mal der Dichte von z) oder eine neue (`clutter_birth`, gleich verteilt wie ein Geist; 4.5);
   eine Person, die schon Spuren anderer Sensoren hat; eine bekannte Person ohne Spur (mit ihrem r, 5.5); eine unbekannte
   (5.5). Eine wiedergefundene: ihr Eigentümer (Person, Geist oder Störquelle); eine andere Person nahe der Stelle;
   Geist/Reflexion.
@@ -876,7 +892,7 @@ Ankünfte und das Vergessen aus 3.4.
   Licht fälschlich aus 1,67 statt 1,17 von 15 (Arbeitszimmer 21:36 knapp unter der Schwelle),
   Log-Evidenz −49.
 
-- **Störquellen** (Zweig `stoerquelle`, nicht freigegeben, 4.5; `filter/clutter.rs`) wie die Personen: Die unbekannten sind eine Poisson-Intensität,
+- **Störquellen** (4.5; `filter/clutter.rs`) wie die Personen: Die unbekannten sind eine Poisson-Intensität,
   gleich über den Blick jedes Sensors und gleich in allen Hypothesen; im Gleichgewicht bekommen so viele ihre erste Spur,
   wie entstehen (`clutter_birth` je m² und s, D_Mahler2011 Gl. 13–15), darum steht die Intensität nicht im Zustand. Die
   bekannten sind Bernoullis je Hypothese, benannt nach der Spur, mit der sie zuerst gesehen wurden (so ist „diese Spur
@@ -3056,6 +3072,38 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   (höchstens 240 s, 4.1), aber dunkel mit Person wiegt schwerer; nicht übernommen. Der Branch bleibt beim zweiten
   Durchgang (leer0111 Start 12:00: 236 min). Ein Befund für die Bewertung: Die Leer-Fenster vom 1.11. starten mit dem
   Hintergrund vom 3.11., dessen Flurwerte halb so hoch sind wie am 1.11. gemessen.
+- **0.61: Woher „Licht zu viel“ und „Personen zu viel“ kommen** (5.11. abends, Branch `lichtzuviel`). Bezug 0.60 auf allen
+  Fenstern mit allen Starts (Lauf `lzv-base`; Maßstab Licht zu viel der Ein-Personen-Fenster + 5 × dunkel mit Sitzer der
+  Ein-Personen- und Morgenfenster: 600). Zerlegt je Sekunde gegen das ideale Licht (`lichtideal.py`: Raum der eigenen
+  Sensorspur ≥ 10 s, 2 min Nachlauf), je Ein-Personen-Fenster ein Start, Raumminuten Licht ohne ideales Licht nach der
+  Person, die den Raum zuletzt belegte (`zerleg.py` im Scratchpad):
+  | Ursache | Raummin |
+  |---|---|
+  | eine Person, nur Durchgang oder Raumwahl (meist echt: das Ideal kennt keine Durchgänge unter 10 s) | 98 |
+  | zweite Person mit junger Spur (< 60 s), geboren als „gehört einer Person mit Spur“ (gehaltene Spur des LD2450 am Ausgang des alten Raums, ein Geist oder ein Halten eines zweiten Sensors am selben Fleck) oder als wiederbelebter Rest-Eintrag | 93 |
+  | zweite Person ohne Spur: Bad 3.11. (Dobby + Waschmaschine) 61, Küche 4.11. 12:10 (Energie nach dem Kochen, Eintrag in der Vorratsecke, Sicht 0,1) 12, Rest 21 | 94 |
+  | zweite Person mit alter Spur: Spiegelbild am Esstisch beim Kochen, Fenster offen 4.11. 11:18 | 39 |
+  Nach Dauer: 51 Belegungen einer zweiten Person unter 10 s kosten mit ihrem Nachlauf 57 Raumminuten, 27 von 10–60 s 61.
+  „Personen zu viel“ sind vor allem kleine r-Reste ohne Licht (2.11. morgens) und die Badperson. Die Morgen: Die zweite
+  Schlafende ist schon abends verloren (2.11. 22:49 r 1,0 → 0,07 in 2 min); wer liegen bleibt, ist nach dem Aufstehen des
+  anderen minutenlang ein Geist. Gemessen 2./3.11. 01–06 Uhr: der Schlafzimmer-LD2450 meldet das zweite Ziel nur in
+  Schüben, Lücken dazwischen Median 869 s / 60 s, 90 % 53 / 40 min, 168 / 114 min der 300 in Lücken über 4 min; mit κ ≥ 0,105
+  (unterste Stufe des Gitters, α = 3) und q ≈ 0,6 neben dem Partner erwartet das Modell eine Erfassung etwa alle 8 min.
+  Verworfen: `kappa_switch` 1/3600 s statt 1/600 s (Maßstab 600 → 584, nicht gemessen, morgens 24,2 → 20,8, tags 3,1 →
+  4,0 min dunkel); lange Echoquellen 0,07 × 36 min (gemessen mit 60-s-Lücken, 4.3) zusammen mit 0.61: Maßstab 589 → 527,
+  3.11. 136 → 86, Personen zu viel 145 → 79, Bad 31.10. 19:22 weiter 0 s (in 0.60 107 s dunkel), aber das leere Haus 1.11.
+  bei einem von sechs Starts (11:00) 4,7 min Licht im Flur: ein Eintrag an der Wohnungstür (Sicht 0,4–0,56) nach dem
+  Aufbruch, gehalten von Breitband-Energie der bewegten Ringe (10–20 statt 3–5, in Flur, Wohn- und Arbeitszimmer zugleich,
+  12:53–13:05), bis die Stille von 10 min ihn freigibt. Offen.
+- **0.61 = Störquellen + Hintergrund ohne Personen ohne Spur nach 10 min Stille** (5.11. abends, beide Zweige
+  zusammengeführt). Die Bewertung startet jedes Fenster jetzt mit dem Gelernten, das zu den Sensoren seiner Aufnahme gehört:
+  1.–3.11. morgens liefen vor der Kalibrierung vom 3.11. (Wohn- und Arbeitszimmer Richtung und Maßstab), `learned_0311` hat
+  danach gelernt, im Flur halb so hohe ruhige Werte wie am 1.11. gemessen; das trug den Eintrag an der Wohnungstür
+  (leer0111 Start 12:00). Mit `learned_3110` für diese Fenster, Lauf `k061` gegen `b060` (0.60, gleiche Bewertung): leeres
+  Haus in allen 22 Starts 0 (0.60: 5.11. 183 Raumminuten), Maßstab 974 → 956, Personen zu viel 290 → 275, Meldung 5.11.
+  13:51 756 → 0 s falsch; schlechter das Spiegelbild am Esstisch 4.11. 17:25 (182 → 213 s). Preis der 10-min-Regel: Wer
+  länger als 10 min ohne LD2450-Ziel still ist, wird nach etwa 0,7 h Hintergrund; gemessen bei Wachen höchstens 240 s,
+  bei Schlafenden länger (Licht dort nachts gesperrt, morgens findet der LD2450 sie wieder).
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

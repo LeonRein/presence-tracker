@@ -2,14 +2,26 @@
 
 ## Unveröffentlicht
 
-- Zweig `stoerquelle`, nicht freigegeben: **Störquellen** (MODEL.md 4.5, D_Mahler2011): Objekte, die keine Personen sind und
+## 0.61.0 (Störquellen; Hintergrund lernt nach langer Stille ohne Personen ohne Spur)
+
+Gegen 0.60 auf allen Fenstern mit mehreren Starts, jedes Fenster jetzt mit dem Gelernten, das zu den Sensoren seiner Aufnahme
+gehört (bisher starteten 1.–3.11. morgens mit dem nach der Kalibrierung vom 3.11. Gelernten, im Flur halb so hohe ruhige
+Werte wie gemessen): leeres Haus in allen 22 Starts ohne Licht (0.60: 5.11. 159 / 23,6 Raumminuten, der Luftentfeuchter);
+Leons Maßstab (Licht zu viel + 5 × dunkel mit Sitzer, Ein-Personen- und Morgenfenster) 974 → 956; Licht zu viel 834 → 821
+Raumminuten, dunkel mit Sitzer 28,0 → 27,1 min, Personen zu viel 290 → 275; Meldung 5.11. 13:51 „Licht im leeren
+Wohnzimmer“ 756 → 0 s falsch, Bad 31.10. 19:22 weiter 0 s; schlechter: Spiegelbild am Esstisch 4.11. 17:25 182 → 213 s
+falsch, ein0411 dunkel mit Sitzer 1,2 → 1,6 min (Spiegelbild, die Person war in der Küche). Rechenzeit gepaart 1,17×.
+- **Störquellen** (MODEL.md 4.5, D_Mahler2011): Objekte, die keine Personen sind und
   an einem festen Ort immer wieder Spuren eines LD2450 machen (ein Luftentfeuchter, das Spiegelbild am Esstisch), als eigene
   Klasse im PMBM mit eigener Geburt (`clutter_birth` 2,2·10⁻⁷ je m² und s), Lebensdauer (`clutter_life` 1,9 h) und Erfassung
   (`clutter_acquire` 0,115 /s, Spurdauer 420 s), gemessen in den leeren Fenstern; ihr Ort zittert wie der einer Stehenden und
-  liegt in der Sicht ihres Sensors. Leeres Haus 5.11. 159 / 23,6 → 0 / 0 Raumminuten, Meldung 5.11. 13:51 756 → 0 s falsch,
-  score (Licht zu viel + 5 × dunkel mit Sitzer) 970,5 → 965,3; aber ein Start im leeren Haus 1.11. (12:00) hält 236 min Licht
-  im Flur (unter 0.60 0; ein Eintrag an der Wohnungstür, den ein zu niedriger LD2410C-Hintergrund hält und der den
-  Hintergrund hält). Rechenzeit gepaart 1,17×. Schlägt 0.60 deshalb nicht (MODEL.md 10 „Störquellen“).
+  liegt in der Sicht ihres Sensors.
+- **Nach 10 min ohne Ziel des LD2450 zählen beim Lernen des LD2410C-Hintergrunds nur Personen mit Spur** (MODEL.md 4.3):
+  Der Anteil des Hintergrunds an einer Energie (`b/μ`) nahm μ mit allen Personen. Hielt die Energie selbst eine Person ohne
+  Spur, erklärte sie den Überschuss, und der Hintergrund lernte nur sich selbst zurück (die Waschmaschine im Bad 3.11.:
+  ruhig Ring 2 um 55, gelernt blieb 7, eine Stunde lang eine Person im Bad ohne ein Ziel des Bad-LD2450). Nach
+  `ld_anchor_quiet` (10 min) Stille sieht der LD2450 niemanden, der in seinem Blick ist (gemessen: die längste Lücke echter
+  Aufenthalte 240 s); dann lernt b, was bleibt, mit seinem Vergessen von 0,7 h.
 - Tests: `test_when_one_of_two_lying_together_gets_up_the_other_is_still_there` statt „zwei Liegende bleiben zwei“ (Leon 5.11.:
   wie viele nachts liegen, ist egal, die Bleibende muss morgens wieder eine Person sein); der Kaltstart einer Sitzenden, die nur
   ein Sensor sieht, verlangt P(belegt) > 0,6 statt > 0,9 (ohne LD2410C kann es auch eine Störquelle sein, die schon vor dem Start

@@ -34,10 +34,12 @@ type Cells = [f64; CELLS];
 /// docs/rust-core.md 2.0): per hypothesis the mean the people, the echo sources and the background
 /// put in before these frames, the hypotheses' weights before, P(nobody in view), P(no echo source
 /// on) and the sources begun, judged with these frames, the frames, and since when the housing's
-/// LD2450 has had nothing in sight.
+/// LD2450 has had nothing in sight. `tracked`: per hypothesis the mean of the background and the people
+/// with tracks alone (what the background learns from once the housing's LD2450 has been quiet long).
 #[derive(Debug)]
 pub struct LdLearn {
     pub mus: Vec<Cells>,
+    pub tracked: Vec<Cells>,
     pub prior_w: Vec<f64>,
     pub nobody: f64,
     pub echo_off: f64,
@@ -551,29 +553,37 @@ fn objects_of(hy: &Hyp) -> impl Iterator<Item = Obj> + '_ {
 }
 
 /// What the background learns: per hypothesis the mean the people as the filter saw them before
-/// these frames and the background put in, and P(nobody in view) mixed over the hypotheses.
-fn before(ctx: &LdContext, hyps: &[Hyp], holders: &Holders, prior_w: &[f64]) -> (Vec<Cells>, f64) {
+/// these frames and the background put in, the same of the people with tracks alone, and P(nobody in
+/// view) mixed over the hypotheses.
+fn before(ctx: &LdContext, hyps: &[Hyp], holders: &Holders, prior_w: &[f64]) -> (Vec<Cells>, Vec<Cells>, f64) {
     let mut nobody = 0.0;
-    let mus = hyps
+    let (mus, tracked) = hyps
         .iter()
         .zip(prior_w)
         .map(|(hy, w)| {
-            let (mut mu, mut none) = (ctx.b0, 1.0);
-            for e in objects_of(hy).map(|obj| holders.entry(obj)) {
+            let (mut mu, mut tracked, mut none) = (ctx.b0, ctx.b0, 1.0);
+            for obj in objects_of(hy) {
+                let e = holders.entry(obj);
                 if !ctx.seen[e] {
                     continue;
                 }
                 let pts = &ctx.points[e];
-                for (x, y) in mu.iter_mut().zip(&pts.put_in()) {
+                let put = pts.put_in();
+                for (x, y) in mu.iter_mut().zip(&put) {
                     *x += y;
+                }
+                if matches!(obj, Obj::Mixture(_)) {
+                    for (x, y) in tracked.iter_mut().zip(&put) {
+                        *x += y;
+                    }
                 }
                 none *= (1.0 - pairwise_sum(&pts.mass)).max(0.0);
             }
             nobody += w * none;
-            mu
+            (mu, tracked)
         })
-        .collect();
-    (mus, nobody)
+        .unzip();
+    (mus, tracked, nobody)
 }
 
 impl Filter {
@@ -645,7 +655,7 @@ impl Filter {
             },
             scratch: Scratch::default(),
         };
-        let (mus, nobody) = before(&ctx, &self.hyps, &self.holders, &prior_w);
+        let (mus, tracked, nobody) = before(&ctx, &self.hyps, &self.holders, &prior_w);
         // per hypothesis the people one after the other, the echo sources last
         let mut chains = Chains::build(&mut ctx, &self.hyps, &self.holders);
         let logf = chains.logf(&mut ctx);
@@ -689,6 +699,7 @@ impl Filter {
         sensor.echoes.weigh(&f);
         let learned = LdLearn {
             mus,
+            tracked,
             prior_w,
             nobody,
             echo_off: sensor.echoes.off(),
