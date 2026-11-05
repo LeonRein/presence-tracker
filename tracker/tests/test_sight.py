@@ -90,6 +90,8 @@ def test_a_track_at_the_wall_never_puts_somebody_behind_it():
             occ = crowd.core.occupancy()
             assert not occ["buero"], t
             measured_bad |= occ["bad"]
-    assert worst < prior + 0.01  # 0.25.0: 0.67, the study's light on
+    # 0.25.0: 0.67, the study's light on; the unknown people's share drifts by about 0.01 (0.0098 with kappa ~
+    # Gamma(1), 0.0114 with Gamma(3), 0.60)
+    assert worst < prior + 0.02
     assert measured_bad
     assert 1 - crowd.core.count_distribution()["bad"][0] > 0.9

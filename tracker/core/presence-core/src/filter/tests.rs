@@ -463,6 +463,7 @@ fn somebody_who_neither_moves_nor_changes_is_weighed_by_exp_of_minus_their_rate_
     let mut world = testing::flat();
     world.shapes.go = vec![0.0; world.shapes.kinds()];
     world.params.kappa_switch = 0.0;
+    world.params.record_life = f64::INFINITY; // the record certain: the factor is the hypothesis'
     let s = shape(&world);
     let (c, k) = (65, 1); // the tile at (3.25, 2.75), the higher detectability
     let mut still = vec![0.0; s.still_len()];

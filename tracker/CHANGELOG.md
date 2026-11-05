@@ -2,6 +2,23 @@
 
 ## Unveröffentlicht
 
+## 0.60.0 (Kein Eintrag ist gewiss, Echoquellen so beweglich wie Personen, Erkennbarkeit gemessen)
+
+Gegen 0.57 (main) und 0.59 auf allen Fenstern mit Wahrheit aus den Telefonen (4 leere, 5 mit einer Person, 2 Nächte),
+Mittel über mehrere Starts (MODEL.md 10 „0.60“): leeres Haus in allen 16 Starts kein Licht; mit einer Person Licht zu viel
+590 / 523 → 464 Raumminuten, dunkel mit Sitzer 5,6 / 3,9 → 3,1 min, Personen zu viel 441 / 326 → 167 Personenminuten;
+Bad „eine bleibt“ 0 s falsch, „plötzlich zwei“ P(≥ 2) 0,97 / 0,36 → 0,31; Rechenzeit etwa +10 %.
+- **Kein Eintrag ist gewiss** (MODEL.md 5.5, `record_life` = 1 Tag): Eine Person, die einmal eine Spur hatte, konnte in
+  Sicht nie mehr verschwinden, auch wenn kein Sensor sie je wieder sah. Jetzt laufen alle Einträge zusätzlich mit 1/Tag ab;
+  damit entscheiden die Messungen. 3.11. Bad belegt 111 → 67 min.
+- **Echoquellen so beweglich wie eine Person** (MODEL.md 4.3): Entfernung alle 0,25 m statt 0,5 m, 8 Stärken statt 3. Die
+  Waschmaschine war sonst besser als Person erklärt als als Quelle.
+- **Erkennbarkeit gemessen** (MODEL.md 4.1, `kappa_shape` 3 statt 1): Echte Aufenthalte haben nie mehr als 4 min ohne
+  LD2450-Ziel (46 Aufenthalte, 15,9 h).
+- Gespeicherte Personen vor 0.60 passen nicht zum neuen Gitter (Fingerabdruck der Kacheln): Nach dem Update beginnt das
+  Modell einmal ohne Wissen.
+- Offen: Spiegelbild am Esstisch beim Kochen, Einträge an der Wohnungstür nach dem Aufbruch, die zweite Schlafende.
+
 ## 0.59.0 (Echoquellen kurz und lang, Messung nach dem Präsenzlicht)
 
 - **Langlebige Echoquellen** (MODEL.md 4.3, `ld_echo_long` = [0,11; 245 s], gemessen auf 103 h Aufnahmen): Neben den kurzen

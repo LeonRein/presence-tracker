@@ -119,10 +119,10 @@ def test_the_nook_is_unobserved():
 
 def _hold_in_nook(minutes):
     """Somebody known for sure in the nook, standing (the stays' prior at the nook's tiles: a state
-    saved with 0.38.1, fixtures/people.json); then for this long no sensor measures anything.
-    P(somebody in the room) afterwards."""
+    saved with 0.38.1, fixtures/people.json, with kappa ~ Gamma(1) as until 0.59); then for this long no
+    sensor measures anything. P(somebody in the room) afterwards."""
     config = _nook_config()
-    crowd = Tracker(config, start=0.0, people=["outside"])
+    crowd = Tracker(config, start=0.0, people=["outside"], model={"kappa_shape": 1.0})
     assert crowd.restore_people(fixture("people.json")["nook"])
     for t, sid, frame in simulate([], sim_sensors(config), 60 * minutes, rate=2.0, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))

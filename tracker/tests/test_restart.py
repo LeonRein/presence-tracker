@@ -83,18 +83,23 @@ def test_the_saved_state_round_trips_and_needs_the_same_tiles():
     assert not again.restore_people({**state, "hyps": [{"logw": "x"}]})
 
 
+# fixtures/people.json was saved with kappa ~ Gamma(1) (until 0.59; the tiles' fingerprint holds its grid)
+SAVED_KAPPA = {"kappa_shape": 1.0}
+
+
 def test_a_gap_moves_everybody_on():
     # somebody known to sit in the room: after a gap of minutes still most probably there, after a
     # day spread over the house and out of it (the motion of MODEL.md 3, nothing weighs: a gap says
     # nothing, 4.4); the leaps of a long gap agree with moving all of it as always
     config = flat_config(entry=True)
-    crowd = Tracker(config, start=0.0, people=["outside"])
+    crowd = Tracker(config, start=0.0, people=["outside"], model=SAVED_KAPPA)
     assert crowd.restore_people(fixture("people.json")["sitter"])  # standing in the tile at (3, 2.5)
     state = crowd.people_state()
 
     def after(gap, exact=False):
         """Where the one person is after the gap: per place (observed, regions, outside) their mass."""
-        model = {"unseen_life": math.inf}  # the motion alone (records nothing tests expire over a gap too, MODEL.md 5.5)
+        # the motion alone (records expire over a gap too, MODEL.md 5.5)
+        model = {"unseen_life": math.inf, "record_life": math.inf, **SAVED_KAPPA}
         if exact:
             model["gap_exact"] = gap + 1
         tr = Tracker(config, model=model)
@@ -156,7 +161,7 @@ def test_saving_the_people_changes_nothing():
     # amplitude a track measured (fixtures/people.json), moved on, which defers the mixing: saving
     # between the steps changes nothing of the run
     def run(save):
-        crowd = Tracker(flat_config(), start=0.0)
+        crowd = Tracker(flat_config(), start=0.0, model=SAVED_KAPPA)
         assert crowd.restore_people(fixture("people.json")["measured"])
         states = []
         for k in range(1, 26):
@@ -179,7 +184,7 @@ def test_a_state_saved_by_0381_is_read_and_written_alike():
     from test_existence import _nook_config
     for name, config in (("nook", _nook_config()), ("sitter", flat_config(entry=True)), ("measured", flat_config())):
         saved = fixture("people.json")[name]
-        tr = Tracker(config)
+        tr = Tracker(config, model=SAVED_KAPPA)
         assert tr.tiles()["id"] == saved["tiles"]
         assert tr.restore_people(saved)
         again = tr.people_state()

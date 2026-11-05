@@ -185,12 +185,14 @@ fn sync_part(
 /// The record of a known person without a track lasts only as far as a measurement could test it
 /// (MODEL.md 5.5): the share of them no live sensor can see expires at
 /// 1 / unseen_life - in a tile by 1 - how well the live sensors see it (`fade` per tile: exp(-dt /
-/// unseen_life x that)), in the regions and out of the house whole - so r falls by r x that share.
+/// unseen_life x that)), in the regions and out of the house whole - so r falls by r x that share. Besides,
+/// every record expires everywhere at 1 / record_life.
 fn expire(world: &World, d: &mut DensityMut, dt: f64, fade: &[f64]) {
     if d.kind != Kind::Person || d.r.is_nan() || *d.r <= 0.0 {
         return;
     }
-    let q = -(-dt / world.params.unseen_life).exp_m1();
+    let p = &world.params;
+    let q = -(-dt * (1.0 / p.unseen_life + 1.0 / p.record_life)).exp_m1();
     let mut lost = *d.out * q;
     *d.out -= lost;
     let reg = pairwise_sum(d.region);
@@ -209,11 +211,13 @@ fn expire(world: &World, d: &mut DensityMut, dt: f64, fade: &[f64]) {
     }
 }
 
-/// exp(-dt / unseen_life x (1 - how well the sensors see each tile)): what of a record lasts dt.
+/// exp(-dt (1 / record_life + (1 - how well the sensors see each tile) / unseen_life)): what of a record
+/// lasts dt.
 fn fade(world: &World, observed: &[f64], dt: f64) -> Vec<f64> {
+    let p = &world.params;
     observed
         .iter()
-        .map(|o| (-dt / world.params.unseen_life * (1.0 - o)).exp())
+        .map(|o| (-dt * (1.0 / p.record_life + (1.0 - o) / p.unseen_life)).exp())
         .collect()
 }
 

@@ -334,15 +334,18 @@ mod tests {
 
     #[test]
     fn the_detectability_grid_keeps_long_unseen_sitting_as_the_prior_says() {
-        // test_hypotheses: E[exp(-kappa s)] of the grid against the Gamma(1) prior's 1 / (1 + s), s =
-        // rate x time unseen up to 300 (a still person near one sensor, 0.034 /s, for 2.5 h): within
-        // 25 % everywhere (the three Gauss-Laguerre nodes until 0.21: 0.40 at s = 20, 10 min, and 1e-7
-        // at s = 70)
-        let sh = Shapes::new(&Params::default());
-        for s in linspace(0.1f64.ln(), 300f64.ln(), 40).into_iter().map(f64::exp) {
+        // test_hypotheses: E[exp(-kappa s)] of the grid against the Gamma(a, a) prior's (1 + s / a)^-a, s =
+        // rate x time unseen within one draw of kappa (a still person near one sensor, 0.034 /s, for
+        // 1 / kappa_switch = 600 s: s = 20): within 30 % (the three Gauss-Laguerre nodes until 0.21: 0.40 at
+        // s = 20). Beyond, the grid of a = 3 is stricter than its prior (no cell below 0.1: 0.16 of it at
+        // s = 60, where the prior itself gives 1e-4), as measured 5.11. (MODEL.md 4.1)
+        let p = Params::default();
+        let (sh, a) = (Shapes::new(&p), p.kappa_shape);
+        let s_max = p.acquire[0][0] / p.kappa_switch;
+        for s in linspace(0.1f64.ln(), s_max.ln(), 40).into_iter().map(f64::exp) {
             let e: f64 = sh.kappa.iter().zip(&sh.kappa_w).map(|(k, w)| w * (-k * s).exp()).sum();
-            let ratio = e * (1.0 + s);
-            assert!(ratio > 0.75 && ratio < 1.01, "{s}: {ratio}");
+            let ratio = e * (1.0 + s / a).powf(a);
+            assert!(ratio > 0.7 && ratio < 1.01, "{s}: {ratio}");
         }
     }
 

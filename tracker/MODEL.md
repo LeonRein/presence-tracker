@@ -198,7 +198,8 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   8.10.): ein Gitter von 5 Zellen gleichen Abstands in log κ zwischen dem 0,1-%- und dem 99,9-%-Quantil
   (die äußeren Zellen reichen bis 0 und ∞), je am bedingten Mittel mit der Masse des Priors in der
   Zelle, wie die Amplitude des LD2410C (4.3; ein Punktmassenfilter über κ, 0_Arulampalam2002 Abschn.
-  II-B): 0,003 / 0,020 / 0,12 / 0,61 / 2,18 mit 0,006 / 0,028 / 0,15 / 0,51 / 0,31. Warum ein Gitter
+  II-B): 0,105 / 0,249 / 0,541 / 1,11 / 2,12 mit 0,010 / 0,066 / 0,302 / 0,496 / 0,127 (α = 3; mit α = 1 bis 0.59
+  0,003 / 0,020 / 0,12 / 0,61 / 2,18 mit 0,006 / 0,028 / 0,15 / 0,51 / 0,31). Warum ein Gitter
   in log κ: Was die Stufen tragen müssen, ist `E[e^(−κ·a·T)]` für eine Sitzende, die die Zeit T mit
   der Erfassungsrate a nicht erfasst wird, also die Laplace-Transformierte des Priors an s = aT; sie
   hängt nur von log κ + log s ab, ein gleichmäßiges Gitter in log κ ist deshalb über alle Zeitskalen
@@ -219,7 +220,15 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   +466 / +513 auf den Meldungen bis 6.10. / vom 7.10., Lichtfehler gleich; 5 Stufen −2, 4 Stufen −0,3
   gegenüber 3 Quadraturpunkten, dieselben 11 h wie 3.1; das waren Vergleiche verschiedener diskreter
   Verteilungen, nicht verschiedener α).
-  α = 1 (angenommen). Mit der Quadratur über die Evidenz dieser 11 h nicht zu bestimmen: α = 0,5 −5,
+  **α = 3 (seit 0.60.0, gemessen 5.11.):** In Zeiten mit nur einer Person zu Hause (Telefone, 31.10.–4.11.) je Aufenthalt
+  in einem Raum (von der ersten bis zur letzten Spur ≥ 10 s dort, bevor eine solche in einem anderen Raum beginnt; 46
+  Aufenthalte ≥ 3 min, 15,9 h) die Lücken zwischen frischen Zielen des LD2450 dieses Raums (`dev/personenzahl/luecken.py`):
+  die längste 240 s (Schlafzimmer), im Bad 98 s; nach 10 s ohne Ziel kommt eines mit 0,059 /s, nach 30 s mit 0,018 /s
+  (die Rate fällt: verschiedene κ). Mit α = 1 wären von den 20 Lücken über 30 s etwa 4 länger als 4 min, gemessen keine;
+  mit α = 3 eine. Maximum-Likelihood (je Aufenthalt Exp(λκ), κ ~ Gamma(α, α)) α 1,9 (α 1 −2,2, α 3 −1,1 log). Das Gitter
+  aus 5 Zellen trägt `E[e^(−κs)]` bei α = 3 bis s = 20 (ein Neuziehen, 600 s bei 0,034 /s) auf 0,74 genau; darüber ist es
+  strenger als sein Prior (keine Zelle unter 0,1; bei s = 60 0,16 davon, wo der Prior selbst 10⁻⁴ gibt).
+  Bis 0.59 α = 1 (angenommen). Mit der Quadratur über die Evidenz dieser 11 h nicht zu bestimmen: α = 0,5 −5,
   α = 2 +17, mit 24 Hypothesen ab 10⁻⁹ aber −82 (5.1). Aus den bekannten Aufenthalten (5.5) auch nicht: Der LD2450 im
   Arbeitszimmer hatte Leon am Schreibtisch fast immer in einer Spur (6.10. abends 233 s ohne Spur in
   79 min, 7.10. 0–14 s je 10 min), und ohne Spur fand er ihn mit 0,01–0,27 /s wieder (κ ≈ 0,3–8, keine
@@ -482,8 +491,16 @@ Das Modell, je Sensor:
 - **Echoquellen** (`ld2410.Echoes`): Energie, die von keiner Person kommt (7.10. 01:07:52–01:08:34 in
   der leeren Küche: bewegt Ring 0–1 Schübe bis 100, ruhig Ring 2–4 bis 60–90, kein LD2450-Ziel, niemand
   ging). Wie die Geister des LD2450 (4.2) unterscheidet sie, wie sie beginnt und endet: Je Sensor aus
-  oder eine Quelle an – das Profil einer Stehenden auf der Achse in 0,75–6,5 m (Schritt 0,5 m) mal
-  0,3 / 1 / 3 –, Beginn mit der Rate ρ (gleich über die Quellen), Lebensdauer Erlang(2) mit Mittel 20 s.
+  oder eine Quelle an – das Profil einer Stehenden auf der Achse in 0,75–6,5 m (Schritt 0,25 m) mal
+  8 Stärken 0,2–5 (gleich in log) –, Beginn mit der Rate ρ (gleich über die Quellen), Lebensdauer Erlang(2) mit Mittel 20 s.
+  **So beweglich wie eine Person** (seit 0.60.0): Bis 0.59 Schritt 0,5 m und 0,3 / 1 / 3. Eine Person ohne Spur liegt auf
+  Kacheln von 0,4 m mit einer Verstärkung, deren Gitter (Gamma(6, 6), 9 Stufen) fein ist; gleichmäßige Energie, die
+  zwischen zwei Quellen lag, erklärte sie in jedem Block besser, und das wog mehr als das Nicht-Sehen des LD2450
+  (3.11. 14:00–15:44: die Waschmaschine im Bad hielt eine Person 1,4 m vor dem Sensor, ohne ein einziges Ziel; ohne
+  den Bad-LD2410C entsteht sie nicht). Jetzt ist der Schritt kleiner als eine Kachel, und eine Stufe (0,46 in log) so
+  groß wie die Streuung der Verstärkung einzelner Aufenthalte (0,47, oben); der Prior einer Quelle verteilt sich über
+  mehr Zellen, ρ bleibt. 0,1 m und 12 Stärken (doppelte Rechenzeit) machten im leeren Haus 1.11. bei einem Start 12 min
+  Licht im Flur; 0,25 m und 8 Stärken kosten etwa 10 % Rechenzeit.
   **Kurz- und langlebige Quellen** (seit 0.59.0, `ld_echo_long` = [0,11; 245 s]): Eine beginnende Quelle lebt mit 0,89
   Erlang(2) mit Mittel 20 s, mit 0,11 Erlang(2) mit Mittel 245 s (zwei parallele Ketten, Mischung wie bei den Geistern 4.2).
   Gemessen 4.11. über 103 h App-Aufnahmen: Episoden mit der Summe der ruhigen Ringe 2–4 über 3 × ihrem Pegel ohne
@@ -787,6 +804,11 @@ Ankünfte und das Vergessen aus 3.4.
   des Schlafzimmers (x −2,3 bis −1,0); s < 0,5 auf 3,1 m². **Bis 0.22** lief die Existenz überall ab, auch in
   voller Sicht (`record_life`, `e^(−t/2 min)`); in Sicht kostete das die zweite Person, die der LD2450
   nicht trennt, und Sitzende in langen Lücken (10).
+- **Kein Eintrag ist gewiss** (`record_life` = 1 Tag, seit 0.60.0): Jeder Eintrag einer bekannten Person ohne Spur läuft
+  überall zusätzlich mit 1/Tag ab, wie die unbekannten Personen außer Haus (3.4). Für Sitzende ist das nichts (in 4 min
+  0,3 %), aber r bleibt unter 1: Bei r = 1 ändert `1 − r + r ∫ …` nichts, und wenn alle Hypothesen den Eintrag haben, auch
+  kein Gewicht; ein Eintrag, der einmal eine Spur hatte, konnte in Sicht nie mehr enden, was auch die Sensoren sagten
+  (die Existenzkette von D_MusickiEvans2005 mit p₁₁ < 1, jetzt überall). Allein: 3.11. Bad 111 → 67 belegte Minuten.
 - **Zurückgeben:** Eine bekannte Person ohne Spur, die zu weniger als 1 % existiert (r < 0,01), geht
   mit r × ihrer Dichte in die Intensität (Bernoulli → Poisson), wo sie auch ist. Wer das Haus verlassen
   hat, dessen Eintrag läuft draußen ab wie überall, wo kein Sensor prüft (oben), und geht erst dann
@@ -2861,6 +2883,26 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   leeren Haus). Der Rest am 3.11. ist das Bad: Aus Dobbys Spuren (13:18–13:53) wird eine Person, die die Energie der
   Waschmaschine bis 15:55 hält. Die zweite Schlafende: Ihr r fällt nachts durch die Existenzaktualisierung (alle
   Hypothesen hatten sie mit r = 1); weder breitere Amplituden (Gamma(1)) noch κ Gamma(0,3) ohne Neuziehen halten sie.
+- **0.60: Kein Eintrag gewiss, Quellen so beweglich wie Personen, κ gemessen** (5.11.; Leon: 0.59 sei schlechter als main).
+  Die leeren Fenster aus 0.59 mit den Telefonen bestätigt, dazu vier weitere Ein-Personen-Zeiten (2.–4.11.). Mittel über
+  2–6 Starts je Fenster,
+  Summe über die fünf Ein-Personen-Fenster (Licht zu viel in Raumminuten mit den 2 min Nachlauf je Raumwechsel; dunkel mit
+  ruhender LD2450-Spur in min; Personen zu viel in Personenminuten):
+  | | leeres Haus | Licht zu viel | dunkel mit Sitzer | Personen zu viel | Bad „eine bleibt“ / „zwei“ |
+  |---|---|---|---|---|---|
+  | 0.57 (main) | 0 | 590 | 5,6 | 441 | 5 s / 0,97 |
+  | 0.59 | 0 | 523 | 3,9 | 326 | 0 s / 0,36 |
+  | + `record_life` | 0 | 466 | 3,9 | 247 | 0 s / 0,36 |
+  | + Quellen 0,25 m, 8 Stärken | 0 | 464 | 3,1 | 224 | 0 s / 0,37 |
+  | + κ α = 3 (0.60) | 0 | 464 | 3,1 | 167 | 0 s / 0,31 |
+  Verworfen: Quellen 0,1 m / 12 Stärken (leeres Haus 12 min, doppelte Rechenzeit), dazu lange Quellen 0,07 × 36 min (Bad 3.11.
+  111 → 7 min, aber die Sitzende im Bad 31.10. 19:22 107 s dunkel und das leere Haus 4 h hell: lange Quellen nehmen Sitzenden ihre
+  Energie), nur 12 Stärken (Bad 19:22 14 s dunkel), κ allein (Summe 519). Gleich weit vom Sensor wie die Person
+  (Mehrweg erster Ordnung, F_Liu2025 Abschn. 2.2): nur der Spiegel am Esstisch (0,14 m), sonst kein Muster (Median 0,68 m
+  gegen 0,80 m mit 15 min Versatz); kein eigener Baustein. Offen: das Spiegelbild am Esstisch beim Kochen (4.11.,
+  31 min), die Badperson 3.11. 14:00–14:40 (Dobby + Waschmaschine), Einträge an der Wohnungstür nach dem Aufbruch
+  (1.11. 12:55: draußen läuft ein Eintrag in 2 min ab, an der halb gesehenen Türkachel langsamer; was bleibt, steht
+  innen an der Tür), die zweite Schlafende.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

@@ -122,6 +122,10 @@ pub struct Params {
     // 5.5 a known person's record expires where no sensor could test it
     #[serde(deserialize_with = "real")]
     pub unseen_life: f64,
+    /// 5.5 every known person's record without a track, wherever it is, expires besides with this mean life (s):
+    /// a record is never certain, so what the sensors say can end it (D_MusickiEvans2005, chain 1, p11 < 1)
+    #[serde(deserialize_with = "real")]
+    pub record_life: f64,
     // 5.1 the cut of the hypotheses
     pub max_hyps: usize,
     #[serde(deserialize_with = "real")]
@@ -229,7 +233,7 @@ impl Default for Params {
             go_share: 0.58,
             go_time: 5.6,
             stay_points: vec![86400.0, 5993.0, 416.0, 29.0, 2.0],
-            kappa_shape: 1.0,
+            kappa_shape: 3.0,
             kappa_levels: 5,
             ld_amp_shape: 6.0,
             ld_amp_levels: 9,
@@ -261,6 +265,7 @@ impl Default for Params {
             walker_ghosts: 0.0057,
             start_unknown: 1.0,
             unseen_life: 120.0,
+            record_life: 86400.0,
             max_hyps: 12,
             hyp_mass: 1e-7,
             give_up: 0.01,
@@ -291,9 +296,9 @@ impl Default for Params {
             ld_echo_ranges: Slants {
                 from: 0.75,
                 to: 6.5,
-                step: 0.5,
+                step: 0.25,
             },
-            ld_echo_amps: vec![0.3, 1.0, 3.0],
+            ld_echo_amps: vec![0.2, 0.3168, 0.5017, 0.7946, 1.2585, 1.9932, 3.1569, 5.0],
             ld_tile_mass: 1e-4,
             ld_background: [13.0, 9.0, 4.5, 5.0],
             ld_prior_time: 600.0,
@@ -383,6 +388,7 @@ impl Params {
             ),
             ("start_unknown", at_least_0(self.start_unknown)),
             ("unseen_life", time(self.unseen_life)),
+            ("record_life", time(self.record_life)),
             ("max_hyps", up_to(self.max_hyps, 1, 1000)),
             ("hyp_mass", share(self.hyp_mass)),
             ("give_up", (0.0..=1.0).contains(&self.give_up)),

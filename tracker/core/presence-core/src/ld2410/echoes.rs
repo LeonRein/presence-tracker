@@ -155,7 +155,7 @@ mod tests {
         // test_ld2410.test_echo_sources_begin_live_end_and_are_counted
         let p = Params::default();
         let mut e = Echoes::new(&p);
-        assert_eq!(e.sources(), 36);
+        assert_eq!(e.sources(), 24 * 8); // slants 0.75-6.5 m every 0.25 m, 8 amplitudes
         let rate = 1.0 / 3600.0;
         e.predict(&p, 1.0, rate);
         let on = 1.0 - e.off();
