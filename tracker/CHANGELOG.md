@@ -7,8 +7,9 @@
   Klasse im PMBM mit eigener Geburt (`clutter_birth` 2,2·10⁻⁷ je m² und s), Lebensdauer (`clutter_life` 1,9 h) und Erfassung
   (`clutter_acquire` 0,115 /s, Spurdauer 420 s), gemessen in den leeren Fenstern; ihr Ort zittert wie der einer Stehenden und
   liegt in der Sicht ihres Sensors. Leeres Haus 5.11. 159 / 23,6 → 0 / 0 Raumminuten, Meldung 5.11. 13:51 756 → 0 s falsch,
-  score (Licht zu viel + 5 × dunkel mit Sitzer) 970,5 → 965,3; aber ein Start im leeren Haus 1.11. (12:00) hält 236 min
-  Licht im Flur (unter 0.60 0). Rechenzeit 1,17×. Schlägt 0.60 deshalb nicht (MODEL.md 10 „Störquellen“, „Zweiter Durchgang“).
+  score (Licht zu viel + 5 × dunkel mit Sitzer) 970,5 → 965,3; aber ein Start im leeren Haus 1.11. (12:00) hält 236 min Licht
+  im Flur (unter 0.60 0; ein Eintrag an der Wohnungstür, den ein zu niedriger LD2410C-Hintergrund hält und der den
+  Hintergrund hält). Rechenzeit gepaart 1,17×. Schlägt 0.60 deshalb nicht (MODEL.md 10 „Störquellen“).
 - Tests: `test_when_one_of_two_lying_together_gets_up_the_other_is_still_there` statt „zwei Liegende bleiben zwei“ (Leon 5.11.:
   wie viele nachts liegen, ist egal, die Bleibende muss morgens wieder eine Person sein); der Kaltstart einer Sitzenden, die nur
   ein Sensor sieht, verlangt P(belegt) > 0,6 statt > 0,9 (ohne LD2410C kann es auch eine Störquelle sein, die schon vor dem Start

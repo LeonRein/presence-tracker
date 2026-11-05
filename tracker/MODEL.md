@@ -430,7 +430,10 @@ Das Modell, je Sensor:
 - **Hintergrund b je Sensor, Ring und Art: von der App gelernt**: Online-EM der
   Überlagerung, der Anteil des Hintergrunds an einer Energie ist im Mittel `e · b/μ` (Richardson 1972;
   Shepp & Vardi 1982), μ aus dem Stand vor diesen Frames (die Energien lernen nicht ihr eigenes Urteil,
-  J_Park2020). Eine gekappte Energie (100) zählt mit dem, was sie war: `b · Q(α+1, x) / Q(α, x)`,
+  J_Park2020). Die Personen ohne Spur zählen in μ mit; so hält ein zu niedriger Hintergrund einen Eintrag und der
+  Eintrag den Hintergrund (Fixpunkt des EM bei `e = b + r·S`; 10 „Störquellen“, dritter Durchgang: leer0111). Sie aus
+  μ zu nehmen (immer, oder nach 600 s ohne LD2450-Ziel im Gehäuse) lässt den Hintergrund Sitzende und Schlafende lernen,
+  die der LD2450 selten sieht, und ist verworfen. Eine gekappte Energie (100) zählt mit dem, was sie war: `b · Q(α+1, x) / Q(α, x)`,
   `x = α · 100/μ`, der Anteil des Hintergrunds an `E[e | e ≥ 100]` (E-Schritt zensierter Daten,
   Dempster, Laird & Rubin 1977; bis 0.20 zählte sie als 100, und neben einer Person, die mehr gibt,
   lernte der Hintergrund zu wenig: Arbeitszimmer Ring 2 abends 2,0 statt leer 6,5, 10 „Lernschleifen“).
@@ -3022,6 +3025,37 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   um 12:52 die Spur einer an der Wohnungstür Stehenden (Gewicht 0,3), danach bleibt ein Eintrag bei (−0,6 | 6,0) mit r
   0,5–0,7 sechs Stunden, ohne eine einzige Spur; was r wieder hebt, kann nur das LD2410C des Flurs sein (dessen Energien in der Stunde
   gewöhnlich sind; der offene Punkt „Einträge an der Wohnungstür nach dem Aufbruch“ aus 0.60).
+  **Dritter Durchgang** (5.11. abends, nur leer0111 Start 12:00). Zerlegt je Minute (logit r des Eintrags bei
+  (−0,6 | 6,0), vorübergehend instrumentiert): keine neue LD2450-Spur −0,1 bis −0,25, Ablauf (2 min, halb gesehene
+  Türkachel) −0,6 bis −1,1, LD2410C Flur +0,5 bis +1,6 je Minute; im Gleichgewicht r ≈ 0,65. Keine Breitband-Energie
+  (ab 12:53 Flur bewegt 4,5–5,4, ruhig 3,4–4,0, Wohn- und Arbeitszimmer ebenso ruhig wie den ganzen Nachmittag); der
+  Hintergrund, mit dem dieses Fenster startet (gelernt am 3.11.), liegt im Flur ruhig Ring 4–6 bei 1,4–2,1, gemessen
+  sind 3,5 (Hintergrund und Anker von 31.10. und 4.11.: 3,1–3,3). Der Eintrag erklärte den Rest, und weil sein Anteil im
+  E-Schritt zählte, lernte der Hintergrund ihn nie (Fixpunkt `e = b + r·S`, 4.3). Ohne Störquellen (`clutter_birth` = 0)
+  gleich bis 12:52, dann geht die Person bei diesem Start hinaus (Eintrag draußen, r 0,57 → 0,13 in 2 min) statt an der
+  Tür zu bleiben: In den Hypothesen mit 0,3 Gewicht nahm eine Störquelle ihre letzte Flurspur. Zwei Versuche an der
+  Wurzel (4.3), beide verworfen: (a) Der Hintergrund lernt immer ohne die Personen ohne Spur (`stoer-full3`): leeres
+  Haus 0,3 (schlechtester Start 1,7), aber die Schlafenden wurden Hintergrund (Nacht 1./2.11. Schlafzimmer 56,6 min
+  dunkel statt 0,5, morgen0511 dunkel mit Sitzer 16,5 statt 6,0; score 985,7). (b) Dasselbe erst nach 600 s ohne
+  LD2450-Ziel im Gehäuse (`ld_anchor_quiet`, wie der Anker; `stoer-full4`):
+  | Fenster | 0.60 | Störquellen |
+  |---|---|---|
+  | leer0511 / leer0511b | 159,2 / 23,6 | 0 / 0 |
+  | leer0111 (schlechtester Start) | 0 (0) | 0,8 (4,7, Start 12:00, 13:00–13:04) |
+  | übrige Leer-Fenster | 0 | 0 |
+  | ein0211a / 0211b / 0311 / 0311b / 0411 (score) | 60,0 / 79,1 / 147,4 / 21,2 / 171,6 | 60,0 / 78,7 / 136,7 / 21,2 / 170,2 |
+  | morgen0211 / 0311 / 0411 / 0511 (score) | 46,4 / 82,7 / 270,7 / 91,3 | 46,4 / 87,2 / 263,3 / 91,3 |
+  | Nächte, Schlafzimmer dunkel (min) | 0,5 / 3,3 | 0,8 / 3,2 |
+  | Meldung 5.11. 13:51 / Spiegel 11:33, 17:25 (s falsch) | 756 / 515, 182 | 0 / 515, 213 |
+  Summe score 970,5 → 955,0, aber leer0111 Start 12:00 noch 4,7 Raumminuten Licht (bis 600 s nach der letzten Flurspur
+  lernt der Hintergrund noch mit dem Eintrag), und zwei Tests der Lernschleifen schlagen fehl
+  (`test_a_sitter_for_an_hour_is_not_learned_as_background`: Ring 2–3 von Sensor a 11 statt 4,5;
+  `test_a_sitter_the_model_starts_with_is_found_and_not_learned`: P(belegt) bis 0,51): Eine Sitzende, die der LD2450 nur
+  alle 15 min sieht, wird Hintergrund – genau der offene Punkt aus „Lernschleifen“ (aus den Energien allein ist eine
+  Person, die sich nicht bewegt, von einem anderen Hintergrund nicht zu trennen). Gemessene echte Lücken sind kürzer
+  (höchstens 240 s, 4.1), aber dunkel mit Person wiegt schwerer; nicht übernommen. Der Branch bleibt beim zweiten
+  Durchgang (leer0111 Start 12:00: 236 min). Ein Befund für die Bewertung: Die Leer-Fenster vom 1.11. starten mit dem
+  Hintergrund vom 3.11., dessen Flurwerte halb so hoch sind wie am 1.11. gemessen.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.
