@@ -1,12 +1,14 @@
 //! A new track, or a lost one found again, branches every hypothesis (MODEL.md 5.1;
-//! filter.Tracker._branch). A new track is a ghost's, or a person's who has tracks of other
-//! sensors, or a person's without any (from their tiles), or somebody's nobody knew of. A track
-//! found again is its owner's again, or the sensor found it on somebody else near the spot, or on
-//! a reflection there - the LD2450 lets a held track glide to the next target. Every alternative is
-//! a hypothesis with its exact weight; the children are then merged and cut (merge.rs).
+//! filter.Tracker._branch). A new track is a ghost's, or a known or new Störquelle's of its sensor
+//! (4.5), or a person's who has tracks of other sensors, or a person's without any (from their
+//! tiles), or somebody's nobody knew of. A track found again is its owner's again, or the sensor
+//! found it on somebody else near the spot, or on a reflection there - the LD2450 lets a held track
+//! glide to the next target. Every alternative is a hypothesis with its exact weight; the children
+//! are then merged and cut (merge.rs).
 //!
 //! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
+use crate::filter::clutter::{Clutter, ClutterId};
 use crate::filter::densities::{TileFactors, TileFactorsBuf};
 use crate::filter::evidence::{expect, mixture_rates, near_mixture, near_tiles, no_find};
 use crate::filter::holders::Obj;
@@ -38,6 +40,10 @@ pub enum Category {
     Known,
     /// somebody's nobody knew of
     New,
+    /// a Störquelle's known before (MODEL.md 4.5)
+    KnownClutter,
+    /// a Störquelle's nobody knew of
+    NewClutter,
 }
 
 impl Category {
@@ -50,6 +56,8 @@ impl Category {
             Category::Tracked => "tracked",
             Category::Known => "known",
             Category::New => "new",
+            Category::KnownClutter => "known_clutter",
+            Category::NewClutter => "new_clutter",
         }
     }
 }
@@ -268,8 +276,14 @@ impl Branching<'_> {
             } => {
                 let (lost, lr_nf) = (*lost, *lr_nf);
                 // found in this frame on one of the finders: everybody near the spot as far as the
-                // sensor sees them there, the ghost (if it is one), a reflection
-                let mut e = p.find_clutter + if cur == Some(Owner::Ghost) { 1.0 } else { 0.0 };
+                // sensor sees them there, the ghost (if it is one), its Störquelle near the spot (if it is
+                // one, MODEL.md 4.5), a reflection
+                let own = match cur {
+                    Some(Owner::Ghost) => 1.0,
+                    Some(Owner::Clutter(c)) => hy.clutter.get(&c).expect("its Störquelle").near(world, lost.z),
+                    _ => 0.0,
+                };
+                let mut e = p.find_clutter + own;
                 let (n, shape) = (world.tiles.n, self.objects.densities.shape());
                 for &m in hy.people.values() {
                     let mix = self.objects.mixtures.get(m);
@@ -294,11 +308,20 @@ impl Branching<'_> {
                         ch.ghosts.insert(seg, Ghost { life: stay, source });
                         out.push(ch, Category::RefindGhost);
                     }
-                    Some(Owner::Person(gid)) => {
-                        let owner = *hy.people.get(&gid).expect("a person with tracks");
-                        if let Some((new, l)) = self.attach(Obj::Mixture(owner)) {
-                            let mut ch = hy.child(hy.logw + pf + l);
-                            ch.people.insert(gid, new);
+                    Some(owner @ (Owner::Person(_) | Owner::Clutter(_))) => {
+                        if let Owner::Person(gid) = owner {
+                            let m = *hy.people.get(&gid).expect("a person with tracks");
+                            if let Some((new, l)) = self.attach(Obj::Mixture(m)) {
+                                let mut ch = hy.child(hy.logw + pf + l);
+                                ch.people.insert(gid, new);
+                                out.push(ch, Category::Owner);
+                            }
+                        }
+                        if let Owner::Clutter(c) = owner {
+                            let known = hy.clutter.get(&c).expect("its Störquelle");
+                            let (new, l) = known.attach(self.track, self.frame.t, p);
+                            let mut ch = hy.child(hy.logw + pf + own.ln() + l);
+                            ch.clutter.insert(c, new);
                             out.push(ch, Category::Owner);
                         }
                         let clutter = (p.find_clutter / (2.0 * std::f64::consts::PI * p.find_radius.powf(2.0))).ln();
@@ -317,7 +340,11 @@ impl Branching<'_> {
                 let mut lam = ghost_rates;
                 // ghosts that come with somebody walking (MODEL.md 4.2): of the short kind, spread over
                 // the sensor's view, walker_ghosts per s and walking person
-                let walking: f64 = hy.people.values().map(|&m| self.objects.mixtures.get(m).weights()[WALK]).sum();
+                let walking: f64 = hy
+                    .people
+                    .values()
+                    .map(|&m| self.objects.mixtures.get(m).weights()[WALK])
+                    .sum();
                 lam[0] += p.walker_ghosts * walking / world.sights[self.frame.si].area.max(1.0);
                 if self.frame.censored {
                     // ghosts there now: born at any time before
@@ -332,6 +359,7 @@ impl Branching<'_> {
                 let source = self.source();
                 ch.ghosts.insert(seg, Ghost { life, source });
                 out.push(ch, Category::Ghost);
+                self.clutter_children(hy, out);
                 0.0
             }
         };
@@ -400,9 +428,52 @@ impl Branching<'_> {
                 let now = self.objects.release(self.world, &ch, gid, seg, &mut self.made.released);
                 ch.set_person(gid, now);
             }
+            Some(Owner::Clutter(c)) => ch.clutter.get_mut(&c).expect("its Störquelle").drop_track(),
             None => {}
         }
         ch
+    }
+
+    /// A new track is a Störquelle's of its sensor (MODEL.md 4.5): of one known without a track, with its r
+    /// and the chance of a start on it where it is, times the density of z; or of one nobody knew of, born
+    /// evenly over the view with clutter_birth per m^2 and s (in steady state as many get their first
+    /// track, D_Mahler2011 eq. 13-15), as a ghost; at a start of the sensor those there with a track now.
+    fn clutter_children(&self, hy: &Hyp, out: &mut Children) {
+        let (p, frame, track) = (&self.world.params, self.frame, self.track);
+        let Chance::New { spots, .. } = &self.chance else {
+            return;
+        };
+        let [acquire, life] = p.clutter_acquire;
+        for (&c, known) in hy.clutter.iter() {
+            if known.si != frame.si || known.track.is_some() {
+                continue;
+            }
+            let a = known.rate(self.world, spots);
+            let start = if frame.censored {
+                a * life
+            } else {
+                (a * frame.last).exp_m1()
+            };
+            let (new, l) = known.attach(track, frame.t, p);
+            let mut ch = hy.child(hy.logw + (known.r * start).ln() + l);
+            ch.clutter.insert(c, Clutter { r: 1.0, ..new });
+            ch.tracks.insert(track.seg, Owner::Clutter(c));
+            out.push(ch, Category::KnownClutter);
+        }
+        let birth = if frame.censored {
+            let tracked = acquire * life / (1.0 + acquire * life);
+            p.clutter_birth * p.clutter_life * tracked / FRAME
+        } else {
+            p.clutter_birth
+        };
+        if birth <= 0.0 {
+            return;
+        }
+        let id = ClutterId(track.seg.0);
+        let mut ch = hy.child(hy.logw + (birth * frame.last).ln());
+        ch.clutter.insert(id, Clutter::born(frame.si, track, frame.t, p));
+        ch.tracks.insert(track.seg, Owner::Clutter(id));
+        out.push(ch, Category::NewClutter);
     }
 
     /// The source of a new ghost track, one for all children.

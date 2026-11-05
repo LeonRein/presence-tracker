@@ -572,6 +572,41 @@ aufgehalten werden:
   Board, das während eines Staus neu startet (seine Frames nach dem Neustart kommen zu ihrer Empfangszeit, also nach
   den gestauten der anderen, die das Modell dann überholt hat).
 
+### 4.5 Störquellen
+**Zweig `stoerquelle`, nicht freigegeben** (5.11.; schlägt 0.60 nicht, 10 „Störquellen“). Ein Objekt, das keine Person
+ist und an einem festen Ort immer wieder Spuren eines LD2450 macht: ein Luftentfeuchter
+(5.11., Esszimmer-LD2450 auf ein Gerät im Wohnzimmer, 08:23–13:50+, 46 Spuren der App, eine bis 71 min), ein
+Spiegelbild. Bis 0.60 war im Modell das einzige dauerhafte Objekt die Person: Ein Geist lebt 3 / 39 s (4.2), also
+gewann bei einer Spur von Minuten die Person, und jede weitere Spur an derselben Stelle hing sich billig an sie (5.11.:
+stundenlang Licht im leeren Wohnzimmer). Jetzt eine eigene Objektklasse neben den Personen, die Clutter-Generatoren von
+D_Mahler2011 (Abschn. III-A, Gl. 13–18: eigene Geburt, eigenes Überleben, eigene Erfassung; Personen werden nie
+Störquellen und umgekehrt), im PMBM wie die Personen (B_GarciaFernandez2018; `filter/clutter.rs`):
+- **Gehört zu einem LD2450** und macht nur in ihm Spuren. Die anderen Sensoren und das LD2410C sehen sie nicht, sie geht
+  nicht, braucht keine Tür, gibt kein Licht und zählt nicht.
+- **Ort fest**, ihre Spuren sitzen auf ihr wie auf einer Person (4.1: `z = y + c + o + w`, derselbe Versatz); ein
+  Kalman-Filter über (y, c, o) je Achse, y ohne Bewegung. Gemessen am Luftentfeuchter (Ziele je 10 s gemittelt,
+  08:30–11:25): Streuung 0,06 m je Achse, also enger als der Versatz einer Spur auf einer Person (0,2–0,3 m); das
+  Modell nimmt den Versatz der Personen.
+- **Entstehen** überall im Blick ihres Sensors mit `clutter_birth` = 2,2·10⁻⁷ je m² und s, gleich verteilt, keine Karte.
+  Gemessen in den leeren Fenstern (17 h ohne Dobby, 7 Sensoren, im Mittel 21 m² Blick): zwei Orte, an denen eine Spur
+  länger als jeder Geist lebte, der Luftentfeuchter (Esszimmer) und 25 min an einer Stelle 0,3 m vor dem
+  Wohnzimmer-Sensor; 2 / (120 Sensorstunden × 21 m²). Unsicher (2 Ereignisse, ein Faktor 3 nach jeder Seite).
+- **Lebensdauer** exponentiell, Mittel `clutter_life` = 5,3 h (die zwei Orte: 25 min und ≥ 4,9 h bis zum Ende der
+  Aufnahme; Maximum-Likelihood mit Zensur).
+- **Erfassung:** Ohne laufende Spur beginnt ihr Sensor eine mit `clutter_acquire` = 0,115 /s (gemessen am Luftentfeuchter:
+  21 Lücken zwischen den Spuren der App, zusammen 182 s, Median 5 s; 24 weitere Spuren begannen, während die vorige
+  noch gehalten wurde), überall gleich (die feste Erfassung bei D_Mahler2011), weniger neben seinen laufenden Zielen
+  (Auflösung, 4.1). Eine Spur auf ihr dauert im Mittel 420 s (für die Spuren, die bei einem Start schon laufen, 4.1).
+  Verlieren, Wiederfinden (auf ihr wie der Geist auf seiner Quelle, mit dem Kern um die gehaltene Stelle) und das
+  Ende einer Spur wie bei einer Person: Das Ende sagt nichts, sie bleibt.
+- **Was sie von einer Person trennt**, kommt allein aus dem Modell: Eine Person an der Stelle sähen die anderen
+  Sensoren mit Sicht (4.1), sie gäbe dem LD2410C Energie (4.3) und kam durch eine Tür (3.3, 3.4); eine Störquelle sieht
+  nur ihr Sensor, und sie entsteht irgendwo. Was sie von einem Geist trennt: Sie lebt Stunden, und an derselben Stelle
+  beginnt nach Sekunden wieder eine Spur. Was gegen sie spricht: Ihr Sensor findet sie nicht wieder (mit 0,115 /s, nach
+  60 s ohne Spur e⁻⁷). Eine Sitzende, deren Spur minutenlang ausbleibt (4.1, κ), ist deshalb keine.
+- Geteilt mit den Personen: dieselben Messungen, dieselbe Zuordnung (5.1), dasselbe Zusammenlegen (5.6). Nicht gespeichert:
+  Nach einem Neustart der App (5.3) ist keine Störquelle bekannt.
+
 ## 5. Inferenz
 
 Deterministisch: Was diskret ist und wenige Werte hat, wird aufgezählt, nicht gezogen. Das Ergebnis
@@ -589,9 +624,11 @@ Frame jedes Sensors alles vorgerückt: etwa 23-mal je Sekunde, ein Hauptteil der
 - Welche laufenden Spuren zu derselben Person gehören und welche Geister sind, ist eine diskrete
   Hypothese mit exaktem Gewicht (Datenassoziation eines PMBM, B_GarciaFernandez2018; δ-GLMB,
   B_Reuter2014).
-- Eine neue Spur verzweigt jede Hypothese: Geist; eine Person, die schon Spuren anderer Sensoren hat;
-  eine bekannte Person ohne Spur (mit ihrem r, 5.5); eine unbekannte (5.5). Eine wiedergefundene: ihr Eigentümer; eine
-  andere Person nahe der Stelle; Geist/Reflexion.
+- Eine neue Spur verzweigt jede Hypothese: Geist; eine bekannte Störquelle ihres Sensors ohne Spur (mit ihrem r und
+  `1 − e^(−a·Δt)`, mal der Dichte von z) oder eine neue (`clutter_birth`, gleich verteilt wie ein Geist; Zweig `stoerquelle`, 4.5);
+  eine Person, die schon Spuren anderer Sensoren hat; eine bekannte Person ohne Spur (mit ihrem r, 5.5); eine unbekannte
+  (5.5). Eine wiedergefundene: ihr Eigentümer (Person, Geist oder Störquelle); eine andere Person nahe der Stelle;
+  Geist/Reflexion.
 - **Erst zusammenlegen, dann abschneiden** (seit 8.10.): Die Kinder einer Verzweigung, die über die
   laufenden Spuren dasselbe sagen, werden zuerst eine Hypothese (5.6). Der Schlüssel sagt nicht,
   *welcher* Person eine Spur gehört: „sie gehört u₁“, „u₂“, „einer neuen Person“ desselben
@@ -608,7 +645,8 @@ Frame jedes Sensors alles vorgerückt: etwa 23-mal je Sekunde, ein Hauptteil der
   späteren Messungen dazu sagen (ein Geist lebt 3 / 39 s, 4.2; eine Person bleibt), wirkt nur auf eine
   Alternative, die noch da ist. Sagen alle behaltenen Hypothesen über eine laufende Spur dasselbe
   („Geist“ oder „Person“), bleibt von den verworfenen die stärkste, die das andere sagt (die Grenze von 12
-  wird dafür um höchstens die Zahl der laufenden Spuren überschritten). Bis 0.25 fiel die Alternative
+  wird dafür um höchstens die Zahl der laufenden Spuren überschritten). Mit Störquellen (4.5) drei Antworten (Person, Geist,
+  Störquelle, 4.5): Von den verworfenen bleibt je fehlender Antwort einer laufenden Spur die stärkste. Bis 0.25 fiel die Alternative
   „Person“ einer Spur, die dort begann, wo der Filter niemanden kannte, schon bei der Geburt unter die
   Schwelle; danach sagten alle Hypothesen „Geist“, der Faktor der Lebensdauer (`_ghost_life`) kürzte
   sich bei der Normierung heraus, und die Spur blieb ein Geist, wie lange sie auch gemessen wurde (das
@@ -826,6 +864,15 @@ Ankünfte und das Vergessen aus 3.4.
   Intensität in Sicht ist) kostete das Rechenzeit (10). 5 % statt 1 %: 14 % weniger Rechenzeit, aber
   Licht fälschlich aus 1,67 statt 1,17 von 15 (Arbeitszimmer 21:36 knapp unter der Schwelle),
   Log-Evidenz −49.
+
+- **Störquellen** (Zweig `stoerquelle`, nicht freigegeben, 4.5; `filter/clutter.rs`) wie die Personen: Die unbekannten sind eine Poisson-Intensität,
+  gleich über den Blick jedes Sensors und gleich in allen Hypothesen; im Gleichgewicht bekommen so viele ihre erste Spur,
+  wie entstehen (`clutter_birth` je m² und s, D_Mahler2011 Gl. 13–15), darum steht die Intensität nicht im Zustand. Die
+  bekannten sind Bernoullis je Hypothese, benannt nach der Spur, mit der sie zuerst gesehen wurden (so ist „diese Spur
+  ist eine neue Störquelle“ in allen Hypothesen dieselbe). Ohne Spur überlebt eine mit `e^(−Δt/clutter_life)`, und
+  solange ihr Sensor lebt, gewichtet „keine neue Spur auf ihr“ mit `1 − r + r e^(−a Δt)` und senkt r (dieselbe
+  Bernoulli-Aktualisierung wie oben). Unter r < 1 % geht sie zurück in die Intensität. Beim Zusammenlegen (5.6) wird
+  dieselbe Störquelle nach ihrem Namen gemischt (Momentenabgleich, r = Σ Gewicht × r, wo sie fehlt r = 0).
 
 ### 5.6 Zusammenlegen
 Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
@@ -2903,6 +2950,43 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   31 min), die Badperson 3.11. 14:00–14:40 (Dobby + Waschmaschine), Einträge an der Wohnungstür nach dem Aufbruch
   (1.11. 12:55: draußen läuft ein Eintrag in 2 min ab, an der halb gesehenen Türkachel langsamer; was bleibt, steht
   innen an der Tür), die zweite Schlafende.
+- **Störquellen** (5.11. nachmittags, Zweig `stoerquelle`, 4.5; Meldung 5.11. 13:51 „Licht im leeren Wohnzimmer“).
+  Gemessen auf den App-Spuren der leeren Fenster (Skalen in 4.5). Bewertung `dev/personenzahl/evalp.py`, Mittel über die
+  Starts, gegen 0.60 (`mittelk3` auf den alten Fenstern, `d060` auf denen vom 5.11.):
+  | | 0.60 | Störquellen |
+  |---|---|---|
+  | leeres Haus 5.11. (`leer0511` / `leer0511b`, Raumminuten Licht) | 159 / 23,6 | 41 / 0 |
+  | Meldung 5.11. 13:51 (s falsch) | 756 | 0 |
+  | leeres Haus, alte Fenster (16 Starts) | 0 | 38,9 (ein Start 1.11. 12:00: 234 min Flur) |
+  | Licht zu viel / dunkel mit Sitzer / Personen zu viel (fünf Ein-Personen-Fenster) | 464 / 3,1 / 167 | 460 / 3,8 / 163 |
+  | Nacht 1./2.11.: Schlafzimmer dunkel (min) | 0,5 | 0,8 |
+  | Spiegel am Esstisch, Meldungen 4.11. 11:33 / 17:25 (s falsch) | 515 / 182 | 515 / 213 |
+  | Rechenzeit (dieselben Fenster) | 8 921 CPU-s | 11 444 CPU-s (1,28×) |
+  Der Luftentfeuchter wird eine Störquelle: Jede neue Spur dort hängt sich an sie (`known_clutter` 0,99), die Person
+  verliert, weil der Wohnzimmer-LD2450 sie sähe. Was bleibt (10:20–11:00), ist eine Person auf einer Spur am selben Ort,
+  die innerhalb von 3 min gegen die Störquelle gewinnt, ohne LD2410C noch deutlicher; warum, ist nicht geklärt (der Ort
+  wandert gemessen nur 0,06 m, Haltezeiten sind ein Kandidat). Die mehr „dunkel mit Sitzer“ sind fast alle das Spiegelbild am Esstisch, das jetzt eine
+  Störquelle ist, während die eine Person woanders war (2.11. 16:27–16:33 im Arbeitszimmer, 4.11. 11:52–11:58 in der
+  Küche; geprüft an den Spuren der anderen Sensoren): dort ist dunkel richtig. Echt dunkel mit Person mehr: 3.11. 10:04
+  Wohnzimmer 7–9 s in zwei von drei Starts, die Nacht 1./2.11. 0,3 min. Das leere Haus 1.11. (Start 12:00) ist der
+  bekannte Eintrag an der Wohnungstür nach dem Aufbruch (r ≈ 0,65 stundenlang, ohne Störquelle; unter 0.60 in allen 6
+  Starts aus); er hängt chaotisch an der Vorgeschichte. **Nicht besser nach Leons Maßstab, nicht freigegeben.**
+  Was die Tests zeigen (pytest, drei schlagen fehl): (1) Zwei, die nebeneinander liegen und die beide LD2450 als ein
+  Ziel sehen (`test_two_lying_together_stay_two_for_long`): Nach 15 min nimmt eine Störquelle von Sensor b dessen
+  Spuren, die zweite Person verliert ihre Existenz. Eine Person plus Störquelle erklärt zwei Sensoren mit eigenem Versatz
+  an fast derselben Stelle billiger als zwei Personen, die sich gegenseitig nur teilweise verdecken (4.1, Auflösung):
+  Die Störquelle hat ihren Ort frei, verdeckt die zweite Person für ihren Sensor, und ihre Erfassung (0,115 /s) ist
+  schneller als die einer Stehenden (0,034 κ /s), also gewinnt sie bei jeder Spur nach kurzer Lücke. (2) Beim Start ohne
+  Wissen (`test_somebody_at_the_wall_…`, eine Sitzende, die nur ein Sensor sieht, ohne LD2410C): Eine Störquelle, die
+  beim Start schon eine Spur hat, ist so wahrscheinlich (`clutter_birth` × `clutter_life` × Anteil mit Spur ≈ 4·10⁻³ je m²)
+  wie eine unbekannte Person dort (`start_unknown` = 1 über die Wohnung, angenommen); P(belegt) 0,98 → 0,02. Das ist der
+  Fall „dunkel mit Person“, vor dem die Aufgabe warnte.
+  Verworfen auf dem Weg (Schnellprüfung `leer0511`, `leer0511b`, Meldungen): die Sicht des Sensors in der Erfassung und
+  beim Wiederfinden der Störquelle wie bei einer Person (die Stelle des Luftentfeuchters sieht der Esszimmer-Sensor nur
+  zu 0,5; dort, wo ein gemessenes Ziel bis 0,4 m hinter einer Wand liegt, ist die Sicht 0 und die Störquelle konnte nie
+  wiedergefunden werden: `leer0511` 132 bzw. 48 Raumminuten statt 41); das Wiederfinden mit 1 wie beim Geist statt mit
+  dem Kern um die gehaltene Stelle (72). Offen: dieselbe Spur kehrt nach langen Haltezeiten zur Person zurück; ein Störquellen-Ort, der zwei
+  Personen trennt; das Speichern der Störquellen über einen Neustart.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

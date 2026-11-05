@@ -6,6 +6,7 @@
 //! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
 pub mod branch;
+pub mod clutter;
 pub mod densities;
 pub(crate) mod evidence;
 pub(crate) mod holders;
@@ -89,6 +90,8 @@ pub struct HypView {
     pub ghosts: Vec<SegId>,
     pub known: Vec<f64>,
     pub unknown_out: f64,
+    /// the known Störquellen: their id, sensor, r, where they are, their track
+    pub clutter: Vec<(u64, usize, f64, crate::geometry::Point, Option<SegId>)>,
 }
 
 /// What is known about the people, to start from after a restart (MODEL.md 5.3; Tracker.
@@ -311,6 +314,11 @@ impl Filter {
                     .chain(hy.hidden.iter().map(|&u| densities.get(u).r))
                     .collect(),
                 unknown_out: densities.get(hy.unknown).out,
+                clutter: hy
+                    .clutter
+                    .iter()
+                    .map(|(c, x)| (c.0, x.si, x.r, x.pos(), x.track.map(|(s, _)| s)))
+                    .collect(),
             })
             .collect()
     }
@@ -352,6 +360,18 @@ impl Filter {
                 if *o == Owner::Ghost && !hy.ghosts.contains_key(s) {
                     return Err(format!("hypothesis {h}: a ghost without its source"));
                 }
+                if let Owner::Clutter(c) = *o
+                    && hy.clutter.get(&c).and_then(|c| c.track).map(|(t, _)| t) != Some(*s)
+                {
+                    return Err(format!("hypothesis {h}: a Störquelle's track it does not have"));
+                }
+            }
+            if hy
+                .clutter
+                .iter()
+                .any(|(&c, x)| x.track.is_some_and(|(s, _)| hy.owner_of(s) != Some(Owner::Clutter(c))))
+            {
+                return Err(format!("hypothesis {h}: a Störquelle with a track that is not its own"));
             }
             let kind = |d: DensityId| {
                 self.objects

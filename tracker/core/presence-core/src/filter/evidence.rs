@@ -47,9 +47,11 @@ pub struct Ended {
 }
 
 impl Filter {
-    /// Step 1 of a frame: no ghost track was born in delta s.
+    /// Step 1 of a frame: no ghost track was born in delta s, nor the first of a Störquelle nobody knew of
+    /// (MODEL.md 4.5; alike in all hypotheses).
     pub fn watch(&mut self, world: &World, si: usize, delta: f64) {
-        let total = world.params.ghost_types.iter().map(|t| t[0]).sum::<f64>() * world.sights[si].area;
+        let p = &world.params;
+        let total = (p.ghost_types.iter().map(|t| t[0]).sum::<f64>() + p.clutter_birth) * world.sights[si].area;
         for hy in &mut self.hyps {
             hy.logw -= total * delta;
         }
@@ -89,6 +91,16 @@ impl Filter {
             let dl = mix.update(&mut objects.densities, seg, z, world.params.white);
             mix.in_sight(world, origin);
             self.holders.book(&mut self.hyps, entry, dl);
+        }
+        // a Störquelle's track: its own Kalman update in each hypothesis (MODEL.md 4.5)
+        for hy in &mut self.hyps {
+            if let Some(Owner::Clutter(c)) = hy.owner_of(seg) {
+                hy.logw += hy
+                    .clutter
+                    .get_mut(&c)
+                    .expect("its Störquelle")
+                    .update(z, t, &world.params);
+            }
         }
         self.tracks.update(seg, |i| (i.t, i.zt, i.z) = (t, t, z));
     }
@@ -132,7 +144,12 @@ impl Filter {
                 self.holders.book(&mut self.hyps, entry, dl);
             }
             for hy in &mut self.hyps {
-                let ghost = if hy.is_ghost(seg) { 1.0 } else { 0.0 };
+                // its ghost's source, or its Störquelle near the spot (MODEL.md 4.5)
+                let ghost = match hy.owner_of(seg) {
+                    Some(Owner::Ghost) => 1.0,
+                    Some(Owner::Clutter(c)) => hy.clutter.get(&c).expect("its Störquelle").near(world, lost.z),
+                    _ => 0.0,
+                };
                 hy.logw += (p.find_clutter + ghost) * lr;
             }
         }
@@ -174,6 +191,8 @@ impl Filter {
                     let now = self.objects.release(world, hy, gid, seg, &mut cache);
                     hy.set_person(gid, now);
                 }
+                // stays where it is, without a track: its end says nothing (as a person's, 4.1)
+                Owner::Clutter(c) => hy.clutter.get_mut(&c).expect("its Störquelle").drop_track(),
             }
             hy.tracks.remove(&seg);
         }
@@ -222,6 +241,7 @@ impl Filter {
             };
             self.holders.book(&mut self.hyps, entry, d);
         }
+        self.clutter_censor(world, si);
     }
 }
 

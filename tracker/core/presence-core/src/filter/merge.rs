@@ -5,10 +5,12 @@
 //!
 //! Numbers and their order follow the Python core of 0.38.1 (deleted in 0.39; its results are test fixtures).
 
+use crate::filter::clutter::{Clutter, ClutterId};
 use crate::filter::densities::DensityId;
 use crate::filter::hyp::{Hyp, Owner, alike};
 use crate::filter::mixture::{Mixture, MixtureId, SegId, mix_mixtures};
 use crate::filter::objects::Objects;
+use crate::filter::small_map::SmallMap;
 use crate::filter::{Filter, NotFinite};
 use crate::params::Params;
 use crate::vmath::logsumexp;
@@ -188,17 +190,26 @@ fn cut_hyps(hyps: &mut Vec<Hyp>, p: &Params) -> Result<Cut, NotFinite> {
         if n == w.len() {
             return Ok(Cut::Nothing);
         }
-        let alternatives = |i: usize| -> Vec<(SegId, bool)> {
+        // what a track is: a person's, a ghost's or a Störquelle's (MODEL.md 4.5)
+        let kind = |o: Owner| match o {
+            Owner::Person(_) => 0u8,
+            Owner::Ghost => 1,
+            Owner::Clutter(_) => 2,
+        };
+        let alternatives = |i: usize| -> Vec<(SegId, u8)> {
             groups[i]
                 .iter()
-                .flat_map(|&h| hyps[h].tracks.iter().map(|(&s, &o)| (s, o == Owner::Ghost)))
+                .flat_map(|&h| hyps[h].tracks.iter().map(|(&s, &o)| (s, kind(o))))
                 .collect()
         };
         chosen = order[..n].to_vec();
-        let mut held: Vec<(SegId, bool)> = chosen.iter().flat_map(|&i| alternatives(i)).collect();
+        let mut held: Vec<(SegId, u8)> = chosen.iter().flat_map(|&i| alternatives(i)).collect();
         for &i in &order[n..] {
-            let new: Vec<(SegId, bool)> = alternatives(i).into_iter().filter(|a| !held.contains(a)).collect();
-            if new.iter().any(|&(s, g)| held.contains(&(s, !g))) {
+            let new: Vec<(SegId, u8)> = alternatives(i).into_iter().filter(|a| !held.contains(a)).collect();
+            if new
+                .iter()
+                .any(|&(s, k)| held.iter().any(|&(hs, hk)| hs == s && hk != k))
+            {
                 chosen.push(i);
                 held.extend(new);
             }
@@ -282,6 +293,22 @@ impl Objects {
                 let id = self.mix_mixtures(&parts);
                 new.ghosts.get_mut(seg).expect("the base's own ghost").source = id;
             }
+        }
+        // the Störquellen: each by its id, mixed with nobody (r = 0) where a hypothesis lacks it (MODEL.md 4.5)
+        let mut ids: Vec<ClutterId> = Vec::new();
+        for &c in hs.iter().flat_map(|h| h.clutter.keys()) {
+            if !ids.contains(&c) {
+                ids.push(c);
+            }
+        }
+        new.clutter = SmallMap::default();
+        for id in ids {
+            let parts: Vec<(f64, &Clutter)> = wn
+                .iter()
+                .zip(hs)
+                .filter_map(|(&w, h)| h.clutter.get(&id).map(|c| (w, c)))
+                .collect();
+            new.clutter.insert(id, Clutter::mix(&parts));
         }
         // people without a track: the objects all hold stay, the others are paired and mixed
         let mut common: Vec<DensityId> = base.hidden.clone();

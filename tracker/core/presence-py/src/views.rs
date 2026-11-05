@@ -24,6 +24,8 @@ pub struct HypView {
     ghosts: Vec<u64>,
     known: Vec<f64>,
     unknown_out: f64,
+    /// the known Störquellen: (id, sensor index, r, (x, y), its track or None)
+    clutter: Vec<(u64, usize, f64, Point, Option<u64>)>,
 }
 
 #[cfg(feature = "testing")]
@@ -36,6 +38,11 @@ impl HypView {
             ghosts: ids(h.ghosts),
             known: h.known,
             unknown_out: h.unknown_out,
+            clutter: h
+                .clutter
+                .into_iter()
+                .map(|(c, si, r, at, seg)| (c, si, r, at, seg.map(|s| s.0)))
+                .collect(),
         }
     }
 }

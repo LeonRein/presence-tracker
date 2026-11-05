@@ -375,6 +375,7 @@ impl Filter {
                 }
             }
         }
+        self.clutter_flush(world, sensors, t0, t);
         self.flushed = t;
         self.void_cache();
     }
@@ -418,6 +419,10 @@ impl Filter {
     /// intensity. Returns whether anybody was given back (then the shell moves everybody and
     /// merges).
     pub fn recycle(&mut self, give_up: f64) -> bool {
+        // a Störquelle as unlikely goes back to the unknown ones: their intensity stays as it is (MODEL.md 4.5)
+        for hy in &mut self.hyps {
+            hy.clutter.retain(|_, c| c.track.is_some() || c.r >= give_up);
+        }
         let densities = &self.objects.densities;
         let gone: Vec<Vec<DensityId>> = self
             .hyps
@@ -518,6 +523,10 @@ impl Filter {
                 move_densities(world, densities, &[(id, dt)]);
                 expire(world, &mut densities.get_mut(id), dt, &f);
             }
+        }
+        let survive = (-gap / p.clutter_life).exp();
+        for c in self.hyps.iter_mut().flat_map(|hy| hy.clutter.values_mut()) {
+            c.r *= survive;
         }
         self.void_cache();
     }

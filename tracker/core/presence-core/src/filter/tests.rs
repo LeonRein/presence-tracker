@@ -182,7 +182,10 @@ fn track_through_its_events(world: &World, mut at: impl FnMut(&Filter, &str)) ->
     let cats = f.branch_all(world, &frame(t, &[seg]), &[found]).expect("finite");
     at(&f, "branch");
     let cats: Vec<Category> = cats[0].iter().map(|&(_, c)| c).collect();
-    assert_eq!(cats, [Category::Ghost, Category::Known, Category::New]);
+    assert_eq!(
+        cats,
+        [Category::Ghost, Category::NewClutter, Category::Known, Category::New]
+    );
     for step in 0..3 {
         t += 0.3;
         f.flush(world, &watching(t), t);
@@ -488,4 +491,57 @@ fn somebody_who_neither_moves_nor_changes_is_weighed_by_exp_of_minus_their_rate_
     let want = -world.shapes.kappa[k] * rate * span;
     let got = f.hyps()[0].logw;
     assert!((got - want).abs() <= 1e-12 * want.abs(), "{got} against {want}");
+}
+
+#[test]
+fn tracks_again_and_again_at_one_spot_that_only_one_sensor_makes_are_a_stoerquelle() {
+    // MODEL.md 4.5: sensor 0 makes a track of 10 s at the same spot every 13 s for 13 min, sensor 1 sees the spot and
+    // makes none. A person there would be seen by sensor 1, a ghost lives seconds: after a few tracks they
+    // are a Störquelle's, and nobody is there.
+    let world = testing::flat();
+    let (mut f, _) = filter(&world, 0);
+    let mut t = 1.0;
+    f.set_flushed(t);
+    let z = [3.0, 2.5];
+    for k in 0..60 {
+        let seg = SegId(10 + k);
+        let found = NewTrack { seg, z, var: 0.04 };
+        f.branch_all(&world, &frame(t, &[seg]), &[found]).expect("finite");
+        for _ in 0..20 {
+            t += 0.5;
+            f.flush(&world, &watching(t), t);
+            f.measured(&world, &watching(t), seg, z, t);
+            f.normalize(0.0).expect("finite");
+        }
+        t += 0.1;
+        f.flush(&world, &watching(t), t);
+        f.end(&world, seg, t, false);
+        f.merge();
+        f.prune(&world.params).expect("finite");
+        f.normalize(0.0).expect("finite");
+        f.check().expect("after a track");
+        t += 3.0;
+        f.flush(&world, &watching(t), t);
+        f.normalize(0.0).expect("finite");
+    }
+    let w = f.hyp_weights();
+    let views = f.hypotheses();
+    let people: f64 = w
+        .iter()
+        .zip(&views)
+        .map(|(wi, h)| wi * h.known.iter().sum::<f64>())
+        .sum();
+    let stoer: f64 = w
+        .iter()
+        .zip(&views)
+        .map(|(wi, h)| {
+            let near = h
+                .clutter
+                .iter()
+                .filter(|c| crate::vmath::py_hypot(c.3[0] - z[0], c.3[1] - z[1]) < 0.3);
+            wi * near.map(|c| c.2).fold(0.0, f64::max)
+        })
+        .sum();
+    assert!(people < 0.1, "known people {people}");
+    assert!(stoer > 0.9, "a Störquelle there {stoer}");
 }

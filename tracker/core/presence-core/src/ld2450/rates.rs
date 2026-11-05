@@ -61,7 +61,7 @@ impl RateModel {
     /// The share left at a point given the sensor's live tracks: next to a target it measures,
     /// somebody is merged into it (resolution, Svensson 2012); near where it holds a lost target it
     /// finds that one again.
-    fn mask(&self, sight: &Sight, p: Point, tracks: &[TrackSpot]) -> f64 {
+    pub(crate) fn mask(&self, sight: &Sight, p: Point, tracks: &[TrackSpot]) -> f64 {
         if tracks.is_empty() {
             return 1.0;
         }

@@ -1,8 +1,9 @@
-//! One hypothesis (MODEL.md 5.1): its weight; per live track whose it is - a person's (a group) or
-//! a ghost's; per ghost track the log likelihood of its life per kind of ghost and its source (a
-//! Gaussian mixture); the people with tracks, the known ones without (one density each) and the
-//! unknown ones. It holds indices into the filter's pools, never the objects (docs/rust-core.md 2.2).
+//! One hypothesis (MODEL.md 5.1): its weight; per live track whose it is - a person's (a group), a
+//! ghost's or a Störquelle's; per ghost track the log likelihood of its life per kind of ghost and its
+//! source (a Gaussian mixture); the people with tracks, the known ones without (one density each) and
+//! the unknown ones; the known Störquellen (4.5). It holds indices into the filter's pools, never the objects (docs/rust-core.md 2.2).
 
+use crate::filter::clutter::{Clutter, ClutterId};
 use crate::filter::densities::DensityId;
 use crate::filter::holders::Obj;
 use crate::filter::mixture::{MixtureId, SegId};
@@ -18,6 +19,7 @@ pub struct GroupId(pub u64);
 pub enum Owner {
     Person(GroupId),
     Ghost,
+    Clutter(ClutterId),
 }
 
 /// A ghost track: the log likelihood of its life so far per kind of ghost (MODEL.md 4.2), and its
@@ -42,14 +44,17 @@ pub struct Hyp {
     pub hidden: Vec<DensityId>,
     /// the people nobody knows of (a Poisson intensity)
     pub unknown: DensityId,
+    /// the known Störquellen (Bernoullis, MODEL.md 4.5); the unknown ones are an intensity alike in all
+    pub clutter: SmallMap<ClutterId, Clutter>,
 }
 
-/// What a hypothesis says about the live tracks (Hyp.key): which of them are one person's, and
-/// which are ghosts. Both sorted, so hypotheses that say the same have equal keys.
+/// What a hypothesis says about the live tracks (Hyp.key): which of them are one person's, which are
+/// ghosts and which Störquelle's. All sorted, so hypotheses that say the same have equal keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HypKey {
     groups: Vec<Vec<SegId>>,
     ghosts: Vec<SegId>,
+    clutter: Vec<(SegId, ClutterId)>,
 }
 
 impl Hyp {
@@ -74,6 +79,7 @@ impl Hyp {
             people: SmallMap::default(),
             hidden,
             unknown,
+            clutter: SmallMap::default(),
         }
     }
 
@@ -125,7 +131,20 @@ impl Hyp {
             .map(|(&s, _)| s)
             .collect();
         ghosts.sort_unstable();
-        HypKey { groups, ghosts }
+        let mut clutter: Vec<(SegId, ClutterId)> = self
+            .tracks
+            .iter()
+            .filter_map(|(&s, o)| match *o {
+                Owner::Clutter(c) => Some((s, c)),
+                _ => None,
+            })
+            .collect();
+        clutter.sort_unstable();
+        HypKey {
+            groups,
+            ghosts,
+            clutter,
+        }
     }
 }
 

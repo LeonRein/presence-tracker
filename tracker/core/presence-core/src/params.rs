@@ -116,6 +116,13 @@ pub struct Params {
     /// (measured 4.11. with one person home: 0.0057, Küche 0.014, Bad 0.002)
     #[serde(deserialize_with = "real")]
     pub walker_ghosts: f64,
+    /// 4.5 Störquellen: born per m^2 and s in an LD2450's view, their mean life (s), the rate (1/s) at which its
+    /// sensor starts a track on one and how long such a track lasts (s), measured in the empty house
+    #[serde(deserialize_with = "real")]
+    pub clutter_birth: f64,
+    #[serde(deserialize_with = "real")]
+    pub clutter_life: f64,
+    pub clutter_acquire: [f64; 2],
     // 5.3 nothing known: the unknown people expected at a start
     #[serde(deserialize_with = "real")]
     pub start_unknown: f64,
@@ -263,6 +270,9 @@ impl Default for Params {
             },
             ghost_types: vec![[0.4 * 1.8e-5, 3.0], [0.6 * 1.8e-5, 39.0]],
             walker_ghosts: 0.0057,
+            clutter_birth: 2.2e-7,
+            clutter_life: 5.3 * 3600.0,
+            clutter_acquire: [0.115, 420.0],
             start_unknown: 1.0,
             unseen_life: 120.0,
             record_life: 86400.0,
@@ -363,9 +373,20 @@ impl Params {
             ("res_range", positive(self.res_range)),
             ("res_cross", positive(self.res_cross)),
             ("const_share", (0.0..=1.0).contains(&self.const_share)),
-            ("ld_echo_long", (0.0..1.0).contains(&self.ld_echo_long[0]) && self.ld_echo_long[1] > 0.0 && self.ld_echo_long[1].is_finite()),
+            (
+                "ld_echo_long",
+                (0.0..1.0).contains(&self.ld_echo_long[0])
+                    && self.ld_echo_long[1] > 0.0
+                    && self.ld_echo_long[1].is_finite(),
+            ),
             ("walker_ghosts", at_least_0(self.walker_ghosts)),
-            ("offset_wide", (0.0..1.0).contains(&self.offset_wide[0]) && at_least_0(self.offset_wide[1])),
+            ("clutter_birth", at_least_0(self.clutter_birth)),
+            ("clutter_life", time(self.clutter_life)),
+            ("clutter_acquire", self.clutter_acquire.iter().all(|&x| positive(x))),
+            (
+                "offset_wide",
+                (0.0..1.0).contains(&self.offset_wide[0]) && at_least_0(self.offset_wide[1]),
+            ),
             ("tau", positive(self.tau)),
             ("white", positive(self.white)),
             ("pos_every", positive(self.pos_every)),

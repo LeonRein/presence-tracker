@@ -2,6 +2,14 @@
 
 ## Unveröffentlicht
 
+- Zweig `stoerquelle`, nicht freigegeben: **Störquellen** (MODEL.md 4.5, D_Mahler2011): Objekte, die keine Personen sind und
+  an einem festen Ort immer wieder Spuren eines LD2450 machen (ein Luftentfeuchter, das Spiegelbild am Esstisch), als eigene
+  Klasse im PMBM mit eigener Geburt (`clutter_birth` 2,2·10⁻⁷ je m² und s), Lebensdauer (`clutter_life` 5,3 h) und Erfassung
+  (`clutter_acquire` 0,115 /s, Spurdauer 420 s), gemessen in den leeren Fenstern. Leeres Haus 5.11. 159 → 41 Raumminuten,
+  Meldung 5.11. 13:51 756 → 0 s falsch; aber ein Start im leeren Haus 1.11. 234 min Licht, die zweite von zwei
+  Nebeneinanderliegenden geht verloren, und beim Start ohne Wissen wird eine Sitzende, die nur ein Sensor sieht, eine
+  Störquelle (drei pytest schlagen fehl). Rechenzeit 1,28×. Schlägt 0.60 nicht (MODEL.md 10 „Störquellen“).
+
 ## 0.60.0 (Kein Eintrag ist gewiss, Echoquellen so beweglich wie Personen, Erkennbarkeit gemessen)
 
 Gegen 0.57 (main) und 0.59 auf allen Fenstern mit Wahrheit aus den Telefonen (4 leere, 5 mit einer Person, 2 Nächte),
