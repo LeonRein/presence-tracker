@@ -2,6 +2,11 @@
 
 ## Unveröffentlicht
 
+- Aufzeichnung: Eine abgeschnittene Stundendatei (Absturz, Stromausfall) behält beim Wiederöffnen ihre ganzen Zeilen auch
+  unter Python 3.14 und neuer; dort gab gzip von so einer Datei nichts mehr her, die Reparatur hätte alles verworfen (die App
+  läuft auf 3.13 und war nicht betroffen). Jetzt Glied für Glied mit zlib bis zum ersten kaputten Byte; neuer Test mit
+  ganzen Gliedern und einem abgeschnittenen.
+
 ## 0.61.0 (Störquellen; Hintergrund lernt nach langer Stille ohne Personen ohne Spur)
 
 Gegen 0.60 auf allen Fenstern mit mehreren Starts, jedes Fenster jetzt mit dem Gelernten, das zu den Sensoren seiner Aufnahme

@@ -43,19 +43,44 @@ def line(recv: float, topic: str, payload: bytes) -> str:
     return json.dumps({"t": round(recv, 3), "topic": topic, "payload": decoded(payload)}, separators=(",", ":"))
 
 
+def readable(data: bytes) -> bytes:
+    """What decompresses of gzip members one after another, up to the first byte that does not (zeros, garbage, a
+    member cut off). With zlib, member by member: gzip's reader gives nothing of a cut-off file from Python 3.14 on."""
+    out = bytearray()
+    while data:
+        member, pos = zlib.decompressobj(16 + zlib.MAX_WBITS), 0
+        while pos < len(data) and not member.eof:
+            step, before = data[pos : pos + 4096], member.copy()
+            try:
+                out += member.decompress(step)
+            except zlib.error:  # the step with the break: again a byte at a time, up to it
+                for i in range(len(step)):
+                    try:
+                        out += before.decompress(step[i : i + 1])
+                    except zlib.error:
+                        break
+                return bytes(out)
+            pos += len(step)
+        if not member.eof:
+            break
+        data = member.unused_data + data[pos:]
+    return bytes(out)
+
+
 def repair(path: pathlib.Path):
     """A file with a gzip member not ended (a crash, a power cut): its whole lines, whole again (written whole or
     not at all). A sound file stays as it is."""
-    lines = []
     try:
         with gzip.open(path) as f:
-            for text in f:  # (cut off: raises where the last line would be incomplete)
-                lines.append(text)
+            for _ in f:
+                pass
         return
     except (EOFError, zlib.error, gzip.BadGzipFile):
         pass
-    log.info("recording %s was cut off: %d lines kept", path.name, len(lines))
-    atomic_write(path, gzip.compress(b"".join(lines), compresslevel=LEVEL))
+    out = readable(path.read_bytes())
+    kept = out[: out.rfind(b"\n") + 1]
+    log.info("recording %s was cut off: %d lines kept", path.name, kept.count(b"\n"))
+    atomic_write(path, gzip.compress(kept, compresslevel=LEVEL))
 
 
 class Recorder:

@@ -8,6 +8,7 @@ import json
 import subprocess
 import tarfile
 import time
+import zlib
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -144,6 +145,17 @@ def test_garbage_at_the_end_of_a_file_is_cut_off(tmp_path):
     repair(path)
     got = uptimes(path)  # (the last few lines go with the broken block)
     assert len(got) > 950 and got == list(range(len(got)))
+
+
+def test_after_whole_members_a_cut_off_one_keeps_its_whole_lines(tmp_path):
+    # a file opened again after clean closes, then cut off: every line written whole stays, in order
+    path = tmp_path / "x.jsonl.gz"
+    cut = zlib.compressobj(6, zlib.DEFLATED, 16 + zlib.MAX_WBITS)
+    tail = cut.compress(b"".join(b"%d\n" % i for i in range(600, 900))) + cut.flush(zlib.Z_SYNC_FLUSH)
+    path.write_bytes(gzip.compress(b"".join(b"%d\n" % i for i in range(300)))
+                     + gzip.compress(b"".join(b"%d\n" % i for i in range(300, 600))) + tail + bytes(4096))
+    repair(path)
+    assert [int(x) for x in gzip.decompress(path.read_bytes()).split()] == list(range(900))
 
 
 def test_a_failed_write_stops_the_recording_not_the_app(tmp_path, caplog):
