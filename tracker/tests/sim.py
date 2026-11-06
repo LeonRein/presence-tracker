@@ -73,6 +73,7 @@ class SimSensor:
     bias_time: float = 1.0  # s, ... this slowly
     still_dropout: float = 0.0  # chance per second that a still person is dropped (stays dropped for still_gap s)
     still_gap: float = 20.0
+    hold_dropped: bool = False  # a dropped still person's target is held frozen meanwhile (bit-identical, MODEL.md 4.1)
     ghost_rate: float = 0.0  # LD2450 ghosts per minute
     reflections: tuple = ()  # ((t0, t1, x, y), ...): a fixed reflection its LD2450 reports then (not the LD2410C)
     ld2410: bool = True  # the LD2410C's energies in the frames
@@ -86,6 +87,7 @@ class SimSensor:
     seq: int = 0
     _sent: tuple = (-math.inf, True)  # when the last frame was sent, and whether it was empty
     _dropped: dict = field(default_factory=dict)
+    _held: dict = field(default_factory=dict)  # person -> their last target
     _ghost_until: float = -1.0
     _ghost_pos: tuple = (0.0, 0.0)
     _bias: dict = field(default_factory=dict)
@@ -153,10 +155,12 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
         speed = math.hypot(vx, vy)
         if speed < 0.05:
             until = s._dropped.get(i)
+            if until is None or t >= until:
+                if rng.random() < s.still_dropout * dt:
+                    s._dropped[i] = until = t + s.still_gap
             if until is not None and t < until:
-                continue
-            if rng.random() < s.still_dropout * dt:
-                s._dropped[i] = t + s.still_gap
+                if s.hold_dropped and i in s._held:
+                    targets.append(s._held[i])
                 continue
         else:
             s._dropped.pop(i, None)
@@ -180,6 +184,7 @@ def _frame(s: SimSensor, people: list, t: float, dt: float, rng: random.Random, 
             "resolution": 360,
         }
         targets.append((ground, tgt))
+        s._held[i] = (ground, dict(tgt))
         lvx, lvy = to_local(pos[0] + vx, pos[1] + vy)
         s._coast[i] = (tgt["x"] / 1000, tgt["y"] / 1000, lvx - lx, lvy - ly, tgt["speed"] or 10, 15)
     if s.ghost_rate and rng.random() < s.ghost_rate / 60 * dt:

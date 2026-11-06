@@ -242,7 +242,14 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   0,2 s / 2,0 (eingefroren); 3 % bzw. 2 % nie.
 - Wiedergefunden wird auf dem Eigentümer, auf einer anderen Person nahe der gehaltenen Stelle
   (Gauß-Kern 0,7 m × Sicht), auf dem Geist, der sie war, oder auf einer Reflexion dort (wie 0,05
-  Personen). Nicht-Wiederfinden spricht gegen alle diese, ohne Frist.
+  Personen). Nicht-Wiederfinden spricht gegen alle diese, ohne Frist; gegen eine andere Person aber nur, soweit
+  der Sensor sie vom gehaltenen Ziel auflöst (seit 0.62): mit dem Faktor `S(u)^(k(x)·(1 − P_u(x, z)))`,
+  `P_u = exp(−ln 2 ((Δr/0,6 m)² + (Δquer/0,9 m)²))` die Form der Auflösung von oben (A_Svensson2012 Gl. 18–20). Wer
+  mit dem Eigentümer in einer Auflösungszelle steht, ist mit ihm eine Quelle, die höchstens ein Ziel gibt
+  (A_Beard2015 Gl. 16–17: je Gruppe einer Partition höchstens eine Messung; Mahlers Punkt-Cluster); sein Ausbleiben
+  ist das Ausbleiben dieses einen Ziels und zählt schon beim Eigentümer. Bis 0.61 zählte es für jede Person in der
+  Nähe noch einmal, als könne der Sensor sie getrennt wiederfinden: Die zweite Person neben Leon im Bad verlor in
+  100 s Δlogit r = −6,0 allein dadurch (6.11. 19:28, 10 „Zwei als ein Ziel“).
 - Fallenlassen der Spur: keine eigene Information (für Geister: Lebensdauer, 4.2).
 
 **Position:** `z = x + c + o + w`. Versatz c konstant je Spur, o wandert (OU, τ = 3,5 s), w = 5 cm.
@@ -835,7 +842,8 @@ Ankünfte und das Vergessen aus 3.4.
   Review des Algorithmus 1.3). Wo ein Sensor eine bekannte Person ohne Spur sähe, entscheiden die
   Messungen allein (`1 − r + r ∫ Dichte × Likelihood`, oben); dort endet nichts (Vorgabe 1.3): Eine
   Sitzende in Sicht bleibt, solange keine Messung gegen sie spricht, wie lang ihre Lücke auch ist, und
-  zwei, die der LD2450 als ein Ziel sieht, bleiben zwei. Wo kein Sensor hinsieht – ein toter Winkel
+  zwei, die der LD2450 als ein Ziel sieht, bleiben zwei (weder Erfassung noch Wiederfinden zählen gegen die
+  Unaufgelöste, 4.1; bis 0.61 tat es das Wiederfinden). Wo kein Sensor hinsieht – ein toter Winkel
   eines Raums, ein Bereich ohne Sensor, außer Haus –, kann keine Messung einen Eintrag widerlegen; dort
   hielte ihn nur die Aufenthaltsdauer, mit ihren schweren Ausläufern (3.1: 2 % der Aufenthalte dauern
   über eine Stunde; 3.3) über Stunden. Bei r < 1 kostet ein Ort ohne Sicht, was sein Aufenthalt sagt
@@ -3104,6 +3112,30 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   13:51 756 → 0 s falsch; schlechter das Spiegelbild am Esstisch 4.11. 17:25 (182 → 213 s). Preis der 10-min-Regel: Wer
   länger als 10 min ohne LD2450-Ziel still ist, wird nach etwa 0,7 h Hintergrund; gemessen bei Wachen höchstens 240 s,
   bei Schlafenden länger (Licht dort nachts gesperrt, morgens findet der LD2450 sie wieder).
+- **0.62: Zwei als ein Ziel** (Meldung 6.11. 19:54: zu zweit im Bad, Leon geht hinaus, die zweite Person bleibt, das
+  Licht geht aus). Nachgespielt aus den Aufnahmen ab 18:30 unter 0.61: Um 19:27:36 zwei Personen im Bad, ab 19:28:46
+  meldet der Bad-LD2450 nur ein Ziel, die zweite Person wird zur Person ohne Spur neben Leon (Dichte bei (−2,97 | 3,09),
+  Gehanteil unter 1 %: sie folgt ihm nicht und wandert nicht). Ihr r fällt von 0,997 (19:28:51) auf 0,02 (19:30:30),
+  Δlogit r = −10,3, zerlegt je Schritt über die Bernoulli-Aktualisierungen der Hypothese mit dem Gewicht ≈ 1: **Nicht-
+  Wiederfinden der gehaltenen Spur Leons −6,0**, LD2410C −2,8, keine neue Spur −1,7, Ablauf (`expire`) −0,5, Zusammenlegen
+  +0,6. Erst als r klein war, wanderte ihre Restmasse relativ nach außer Haus (Bad → Flur → Wohnungstür; außer Haus prüft
+  nichts, 19:30:10 0,68 der Dichte) und lief dort ab; mit r < 0,01 ging sie an die unbekannten Personen zurück. Von da an
+  22 min eine Person im Haus. Ihre frische Spur ab 19:51:58 bei (−3,95 | 4,25) war in allen Hypothesen ein Geist (eine
+  Person dort hätte nur aus der Intensität der unbekannten kommen können, log −13 bis −18 gegen den Geist), bis um 19:54:26
+  die Lebensdauer des Geistes (39 s) und das LD2410C umschlugen. Ursache: Nicht-Wiederfinden zählte gegen jede Person
+  nahe der gehaltenen Stelle, als könne der Sensor die Unaufgelöste getrennt wiederfinden; sie und der Eigentümer sind
+  aber eine Quelle mit höchstens einem Ziel (A_Beard2015 Gl. 16–17). Seit 0.62 mit dem Anteil, den der Sensor auflöst
+  (4.1). Danach: P(Bad ≥ 2) 19:28:40–19:51:58 im Mittel 0,996, 19:52:20–19:54:55 P(belegt) ≥ 0,99 (0 s falsch).
+  `unseen_life` ∞, `clutter_birth` 0 und `res_*` 1,2/1,8 m änderten unter 0.61 wenig: nicht der Ablauf, das Wiederfinden war es.
+  Bewertung `res062` gegen `k061`: leeres Haus in allen Starts 0; Licht zu viel 821 → 809 Raumminuten, dunkel mit Sitzer
+  27,1 → 29,9 min, Leons Maßstab 956,5 → 958,5 (+2,0; davon ein0411 +2,0 min = 10: das Spiegelbild am Esstisch 4.11.
+  11:36–11:39, die Person war in der Küche, dunkel ist dort richtig; morgen0411 +1,9, morgen0511 −1,1); Personen zu viel
+  275 → 407 Personenminuten (Unaufgelöste neben einer Person bleiben, auch wenn es keine sind: ein0411 60 → 170); Meldung
+  5.11. 13:51 weiter 0 s falsch, 4.11. 17:25 213 → 182 s, 31.10. 19:43 „plötzlich zwei“ P(≥ 2) 0,29 → 0,98 (ein Eintrag aus
+  dem Start ohne Wissen neben Leon); Rechenzeit 0,87×. Die Meldung 6.11. selbst bleibt in der Bewertung 122 s falsch, unter
+  0.61 ebenso: Ihre Daten beginnen 19:39:55 ohne gespeicherten Zustand, das Nachspiel weiß nichts von der zweiten Person
+  (sie war da seit 19:27 verdeckt), und eine Person entsteht nicht im Raum (Vorgabe 1.3). Offen: ein schnelleres
+  Wiederannehmen nach einem Verlust, ohne Personen im Raum entstehen zu lassen.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

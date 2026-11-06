@@ -118,7 +118,7 @@ impl Filter {
         if lr < 0.0 {
             let n = world.tiles.n;
             let f: Vec<f64> = if n > 0 {
-                near_tiles(world, si, lost.z).iter().map(|k| (k * lr).exp()).collect()
+                near_tiles(world, si, lost.z, true).iter().map(|k| (k * lr).exp()).collect()
             } else {
                 Vec::new()
             };
@@ -133,7 +133,8 @@ impl Filter {
                             Some(away) if n > 0 => objects.densities.get_mut(away).weigh(f),
                             _ => 0.0,
                         };
-                        let k = near_mixture(world, si, mix, lost.z);
+                        // its owner is found again on it; anybody else only as far as resolved from it
+                        let k = near_mixture(world, si, mix, lost.z, !mix.slots.contains_key(&seg));
                         mix.reweigh([k[0] * lr, k[1] * lr], da)
                     }
                 };
@@ -295,8 +296,9 @@ fn ghost_end(p: &Params, info: &TrackInfo, t: f64) -> Option<Vec<f64>> {
 }
 
 /// How well sensor si could find its target held at z on somebody in each tile:
-/// its sight times the kernel of finding it near the spot, averaged over the tile.
-pub fn near_tiles(world: &World, si: usize, z: Point) -> Vec<f64> {
+/// its sight times the kernel of finding it near the spot, averaged over the tile; with `resolved` only as far as
+/// the sensor resolves them from its target there (MODEL.md 4.1 "Verlieren und Wiederfinden").
+pub fn near_tiles(world: &World, si: usize, z: Point, resolved: bool) -> Vec<f64> {
     let (tiles, grid) = (&world.tiles, &world.sights[si].grid);
     let r2 = world.params.find_radius.powf(2.0);
     let at: Vec<f64> = tiles
@@ -304,18 +306,28 @@ pub fn near_tiles(world: &World, si: usize, z: Point) -> Vec<f64> {
         .iter()
         .map(|&q| {
             let (dx, dy) = (q[0] - z[0], q[1] - z[1]);
-            grid.at(q) * (-0.5 * (dx * dx + dy * dy) / r2).exp()
+            grid.at(q) * (-0.5 * (dx * dx + dy * dy) / r2).exp() * resolved_from(world, si, q, z, resolved)
         })
         .collect();
     tiles.average(&at)
 }
 
+/// With `resolved`: the share of a person at p the sensor resolves from its target at z (Svensson 2012, the
+/// form of `RateModel::mask`); else 1. Unresolved from the target of a held track, a person is one
+/// merged source with it (Beard 2015 eq. 16-17: a group gives at most one measurement), not a finder of its own.
+fn resolved_from(world: &World, si: usize, p: Point, z: Point, resolved: bool) -> f64 {
+    if !resolved {
+        return 1.0;
+    }
+    world.rates.mask(&world.sights[si], p, &[TrackSpot { held: false, at: z }])
+}
+
 /// Per component E[sight x kernel]: the kernel exactly, the sight at the sigma
 /// points of the position weighted by it.
-pub fn near_mixture(world: &World, si: usize, mix: &Mixture, z: Point) -> [f64; 2] {
+pub fn near_mixture(world: &World, si: usize, mix: &Mixture, z: Point, resolved: bool) -> [f64; 2] {
     let (k, pts) = mix.near_sigma(world, z, world.params.find_radius);
     let grid = &world.sights[si].grid;
-    [0, 1].map(|m| k[m] * expect(&pts[m].map(|p| grid.at(p))))
+    [0, 1].map(|m| k[m] * expect(&pts[m].map(|p| grid.at(p) * resolved_from(world, si, p, z, resolved))))
 }
 
 /// The rates of sensor si per component [STILL, WALK] at its sigma points; 0 where the person has

@@ -1,7 +1,23 @@
 # Changelog
 
-## Unveröffentlicht
+## 0.62.0 (Zwei als ein Ziel bleiben zwei, auch wenn der Sensor das Ziel verliert)
 
+Meldung 6.11. 19:54 „zu zweit im Bad, ich gehe raus, sie bleibt, Licht aus“. Nachgespielt aus den Aufnahmen ab 18:30: unter
+0.61 fiel r der zweiten Person neben Leon in 100 s von 0,997 auf 0,02, 22 min eine Person im Haus, Licht aus bei belegtem Bad;
+jetzt P(Bad ≥ 2) im Mittel 0,996 bis Leon geht und danach P(belegt) ≥ 0,99 (0 s falsch). Bewertung gegen 0.61 (`k061`): leeres
+Haus in allen Starts ohne Licht; Licht zu viel 821 → 809 Raumminuten, dunkel mit Sitzer 27,1 → 29,9 min (Leons Maßstab 956,5
+→ 958,5; +2 min davon das Spiegelbild am Esstisch 4.11., dort ist dunkel richtig); Personen zu viel 275 → 407; Meldung 5.11.
+13:51 weiter 0 s, Esstisch 4.11. 17:25 213 → 182 s, „plötzlich zwei“ 31.10. P(≥ 2) 0,29 → 0,98; Rechenzeit 0,87×.
+- **Nicht-Wiederfinden zählt gegen eine andere Person nur, soweit der Sensor sie vom gehaltenen Ziel auflöst** (MODEL.md
+  4.1): Wer mit dem Eigentümer einer gehaltenen Spur in einer Auflösungszelle steht, ist mit ihm eine Quelle mit höchstens
+  einem Ziel (A_Beard2015 Gl. 16–17); die Auflösung in der Form, die schon die Erfassung neben einem Ziel hat (A_Svensson2012
+  Gl. 18–20). Bis 0.61 kostete jedes Halten der Spur Leons die Unaufgelöste neben ihm dasselbe wie ihn (Δlogit r −6,0 von
+  −10,3 in den ersten 100 s, MODEL.md 10 „0.62“).
+- Test `test_one_of_two_merged_into_one_target_leaves_and_the_other_is_still_there`: zwei stehen 20 min als ein Ziel, das
+  Ziel fällt aus und wird gehalten; eine geht, die andere bleibt, P(belegt) > 0,9 die ganze Zeit (unter 0.61 0,05). Der
+  Simulator hält dafür ein ausgefallenes ruhendes Ziel auf Wunsch eingefroren (`hold_dropped`).
+- Die Meldung 6.11. ist in der Bewertung (`evalp.py` REPORTS) 122 s falsch, unter 0.61 ebenso: Ihre Daten beginnen 19:39:55
+  ohne gespeicherten Zustand, das Nachspiel kennt die zweite Person nicht.
 - Aufzeichnung: Eine abgeschnittene Stundendatei (Absturz, Stromausfall) behält beim Wiederöffnen ihre ganzen Zeilen auch
   unter Python 3.14 und neuer; dort gab gzip von so einer Datei nichts mehr her, die Reparatur hätte alles verworfen (die App
   läuft auf 3.13 und war nicht betroffen). Jetzt Glied für Glied mit zlib bis zum ersten kaputten Byte; neuer Test mit

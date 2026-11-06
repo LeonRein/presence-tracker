@@ -94,3 +94,26 @@ def test_somebody_walking_in_alone_is_a_person_within_seconds():
             late.append(1 - crowd.core.count_distribution()["wohn"][0])
     assert late and min(late) > c, min(late)
     assert abs(in_house(crowd) - 1) < 0.05, in_house(crowd)
+
+
+def test_one_of_two_merged_into_one_target_leaves_and_the_other_is_still_there():
+    # two walk in together and stand side by side for 20 min; the LD2450s see them as one target (the second
+    # behind the first), and that target drops out now and then, as the real one does (6.11. 19:28, the bath).
+    # Then one goes out and the other stays still, seen again only 30 s later: the room is occupied all the
+    # time. Until 0.61 not finding the held target again counted against the second as if she were a target
+    # the sensor could find on her own (MODEL.md 4.1 "Verlieren und Wiederfinden"): she was lost.
+    config = flat_config(entry=True)
+    stand, out = 1200, [FLUR_DOOR, (-1.0, 4.0)]
+    a = Person(walk((-1.0, 4.0), FLUR_DOOR, (3.0, 2.5), (3.0, 2.5), *out, start=5, pauses={3: stand}))
+    b = Person(walk((-1.0, 4.3), FLUR_DOOR, (3.2, 2.6), (3.2, 2.6), start=6, pauses={3: stand + 4000}))
+    t_in, t_out = b.waypoints[2][0], a.waypoints[4][0]
+    sensors = sim_sensors(config, resolution=0.6, still_dropout=0.05, still_gap=10.0, hold_dropped=True)
+    for s in sensors:
+        s.blind_to, s.blind_after, s.blind_until = (1,), t_in, t_out + 30
+    crowd = Tracker(config, start=0.0, people=["outside", "outside"])
+    least = 1.0
+    for t, sid, frame in simulate([a, b], sensors, t_out + 300, rate=4.0, plan=config):
+        crowd.process_frame(sid, t, Frame.of(frame))
+        if t > t_in + 5:
+            least = min(least, 1 - crowd.core.count_distribution()["wohn"][0])
+    assert least > 0.9, least

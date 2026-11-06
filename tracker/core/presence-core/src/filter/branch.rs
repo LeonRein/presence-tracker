@@ -242,7 +242,7 @@ fn found_again<'a>(world: &World, frame: &Frame, info: &TrackInfo) -> Chance<'a>
         .max(1e-300)
         .ln();
     let near = if world.tiles.n > 0 {
-        near_tiles(world, frame.si, lost.z)
+        near_tiles(world, frame.si, lost.z, false)
     } else {
         Vec::new()
     };
@@ -287,7 +287,7 @@ impl Branching<'_> {
                 let (n, shape) = (world.tiles.n, self.objects.densities.shape());
                 for &m in hy.people.values() {
                     let mix = self.objects.mixtures.get(m);
-                    let (w, k) = (mix.weights(), near_mixture(world, self.frame.si, mix, lost.z));
+                    let (w, k) = (mix.weights(), near_mixture(world, self.frame.si, mix, lost.z, false));
                     e += (1.0 - mix.a) * (w[0] * k[0] + w[1] * k[1]);
                     if let Some(away) = mix.away.filter(|_| n > 0) {
                         e += mix.a * self.objects.densities.get(away).integrate(near, &shape);
@@ -578,7 +578,7 @@ impl Branching<'_> {
     fn start_chance(&self, mix: &mut Mixture) -> [f64; 2] {
         let (world, frame) = (self.world, self.frame);
         match &self.chance {
-            Chance::Again { lost, .. } => near_mixture(world, frame.si, mix, lost.z).map(f64::ln),
+            Chance::Again { lost, .. } => near_mixture(world, frame.si, mix, lost.z, false).map(f64::ln),
             Chance::New { skip, spots, .. } => {
                 let p = &world.params;
                 let (lw, ls) = (p.track_life[WALK], p.track_life[STILL]);
