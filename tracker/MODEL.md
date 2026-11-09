@@ -3204,7 +3204,11 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Verworfen (Abende mit 3 Starts, chaotisch: dieselbe Fassung gelingt in einem Start und scheitert im nächsten):
   `record_life` ∞ allein; Amplitude der Gehenden je Block (Gamma(2), 5 Stufen); dieselbe fest über einen Gang (Swerling
   III, mit dem Neuziehen von κ); breiter Versatz auch für die erste Spur einer bekannten Person ohne Spur; Doppler-Trennung
-  (gemessen widerlegt, s. o.).
+  (gemessen widerlegt, s. o.). Mit 0.63 auf `sofa10`, `bad3110`, `bad0611` (Sofa dunkel in x von 10 Starts / Bad 31.10. in
+  y von 3): 0.63 1/10 / 3/3; dazu das Profil *ruhig, geht* neu (312 / 1,46 / 1,72 / 2,70 / 0,92 / 1,49) 2/10 / 2/3; alle drei
+  übrigen Profile neu (stehend höher: A 756 statt 574) 9/10 / 3/3, eine Sitzende, die wenig gibt, widerspricht dann sich
+  selbst; die Chance des Beginns einer Spur auf einer Person mit Spur vor dem Schnitt auf die Sicht ihres Sensors (gegen D)
+  10/10 / 1,3 von 3 (ein Start ganz gehalten). Keine davon übernommen.
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.
