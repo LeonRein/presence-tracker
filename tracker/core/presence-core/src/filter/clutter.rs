@@ -14,6 +14,7 @@ use crate::filter::Filter;
 use crate::filter::mixture::{Kalman, NewTrack, SegId, cut_to_sight};
 use crate::geometry::Point;
 use crate::ld2450::rates::TrackSpot;
+use crate::params::STILL;
 use crate::sensors::{SensorState, live};
 use crate::world::World;
 
@@ -155,7 +156,7 @@ impl Clutter {
     /// seine laufenden Spuren sind.
     pub fn rate(&self, world: &World, spots: &[Vec<TrackSpot>]) -> f64 {
         let (sight, at) = (&world.sights[self.si], self.pos());
-        world.params.clutter_acquire[0] * world.rates.mask(sight, at, &spots[self.si])
+        world.params.clutter_acquire[0] * world.rates.mask(sight, at, &spots[self.si], STILL)
     }
 
     /// Wie gut ihr Sensor ein bei z gehaltenes Ziel auf ihr wiederfinden kann (MODEL.md 4.1): der Kern um die Stelle

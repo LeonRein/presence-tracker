@@ -17,6 +17,8 @@ use crate::world::Sight;
 pub struct TrackSpot {
     pub held: bool,
     pub at: Point,
+    /// its target moves (a walker's)
+    pub moving: bool,
 }
 
 #[derive(Debug)]
@@ -25,8 +27,8 @@ pub struct RateModel {
     acquire: [[f64; 2]; 2],
     /// the SNR at which a Swerling I target is detected half the time
     s50: f64,
-    /// m: two people this far apart are resolved half of the time (range, cross)
-    res: [f64; 2],
+    /// m [STILL, WALK]: two people this far apart are resolved half of the time (range, cross)
+    res: [[f64; 2]; 2],
     find_radius: f64,
 }
 
@@ -39,7 +41,7 @@ impl RateModel {
         Self {
             acquire: p.acquire,
             s50: P_FA.ln() / 0.5f64.ln() - 1.0,
-            res: [p.res_range, p.res_cross],
+            res: p.resolution,
             find_radius: p.find_radius,
         }
     }
@@ -58,22 +60,30 @@ impl RateModel {
         rho * self.pd(r, r50) * sight.grid.at(p)
     }
 
-    /// The share left at a point given the sensor's live tracks: next to a target it measures,
-    /// somebody is merged into it (resolution, Svensson 2012); near where it holds a lost target it
-    /// finds that one again.
-    pub(crate) fn mask(&self, sight: &Sight, p: Point, tracks: &[TrackSpot]) -> f64 {
+    /// The share left at a point given the sensor's live tracks, for somebody walking or still (mode): next to a
+    /// target it measures, somebody is merged into it (resolution, Svensson 2012); a still person beside any target
+    /// with the still people's scale, a walker beside a walker's with the walkers' and beside a still target not at
+    /// all (the LD2450 reports the walker and drops the still one, measured 8.11., MODEL.md 4.1); near where it holds
+    /// a lost target it finds that one again.
+    pub(crate) fn mask(&self, sight: &Sight, p: Point, tracks: &[TrackSpot], mode: usize) -> f64 {
+        self.masks(sight, p, tracks)[mode]
+    }
+
+    /// `mask` for [STILL, WALK] at once (the geometry is the same).
+    fn masks(&self, sight: &Sight, p: Point, tracks: &[TrackSpot]) -> [f64; 2] {
         if tracks.is_empty() {
-            return 1.0;
+            return [1.0; 2];
         }
         let [sx, sy] = sight.at;
         let (dx, dy) = (p[0] - sx, p[1] - sy);
         let r = py_hypot(dx, dy);
         let th = dy.atan2(dx);
-        let mut mask = 1.0;
+        let mut mask = [1.0; 2];
         for spot in tracks {
             if spot.held {
                 let (ex, ey) = (p[0] - spot.at[0], p[1] - spot.at[1]);
-                mask *= 1.0 - (-0.5 * (ex * ex + ey * ey) / sq(self.find_radius)).exp();
+                let m = 1.0 - (-0.5 * (ex * ex + ey * ey) / sq(self.find_radius)).exp();
+                mask = mask.map(|x| x * m);
             } else {
                 let (zx, zy) = (spot.at[0] - sx, spot.at[1] - sy);
                 let (rz, tz) = (py_hypot(zx, zy), zy.atan2(zx));
@@ -85,7 +95,13 @@ impl RateModel {
                     a += 2.0 * PI;
                 }
                 let dc = 0.5 * (r + rz) * a;
-                mask *= 1.0 - (-LN_2 * (sq(dr / self.res[0]) + sq(dc / self.res[1]))).exp();
+                for mode in [STILL, WALK] {
+                    if mode == WALK && !spot.moving {
+                        continue;
+                    }
+                    let res = self.res[mode];
+                    mask[mode] *= 1.0 - (-LN_2 * (sq(dr / res[0]) + sq(dc / res[1]))).exp();
+                }
             }
         }
         mask
@@ -93,7 +109,7 @@ impl RateModel {
 
     /// The rate (1/s) at which the sensor starts a track on somebody at p, walking or still (mode).
     pub fn rate_at(&self, sight: &Sight, p: Point, mode: usize, tracks: &[TrackSpot]) -> f64 {
-        self.base(sight, p, mode) * self.mask(sight, p, tracks)
+        self.base(sight, p, mode) * self.mask(sight, p, tracks, mode)
     }
 
     /// The rates at which the sensors `users` start a track on a person, summed
@@ -130,8 +146,8 @@ impl RateModel {
         base: &[Vec<f64>; 2],
         tracks: &[TrackSpot],
     ) -> [Vec<f64>; 2] {
-        let mask: Vec<f64> = points.iter().map(|&p| self.mask(sight, p, tracks)).collect();
-        [STILL, WALK].map(|mode| base[mode].iter().zip(&mask).map(|(b, m)| b * m).collect())
+        let masks: Vec<[f64; 2]> = points.iter().map(|&p| self.masks(sight, p, tracks)).collect();
+        [STILL, WALK].map(|mode| base[mode].iter().zip(&masks).map(|(b, m)| b * m[mode]).collect())
     }
 }
 
@@ -165,9 +181,14 @@ mod tests {
         let on = [TrackSpot {
             held: false,
             at: [2.0, 1.0],
+            moving: true,
         }];
         assert_eq!(m.rate_at(&s, [2.0, 1.0], STILL, &on), 0.0);
-        let far = m.rate_at(&s, [-2.0, -3.0], STILL, &on);
-        assert!((far / m.rate_at(&s, [-2.0, -3.0], STILL, &[]) - 1.0).abs() < 1e-9);
+        let far = m.rate_at(&s, [-2.0, -3.0], WALK, &on);
+        assert!((far / m.rate_at(&s, [-2.0, -3.0], WALK, &[]) - 1.0).abs() < 1e-9);
+        // still people are resolved only in range and angle: 0.5 m beside the target hardly, 5.7 m away fully
+        let near = m.rate_at(&s, [2.5, 1.0], STILL, &on) / m.rate_at(&s, [2.5, 1.0], STILL, &[]);
+        let far = m.rate_at(&s, [-2.0, -3.0], STILL, &on) / m.rate_at(&s, [-2.0, -3.0], STILL, &[]);
+        assert!(near < 0.1 && far > 0.99, "{near} {far}");
     }
 }

@@ -189,8 +189,18 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   (7.10. 07:10 Küche 0,76, 10). Jetzt erfasst der LD2450 dort Gehende mit 0,26–0,32 /s (Raummitte
   0,48 /s), das LD2410C erwartet 26–40 statt 0.
 - `q(x)`: Auflösung neben einem gemessenen Ziel,
-  `1 − exp(−ln 2 ((Δr/0,6 m)² + (Δquer/0,9 m)²))` (Form A_Svensson2012 Gl. 18–20); neben einem
-  gehaltenen Ziel stattdessen `1 − exp(−d²/(2·0,7²))` (dort würde es wiedergefunden).
+  `1 − exp(−ln 2 ((Δr/R_r)² + (Δquer/R_q)²))` (Form A_Svensson2012 Gl. 18–20); neben einem
+  gehaltenen Ziel stattdessen `1 − exp(−d²/(2·0,7²))` (dort würde es wiedergefunden). **Je Betriebsart** (seit 0.63,
+  `resolution`): eine Stehende neben jedem Ziel R = 1,4 / 2,1 m, eine Gehende neben dem Ziel einer Gehenden 0,6 / 0,9 m,
+  neben einem ruhenden Ziel gar nicht (q = 1; ruhend ist ein Ziel, dessen gemessene Geschwindigkeit entlang des Strahls
+  unter 0,3 m/s liegt). Gemessen 8.11.: Zwei Ruhende nah beieinander (Sofa 8.11. 36 min, Bett in 7 Nächten zu je 4 h)
+  geben in 1–4 % der Frames zwei Ziele, das Modell erwartete mit 0,6 / 0,9 m bei 0,6 m Abstand etwa die Hälfte;
+  Maximum-Likelihood der Wiedererfassung einer verlorenen Zweiten neben der Ersten (13 Episoden, `dev/personenzahl` 8.11.
+  `reacq.py`, Rate `ρ κ (1 − exp(−ln 2 (d/R)²))`): R 1,5–2,0 m (κ 0,5–1), mit 0,6 m −30 log. Unabhängig davon: Ein ruhendes
+  Ziel, das bleibt, meldet der LD2450, während eine Gehende in < 0,6 / 0,6–1 / 1–2 m daneben ist, zu 0,4 / 13 / 37 % der
+  Frames, sonst zu 89 % (`doppler2.py`, 7.–8.11.): dieselbe Form mit R ≈ 1,75 m. Er trennt Ruhende also nicht über Doppler,
+  sondern meldet die Gehende und lässt das ruhende Ziel fallen. Bis 0.62 galt 0,6 / 0,9 m für alle, und eine Verdeckte
+  neben dem Ziel konnte ungesehen gehen (10 „Nacht 8./9.11.“).
 - **Erkennbarkeit κ** einer stehenden Person in diesem Aufenthalt (Haltung, Platz): dieselbe Person
   wird am Tisch alle halbe Minute erfasst, auf dem Sofa minutenlang nicht. κ ~ Gamma(α, α), Mittel 1;
   neu bei jedem Stehenbleiben, innerhalb eines Aufenthalts mit 1/(600 s) neu gezogen (D_Mahler2011
@@ -341,11 +351,19 @@ Ziele des LD2450 im selben Gehäuse (der unterdrückt Sitzende und hat Geister: 
 
   | | A (1 m) | n | δ | σ | τ | ℓ |
   |---|---|---|---|---|---|---|
-  | bewegt, geht | 159 | 2,16 | 0,41 m | 0,57 m | 0,47 | 1,26 m |
+  | bewegt, geht | 178 | 1,80 | 0,52 m | 0,67 m | 0,48 | 1,50 m |
   | bewegt, steht | 63 | 2,52 | 0,41 m | 0,55 m | 0,27 | 1,34 m |
   | ruhig, geht | 949 | 2,19 | 0,58 m | 1,44 m | 1,00 | 1,25 m |
   | ruhig, steht | 574 | 2,03 | 0,19 m | 0,77 m | 0,40 | 1,70 m |
 
+  *bewegt, geht* neu gemessen 8.11. (seit 0.63; `dev/personenzahl` `fitprof.py`, dieselbe Form, Frames mit genau einem
+  gehenden Ziel im Gehäuse, |v| ≥ 0,3 m/s, weder gehalten noch eingefroren, 7.–8.11., 41 883 Frames, Gamma(2,5), 100
+  zensiert, gelernter Hintergrund): Log-Likelihood +1,3 je Frame gegenüber 6.10. (159 / 2,16 / 0,41 / 0,57 / 0,47 / 1,26),
+  in keinem Sensor schlechter (Küche +4,1, Flur +1,5, Wohnzimmer +0,5). In Zeiten mit einer Person zu Hause (24 665 Frames)
+  166 / 1,71 / 0,55 / 0,69 / 0,48 / 1,43. In 2–4 m gibt ein Gehender damit 1,6–2-mal so viel wie mit dem Profil vom 6.10.
+  Die übrigen drei Profile neu gemessen (eine Person zu Hause): ruhig, geht +1,3 je Frame (312 / 1,46 / 1,72 m / 2,70 m /
+  0,92 / 1,49 m, viel breiter), stehend bewegt +0,19, ruhig +0,23; nicht übernommen (am Abend 8.11. ohne Wirkung, ungeprüft
+  über alle Fenster).
   n ≈ 2: eine Amplitude (Radargleichung). Der Schweif ist kein Sonderfall eines Raums (Arbeitszimmer
   allein und die übrigen vier: τ 0,42 / 0,39, ℓ 1,59 / 1,67 m). Nach dem Winkel flach bis 45–60°
   (Strahl voll bis 50°, 0 ab 70°, angenommen darüber). Die Amplitude einzelner Aufenthalte streut um
@@ -1090,6 +1108,17 @@ Geister geschätzt (4.2).
   laufen auf einem Baum von 0.43.0).
 
 ## 9. Bekannte Schwächen und Offenes
+**Offen nach 0.63: Personen verschwinden noch über fremde Spuren** (10 „Nacht 8./9.11.“). (1) Die Spur eines fernen
+Sensors (Esszimmer auf das Sofa in 6–7,5 m) misst eine Person 1,5 m daneben (Mehrweg, 20 min dieselbe Stelle an der Wand).
+Bekommt eine Person ohne Spur sie, steht sie dort fest (die Gauß-Mischung verschiebt sich durch Nicht-Erfassung nicht, sie
+wird nur gewogen), der Sensor des Raums sieht die Stelle leer, und nach 1–2 min ist ihr Rest „gab es nie“ (r ≈ 0,98 aus
+dem Zusammenlegen, 5.6) billiger als Umziehen. (2) Eine neue Spur eines Sensors im Nachbarraum geht mit dem breiten Versatz
+(4.1) an eine Person, die durch die Wand von ihm getrennt ist, und der Schnitt auf die Sicht des Sensors zieht sie hinüber
+(31.10. 19:19:30 Bad → Arbeitszimmer, 4,5 m). Beides ist ein Fehler der Darstellung, nicht der Messung: Wer gesehen wird, ist
+in Sicht des Sensors, aber eine Person, die er durch eine Wand nicht sehen kann, kann auch seine Spur nicht haben, und eine
+Person, die der Sensor ihres Raums nicht sieht, ist woanders, nicht fort. Ein „Wer nicht da ist, wo er erwartet wird, ist
+woanders im Raum“ (der Musicki-Zustand „unsichtbar“, D_MusickiEvans2005 Kette 2, mit eigener Dauer) und eine Prüfung der
+Sicht beim Beginn einer Spur auf einer Person mit Spur sind die nächsten Kandidaten; beide nicht gemessen.
 Offen beim LD2410C (4.3): Flur 21:35 und 21:56 (Eintretende zu 0,5 statt 0,9 im Flur) liegen nicht
 am LD2410C: ohne seine Echoquellen im Flur 0,54 / 0,46, ganz ohne den Flur-LD2410C 0,51 / 0,62
 (sonst 0,52 / 0,40). Die Person steht in der Tür zum Arbeitszimmer (−1,5 / 5,0), und welche Seite,
@@ -3136,6 +3165,46 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   0.61 ebenso: Ihre Daten beginnen 19:39:55 ohne gespeicherten Zustand, das Nachspiel weiß nichts von der zweiten Person
   (sie war da seit 19:27 verdeckt), und eine Person entsteht nicht im Raum (Vorgabe 1.3). Offen: ein schnelleres
   Wiederannehmen nach einem Verlust, ohne Personen im Raum entstehen zu lassen.
+- **Nacht 8./9.11.: Zwei auf dem Sofa, einer geht, Licht aus** (Meldung 8.11. 22:27: „Wir saßen zu zweit auf dem
+  Sofa. Ich gehe, das Licht geht aus.“). Nachgespielt aus den Aufnahmen (App-Aufzeichnung 31.10.–8.11.) mit dem Gelernten
+  der Meldung. Unter 0.62 in allen 10 Starts (18:00–21:15) Wohnzimmer dunkel ab 22:25:30 (Leon geht 22:23:15, 120 s Nachlauf).
+  Drei Wege, auf denen die zweite Person verschwindet, jeder für sich genug:
+  - *A, zwei Ruhende als ein Ziel:* Ab 21:47:18 meldet der Wohnzimmer-LD2450 die beiden (0,45–0,9 m auseinander) 36 min als
+    ein Ziel. Das Modell erwartete neben einem Ziel eine Auflösung von 0,6/0,9 m (Svensson-Form), also bei 0,6 m etwa die
+    Hälfte der Erfassungen; jede Minute ohne eigene Spur sprach gegen sie, P(zwei) auf dem Sofa im Mittel 0,06.
+    Gemessen (8.11.): zwei Ruhende nah beieinander (Sofa 8.11., Bett in 7 Nächten) geben in 1–4 % der Frames zwei Ziele;
+    Maximum-Likelihood der Wiedererfassung einer verlorenen Zweiten (13 Episoden, 1–30 min): Skala R ≈ 1,5–2,0 m
+    (0,6 m: −30 log). Unabhängig davon: ein ruhendes Ziel, das bleibt, wird gemeldet zu 0,4 % (Gehende < 0,6 m daneben),
+    13 % (0,6–1 m), 37 % (1–2 m), sonst 89 % – dieselbe Form mit R ≈ 1,75 m. Der LD2450 trennt Ruhende nicht über
+    Doppler von Gehenden; er meldet die Gehende und lässt das ruhende Ziel fallen.
+  - *B, die Bleibende geht mit:* Steht Leon auf, sprang der Gehanteil der verdeckten Sitzenden in 2 s von 0,3 % auf 38 %:
+    Die Bewegt-Energie des LD2410C nahe am Sensor (Ring 2 = 100, Ring 3 = 81) lag beim Gehenden ×3 über dem Profil
+    (gemessen 6.10.), ein zweiter Gehender erklärte sie besser. Ohne LD2410C ab 22:22 blieb sie sitzen. Neu gemessen
+    (Frames mit genau einem gehenden Ziel im Gehäuse, 7.–8.11., 41 883 Frames; und Zeiten mit einer Person zu Hause,
+    24 665): A 178 / 166, n 1,80 / 1,71, δ 0,52 / 0,55 m, σ 0,67 / 0,69 m, τ 0,48, ℓ 1,50 / 1,43 m; Log-Likelihood
+    +1,3 je Frame, in keinem Sensor schlechter. In 2–4 m gibt ein Gehender 1,6–2× mehr als das alte Profil.
+    Zusätzlich hielt die Maskierung neben dem zusammengelegten Ziel auch das *Gehen* der Verdeckten verborgen: Sie konnte
+    ungesehen aufstehen und sich setzen, und jeder Zyklus erneuerte ihren Aufenthalt (11 % der Masse in der Art mit
+    50 s mittlerer Dauer nach 35 min Sitzen, Aufstehrate 3,8·10⁻³ statt 2,9·10⁻⁴ /s).
+  - *C, die Spur eines fernen Sensors:* Der Esszimmer-Sensor sieht das Sofa in 6–7,5 m und meldet die zweite Person
+    1,5 m zu weit an der Südwand (3,1 | −1,5) (Mehrweg), 20 min lang. Bekommt sie diese Spur, steht sie dort, wo der
+    Wohnzimmer-Sensor niemanden sieht; nach 1–2 min ist Streichen (ihr Rest r ≈ 0,98 aus dem Zusammenlegen) billiger als
+    Umziehen (Aufstehen nach langem Sitzen, ~8 nats). In den meisten fehlgeschlagenen Starts der Kandidaten war es C.
+  **0.63** (Auflösung je Betriebsart, 4.1; Profil der Gehenden, 4.3). Bewertung (`evalp.py`, mehrere Starts je Fenster,
+  `sofa10` = 10 Starts 18:00–21:15 des Abends 8.11., Wohnzimmer muss 21:47:30–22:27 belegt sein): Sofa dunkel in 1 von 10
+  Starts (0.62: 10 von 10; der Start 21:00 scheitert an C); Bad 6.11. in 3 von 3 Starts gehalten wie 0.62; Bad 31.10.
+  (`bad3110`) in 3 von 3 Starts 1,1 min dunkel wie 0.62 (dort springt die Bleibende um 19:19:30 über eine Spur des
+  Arbeitszimmer-Sensors 4,5 m durch die Wand ins Arbeitszimmer: der breite Versatz, 4.1, und danach der Schnitt auf die
+  Sicht des Sensors; offen, 9). Leeres Haus unverändert (alte Fenster 0, 7.11. 33,8 → 32,6 Raumminuten, ein Ziel 0,3 m vor
+  dem Wohnzimmer-Sensor, offen); Ein-Personen-Tage (3.11., 4.11., 8.11.) Licht zu viel 314 → 323 Raumminuten, dunkel mit
+  Sitzer 3,8 → 1,4 min, Personen zu viel 238 → 172; zwei Personen 7.11. dunkel mit Sitzer 0,6 → 1,3 min. Einzeln: die
+  Auflösung allein (Lauf `resM`) ändert über alle Fenster wenig und hält das Sofa in keinem Start; erst mit dem Profil der
+  Gehenden trägt sie. `record_life` ∞ dazu (`K2`): Sofa 3 von 10 dunkel, sonst gleich, nicht übernommen. Rechenzeit gegen
+  0.62: eine Person 0,96×, leeres Haus 0,99×, der Sofa-Abend 1,2× (zwei Personen statt einer).
+  Verworfen (Abende mit 3 Starts, chaotisch: dieselbe Fassung gelingt in einem Start und scheitert im nächsten):
+  `record_life` ∞ allein; Amplitude der Gehenden je Block (Gamma(2), 5 Stufen); dieselbe fest über einen Gang (Swerling
+  III, mit dem Neuziehen von κ); breiter Versatz auch für die erste Spur einer bekannten Person ohne Spur; Doppler-Trennung
+  (gemessen widerlegt, s. o.).
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.

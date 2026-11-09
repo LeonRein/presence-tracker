@@ -37,7 +37,12 @@ pub struct TrackInfo {
     pub z0: Point,
     pub born: f64,
     pub lost: Option<Lost>,
+    /// its target moved when last measured (radial speed at least MOVING, m/s)
+    pub moving: bool,
 }
+
+/// m/s: a target this fast along the beam is a walker's (the LD2450 reports still people at 0-0.16 m/s)
+pub const MOVING: f64 = 0.3;
 
 impl TrackInfo {
     /// Up to when a ghost's life was counted.
@@ -51,8 +56,13 @@ impl TrackInfo {
             None => TrackSpot {
                 held: false,
                 at: self.z,
+                moving: self.moving,
             },
-            Some(l) => TrackSpot { held: true, at: l.z },
+            Some(l) => TrackSpot {
+                held: true,
+                at: l.z,
+                moving: false,
+            },
         }
     }
 }

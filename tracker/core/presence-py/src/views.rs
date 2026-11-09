@@ -23,6 +23,7 @@ pub struct HypView {
     people: Vec<Vec<u64>>,
     ghosts: Vec<u64>,
     known: Vec<f64>,
+    hidden: Vec<filter::HiddenView>,
     unknown_out: f64,
     /// the known Störquellen: (id, sensor index, r, (x, y), its track or None)
     clutter: Vec<(u64, usize, f64, Point, Option<u64>)>,
@@ -37,6 +38,7 @@ impl HypView {
             people: h.people.into_iter().map(ids).collect(),
             ghosts: ids(h.ghosts),
             known: h.known,
+            hidden: h.hidden,
             unknown_out: h.unknown_out,
             clutter: h
                 .clutter

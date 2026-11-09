@@ -189,7 +189,7 @@ fn track_through_its_events(world: &World, mut at: impl FnMut(&Filter, &str)) ->
     for step in 0..3 {
         t += 0.3;
         f.flush(world, &watching(t), t);
-        f.measured(world, &watching(t), seg, [2.0 + 0.05 * step as f64, 2.0], t);
+        f.measured(world, &watching(t), seg, [2.0 + 0.05 * step as f64, 2.0], 0.0, t);
         f.normalize(0.0).expect("finite");
         at(&f, "measured");
     }
@@ -422,6 +422,7 @@ fn a_track_whose_ghost_alternative_is_all_but_gone_ends() {
         z0: track.z,
         born: 1.0,
         lost: None,
+        moving: false,
     };
     f.tracks_mut().begin(seg, info);
     let objects = f.objects_mut();
@@ -510,7 +511,7 @@ fn tracks_again_and_again_at_one_spot_that_only_one_sensor_makes_are_a_stoerquel
         for _ in 0..20 {
             t += 0.5;
             f.flush(&world, &watching(t), t);
-            f.measured(&world, &watching(t), seg, z, t);
+            f.measured(&world, &watching(t), seg, z, 0.0, t);
             f.normalize(0.0).expect("finite");
         }
         t += 0.1;

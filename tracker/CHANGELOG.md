@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.63.0 (Zwei Ruhende als ein Ziel; wer neben einer Ruhenden aufsteht, nimmt sie nicht mit)
+
+Meldung 8.11. 22:27 „Wir saßen zu zweit auf dem Sofa. Ich gehe, das Licht geht aus.“ Nachgespielt aus den Aufnahmen
+mit 10 Starts (18:00–21:15): unter 0.62 in allen 10 Starts Wohnzimmer dunkel, während die zweite Person noch auf dem Sofa
+saß, jetzt in 1 von 10 (der Start 21:00: die Spur des Esszimmer-Sensors an der Wand, MODEL.md 9, offen). Bad 6.11. weiter in
+allen Starts gehalten; Bad 31.10. weiter 1,1 min dunkel (die Bleibende springt über eine Spur des Arbeitszimmer-Sensors durch
+die Wand, MODEL.md 9, offen). Leeres Haus unverändert (alte Fenster 0; 7.11. 33,8 → 32,6 Raumminuten, offen); Ein-Personen-Tage
+Licht zu viel 314 → 323 Raumminuten, dunkel mit Sitzer 3,8 → 1,4 min, Personen zu viel 238 → 172 (MODEL.md 10 „Nacht 8./9.11.“).
+Rechenzeit: eine Person (8.11. 17:50–18:48) 0,96×, leeres Haus (7.11. 12–13 Uhr) 0,99×, der Sofa-Abend 21:30–22:28 1,2× (dort
+werden jetzt zwei Personen geführt statt einer). **Nicht live** (Leon 8.11.: nichts live stellen).
+- **Auflösung je Betriebsart** (MODEL.md 4.1, `resolution`, gemessen 8.11.): Zwei Ruhende nah beieinander meldet der LD2450
+  fast nie getrennt (Sofa, Bett in 7 Nächten: 1–4 % der Frames), eine Ruhende neben einer Gehenden ebenso wenig; die
+  Wiedererfassung einer Verlorenen neben der Ersten passt zu R ≈ 1,5–2 m (bis 0.62 0,6/0,9 m für alle). Jetzt eine Ruhende
+  neben jedem Ziel 1,4/2,1 m, eine Gehende neben einer Gehenden 0,6/0,9 m, eine Gehende neben einem ruhenden Ziel wird
+  normal erfasst. So zählt das Ausbleiben einer eigenen Spur nicht mehr gegen die Zweite auf dem Sofa, und sie kann neben
+  dem Ziel nicht mehr ungesehen gehen (das erneuerte ihren Aufenthalt und machte ihr Aufstehen 13-mal wahrscheinlicher).
+- **Profil eines Gehenden beim LD2410C neu gemessen** (MODEL.md 4.3): Bewegt-Energie A 178, n 1,80, δ 0,52 m, σ 0,67 m,
+  τ 0,48, ℓ 1,50 m (6.10.: 159 / 2,16 / 0,41 / 0,57 / 0,47 / 1,26), Log-Likelihood +1,3 je Frame auf 41 883 Frames, in
+  keinem Sensor schlechter. Mit dem alten Profil gab Leon beim Aufstehen nah am Sensor dreimal mehr Energie ab als erwartet,
+  und ein zweiter Gehender – die Sitzende neben ihm – erklärte sie besser: Ihr Gehanteil sprang in 2 s von 0,3 % auf 38 %.
+- Testansicht (`testing`): je Hypothese die Personen ohne Spur mit r, Gehanteil, Art des Aufenthalts und Masse je Kachel.
+- `tests/fixtures/core_build.json`: die Prüfsummen von `ld_walk` (das Profil der Gehenden) neu.
+
 ## 0.62.0 (Zwei als ein Ziel bleiben zwei, auch wenn der Sensor das Ziel verliert)
 
 Meldung 6.11. 19:54 „zu zweit im Bad, ich gehe raus, sie bleibt, Licht aus“. Nachgespielt aus den Aufnahmen ab 18:30: unter

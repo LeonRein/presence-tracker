@@ -85,10 +85,9 @@ pub struct Params {
     pub acquire: [[f64; 2]; 2],
     #[serde(deserialize_with = "real")]
     pub find_radius: f64,
-    #[serde(deserialize_with = "real")]
-    pub res_range: f64,
-    #[serde(deserialize_with = "real")]
-    pub res_cross: f64,
+    /// m [STILL, WALK] x [range, cross]: two people this far apart are resolved half of the time; a still person
+    /// beside any target with the still scale, a walker beside a walker's with the walking one (MODEL.md 4.1)
+    pub resolution: [[f64; 2]; 2],
     #[serde(deserialize_with = "real")]
     pub const_share: f64,
     /// 4.1 a new track's offset from the person it begins on: besides the narrow one of its position's
@@ -255,8 +254,7 @@ impl Default for Params {
             forget_rate: 1.0 / 86400.0,
             acquire: [[0.034, 5.0], [0.51, 4.55]],
             find_radius: 0.7,
-            res_range: 0.6,
-            res_cross: 0.9,
+            resolution: [[1.4, 2.1], [0.6, 0.9]],
             const_share: 0.57,
             offset_wide: [0.2, 2.0],
             tau: 3.5,
@@ -282,7 +280,7 @@ impl Default for Params {
             max_step: 0.2,
             ld_moving: [
                 Profile::new([63.0, 2.52, 0.41, 0.55, 0.27, 1.34]),
-                Profile::new([159.4, 2.16, 0.41, 0.57, 0.47, 1.26]),
+                Profile::new([178.4, 1.797, 0.522, 0.667, 0.475, 1.498]),
             ],
             ld_still: [
                 Profile::new([574.0, 2.03, 0.19, 0.77, 0.40, 1.70]),
@@ -370,8 +368,7 @@ impl Params {
             ("forget_rate", at_least_0(self.forget_rate)),
             ("acquire", self.acquire.iter().flatten().all(|&x| positive(x))),
             ("find_radius", positive(self.find_radius)),
-            ("res_range", positive(self.res_range)),
-            ("res_cross", positive(self.res_cross)),
+            ("resolution", self.resolution.iter().flatten().all(|&x| positive(x))),
             ("const_share", (0.0..=1.0).contains(&self.const_share)),
             (
                 "ld_echo_long",
@@ -667,7 +664,7 @@ mod tests {
                 "stay_points",
             ),
             (r#"{"find_radius": 0}"#, "find_radius"),
-            (r#"{"res_cross": 0}"#, "res_cross"),
+            (r#"{"resolution": [[1, 0], [1, 1]]}"#, "resolution"),
             (r#"{"tau": 0}"#, "tau"),
             (r#"{"pos_every": 0}"#, "pos_every"),
             (r#"{"white": "nan"}"#, "white"),

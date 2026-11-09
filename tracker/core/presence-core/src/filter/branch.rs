@@ -224,6 +224,7 @@ impl Filter {
                     z0: track.z,
                     born: t,
                     lost: None,
+                    moving: false,
                 };
                 self.tracks.begin(seg, info);
             }

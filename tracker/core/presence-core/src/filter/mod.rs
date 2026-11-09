@@ -80,6 +80,10 @@ impl GroupIds {
     }
 }
 
+/// A known person without a track for reading (HypView): r, walking mass, still mass per kind of stay, mass in the
+/// regions, outside, mass per tile (walking + still).
+pub type HiddenView = (f64, f64, Vec<f64>, f64, f64, Vec<f64>);
+
 /// A hypothesis as tests and tools read it (Tracker::hypotheses): its weight, which live tracks are one
 /// person's and which are ghosts, how probably each known person exists (1 with a track), and the mass
 /// of the unknown ones outside.
@@ -89,6 +93,7 @@ pub struct HypView {
     pub people: Vec<Vec<SegId>>,
     pub ghosts: Vec<SegId>,
     pub known: Vec<f64>,
+    pub hidden: Vec<HiddenView>,
     pub unknown_out: f64,
     /// the known Störquellen: their id, sensor, r, where they are, their track
     pub clutter: Vec<(u64, usize, f64, crate::geometry::Point, Option<SegId>)>,
@@ -312,6 +317,23 @@ impl Filter {
                     .values()
                     .map(|_| 1.0)
                     .chain(hy.hidden.iter().map(|&u| densities.get(u).r))
+                    .collect(),
+                hidden: hy
+                    .hidden
+                    .iter()
+                    .map(|&u| {
+                        let d = densities.get(u);
+                        let sh = densities.shape();
+                        let kinds = (0..sh.kinds)
+                            .map(|l| {
+                                (0..sh.levels)
+                                    .map(|k| d.still[sh.still_row(l, k)].iter().sum::<f64>())
+                                    .sum()
+                            })
+                            .collect();
+                        let tiles = (0..sh.tiles).map(|c| d.walk[c] + d.still_at(&sh, c)).collect();
+                        (d.r, d.walk.iter().sum(), kinds, d.region.iter().sum(), d.out, tiles)
+                    })
                     .collect(),
                 unknown_out: densities.get(hy.unknown).out,
                 clutter: hy

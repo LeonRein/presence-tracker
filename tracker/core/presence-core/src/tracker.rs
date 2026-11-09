@@ -643,7 +643,10 @@ impl Tracker {
         let mut refound = Vec::new();
         for m in measured {
             match self.filter.tracks().get(m.seg).map(|i| i.lost.is_some()) {
-                Some(false) => self.filter.measured(&self.world, &self.sensors, m.seg, at(m.det), t),
+                Some(false) => {
+                    let speed = self.sensors[si].frame.detections[m.det].speed;
+                    self.filter.measured(&self.world, &self.sensors, m.seg, at(m.det), speed, t)
+                }
                 Some(true) => refound.push((m.seg, at(m.det))),
                 None => {}
             }

@@ -11,7 +11,7 @@ use crate::filter::hyp::{Hyp, Owner};
 use crate::filter::mixture::{Mixture, MixtureId, SegId, UNIT_W};
 use crate::filter::objects::ReleaseCache;
 use crate::filter::step::TileRates;
-use crate::filter::tracks::{Lost, TrackInfo, Tracks};
+use crate::filter::tracks::{Lost, MOVING, TrackInfo, Tracks};
 use crate::geometry::Point;
 use crate::ld2450::rates::TrackSpot;
 use crate::motion::imm::Bounds;
@@ -60,7 +60,7 @@ impl Filter {
     /// Step 2: a measurement of a track that was not lost. It sits at z = x + c + o + w on its
     /// source (a person or a ghost's source): the exact Kalman update per component; a ghost lives
     /// on. Its positions are used every pos_every s.
-    pub fn measured(&mut self, world: &World, sensors: &[SensorState], seg: SegId, z: Point, t: f64) {
+    pub fn measured(&mut self, world: &World, sensors: &[SensorState], seg: SegId, z: Point, speed: f64, t: f64) {
         let info = *self.tracks.get(seg).expect("a live track");
         let lives: Vec<f64> = world.params.ghost_types.iter().map(|&[_, life]| life).collect();
         for hy in &mut self.hyps {
@@ -68,7 +68,7 @@ impl Filter {
                 ghost_life(hy, seg, &lives, t - info.ghost_t());
             }
         }
-        self.tracks.update(seg, |i| i.gt = Some(t));
+        self.tracks.update(seg, |i| (i.gt, i.moving) = (Some(t), speed.abs() >= MOVING));
         if t - info.zt < world.params.pos_every {
             return;
         }
@@ -306,7 +306,8 @@ pub fn near_tiles(world: &World, si: usize, z: Point, resolved: bool) -> Vec<f64
         .iter()
         .map(|&q| {
             let (dx, dy) = (q[0] - z[0], q[1] - z[1]);
-            grid.at(q) * (-0.5 * (dx * dx + dy * dy) / r2).exp() * resolved_from(world, si, q, z, resolved)
+            // the tiles' walkers and still people alike: as still people (who are not found again is mostly still)
+            grid.at(q) * (-0.5 * (dx * dx + dy * dy) / r2).exp() * resolved_from(world, si, q, z, resolved, STILL)
         })
         .collect();
     tiles.average(&at)
@@ -315,11 +316,21 @@ pub fn near_tiles(world: &World, si: usize, z: Point, resolved: bool) -> Vec<f64
 /// With `resolved`: the share of a person at p the sensor resolves from its target at z (Svensson 2012, the
 /// form of `RateModel::mask`); else 1. Unresolved from the target of a held track, a person is one
 /// merged source with it (Beard 2015 eq. 16-17: a group gives at most one measurement), not a finder of its own.
-fn resolved_from(world: &World, si: usize, p: Point, z: Point, resolved: bool) -> f64 {
+fn resolved_from(world: &World, si: usize, p: Point, z: Point, resolved: bool, mode: usize) -> f64 {
     if !resolved {
         return 1.0;
     }
-    world.rates.mask(&world.sights[si], p, &[TrackSpot { held: false, at: z }])
+    // the held target: a still one (who is lost is mostly still)
+    world.rates.mask(
+        &world.sights[si],
+        p,
+        &[TrackSpot {
+            held: false,
+            at: z,
+            moving: false,
+        }],
+        mode,
+    )
 }
 
 /// Per component E[sight x kernel]: the kernel exactly, the sight at the sigma
@@ -327,7 +338,7 @@ fn resolved_from(world: &World, si: usize, p: Point, z: Point, resolved: bool) -
 pub fn near_mixture(world: &World, si: usize, mix: &Mixture, z: Point, resolved: bool) -> [f64; 2] {
     let (k, pts) = mix.near_sigma(world, z, world.params.find_radius);
     let grid = &world.sights[si].grid;
-    [0, 1].map(|m| k[m] * expect(&pts[m].map(|p| grid.at(p) * resolved_from(world, si, p, z, resolved))))
+    [0, 1].map(|m| k[m] * expect(&pts[m].map(|p| grid.at(p) * resolved_from(world, si, p, z, resolved, m))))
 }
 
 /// The rates of sensor si per component [STILL, WALK] at its sigma points; 0 where the person has
@@ -395,6 +406,7 @@ mod tests {
             z0: lost.z,
             born: 5.0,
             lost: Some(lost),
+            moving: false,
         };
         let got = ghost_end(&p, &info, lost.t + u).expect("held");
         let s = |tau: f64| no_find(&p, lost.kind, tau);
