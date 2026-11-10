@@ -51,9 +51,38 @@ impl Filter {
     /// (MODEL.md 4.5; alike in all hypotheses).
     pub fn watch(&mut self, world: &World, si: usize, delta: f64) {
         let p = &world.params;
-        let total = (p.ghost_types.iter().map(|t| t[0]).sum::<f64>() + p.clutter_birth) * world.sights[si].area;
+        let sight = &world.sights[si];
+        let total = (p.ghost_types.iter().map(|t| t[0]).sum::<f64>() + p.clutter_birth) * sight.area;
+        // nor one of the ghosts people make near themselves (MODEL.md 4.2): nu per person in its sight
+        let nu = p.ghost_near[0];
+        let (objects, shape) = (&self.objects, self.objects.densities.shape());
+        let mut seen: Vec<(crate::filter::densities::DensityId, f64)> = Vec::new();
         for hy in &mut self.hyps {
-            hy.logw -= total * delta;
+            let mut people = 0.0;
+            if nu > 0.0 {
+                for &m in hy.people.values() {
+                    let mix = objects.mixtures.get(m);
+                    let w = mix.weights();
+                    people += (1.0 - mix.a)
+                        * (w[0] * sight.grid.at(mix.modes[0].pos()) + w[1] * sight.grid.at(mix.modes[1].pos()));
+                    if let Some(away) = mix.away.filter(|_| world.tiles.n > 0) {
+                        people += mix.a * objects.densities.get(away).integrate(&sight.tiles, &shape);
+                    }
+                }
+                if world.tiles.n > 0 {
+                    for &u in hy.hidden.iter().chain([&hy.unknown]) {
+                        people += match seen.iter().find(|(x, _)| *x == u) {
+                            Some(&(_, v)) => v,
+                            None => {
+                                let v = objects.densities.get(u).integrate(&sight.tiles, &shape);
+                                seen.push((u, v));
+                                v
+                            }
+                        };
+                    }
+                }
+            }
+            hy.logw -= (total + nu * people) * delta;
         }
     }
 
@@ -68,7 +97,8 @@ impl Filter {
                 ghost_life(hy, seg, &lives, t - info.ghost_t());
             }
         }
-        self.tracks.update(seg, |i| (i.gt, i.moving) = (Some(t), speed.abs() >= MOVING));
+        self.tracks
+            .update(seg, |i| (i.gt, i.moving) = (Some(t), speed.abs() >= MOVING));
         if t - info.zt < world.params.pos_every {
             return;
         }
@@ -118,7 +148,10 @@ impl Filter {
         if lr < 0.0 {
             let n = world.tiles.n;
             let f: Vec<f64> = if n > 0 {
-                near_tiles(world, si, lost.z, true).iter().map(|k| (k * lr).exp()).collect()
+                near_tiles(world, si, lost.z, true)
+                    .iter()
+                    .map(|k| (k * lr).exp())
+                    .collect()
             } else {
                 Vec::new()
             };

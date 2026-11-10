@@ -82,6 +82,8 @@ enum Chance<'a> {
         start: TileFactors<'a>,
         skip: Vec<SegId>,
         spots: Vec<Vec<TrackSpot>>,
+        /// per tile N(z; tile, sigma^2) of the ghosts people make near themselves (empty without them)
+        near: Vec<f64>,
     },
     /// found again: the chance of finding it near where it was held per tile, the log of not
     /// finding it before now, and the ghost's life since it was last measured per kind
@@ -186,7 +188,16 @@ impl Filter {
             None => {
                 let skip: Vec<SegId> = frame.skip.iter().copied().chain([found.seg]).collect();
                 let spots = tracks.spots_without(&skip);
-                (found, Chance::New { start, skip, spots })
+                let near = ghost_kernel_tiles(world, found.z);
+                (
+                    found,
+                    Chance::New {
+                        start,
+                        skip,
+                        spots,
+                        near,
+                    },
+                )
             }
         };
         let mut b = Branching {
@@ -232,6 +243,24 @@ impl Filter {
         self.take(children.hyps, &world.params)?;
         Ok(cats)
     }
+}
+
+/// Per tile N(z; tile, sigma^2) of the ghosts people make near themselves (MODEL.md 4.2), averaged over the tile;
+/// empty without them or without tiles.
+fn ghost_kernel_tiles(world: &World, z: crate::geometry::Point) -> Vec<f64> {
+    let [nu, sigma] = world.params.ghost_near;
+    if nu <= 0.0 || world.tiles.n == 0 {
+        return Vec::new();
+    }
+    let s2 = sigma * sigma;
+    let norm = 2.0 * std::f64::consts::PI * s2;
+    let at: Vec<f64> = world
+        .tiles
+        .points
+        .iter()
+        .map(|q| (-0.5 * ((q[0] - z[0]).powi(2) + (q[1] - z[1]).powi(2)) / s2).exp() / norm)
+        .collect();
+    world.tiles.average(&at)
 }
 
 /// What finding a held track again weighs (refind).
@@ -337,8 +366,17 @@ impl Branching<'_> {
                 }
                 pf
             }
-            Chance::New { .. } => {
+            Chance::New { near, .. } => {
                 let mut lam = ghost_rates;
+                // ghosts people make near themselves (MODEL.md 4.2): nu x sum_i r_i N(z; x_i, sigma^2), shared out
+                // over the kinds as the rates
+                let [nu, _] = p.ghost_near;
+                if nu > 0.0 {
+                    let k = nu * self.near_people(hy, near);
+                    for (l, r) in lam.iter_mut().zip(p.ghost_types.iter()) {
+                        *l += k * r[0] / rate_sum;
+                    }
+                }
                 // ghosts that come with somebody walking (MODEL.md 4.2): of the short kind, spread over
                 // the sensor's view, walker_ghosts per s and walking person
                 let walking: f64 = hy
@@ -406,6 +444,29 @@ impl Branching<'_> {
             ch.tracks.insert(seg, Owner::Person(gid));
             out.push(ch, Category::New);
         }
+    }
+
+    /// sum_i r_i N(z; x_i, sigma^2) over everybody of the hypothesis: the people with tracks (and their part gone
+    /// through a door), the known ones without and the unknown ones (`near` per tile, ghost_kernel_tiles).
+    fn near_people(&self, hy: &Hyp, near: &[f64]) -> f64 {
+        let sigma = self.world.params.ghost_near[1];
+        let (n, shape) = (self.world.tiles.n, self.objects.densities.shape());
+        let norm = 2.0 * std::f64::consts::PI * sigma * sigma;
+        let mut k = 0.0;
+        for &m in hy.people.values() {
+            let mix = self.objects.mixtures.get(m);
+            let (w, (g, _)) = (mix.weights(), mix.near_sigma(self.world, self.track.z, sigma));
+            k += (1.0 - mix.a) * (w[0] * g[0] + w[1] * g[1]) / norm;
+            if let Some(away) = mix.away.filter(|_| n > 0) {
+                k += mix.a * self.objects.densities.get(away).integrate(near, &shape);
+            }
+        }
+        if n > 0 {
+            for &u in hy.hidden.iter().chain([&hy.unknown]) {
+                k += self.objects.densities.get(u).integrate(near, &shape);
+            }
+        }
+        k
     }
 
     /// Does the person of group gid have a measuring track of this sensor besides this one?

@@ -115,6 +115,9 @@ pub struct Params {
     /// (measured 4.11. with one person home: 0.0057, Küche 0.014, Bad 0.002)
     #[serde(deserialize_with = "real")]
     pub walker_ghosts: f64,
+    /// 4.2 ghosts that a person makes near themselves: [per s, sensor and person in its sight, m the kernel's sigma],
+    /// shared out over the kinds as `ghost_types`
+    pub ghost_near: [f64; 2],
     /// 4.5 Störquellen: born per m^2 and s in an LD2450's view, their mean life (s), the rate (1/s) at which its
     /// sensor starts a track on one and how long such a track lasts (s), measured in the empty house
     #[serde(deserialize_with = "real")]
@@ -268,6 +271,7 @@ impl Default for Params {
             },
             ghost_types: vec![[0.4 * 1.8e-5, 3.0], [0.6 * 1.8e-5, 39.0]],
             walker_ghosts: 0.0057,
+            ghost_near: [0.0, 0.5],
             clutter_birth: 2.2e-7,
             clutter_life: 1.9 * 3600.0,
             clutter_acquire: [0.115, 420.0],
@@ -377,6 +381,10 @@ impl Params {
                     && self.ld_echo_long[1].is_finite(),
             ),
             ("walker_ghosts", at_least_0(self.walker_ghosts)),
+            (
+                "ghost_near",
+                at_least_0(self.ghost_near[0]) && positive(self.ghost_near[1]),
+            ),
             ("clutter_birth", at_least_0(self.clutter_birth)),
             ("clutter_life", time(self.clutter_life)),
             ("clutter_acquire", self.clutter_acquire.iter().all(|&x| positive(x))),
