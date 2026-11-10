@@ -59,7 +59,7 @@ def test_the_saved_configuration_comes_with_the_model_of_it(tmp_path):
     assert put["discarded"] is None  # only a parameter: nothing collected or learned goes
     d = got["derived"]
     assert set(d) == {"plan", "thresholds", "ld2410_gate", "output_params"}  # the model's numbers; nothing to draw
-    assert d["plan"]["observed"] == ["wohn"] and abs(d["thresholds"]["occupied"] - 2 / 3) < 1e-12  # light_cost 2
+    assert d["plan"]["observed"] == ["wohn"] and abs(d["thresholds"]["occupied"] - 1 / 6) < 1e-12  # light_cost 0.2 (the default)
     assert d["plan"]["door_on_wall"] == 0.01 and d["ld2410_gate"] == 0.75
     assert "light_cost" in d["output_params"] and "wall_margin" not in d["output_params"]
     # the zones of the home; per door its wall and opening (the balcony door on the wall x = 6, the flat's door on

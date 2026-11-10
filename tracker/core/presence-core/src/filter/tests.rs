@@ -382,8 +382,9 @@ fn giving_back_keeps_the_mass() {
 
 #[test]
 fn a_ghost_starts_at_the_same_rate_anywhere() {
-    // MODEL.md 4.2: one rate per m^2 and s, whoever and whatever is near
-    let world = testing::flat();
+    // MODEL.md 4.2: one rate per m^2 and s, whoever and whatever is near (without the part near people)
+    let mut world = testing::flat();
+    world.params.ghost_near[0] = 0.0;
     let rate: f64 = world.params.ghost_types.iter().map(|t| t[0]).sum();
     for z in [[2.0, 2.0], [5.0, 4.0]] {
         let (mut f, _) = filter(&world, 1);
@@ -398,6 +399,24 @@ fn a_ghost_starts_at_the_same_rate_anywhere() {
             .expect("a ghost's child");
         assert!((ghost - before - (rate * 0.089).ln()).abs() < 1e-12, "{ghost}");
     }
+}
+
+#[test]
+fn a_ghost_is_likelier_where_somebody_is_who_can_make_it() {
+    // MODEL.md 4.2 ghost_near: people make ghosts near themselves; without the part near people a person changes nothing
+    let ghost_child = |near: f64, known: usize| {
+        let mut world = testing::flat();
+        world.params.ghost_near[0] = near;
+        let (mut f, _) = filter(&world, known);
+        f.set_flushed(1.0);
+        let before = f.hyps()[0].logw;
+        let track = NewTrack { seg: SegId(7), z: [2.0, 2.0], var: 0.04 };
+        let children = f.branch_all(&world, &frame(1.0, &[SegId(7)]), &[track]).expect("finite");
+        let (ghost, _) = *children[0].iter().find(|c| c.1 == Category::Ghost).expect("a ghost's child");
+        ghost - before
+    };
+    assert!((ghost_child(0.0, 1) - ghost_child(0.0, 0)).abs() < 1e-12);
+    assert!(ghost_child(5e-4, 1) > ghost_child(5e-4, 0) + 1e-3);
 }
 
 #[test]

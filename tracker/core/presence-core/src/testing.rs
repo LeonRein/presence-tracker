@@ -123,9 +123,14 @@ fn written<T: serde::Serialize>(v: &T) -> String {
     format!("{{{}}}", fields.join(", "))
 }
 
-/// The parameters unless set (TrackerParams::default()) as the shell writes them.
+/// The parameters unless set (TrackerParams::default()) as the shell writes them; the thresholds the tests
+/// work out by hand (on above 2/3, off below 1/3) fixed here, whatever the default.
 pub fn params_json() -> String {
-    written(&crate::config::TrackerParams::default())
+    written(&crate::config::TrackerParams {
+        light_cost: 2.0,
+        occupied_off: 1.0 / 3.0,
+        ..Default::default()
+    })
 }
 
 /// A configuration as the shell writes it (every field): these sensors (id, name, where, heading;

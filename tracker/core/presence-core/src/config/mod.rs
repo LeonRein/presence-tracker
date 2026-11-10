@@ -366,8 +366,8 @@ impl Default for TrackerParams {
             dwell_median: 120.0,
             dwell_spread: 1.5,
             ld2410_hold: 1.5,
-            light_cost: 2.0,
-            occupied_off: 1.0 / 3.0,
+            light_cost: 0.2,
+            occupied_off: 1.0 / 12.0,
             target_threshold: 0.8,
             target_thresholds: BTreeMap::new(),
         }
