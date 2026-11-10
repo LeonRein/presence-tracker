@@ -269,10 +269,14 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 0,10 m + 5 % der Entfernung; im Filter je Achse ihr Mittel. c und o sind Teil des Kalman-Zustands
 (E_BrysonHenrikson1967). Verwendet wird höchstens alle 0,25 s eine Position.
 **Ruhende streuen mit schweren Ausläufern** (seit 0.64, `still_dof` = 2): In der stehenden Komponente ist die Vorhersage
-der Spur je Achse eine Student-t-Verteilung mit 2 Freiheitsgraden, Skala die Varianz des Kalman-Filters; nach dem Update
-wächst die Kovarianz mit `(ν + e²/s) / (ν + 1)` (Student-t-Filter, Roth, Özkan & Gustafsson 2013; Särkkä & Svensson 2023
-Abschn. 5.2: Gauß mit gamma-verteilter Skala). Eine Spur, die springt, zieht so ihren Versatz mit, statt die Person ins
-Gehen zu zwingen. Gehende bleiben gaußsch; ein Geist (seine Quelle steht wie eine Person) bekommt dasselbe. Gemessen 10.11.
+der Spur je Achse eine Student-t-Verteilung mit 2 Freiheitsgraden, Skala s die Varianz der Kalman-Vorhersage (Gauß mit
+gamma-verteilter Skala, Särkkä & Svensson 2023 Abschn. 5.2; Student-t-Filter, Roth, Özkan & Gustafsson 2013). Was der
+Sprung über die Gauß-Verteilung hinaus ist, nimmt der wandernde Versatz o: Vor dem Update bekommt o einen unabhängigen
+Sprung der Varianz `(g − 1)·s`, `g = max(1, (ν + e²/s) / (ν + 1))` die Skala des t-Posteriors, danach das gewöhnliche
+Kalman-Update. Die Person bleibt so stehen, wo sie ist, und muss nicht gehen. Erste Fassung (nicht übernommen): die
+ganze Kovarianz nach dem Update mal g wie bei Roth. Weil x, c und o stark korreliert sind, wuchs dabei s = Var(x + c + o)
+kaum, die einzelnen Varianzen aber ohne Grenze, bis ±∞ (−∞ nach 21 Sprüngen von 3 m im Test
+`a_standing_track_that_jumps_back_and_forth_for_long_stays_finite`; in `evalp` NaN der Hypothesengewichte, 10.11.). Gehende bleiben gaußsch; ein Geist (seine Quelle steht wie eine Person) bekommt dasselbe. Gemessen 10.11.
 (`dev/personenzahl/sitz/streu*.py`; App-Aufnahmen 31.10.–8.11. und Meldung 10.11.; Abschnitte ≥ 60 s mit genau einem
 Ziel der Geschwindigkeit 0, eingefrorene Frames verworfen, bis 1 s Bewegung überbrückt; 2 385 Abschnitte, 116 h;
 Abweichung vom Median des Abschnitts im Sensorsystem): robuste Streuung radial 0,05–0,11 m, quer 0,06–0,18 m;
@@ -435,6 +439,9 @@ Das Modell, je Sensor:
   das Modell nicht kennt; jeder beobachtete Raum hat seinen eigenen Sensor. Bis 0.63 geometrisch: Eine Sitzende am
   Schreibtisch sollte dem Flur-LD2410C in 5,3 m durch die Türkante 8–12 je ruhigem Ring 6–7 geben, er sah den Hintergrund,
   und „Spur = Geist, Person verborgen bei (−2,6 | 6,1)“ gewann um 6–22 nats (Meldung 10.11.).
+  Ein geometrischer Blick durch eine Tür hängt außerdem an ihrer Kante: Leon 10.11.: „dass ich die Türkanten auf den mm
+  genau in den Plan übertragen bekomme ist etwas utopisch.“ Mit 0 entscheidet die Kante für das LD2410C nichts mehr; die
+  Sicht des LD2450 bleibt über den Versatz gemittelt (4.1, σ 0,2–0,35 m, mehr als die Unsicherheit des Plans).
   Was dem LD2410C nicht mehr als `FLOOR` gibt, ist außerhalb seines Blicks und wird nicht gewogen (Faktor 1, neutral)
   statt „mit null Energie gesehen“. Wände sind undurchsichtig: Gemessen lässt eine Innenwand (alle gemauert) etwa 4 %
   durch, und ein Wert je Wand erklärte die Raumpaare nicht besser. Einen gemessenen Faktor je Paar „Sensor ← Raum“

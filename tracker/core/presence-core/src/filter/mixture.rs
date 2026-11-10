@@ -479,8 +479,9 @@ impl Mixture {
     /// view: the part gone through a door is dropped and released. Returns the log of the mixture's
     /// factor, the predictive density of z. Standing, the track's position scatters with heavy tails
     /// (MODEL.md 4.1): per axis a Student's t with `still_dof` degrees of freedom and the Kalman
-    /// prediction's variance as its scale, the covariance after the update scaled by (dof + e^2/s) / (dof + 1)
-    /// (the Student's t filter, Roth, Özkan & Gustafsson 2013; Särkkä & Svensson 2023 Sec. 5.2); infinite
+    /// prediction's variance as its scale; what it puts beyond the Gaussian goes into the wandering offset
+    /// o: before the update o gets an independent jump of variance (g - 1) s, g = max(1, (dof + e^2/s) /
+    /// (dof + 1)) the t's posterior scale ( Roth, Özkan & Gustafsson 2013; Särkkä & Svensson 2023 Sec. 5.2). Infinite
     /// dof: the Kalman filter.
     pub fn update(&mut self, densities: &mut Densities, seg: SegId, z: Point, p: &Params) -> f64 {
         let white = p.white;
@@ -493,27 +494,36 @@ impl Mixture {
         for (mode, g) in self.modes.iter_mut().enumerate() {
             for (ax, &za) in z.iter().enumerate() {
                 let (mean, cov) = g.axis_mut(ax);
-                for (p, row) in ph.iter_mut().zip(cov.chunks_exact(d)) {
-                    *p = idx.iter().fold(0.0, |s, &j| s + row[j]);
-                }
-                let s = idx.iter().fold(0.0, |s, &j| s + ph[j]) + white.powf(2.0);
+                let project = |cov: &[f64], ph: &mut [f64]| {
+                    for (p, row) in ph.iter_mut().zip(cov.chunks_exact(d)) {
+                        *p = idx.iter().fold(0.0, |s, &j| s + row[j]);
+                    }
+                    idx.iter().fold(0.0, |s, &j| s + ph[j]) + white.powf(2.0)
+                };
+                let mut s = project(cov, &mut ph);
                 let e = za - idx.iter().fold(0.0, |s, &j| s + mean[j]);
                 let nu = if mode == STILL { p.still_dof } else { f64::INFINITY };
-                let grow = if nu.is_finite() {
+                if nu.is_finite() {
                     ll[mode] += lgamma(0.5 * (nu + 1.0))
                         - lgamma(0.5 * nu)
                         - 0.5 * (nu * PI * s).ln()
                         - 0.5 * (nu + 1.0) * (e * e / (nu * s)).ln_1p();
-                    (nu + e * e / s) / (nu + 1.0)
+                    // the jump is the track's wandering offset o: it jumped by an independent part, so
+                    // that the prediction's variance is the t's posterior scale times s. Added, not scaled:
+                    // o is correlated with x and c, and scaling it left s small and ran away.
+                    let grow = ((nu + e * e / s) / (nu + 1.0)).max(1.0);
+                    if grow > 1.0 {
+                        cov[(k + 1) * d + k + 1] += (grow - 1.0) * s;
+                        s = project(cov, &mut ph);
+                    }
                 } else {
                     ll[mode] += -0.5 * e * e / s - 0.5 * s.ln() - 0.5 * LOG2PI;
-                    1.0
-                };
+                }
                 for ((m, row), &p_i) in mean.iter_mut().zip(cov.chunks_exact_mut(d)).zip(&ph) {
                     let gain = p_i / s;
                     *m += e * gain;
                     for (c, &p_j) in row.iter_mut().zip(&ph) {
-                        *c = grow * (*c - gain * p_j);
+                        *c -= gain * p_j;
                     }
                 }
             }
@@ -1199,7 +1209,7 @@ mod tests {
     }
 
     #[test]
-    fn a_standing_track_that_slides_far_costs_little_and_widens_the_person() {
+    fn a_standing_track_that_slides_far_costs_little_and_the_slide_goes_into_its_offset() {
         // MODEL.md 4.1: Student's t with still_dof; 1 m off at a predicted spread of 0.22 m per axis
         let mut world = testing::flat();
         let mut densities = Densities::new(DensityShape {
@@ -1211,24 +1221,50 @@ mod tests {
             amps: 2,
         });
         let mut ll = Vec::new();
-        let mut var = Vec::new();
+        let mut moved = Vec::new();
         for dof in [f64::INFINITY, 2.0] {
             world.params.still_dof = dof;
             let mut g = walker([0.0, 0.0]);
             g.logw = [0.0, f64::NEG_INFINITY]; // standing only
             g.add_track(SegId(4), 0.04, world.params.const_share, 0.0);
             ll.push(g.update(&mut densities, SegId(4), [1.0, 0.0], &world.params));
-            var.push(g.modes[STILL].pos_var()[0]);
+            let (mean, _) = g.modes[STILL].axis(0);
+            moved.push((mean[X], mean[g.dim() - 1]));
         }
         let s: f64 = 0.01 + 0.04 + world.params.white.powf(2.0);
         let t = lgamma(1.5) - lgamma(1.0) - 0.5 * (2.0 * PI * s).ln() - 1.5 * (1.0 / (2.0 * s)).ln_1p();
         let gauss = -0.5 / s - 0.5 * s.ln() - 0.5 * LOG2PI;
         // and on the other axis no offset: the peak of the t against the Gaussian's
-        let at0 = lgamma(1.5) - lgamma(1.0) - 0.5 * (2.0 * PI * s).ln() + 0.5 * (2.0 * PI * s).ln();
+        let at0 = lgamma(1.5) - lgamma(1.0);
         assert!((ll[1] - ll[0] - (t - gauss) - at0).abs() < 1e-9, "{ll:?}");
         assert!(ll[1] - ll[0] > 5.0, "a slide of 1 m: Student's t far likelier than the Gaussian");
-        let grow = (2.0 + 1.0 / s) / 3.0;
-        assert!((var[1] / var[0] - grow).abs() < 1e-9, "{var:?}");
+        // the person moves less, the track's wandering offset takes the slide
+        assert!(moved[1].0 < 0.5 * moved[0].0 && moved[1].1 > 2.0 * moved[0].1, "{moved:?}");
+    }
+
+    #[test]
+    fn a_standing_track_that_jumps_back_and_forth_for_long_stays_finite() {
+        // the inflation of the offset must not run away: 4000 updates jumping 3 m, with the prediction
+        let mut world = testing::flat();
+        world.params.still_dof = 2.0;
+        let mut densities = Densities::new(DensityShape {
+            tiles: 0,
+            kinds: 2,
+            levels: 2,
+            regions: 0,
+            ages: 18,
+            amps: 2,
+        });
+        let mut g = walker([0.0, 0.0]);
+        g.logw = [0.0, f64::NEG_INFINITY];
+        g.add_track(SegId(4), 0.04, world.params.const_share, 0.0);
+        for i in 0..4000 {
+            let z = if i % 8 < 4 { [3.0, -3.0] } else { [0.0, 0.0] };
+            let l = g.update(&mut densities, SegId(4), z, &world.params);
+            assert!(l.is_finite(), "step {i}: {l}");
+            let (_, cov) = g.modes[STILL].axis(0);
+            assert!(cov.iter().all(|c| c.is_finite()) && cov[0] > 0.0, "step {i}");
+        }
     }
 
     #[test]
