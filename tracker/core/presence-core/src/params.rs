@@ -151,6 +151,10 @@ pub struct Params {
     pub ld_moving: [Profile; 2],
     pub ld_still: [Profile; 2],
     pub ld_beam: [f64; 2],
+    /// what a person outside the sensor's own room (through a door, over a divider) gives its LD2410C, relative
+    /// to the geometric sight (MODEL.md 4.3)
+    #[serde(deserialize_with = "real")]
+    pub ld_other_room: f64,
     pub ld_shape: [f64; 2],
     pub ld_tau: [f64; 2],
     pub ld_gain: [f64; 2],
@@ -291,6 +295,7 @@ impl Default for Params {
                 Profile::new([949.0, 2.19, 0.58, 1.44, 1.00, 1.25]),
             ],
             ld_beam: [50.0, 70.0],
+            ld_other_room: 0.0,
             ld_shape: [2.5, 2.0],
             ld_tau: [4.0, 13.0],
             ld_gain: [16.0, 50.0],
@@ -460,6 +465,7 @@ impl Params {
                 up_to(self.ld_echo_amps.len(), 1, 16) && self.ld_echo_amps.iter().all(|&a| positive(a)),
             ),
             ("ld_tile_mass", at_least_0(self.ld_tile_mass)),
+            ("ld_other_room", (0.0..=1.0).contains(&self.ld_other_room)),
             ("ld_background", self.ld_background.iter().all(|&b| positive(b))),
             ("ld_prior_time", positive(self.ld_prior_time)),
             ("ld_forget", positive(self.ld_forget)),

@@ -297,12 +297,21 @@ pub(super) struct Built<'a> {
     pub labels: &'a [Option<Place>],
     pub walls: &'a Walls,
     pub tiles: &'a Tiles,
+    pub rooms: &'a RoomGrid,
 }
 
 /// A sensor's sight of a person per cell and its LD2410C (_export_sensor).
-pub(super) fn sensor(b: &Built, s: &SensorConfig) -> (Sight, LdSight) {
+pub(super) fn sensor(b: &Built, si: usize, s: &SensorConfig) -> (Sight, LdSight) {
     let coarse = CoarseSight::new(s, b.plan);
-    let (points, los) = point_sight(b, s, &coarse);
+    let (points, mut los) = point_sight(b, s, &coarse);
+    // a person outside its own room gives its LD2410C ld_other_room of the geometric sight (MODEL.md 4.3)
+    if let Some(own) = b.plan.sensors[si].own_room {
+        for (l, r) in los.iter_mut().zip(b.rooms.cells()) {
+            if *r != Some(own) {
+                *l *= b.params.ld_other_room;
+            }
+        }
+    }
     let reach = Reach::new(&b.raster, b.labels, b.walls, reach_of(b, s));
     let var = offset_var(&b.raster, &b.config.params, s);
     let [grid, los] = spread(&reach, &var, [&points, &los]);
