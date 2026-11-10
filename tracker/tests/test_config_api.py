@@ -69,7 +69,7 @@ def test_the_saved_configuration_comes_with_the_model_of_it(tmp_path):
     assert [o["wall"] for o in d["plan"]["doors"]] == [1, 3]
     assert all(abs(o["t1"] - o["t0"] - 0.9) < 1e-9 for o in d["plan"]["doors"])
     # what a configuration may leave out, for the editor's new sensors
-    assert got["defaults"]["sensor"]["fov"] == 120.0 and got["defaults"]["params"]["light_cost"] == 2.0
+    assert got["defaults"]["sensor"]["fov"] == 120.0 and got["defaults"]["params"]["light_cost"] == 0.2
     # the people for the map: no trail breaks, no polygons; the rooms of their Gaussians
     assert all("jumped" not in p for p in live["tracks"]) and all(set(c) == {"id", "gauss", "rooms", "tiles"}
                                                                    for c in live["clouds"])
