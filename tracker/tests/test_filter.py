@@ -205,14 +205,19 @@ def test_the_bookkeeping_holds_when_two_cross_and_ghosts_come():
 
 
 def test_a_ghost_in_an_empty_house_ends_as_one():
+    # a target of a second in the empty house is no person (MODEL.md 1, 4: Leon 7.10.): it ends, and no room
+    # ever has anybody; whether it was a ghost or a Störquelle (4.5) does not matter for the light
     config = flat_config()
     crowd = Tracker(config, start=0.0, people=["outside", "outside"])
-    ended = []
+    ended, most = [], 0.0
     crowd.listeners.append(lambda kind, d: ended.append(d[2]) if kind == "track_end" else None)
     ghost = Person([(20.0, 3.0, 2.5), (21.0, 3.0, 2.5)])
     for t, sid, frame in simulate([ghost], sim_sensors(config), 40, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
-    assert ended and min(ended) > 0.9, ended
+        dist = crowd.core.count_distribution()
+        most = max(most, max(1 - dist[z][0] for z in crowd.rooms))
+        assert not any(s.occupied for s in crowd.zone_states().values()), t
+    assert ended and most < 0.01, (ended, most)
 
 
 def test_a_sitter_the_ld2450_loses_stays_while_the_ld2410c_sees_them():
@@ -269,7 +274,8 @@ def test_the_tracks_of_a_sensor_that_died_end():
             crowd.step(t)
             p[int(t)] = 1 - crowd.core.count_distribution()["wohn"][0]
         assert p[55] > 0.99
-        assert all(p[t] < c for t in p if t >= 200), (dead, {t: round(v, 3) for t, v in p.items() if t >= 200 and v >= c})
+        # gone 2.5 min after they left (about 130 s; light_cost 0.2 goes on from 1/6), not hours
+        assert all(p[t] < c for t in p if t >= 300), (dead, {t: round(v, 3) for t, v in p.items() if t >= 300 and v >= c})
 
 
 def test_the_display_tells_how_long_people_stay_in_a_region():
