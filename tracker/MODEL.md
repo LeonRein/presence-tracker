@@ -332,6 +332,7 @@ Eine Spur, die zu keiner Person gehört.
   `ν Σ r_i N(x; x_i, (0,4 m)²)` (J_Park2020 Gl. 16) und eine Rate je erwarteter Person im Blick oder im Haus waren auf
   den Aufnahmen 6.–14.10. (30.10.) nicht messbar besser als die feste Rate. Mit der niedrigen Rate des leeren Hauses
   für Blicke ohne Person wird ein Geist in einem leeren Raum zur Person (Esszimmer 7.10. 22:20: 6,3 min Licht leer).
+  Neu gemessen 10.11. mit 0.63 (10 „Geister brauchen eine Quelle“): im Code als `ghost_near` (Standard aus).
 - **Offen:** Auf den Aufnahmen 6.–14.10. (30.10.) gewann die feste Rate keine Sitzenden zurück: Sitzende mit Spuren von
   Minuten blieben „Geist“ (9, „Ein Sitzplatz“); ohne Geister wären etwa 30 min weniger Sitzende verloren gewesen, dafür 85 min mehr
   Licht ohne Person.
@@ -1809,3 +1810,30 @@ damaligen Maße gewichteten die Fehler anders als heute (1). Die Versionsgeschic
 - **Eine einzelne Prozentzahl verdeckt Fehler** (in 0.6.4 versteckte sie einen ganz falschen
   Küchenschritt). **Gute Werte in der Simulation** sagten wenig: 0.5.0 war dort gut und in der Praxis
   schlecht.
+- **Geister brauchen eine Quelle** (10.11., Zweig `geist-person`, 4.2; Meldung 10.11. 10:18 Arbeitszimmer: Die Sitzende am
+  Schreibtisch hat 94 % der Zeit eine ruhende Spur des Arbeitszimmer-LD2450, die App zeigt sie nur 7 % gesehen, die beste
+  Hypothese ist „Spur = Geist, Person verdeckt bei (−2,6 | 6,1)“). Form J_Park2020 Gl. 16: Geburtsrate eines Geists
+  `λ₀ + ν Σᵢ rᵢ N(z; xᵢ, σ²)` über alle Personen der Hypothese (mit Spur, bekannte ohne, unbekannte), dazu „kein Geist
+  geboren“ je Hypothese `exp(−ν Σᵢ rᵢ g_s(xᵢ) Δt)` (`ghost_near` = [ν, σ], Arten wie `ghost_types`). Skalen aus 4.2:
+  λ₀ = 3 % der Rate (5,4·10⁻⁷ /m²/s, leeres Haus), ν = 5·10⁻⁴ /s je Person und Sensor (~1,9 /h: 58 % der 1,6 Geister je
+  Sensorstunde über dem Zufall neben einem Ziel, etwa 0,5 Personen im Blick), σ = 0,5 m (≈ 90 % ≤ 1 m). Nicht neu
+  gemessen: Spuren aus den Aufnahmen ohne Wandschnitt (wie `versatz.py`) geben im leeren Haus 13 Geburten je
+  Sensorstunde, nicht die 0,05 der App; dafür bräuchte es die Spuren der App.
+  *Wirkung auf die Meldung* (rprobe 10:08–10:18:16, Schritte mit Arbeitszimmer-Ziel, in denen P1 „gesehen“ ist): 0.63 174
+  von 2 227 (7,8 %), mit Kern 301 (13,5 %), nur λ₀ ohne Kern 263 (11,8 %). Der Kern wirkt nur bei der Geburt: Spur 4
+  (10:06:16–10:15:45) beginnt 1,6 nats für „Person“, der Vorsprung des Geists wächst danach in ~100 s auf ~10–12 nats
+  und bleibt dort (der Geist zahlt seine 1/39 s, die Person auf der Spur ebenso viel an Fehlpassung, vor allem das
+  LD2410C des Flurs); mit Kern beginnt sie ~2,4 nats weiter vorn. Die verdeckte Person lag 1,55 m neben der Spur, also
+  höchstens ln(1,8·10⁻⁵ / λ₀) = 3,5 nats je Geburt. Eine Kopplung über das Leben des Geists (Quelle muss neben einer Person
+  bleiben) gäbe hier wenig mehr: Die verdeckte Person ruht, ihre Lage bei der Geburt entscheidet.
+  *Bewertung* (`evalp.py`, Lauf `gq1` gegen `b063`, light_cost 2): leeres Haus 34,8 → 32,9 Raumminuten (nur leer0711, das
+  Ziel 0,3 m vor dem Wohnzimmer-Sensor; alle anderen 0); Ein-Personen Licht zu viel 843 → 852, dunkel mit Sitzer 23,8 →
+  25,6 min, Personen zu viel 362 → 361; zwei Personen dunkel mit Sitzer 4,8 → 3,7, MUSS-Raum dunkel 1,5 → 0,8 min (bad3110
+  in 1 statt 3 von 3 Starts 1,1 min dunkel; sofa10 1 von 10 wie 0.63, anderer Start; sofa0811 1 von 5 wie 0.63);
+  Meldungen Bad 31.10. 19:22 177 → 0 s falsch, Sofa 8.11. 22:27 24 → 0 s, Bad 6.11. 122 s wie 0.63, die übrigen gleich.
+  Das Mehr an „dunkel mit Sitzer“ bei einer Person kommt allein aus den Morgen mit je einem Start (morgen0411 5,1 → 8,0,
+  morgen0211 5,6 → 4,4, morgen0311 5,0 → 5,2); die sechs Ein-Personen-Fenster mit 3 Starts sind gleich. Die Kennzahl zählt
+  jede ruhende LD2450-Spur ≥ 60 s, Geister am Ort eingeschlossen; morgen0411 06:5x ist das Esszimmer (der Spiegel am
+  Esstisch, 9). Mit light_cost 0,2 (`gq1lc02`; ohne passenden Bezug gerechnet) 881 / 23,9 / 361, zwei 3,6 / 0,8.
+  Rechenzeit (Prozess-CPU, dieselbe Meldung nacheinander): 1,09–1,10×; `cpu_s` der Fenster 1,12× (unter Last, unsicher).
+  Nicht übernommen (gemischt; Entscheidung bei Leon).
