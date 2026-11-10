@@ -115,29 +115,29 @@ def test_a_gap_moves_everybody_on():
 
 
 def test_nothing_known_invents_nobody_in_view():
-    # nothing known (no saved state): nobody there, the sensors see ghosts now and then - the room
-    # stays dark; then somebody comes in and sits down: found
+    # nothing known (no saved state): nobody there, the sensors see ghosts (4 a minute, far more than the
+    # measured 1.6 an hour). Right after a start, a track may be somebody nobody knew of, and dark with a person
+    # costs 5x light without one (light_cost 0.2, Leon 10.11.); but nobody is held without evidence (Leon 7.10.):
+    # the room is dark again within seconds of the last track ending. Then somebody comes in and sits down: found.
+    # Real nights (1.-8.11., started at 02:07 with nothing known as after the nightly restart): no light outside
+    # the bedroom in 30 min, as with 0.63 (MODEL.md 10).
     config = flat_config(entry=True)
     crowd = Tracker(config)
     assert crowd.started_from is None
     c = config.data["params"]["light_cost"] / (config.data["params"]["light_cost"] + 1.0)
     a = Person(walk((-1.0, 4.0), FLUR_DOOR, (4.5, 1.0), (4.6, 1.0), start=150, pauses={2: 200}))
-    occupied = []
+    occupied, held, last_track, on = [], [], -1e9, False
     for t, sid, frame in simulate([a], sim_sensors(config, ghost_rate=4), 300, plan=config):
         crowd.process_frame(sid, t, Frame.of(frame))
-        occupied.append((t, 1 - crowd.core.count_distribution()["wohn"][0]))
-    # a ghost of up to a second may be somebody stepping out of the hallway and back for a moment
-    # (a second of light, as with the start of 0.10); nobody stays
-    stretches, start, last = [], None, None
-    for t, p in occupied:
+        if crowd.core.tracks():
+            last_track = t
+        p = 1 - crowd.core.count_distribution()["wohn"][0]
+        occupied.append((t, p))
         if t < 150 and p > c:
-            start = t if start is None else start
-            last = t
-        elif start is not None:
-            stretches.append(last - start)
-            start = None
-    assert all(s < 2.0 for s in stretches), stretches
+            held.append(t - last_track)  # how long after the evidence ended somebody is still there
+    assert max(held, default=0.0) < 10.0, held
     assert min(p for t, p in occupied if t > 200) > 0.9
+
 
 
 def test_nothing_known_finds_who_sits_in_view_at_the_start():
