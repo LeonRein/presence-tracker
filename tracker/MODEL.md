@@ -1,6 +1,6 @@
 # Das Wahrscheinlichkeitsmodell des Presence Trackers
 
-Stand: Code 0.27.0 (10.10.2026; 10 „0.27: korrigierte Wahrheit 8.10.“).
+Stand: Code 0.63.0 (geprüft gegen den Code am 10.11.2026).
 Beschreibt, was der Code rechnet; was fehlt oder nur genähert ist,
 steht in 9. Zahlen sind **gemessen** (auf Aufnahmen), **geschätzt** (EM auf Aufnahmen ohne Wahrheit)
 oder **angenommen**. Literaturkürzel wie im Literaturordner (`~/Documents/presence-tracker-literatur`).
@@ -8,53 +8,55 @@ Die Abschnittsnummern werden im Code zitiert (`MODEL.md 4.1`); beim Umbau beibeh
 
 ## 1. Vorgaben
 
-Diese Punkte sind Anforderungen (Leon). Alles andere in diesem Dokument ist eine Umsetzung, die man
-ersetzen darf, wenn etwas Besseres belegt ist.
+Nur die Punkte in diesem Abschnitt sind Leons Anforderungen, jeweils mit Datum seiner Aussage.
+Alles andere in diesem Dokument ist eine Umsetzung, die Agenten gewählt haben; sie darf ersetzt
+werden, wenn etwas Besseres belegt ist. Neue Vorgaben nur mit Datum und Leons Wortlaut eintragen.
 
-1. **Zweck: Licht je Raum.** Schlimmster Fehler: Licht an ohne Person. Schlecht: spätes Einschalten.
-   Harmlos: kurze Aussetzer bei Sitzenden, solange sie kürzer sind als die Ausschaltverzögerung in
-   Home Assistant (1–2 min); falsche Anzahl in einem belegten Raum; der Saugroboter als Person.
-   Vertauschte Identitäten sind egal, Personen sind anonym.
-2. **Ein generatives Modell.** Personen und Geister bewegen sich, die Sensoren erzeugen daraus ihre
-   Ausgaben, der Tracker rechnet rückwärts (Bayes). Alles ist eine Wahrscheinlichkeit; keine Regel und
-   keine Schwelle, die einen Mechanismus an- oder ausschaltet.
-3. **Personen entstehen und verschwinden nicht im Raum**, nur über Türen und Wege nach draußen. Die
-   Personenzahl gehört zum Zustand; keine feste Bewohnerzahl und kein „Gästeplatz“ (die App soll auch
-   in anderen Wohnungen funktionieren).
-4. **Formen aus der Literatur, Skalen aus den Daten.** Keine Schlüsse aus verrauschten Einzelfällen,
-   kein Tuning auf seltene Konstellationen.
-5. **Was nicht nachweislich hilft, fliegt raus; was nachweislich geholfen hat, bleibt**, bis ein
-   Vergleich etwas anderes zeigt.
-6. **Wahrheitsdaten nur zum Bewerten**, nie zum Einstellen oder Lernen.
-7. **Läuft als Home-Assistant-App**: wenig Rechenzeit (nicht mehr als 0.6.21), reproduzierbare
-   Ergebnisse. Was gelernt wird (LD2410C-Hintergrund), lernt die App selbst.
+1. **Zweck: Licht je Raum.** „korrekte lichtsteuerung ist immer wichtiger als korrekte personenzahl“
+   (7.10.). Die Personenzahl kommt an zweiter Stelle.
+2. **Dunkel mit Person ist schlimmer als Licht ohne Person.** „Licht aus und eine person ist im raum ist
+   schlimmer als licht an obwohl niemand da ist“ (14.10.). Am 10.11. auf Nachfrage: etwa 5× so schlimm;
+   das Verhältnis ist schwer genau zu sagen. Ist niemand zu Hause, darf nirgends Licht angehen (4.11.).
+3. **Sitzende nicht verlieren, Schlafende sind kein Ziel.** „Das Modell [sollte] nicht darauf optimiert
+   werden, jemand schlafenden zu erkennen. Schlafende Personen wollen eh das Licht aus haben. Es ist viel
+   wichtiger, dass leute im Badezimmer oder auf dem Sofa im Wohnzimmer nicht verloren werden.“ (9.10.)
+   Ob nachts eine oder zwei Schlafende gezählt werden, ist egal, solange die Bleibende morgens wieder
+   erkannt wird (5.11.).
+4. **Keine feste Personenzahl.** „Die Annahme einer festen Personenzahl ist schlichtweg falsch und führt
+   zu anderen schweren Fehlern. […] Eine neue Person darf nur entstehen, wenn es dafür harte Evidenz gibt.
+   Wenn es erst 5 Sekunden dauert, bis eine Person als solche identifiziert wird, ist das nicht schlimm.
+   Und Geister dürfen sich ohne Belege in den Messwerten nicht halten können!“ (7.10.) Kein Wert für
+   eine Bewohnerzahl, auch kein „Gästeplatz“ (7.10.).
+5. **Personen entstehen und verschwinden nur mit begründendem Bewegungsmuster.** Eine Person kann nicht
+   „vom Himmel fallen“ oder sich „auf der Stelle materialisieren“ (4.11.). „Es muss dennoch möglich sein,
+   dass personen auch in der wonung verschwinden oder neu entstehen. Aber das sollte beides gut durch
+   das bewegungsmuster begründet sein. […] Eben damit sich keine Fehler endlos fortführen können sondern
+   korrigiert werden“ (4.11.). Keine harte Regel „nur durch Türen“. Fenster sind kein Eingang des
+   Modells (4.11.).
+6. **Keine Sonderregeln für Geräte.** „Das modell sollte gut genug sein, um eine Person von einem
+   Luftentfeuchter zu unterscheiden!“ (5.11.) Ob der Saugroboter Licht einschaltet, ist egal (8.10.).
+7. **Nicht auf Fehlerfälle optimieren.** „Das Modell/der Filter sollte nicht auf solche Fehlerfälle
+   optimiert werden. Erstmal muss der normale Betrieb funktionieren.“ (9.10., Sensorausfall)
+8. **Personen sind anonym; die App soll auch in anderen Wohnungen funktionieren** (bestätigt 10.11.).
+   Vertauschte Identitäten sind egal.
 
-Leon, 7.10.: „Die Annahme einer festen Personenzahl ist schlichtweg falsch und führt zu anderen schweren
-Fehlern. […] Eine neue Person darf nur entstehen, wenn es dafür harte Evidenz gibt. Wenn es erst 5
-Sekunden dauert, bis eine Person als solche identifiziert wird, ist das nicht schlimm. Und Geister
-dürfen sich ohne Belege in den Messwerten nicht halten können!“
-
-*Anmerkung zu 3 (Umsetzung):* Wer nie da war (eine Spur, die ein Geist war, oder dieselbe Person
-doppelt), verschwindet nicht „im Raum“, er hat nie existiert. Das Modell trägt deshalb für jede
-bekannte Person ohne Spur die Wahrscheinlichkeit, dass es sie gibt (5.5); Messungen, die gegen sie
-sprechen, senken sie, wie sie die Dichte formen. In Sicht endet sonst nichts. Wo kein Sensor sie prüfen
-kann (tote Winkel, Bereiche ohne Sensor, außer Haus), läuft ihr Eintrag nach Minuten ab (5.5): eine
-Annahme über Einträge ohne Beleg, keine Bewegung. Das gilt auch in einem geschlossenen Bereich (Balkon);
-0.26 ließ dort nichts ablaufen, begründet mit einer Wahrheit, die falsch war (10 „0.27“). Wo sie ist,
-ändert sich weiter nur über Türen und Wege.
+Bewertet wird nach Leons Fehlermeldungen aus der App (6.10.), nicht nach geskripteten Wahrheitstabellen.
 
 ## 2. Die Welt
 
-Aus dem Grundriss (`model.py`; im Kern `plan.rs`, `world/`):
+Aus dem Grundriss (`plan.rs`, `world/`):
 - **Beobachteter Bereich:** Räume, die die Sensoren zu mindestens 60 % sehen.
-- **Bereiche ohne Sensor *Rₖ*:** übrige Räume der Wohnung, über Türen zusammengefasst. *Offen*, wenn
-  eine Tür von dort nach draußen führt oder eine Eingangszone darin liegt, sonst *geschlossen* (Balkon,
-  Schlafzimmer).
+- **Bereiche ohne Sensor *Rₖ*:** übrige Räume der Wohnung, über Türen und Trennlinien zusammengefasst.
+  *Offen*, wenn eine Tür von dort nach draußen führt oder eine Eingangszone darin liegt, sonst
+  *geschlossen* (Balkon).
 - **Außer Haus:** alles jenseits der Wohnungstür. Ein Raum mit dem Haken *Eingang* (das Treppenhaus)
   ist kein Raum der Wohnung, sondern öffentlicher Raum, den auch andere Hausbewohner nutzen (Leon,
   7.10.: „Die Personenzahl hinter Treppe macht keinen Sinn, da dies öffentlicher Raum ist.“). Seine
-  Fläche gehört zu *außer Haus*; die Tür dorthin ist die Wohnungstür, eine Tür nach draußen wie eine
-  in einer Außenwand. Wer hindurchgeht, hat die Wohnung verlassen; wer hereinkommt, kommt von draußen.
+  Fläche gehört zu *außer Haus*; die Tür dorthin ist die Wohnungstür. Wer hindurchgeht, hat die
+  Wohnung verlassen; wer hereinkommt, kommt von draußen. Eine Tür in einer Außenwand ohne gezeichneten
+  Raum dahinter ist nicht ganz dasselbe: Aus einem Bereich ohne Sensor führt sie in beide Richtungen,
+  aus dem beobachteten Bereich nur herein (das Gehen über die Kacheln kennt nur Nachbarn in einem
+  gezeichneten Raum, `door_rates` in `world/tiles.rs`); ebenso eine Eingangszone im beobachteten Bereich.
   Was ein Sensor dort misst, gehört zu niemandem der Wohnung und wird wie in einem geschlossenen Raum
   ohne Sensor verworfen (4.1: keine Information). Der gezeichnete Raum bleibt, weil er die Tür
   festlegt.
@@ -63,8 +65,8 @@ Aus dem Grundriss (`model.py`; im Kern `plan.rs`, `world/`):
 **Zustand:** die bekannten Personen (ihre Zahl gehört zum Zustand, 3.4) und die unbekannten (eine
 Poisson-Intensität), jede an einem Ort: im beobachteten Bereich mit Position und Betriebsart *steht* (mit Aufenthaltsart l und Erkennbarkeit κ) oder *geht*
 (mit Geschwindigkeit), in *Rₖ* mit der bisherigen Aufenthaltsdauer, oder außer Haus. Dazu je laufende
-Sensorspur ihr Eigentümer (eine Person oder ein Geist) und ihr Versatz auf ihm, je Geisterspur ihre
-Quelle.
+Sensorspur ihr Eigentümer (eine Person, ein Geist oder eine Störquelle) und ihr Versatz auf ihm, je
+Geisterspur ihre Quelle, und die bekannten Störquellen je Sensor (4.5, 5.5).
 
 ## 3. Dynamik
 
@@ -76,10 +78,12 @@ Quelle.
   weitersteht, verschiebt sich zu den langsamen Arten: `p_l ← p_l e^(−λ_l Δt) / Σ` (Hidden-Semi-Markov
   als HMM mit parallelen Phasen, D_Yu2010 Abschn. 3.2, 4.1.3). Fehler der Anpassung zwischen 1 s und
   1 Tag: höchstens 0,024 in S, 16 % relativ, 42 % in der Rate des Aufstehens (mit 7 Arten 0,004 /
-  2 % / 18 %). Die Evidenz (7) unterscheidet das nicht: 6.10. 19:28 bis 7.10. 06:15 (11 h, 5 Sensoren,
+  2 % / 18 %). Alte Messung (Python-Kern, Aufnahme gelöscht): Die Evidenz (7) unterschied das nicht,
+  6.10. 19:28 bis 7.10. 06:15 (11 h, 5 Sensoren,
   Neustarts und Nacht), gegenüber 5 Arten mit 7 Arten +1, 6 Arten +2, 4 Arten −11, 3 Arten −53;
   mit 24 Hypothesen ab 10⁻⁹ (5.1) 7 Arten und 5 Stufen κ (0.10.0) +3, 4 Arten −9, 3 Arten −100.
-  Lichtfehler gleich, mit 3 Arten mehr (fälschlich aus 3,5 statt 3,0 bzw. 2,5 statt 2,0 von 15).
+  Lichtfehler (nach der damaligen, ungenauen Wahrheitstabelle) gleich, mit 3 Arten mehr (fälschlich
+  aus 3,5 statt 3,0 bzw. 2,5 statt 2,0 von 15).
 - Ein Aufenthalt, der zu einem zufälligen Zeitpunkt beobachtet wird (Start), ist nach
   Erneuerungstheorie länger: Gewichte ∝ w_l / λ_l.
 - Nach dem Aufstehen geht man in eine gleichverteilte Richtung.
@@ -105,18 +109,16 @@ Prozess wie eine Diffusion aus, je Achse mit `D = E[s²] / (2 λ_d) = (s² + Str
 
 ### 3.3 Türen, Bereiche ohne Sensor, außer Haus
 - Aufenthalt in *Rₖ*: log-normal, Median 2 min / Streuung von ln(Dauer) 1,5, für jeden Bereich gleich
-  (angenommen; `TrackerParams.dwell_*`, im Kern `world/tiles.rs`). Nicht gelernt: Wann jemand hinein- und herausging, kennt der Filter
+  (angenommen; `dwell_median`, `dwell_spread`, `world/tiles.rs`). Nicht gelernt: Wann jemand hinein- und herausging, kennt der Filter
   nur als Wahrscheinlichkeit; seine Urteile als Dauern zu zählen, lernte seine Fehler. Zu schätzen
   über die Evidenz (7). Endet der Aufenthalt, geht man durch eine der Türen des Bereichs, jede gleich
   wahrscheinlich: gehend in den beobachteten Bereich oder durch eine Tür nach draußen außer Haus.
-- **Hinaus** geht man nur durch Türen: aus dem beobachteten Bereich gehend durch die Wohnungstür (die
-  Diffusion aus 3.2 über die Tür, wie in einen Bereich ohne Sensor), aus einem offenen Bereich am
-  Ende eines Aufenthalts (oben). Eine eigene Rate des Weggehens gibt es nicht mehr.
+- **Hinaus** führt die Bewegung durch Türen: aus dem beobachteten Bereich gehend durch die Wohnungstür
+  (die Diffusion aus 3.2 über die Tür, wie in einen Bereich ohne Sensor; zu Türen ohne gezeichneten
+  Raum dahinter 2), aus einem offenen Bereich am Ende eines Aufenthalts (oben). Eine eigene Rate des
+  Weggehens gibt es nicht. Ohne Tür kann ein Eintrag nur über seine Existenz r enden (3.4, 5.5).
 - **Zurück** mit 1/(4 h) je Weg hinein (Türen nach draußen, Eingangszonen) (angenommen); man erscheint
   gehend an der Tür (beobachteter Bereich) bzw. beginnt einen Aufenthalt im offenen Bereich.
-- Bis 0.12.0 war das Treppenhaus ein offener Bereich *Rₖ* mit eigenem Aufenthalt (Median 30 min,
-  Streuung 2,0) und eigener Rate nach außer Haus (1/(2 h)); die Anzeige und Home Assistant bekamen dort
-  eine Personenzahl, die nichts bedeutet (wer dort war, war fort oder ein Nachbar).
 
 ### 3.4 Neuankömmlinge, Personenzahl
 - Neue Personen kommen als Poisson-Prozess an jedem Weg hinein an (Türen nach draußen,
@@ -133,10 +135,13 @@ Prozess wie eine Diffusion aus, je Achse mit `D = E[s²] / (2 λ_d) = (s² + Str
   Wahrscheinlichkeit r (Bernoulli, 5.5). War ihre Spur vielleicht ein Geist oder eine schon bekannte
   Person, bleibt diese Möglichkeit als r < 1 erhalten, und was danach nicht zu ihr passt (keine neue
   Spur, wo sie gesehen würde; kein Herauskommen aus einem Bereich ohne Sensor; die Energien des
-  LD2410C), senkt r. Das ist keine Regel: dieselbe Rechnung wie für ihre Dichte (1.3, Anmerkung).
+  LD2410C), senkt r. Das ist keine Regel: dieselbe Rechnung wie für ihre Dichte (1, Punkt 5).
   Der Teil von ihr, den kein Sensor prüfen kann, läuft mit 2 min ab (5.5).
 
 ## 4. Messmodell
+
+Messungen mit Datum bis 30.10. liefen auf Aufnahmen, die am 31.10. gelöscht wurden; sie lassen sich nicht
+nachrechnen. Vergleiche gegen die Wahrheitstabellen dieser Zeit sind unsicher, die Tabellen waren ungenau.
 
 ### 4.1 LD2450: seine Spuren
 Der LD2450 ist selbst ein Tracker (gemessen 5.10., 16 h: ~23 Spuren je Sensor und Stunde, Median
@@ -144,11 +149,12 @@ Der LD2450 ist selbst ein Tracker (gemessen 5.10., 16 h: ~23 Spuren je Sensor un
 unabhängige Messung zu nehmen, macht überkonfident (E_Aeberhard2017 S. 82). Gemessen wird deshalb auf
 der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo sie liegt.
 
-**Vorverarbeitung** (`frames.py`, `sensortracks.py`, nur das Format):
+**Vorverarbeitung** (`frames.rs`, `ld2450/tracks.rs`, nur das Format):
 - Schrägentfernung → Boden (Sensorhöhe, Reflexionshöhe 1,0 m), Maßstab des Sensors aus der
   Kalibrierung.
 - Keine Information: Ziele mehr als 0,4 m hinter einer Wand (Sichtlinie ab 20 cm vor dem Sensor),
-  außerhalb aller Räume, in geschlossenen Räumen ohne Sensor, näher als 0,3 m am Sensor. „Hinter einer
+  mehr als 0,4 m außerhalb aller Räume, mehr als 0,4 m innerhalb eines geschlossenen Raums ohne Sensor
+  (`wall_margin`), näher als 0,3 m am Sensor. „Hinter einer
   Wand“ heißt: kein Punkt im Umkreis von 0,4 m ist in Sicht (der Messfehler einer Person, die es ist;
   geprüft zurück entlang der Sichtlinie und am Fußpunkt auf jeder Wand im Umkreis). Bis 0.18.0 nur
   entlang der Sichtlinie: Ein Sensor an einer Wand blickt an ihr entlang, und ein Ziel 5 cm jenseits
@@ -157,7 +163,8 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   jenseits einer Wand angenommenes Ziel kommt von einer Person, die er sieht. Das Kalman-Update (5.2)
   kennt keine Wände: Eine Spur an der Wand zog das Mittel hinüber, die Person stand im Nachbarraum (10,
   „Durch die Wand ins Arbeitszimmer“). Nach jedem Update mit einer Spur wird die Position je Komponente
-  auf die Sicht des Sensors beschnitten (`Gauss.in_sight`): N(Mittel, diag Varianz) auf einem Gitter von
+  auf die Sicht des Sensors beschnitten (`Mixture::in_sight`, `cut_to_sight` in `filter/mixture.rs`; nicht die
+  Quelle eines Geists, 4.2): N(Mittel, diag Varianz) auf einem Gitter von
   5 × 5 Gauß-Hermite-Punkten, die Punkte, deren Sichtlinie (ab 20 cm vor dem Sensor) eine Wand kreuzt,
   entfallen, Momentenabgleich (mindestens 5 cm Streuung je Achse), Geschwindigkeit und Versätze folgen
   über ihre Regression. Sieht er keinen der Punkte, werden sie an der Wand
@@ -172,12 +179,13 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 **Erfassung (neue Spur)** einer Person ohne messende Spur dieses Sensors mit der Rate
 `ρ_m · P_m(r) · g_s(x) · q(x)`, je Betriebsart m:
 - `P_m(r)`: Swerling-I-Kurve über der Radargleichung, `P(r) = P_FA^(1/(1 + SNR₅₀ (r₅₀/r)⁴))`,
-  P_FA = 10⁻⁶. ρ, r₅₀ per Maximum-Likelihood (gemessen, 17 h): steht 0,034 /s, 5,0 m; geht 0,51 /s,
-  4,55 m. Für Sitzende ist die Form eine empirische Wahl (der LD2450 unterdrückt Ruhendes).
-- `g_s(x)`: Sicht nach Winkel, Reichweite und Wänden (`world/build.rs`, `prior_pd`): voll bis 15°
-  vor dem Rand des Blickfelds, 0,5 am Rand, 0 bei 15° jenseits; voll bis Reichweite + 1 m, dann
-  Abfall mit e je 1,5 m (gemessen 5.10. an Gehenden).
-  **Sicht einer Person, nicht eines Punkts** (seit 7.10., `Tracker._spread_sight`): Der Sensor misst
+  P_FA = 10⁻⁶, r mindestens 0,3 m. ρ, r₅₀ per Maximum-Likelihood (gemessen, 17 h): steht 0,034 /s, 5,0 m;
+  geht 0,51 /s, 4,55 m. Für Sitzende ist die Form eine empirische Wahl (der LD2450 unterdrückt Ruhendes).
+- `g_s(x)`: Sicht nach Winkel, Reichweite und Wänden (`world/build.rs`, `prior_pd`): 0,95 bis 15°
+  vor dem Rand des Blickfelds, die Hälfte davon am Rand, 0 bei 15° jenseits; voll bis Reichweite + 1 m, dann
+  Abfall mit e je 1,5 m (gemessen 5.10. an Gehenden), 0 ab Reichweite + 4 m und in geschlossenen Räumen ohne
+  Sensor.
+  **Sicht einer Person, nicht eines Punkts** (seit 7.10., `spread` in `world/build.rs`): Der Sensor misst
   die Person dort, wo ihre Spur auf ihr sitzt, `z = x + c + o + w` (unten). Er sieht sie also so weit,
   wie er diese Stelle sieht: `g(x) = E[g_s(x + c + o)]`, Versatz gaußsch mit der Varianz von unten je
   Entfernung, gemittelt über das, was von x aus ohne Wand erreichbar ist (durch eine Türlücke ja,
@@ -186,14 +194,14 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   obwohl seine Spur in Sicht saß (6.10. 20:55, Flur aus Sicht des Arbeitszimmers: „die Spur ist
   Leons“ hatte das Gewicht 0, 10), und ein 0,2 m breiter Streifen der Küche an ihrer Wand (x 2,2–2,4)
   war für jeden Sensor und das LD2410C unsichtbar (Kacheln 0,08 m²): Dort sammelten sich Personen
-  (7.10. 07:10 Küche 0,76, 10). Jetzt erfasst der LD2450 dort Gehende mit 0,26–0,32 /s (Raummitte
-  0,48 /s), das LD2410C erwartet 26–40 statt 0.
+  (7.10. 07:10 Küche 0,76, 10). Danach erfasste der LD2450 dort Gehende mit 0,26–0,32 /s (Raummitte
+  0,48 /s), das LD2410C erwartete 26–40 statt 0 (gerechnet 7.10. im Python-Kern, Grundriss von damals).
 - `q(x)`: Auflösung neben einem gemessenen Ziel,
   `1 − exp(−ln 2 ((Δr/R_r)² + (Δquer/R_q)²))` (Form A_Svensson2012 Gl. 18–20); neben einem
   gehaltenen Ziel stattdessen `1 − exp(−d²/(2·0,7²))` (dort würde es wiedergefunden). **Je Betriebsart** (seit 0.63,
   `resolution`): eine Stehende neben jedem Ziel R = 1,4 / 2,1 m, eine Gehende neben dem Ziel einer Gehenden 0,6 / 0,9 m,
   neben einem ruhenden Ziel gar nicht (q = 1; ruhend ist ein Ziel, dessen gemessene Geschwindigkeit entlang des Strahls
-  unter 0,3 m/s liegt). Gemessen 8.11.: Zwei Ruhende nah beieinander (Sofa 8.11. 36 min, Bett in 7 Nächten zu je 4 h)
+  unter 0,3 m/s liegt, und eine neue Spur bis zu ihrer ersten Messung). Gemessen 8.11.: Zwei Ruhende nah beieinander (Sofa 8.11. 36 min, Bett in 7 Nächten zu je 4 h)
   geben in 1–4 % der Frames zwei Ziele, das Modell erwartete mit 0,6 / 0,9 m bei 0,6 m Abstand etwa die Hälfte;
   Maximum-Likelihood der Wiedererfassung einer verlorenen Zweiten neben der Ersten (13 Episoden, `dev/personenzahl` 8.11.
   `reacq.py`, Rate `ρ κ (1 − exp(−ln 2 (d/R)²))`): R 1,5–2,0 m (κ 0,5–1), mit 0,6 m −30 log. Unabhängig davon: Ein ruhendes
@@ -208,28 +216,23 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   8.10.): ein Gitter von 5 Zellen gleichen Abstands in log κ zwischen dem 0,1-%- und dem 99,9-%-Quantil
   (die äußeren Zellen reichen bis 0 und ∞), je am bedingten Mittel mit der Masse des Priors in der
   Zelle, wie die Amplitude des LD2410C (4.3; ein Punktmassenfilter über κ, 0_Arulampalam2002 Abschn.
-  II-B): 0,105 / 0,249 / 0,541 / 1,11 / 2,12 mit 0,010 / 0,066 / 0,302 / 0,496 / 0,127 (α = 3; mit α = 1 bis 0.59
-  0,003 / 0,020 / 0,12 / 0,61 / 2,18 mit 0,006 / 0,028 / 0,15 / 0,51 / 0,31). Warum ein Gitter
+  II-B): 0,105 / 0,249 / 0,541 / 1,11 / 2,12 mit 0,010 / 0,066 / 0,302 / 0,496 / 0,127 (α = 3). Warum ein Gitter
   in log κ: Was die Stufen tragen müssen, ist `E[e^(−κ·a·T)]` für eine Sitzende, die die Zeit T mit
   der Erfassungsrate a nicht erfasst wird, also die Laplace-Transformierte des Priors an s = aT; sie
   hängt nur von log κ + log s ab, ein gleichmäßiges Gitter in log κ ist deshalb über alle Zeitskalen
-  gleich genau. Gerechnet (nicht gemessen) für α = 1, a = 0,034 /s (`acquire`, nah, ein Sensor) mit dem
+  gleich genau. Gerechnet (nicht gemessen) für das damalige α = 1, a = 0,034 /s (`acquire`, nah, ein Sensor) mit dem
   Neuziehen, gegen ein feines Gitter (4000 Zellen): nach 1 / 5 / 10 / 20 / 60 min ungesehen 0,91 / 0,83
   / 0,79 / 0,75 / 0,74 des Richtigen (7 Zellen 0,94–0,85, 9 Zellen 0,97–0,90; bei a = 0,1 /s ebenso).
   **Bis 0.21** 3 Punkte der verallgemeinerten Gauß-Laguerre-Quadratur (Golub & Welsch 1969), 0,42 /
   2,29 / 6,29 mit 0,71 / 0,28 / 0,01: exakt für die Momente bis zum 5., aber nicht für `e^(−κaT)`,
   das kein Polynom niedrigen Grades ist; die unterste Stufe entschied allein, wie lange eine Sitzende
-  ungesehen bleiben konnte: 0,94 / 0,13 / 5·10⁻³ / 4·10⁻⁶ / 3·10⁻¹⁹ des Richtigen (Review 8.10., 1.7).
+  ungesehen bleiben konnte: 0,94 / 0,13 / 5·10⁻³ / 4·10⁻⁶ / 3·10⁻¹⁹ des Richtigen (Review 8.10.).
   Die konjugierte Form (Gamma(α, β) mal `e^(−κR)` ist Gamma(α, β + R), je Komponente und Kachel ein
   (α, β)) ist nur ohne Neuziehen exakt: Das Neuziehen, neue Aufenthalte und die zensierte Erfassung
   beim Start (`1/(1 + κc)`, 4.1 unten) machen Mischungen, die je Schritt wieder auf eine
-  Gamma-Verteilung projiziert werden müssen (Mittel und Mittel des Logarithmus); so gerechnet 1,00 /
+  Gamma-Verteilung projiziert werden müssen (Mittel und Mittel des Logarithmus); so gerechnet (α = 1) 1,00 /
   0,88 / 0,74 / 0,65 / 0,83, nicht genauer als 4–5 Gitterzellen, aber mit einer Newton-Iteration über
-  Digamma je Kachel und Takt statt einer Multiplikation. Vergleiche in 10, „Review 8.10.“ (bis 7.10.
-  gleich wahrscheinliche Stufen an ihren Mitteln, 0,19 / 0,71 / 2,10: Log-Evidenz mit der Quadratur
-  +466 / +513 auf den Meldungen bis 6.10. / vom 7.10., Lichtfehler gleich; 5 Stufen −2, 4 Stufen −0,3
-  gegenüber 3 Quadraturpunkten, dieselben 11 h wie 3.1; das waren Vergleiche verschiedener diskreter
-  Verteilungen, nicht verschiedener α).
+  Digamma je Kachel und Takt statt einer Multiplikation. Vergleiche in 10, „Review 8.10.“.
   **α = 3 (seit 0.60.0, gemessen 5.11.):** In Zeiten mit nur einer Person zu Hause (Telefone, 31.10.–4.11.) je Aufenthalt
   in einem Raum (von der ersten bis zur letzten Spur ≥ 10 s dort, bevor eine solche in einem anderen Raum beginnt; 46
   Aufenthalte ≥ 3 min, 15,9 h) die Lücken zwischen frischen Zielen des LD2450 dieses Raums (`dev/personenzahl/luecken.py`):
@@ -238,11 +241,7 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   mit α = 3 eine. Maximum-Likelihood (je Aufenthalt Exp(λκ), κ ~ Gamma(α, α)) α 1,9 (α 1 −2,2, α 3 −1,1 log). Das Gitter
   aus 5 Zellen trägt `E[e^(−κs)]` bei α = 3 bis s = 20 (ein Neuziehen, 600 s bei 0,034 /s) auf 0,74 genau; darüber ist es
   strenger als sein Prior (keine Zelle unter 0,1; bei s = 60 0,16 davon, wo der Prior selbst 10⁻⁴ gibt).
-  Bis 0.59 α = 1 (angenommen). Mit der Quadratur über die Evidenz dieser 11 h nicht zu bestimmen: α = 0,5 −5,
-  α = 2 +17, mit 24 Hypothesen ab 10⁻⁹ aber −82 (5.1). Aus den bekannten Aufenthalten (5.5) auch nicht: Der LD2450 im
-  Arbeitszimmer hatte Leon am Schreibtisch fast immer in einer Spur (6.10. abends 233 s ohne Spur in
-  79 min, 7.10. 0–14 s je 10 min), und ohne Spur fand er ihn mit 0,01–0,27 /s wieder (κ ≈ 0,3–8, keine
-  Masse nahe 0, aber zu wenige Fälle für eine Form). Gehende: κ = 1.
+  Bis 0.59 α = 1 (angenommen). Gehende: κ = 1.
 - Wer keine Spur bekommt, wird mit `exp(−Rate·Δt)` gewichtet; das gilt für jede Person, die von einem
   Sensor nicht schon gemessen wird.
 
@@ -251,15 +250,18 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 - Zeit bis zum Wiederfinden (gemessen): log-normal, Median 0,13 s / Streuung 1,0 (weiterlaufend) bzw.
   0,2 s / 2,0 (eingefroren); 3 % bzw. 2 % nie.
 - Wiedergefunden wird auf dem Eigentümer, auf einer anderen Person nahe der gehaltenen Stelle
-  (Gauß-Kern 0,7 m × Sicht), auf dem Geist, der sie war, oder auf einer Reflexion dort (wie 0,05
-  Personen). Nicht-Wiederfinden spricht gegen alle diese, ohne Frist; gegen eine andere Person aber nur, soweit
-  der Sensor sie vom gehaltenen Ziel auflöst (seit 0.62): mit dem Faktor `S(u)^(k(x)·(1 − P_u(x, z)))`,
-  `P_u = exp(−ln 2 ((Δr/0,6 m)² + (Δquer/0,9 m)²))` die Form der Auflösung von oben (A_Svensson2012 Gl. 18–20). Wer
+  (Gauß-Kern 0,7 m × Sicht, `k(x)`), auf dem Geist, der sie war, auf der Störquelle, die sie war (4.5), oder auf
+  einer Reflexion dort (wie 0,05 Personen). Nicht-Wiederfinden spricht gegen alle diese, ohne Frist; gegen eine andere
+  Person aber nur, soweit der Sensor sie vom gehaltenen Ziel auflöst (seit 0.62): mit dem Faktor
+  `S(u)^(k(x)·(1 − P_u(x, z)))`, `P_u` die Form der Auflösung von oben (A_Svensson2012 Gl. 18–20, `resolved_from` in
+  `filter/evidence.rs`). Das gehaltene Ziel gilt dabei als ruhend: Seit 0.63 gilt für Personen ohne Spur und für die
+  Komponente *steht* der anderen die Auflösung der Stehenden, 1,4 / 2,1 m; für die Komponente *geht* einer anderen
+  Person mit Spur zählt das Nicht-Wiederfinden voll (q neben einem ruhenden Ziel ist 1 für Gehende, oben). Wer
   mit dem Eigentümer in einer Auflösungszelle steht, ist mit ihm eine Quelle, die höchstens ein Ziel gibt
   (A_Beard2015 Gl. 16–17: je Gruppe einer Partition höchstens eine Messung; Mahlers Punkt-Cluster); sein Ausbleiben
   ist das Ausbleiben dieses einen Ziels und zählt schon beim Eigentümer. Bis 0.61 zählte es für jede Person in der
   Nähe noch einmal, als könne der Sensor sie getrennt wiederfinden: Die zweite Person neben Leon im Bad verlor in
-  100 s Δlogit r = −6,0 allein dadurch (6.11. 19:28, 10 „Zwei als ein Ziel“).
+  100 s Δlogit r = −6,0 allein dadurch (6.11. 19:28, 10 „0.62: Zwei als ein Ziel“).
 - Fallenlassen der Spur: keine eigene Information (für Geister: Lebensdauer, 4.2).
 
 **Position:** `z = x + c + o + w`. Versatz c konstant je Spur, o wandert (OU, τ = 3,5 s), w = 5 cm.
@@ -267,7 +269,8 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 0,10 m + 5 % der Entfernung; im Filter je Achse ihr Mittel. c und o sind Teil des Kalman-Zustands
 (E_BrysonHenrikson1967). Verwendet wird höchstens alle 0,25 s eine Position.
 **Breiter Versatz einer neuen Spur** (seit 0.58.0, `offset_wide`): Beginnt eine Spur auf einer Person, die schon eine
-Spur hat, sitzt sie mit 0,8 auf dem engen Versatz oben und mit 0,2 auf einem breiten, σ = 2,0 m je Achse auf c
+Spur hat, oder wird eine gehaltene Spur auf einer solchen anderen Person wiedergefunden, sitzt sie mit 0,8 auf dem
+engen Versatz oben und mit 0,2 auf einem breiten, σ = 2,0 m je Achse auf c
 (Skalenmischung, die Form eines Ausläufers wie bei einer t-Verteilung). Behalten wird der Anteil, der die Spur besser
 erklärt, gewogen mit beiden. Gemessen 4.11. in Zeiten mit nur einer Person zu Hause (lange gehende Spuren zweier
 Sensoren, gehaltene Frames verworfen, ohne Dobby): Abstand zweier Sensoren auf der einen Person im Median 0,64 m, 27 %
@@ -286,57 +289,59 @@ des Sensors (5.3): Seine Spuren enden ohne Information, sein nächster Frame ist
 ### 4.2 Geister
 Eine Spur, die zu keiner Person gehört.
 - **Entstehen** je Sensor mit einer festen Rate `λ` = 1,8·10⁻⁵ je m² und s, überall in seinem Blick (Sicht
-  über 0,05), für alle Sensoren gleich, unabhängig davon, wo Personen sind. Das ist die gemessene mittlere Rate:
-  692 Geister in 437 Sensorstunden, 1,6 je Sensorstunde, bei 17–26 m² Blick. Keine Karte, nichts wird gelernt.
+  über 0,05), für alle Sensoren gleich, unabhängig davon, wo Personen sind. Das ist die gemessene mittlere Rate
+  (30.10.): 692 Geister in 437 Sensorstunden, 1,6 je Sensorstunde, bei 17–26 m² Blick. Keine Karte, nichts wird
+  gelernt.
 - **Dazu, während jemand geht** (seit 0.58.0, `walker_ghosts`): je Sensor und gehender Person (Gewicht ihrer
   Gehen-Komponente) 0,0057 Geister je s, gleich über seinen Blick verteilt, von der kurzen Art (3 s). Gemessen 4.11.
   in Zeiten mit nur einer Person zu Hause: Spuren ≤ 10 s, die > 1,5 m von jedem anderen Ziel beginnen, während eine
   Spur geht: 62 in 1 545 Gehsekunden (Küche 0,014, Wohnzimmer 0,012, Bad 0,002 je s). Damit ist eine zweite gehende
   Spur neben einer Gehenden zuerst ein Geist; eine eigene Person wird sie, wenn sie sich länger wie eine verhält.
+  Im Code (`filter/branch.rs`) steht dieser Teil nur in der Dichte, mit der eine neue Spur als Geist beginnt. Gezählt
+  wird das Gehen-Gewicht aller Personen mit Spur im ganzen Haus, für jeden Sensor, auch wer nicht in seinem Blick ist;
+  Personen ohne Spur zählen nicht. Der Faktor „kein Geist entstanden“ je Frame (`Filter::watch`, `filter/evidence.rs`)
+  enthält nur die feste Rate `λ` (und die Geburt der Störquellen, 4.5), nicht diesen Teil.
 - **Lebensdauer:** Mischung zweier Exponentialverteilungen, 40 % mit 3 s, 60 % mit 39 s (geschätzt
   per EM 6.10. offline). Fest: Die App lernt sie nicht weiter (bis 0.12.0 tat sie das, 10). Die Lebensdauer ist, was Geister von Sitzenden trennt; aus dem eigenen
   Urteil gelernt, folgte sie den Personen, die der Filter für Geister hielt.
-- **Ende der Spur** (`Tracker._ghost_end`): Der Sensor gibt eine gehaltene Spur auf, wenn er sie nicht
+- **Ende der Spur** (`ghost_end` in `filter/evidence.rs`): Der Sensor gibt eine gehaltene Spur auf, wenn er sie nicht
   wiederfindet (4.1). Bei einer Person ist das „u s nicht wiedergefunden“, S(u). Beim Geist ist die
   Quelle entweder noch da und nicht wiedergefunden, S_D(u) S(u), oder sie verschwand bei τ < u, bevor
   sie wiedergefunden wurde, ∫ f_D(τ) S(τ) dτ (konkurrierende Risiken, Kalbfleisch & Prentice 2002 Kap.
-  8). Ohne Halten geendet: für Person und Geist gleich (kein Faktor). Bis 0.10.0 bekam der Geist
+  8). Ohne Halten oder durch Datenverlust geendet: für Person und Geist gleich (kein Faktor). Bis 0.10.0 bekam der Geist
   S(u) und dazu `1 − S_D(u)`, als müsse die Quelle sterben *und* nicht gefunden werden: Am Ende jeder
   Geisterspur wurde „Person“ um 1/(1 − e^(−u/L)) wahrscheinlicher, bei 1,5 s gehalten und L = 39 s
   etwa 26-mal (10).
-- **Quelle:** bewegt sich wie eine Person (3.1, 3.2), mit demselben Versatz. Geist und Person
-  unterscheiden sich durch Entstehungsort, Lebensdauer und Verhalten der Spur, nicht durch ein anderes
-  Rauschen.
-- **Warum keine Karte** (Leon 29.10., gemessen 30.10.): Bis 0.54 lernte jeder
-  Sensor je Zelle (0,4 m) eine Rate aus dem Urteil des Filters (J_Luber2014 Kap. 6, J_Park2020 Gl. 37–41). Sie
-  bildete ab, wo Menschen sind, nicht wo Reflexionen stehen: Hält der Filter zwei dicht Sitzende für eine Person,
-  ist jede zweite Spur daneben ein „Geist“, am Bett bis 46-mal die Prior-Rate. J_Luber2014 Kap. 5.3.2 und 6.6 lernt
-  seine Karte deshalb aus annotierten Daten ohne Personen und getrennt vom Filter; die Korrektur nach J_Park2020
-  bremst die Rückkopplung nur. Ohne Lernen gibt es keine Rückkopplung und keinen Bias, und gemessen brachte das
-  Lernen nichts: Die feste Rate gegen die Karte auf den Aufnahmen 6.–14.10.: Wahrheit, leere Nacht und leeres Haus
-  gleich, 44 min Licht anders in 96 h (Rauschboden 34–56), je 1,5–1,7 min „Person wahrscheinlich“ in beide Richtungen.
-- **Geister hängen an Personen, das Modell nutzt es nicht:** Im leeren Haus (6,2 h, 7 Sensoren) beginnen überhaupt
-  nur 2 Spuren, 0,05 je Sensorstunde, also etwa 3 % der Rate; 62 % der Geistermasse liegen ≤ 1 m neben einem
-  gemessenen Ziel (Zufall 9 %). Dieses Ziel misst aber fast immer ein *anderer* Sensor (0,49; derselbe 0,08, wie der
-  Zufall): Geburten neben einer Person, die der Sensor noch nicht hat, nimmt schon „die Spur gehört ihr“ auf
-  (`ρ·N(z; x)` gegen `λ`, um Größenordnungen mehr), ein Kern um Personen ändert dort nichts. Geprüft auf den
-  Aufnahmen, keine Form war messbar besser als die feste Rate:
-  ein Kern `ν Σ r_i N(x; x_i, (0,4 m)²)` mit ν = 1,7 /h (J_Park2020 Gl. 16), mit `λ` wie oben oder dem Wert des
-  leeren Hauses; `ρ_f · (erwartete Personen im Blick)` mit der Rate des leeren Hauses (je Person gleichmäßig);
-  dasselbe je Person im Haus. Mit der Rate des leeren Hauses für Blicke ohne Person wird ein Geist in einem leeren
-  Raum zur Person (Wahrheit, Esszimmer 7.10. 22:20: 6,3 min Licht leer, beide Telefone im Schlafzimmer); „jemand im
-  Haus“ als Bedingung hält das, bringt aber nichts gegenüber der festen Rate. Die bis 0.54 mitgeführten
-  Mehrwegeechos je Gehendem (`λ_e` = 3·10⁻⁴, angenommen, gemessen eine Größenordnung zu hoch) ändern ebenfalls nichts
-  Messbares und sind weg.
-- **Offen:** Sitzende gewinnt die feste Rate nicht. Die verlorenen Sitzenden sind Spuren von Minuten, die „Geist“
-  bleiben, weil die zweite Person nicht durch eine Tür kam (9, „Ein Sitzplatz“); ohne Geister wären es etwa 30 min
-  weniger, dafür 85 min mehr Licht ohne Person.
+- **Quelle** (`ghost_source` in `filter/mixture.rs`): eine Gauß-Mischung wie die einer Person, mit demselben Versatz
+  (4.1) und derselben Dynamik (3.1, 3.2), aber ohne Wände und Türen. Ihr Ort beginnt ohne Vorwissen bei der ersten
+  Position (die ganze Unsicherheit von z liegt auf x), je zur Hälfte stehend und gehend. Sie wird nach einem Update
+  nicht auf die Sicht beschnitten (4.1), und kein Sensor gewichtet sie mit „keine neue Spur“. Geist und Person
+  unterscheiden sich nicht durch ein anderes Rauschen der Spur.
+- **Warum keine Karte:** Bis 0.54 lernte jeder Sensor je Zelle (0,4 m) eine Rate aus dem Urteil des Filters
+  (J_Luber2014 Kap. 6, J_Park2020 Gl. 37–41). Sie bildete ab, wo Menschen sind, nicht wo Reflexionen stehen: Hält der
+  Filter zwei dicht Sitzende für eine Person, ist jede zweite Spur daneben ein „Geist“, am Bett bis 46-mal die
+  Prior-Rate. J_Luber2014 Kap. 5.3.2 und 6.6 lernt seine Karte deshalb aus annotierten Daten ohne Personen und
+  getrennt vom Filter; die Korrektur nach J_Park2020 bremst die Rückkopplung nur. Ohne Lernen gibt es keine
+  Rückkopplung. Auf den Aufnahmen 6.–14.10. waren feste Rate und Karte nicht zu unterscheiden (30.10.: 44 min Licht
+  anders in 96 h bei einem Rauschboden von 34–56 min).
+- **Geister hängen an Personen:** Im leeren Haus (6,2 h, 7 Sensoren) begannen überhaupt nur 2 Spuren, 0,05 je
+  Sensorstunde, also etwa 3 % der Rate; 62 % der Geistermasse lagen ≤ 1 m neben einem gemessenen Ziel (Zufall 9 %).
+  Dieses Ziel misst aber fast immer ein *anderer* Sensor (0,49; derselbe 0,08, wie der Zufall): Geburten neben einer
+  Person, die der Sensor noch nicht hat, nimmt schon „die Spur gehört ihr“ auf (`ρ·N(z; x)` gegen `λ`, um
+  Größenordnungen mehr). Den Ort der Personen nutzt die Geisterrate nicht, nur ob jemand geht (oben). Ein Kern
+  `ν Σ r_i N(x; x_i, (0,4 m)²)` (J_Park2020 Gl. 16) und eine Rate je erwarteter Person im Blick oder im Haus waren auf
+  den Aufnahmen 6.–14.10. (30.10.) nicht messbar besser als die feste Rate. Mit der niedrigen Rate des leeren Hauses
+  für Blicke ohne Person wird ein Geist in einem leeren Raum zur Person (Esszimmer 7.10. 22:20: 6,3 min Licht leer).
+- **Offen:** Auf den Aufnahmen 6.–14.10. (30.10.) gewann die feste Rate keine Sitzenden zurück: Sitzende mit Spuren von
+  Minuten blieben „Geist“ (9, „Ein Sitzplatz“); ohne Geister wären etwa 30 min weniger Sitzende verloren gewesen, dafür 85 min mehr
+  Licht ohne Person.
 
 ### 4.3 LD2410C
 Gemessen wird seine **Energie je Entfernungsring** (0,75 m Schrägentfernung, `ld2410/`): bewegt in Ring
 0–8, ruhig in Ring 2–8 (ruhig 0 und 1 sind immer 0), 0–100, 16 Zahlen je Frame. Seine Flags und die
-gemeldete Entfernung zählen nicht (10). Gemessen 6.10. (4,3 h, 5 Sensoren, `tools/ld2410/`), Bezug die
-Ziele des LD2450 im selben Gehäuse (der unterdrückt Sitzende und hat Geister: nur zum Bedingen):
+gemeldete Entfernung zählen nicht (10). Gemessen 6.10. (4,3 h, 5 Sensoren, `tools/ld2410/`; die Aufnahmen sind
+seit 31.10. gelöscht), Bezug die Ziele des LD2450 im selben Gehäuse (der unterdrückt Sitzende und hat Geister: nur
+zum Bedingen):
 - Das **Ruhig-Flag ist die Firmware-Schwelle** auf die Ruhig-Energien (gleich in 90–99 % der Frames); die
   Energien enthalten es. Das **Bewegt-Flag** ist keine Schwelle auf die gemeldeten Energien (68–84 %);
   ohne jedes Ziel ist es 2–4 % der Zeit an (die Blitze, 1,1 s), ohne dass die Energien etwas zeigen.
@@ -361,30 +366,24 @@ Ziele des LD2450 im selben Gehäuse (der unterdrückt Sitzende und hat Geister: 
   zensiert, gelernter Hintergrund): Log-Likelihood +1,3 je Frame gegenüber 6.10. (159 / 2,16 / 0,41 / 0,57 / 0,47 / 1,26),
   in keinem Sensor schlechter (Küche +4,1, Flur +1,5, Wohnzimmer +0,5). In Zeiten mit einer Person zu Hause (24 665 Frames)
   166 / 1,71 / 0,55 / 0,69 / 0,48 / 1,43. In 2–4 m gibt ein Gehender damit 1,6–2-mal so viel wie mit dem Profil vom 6.10.
-  Die übrigen drei Profile neu gemessen (eine Person zu Hause): ruhig, geht +1,3 je Frame (312 / 1,46 / 1,72 m / 2,70 m /
-  0,92 / 1,49 m, viel breiter), stehend bewegt +0,19, ruhig +0,23; nicht übernommen (am Abend 8.11. ohne Wirkung, ungeprüft
-  über alle Fenster).
+  Die übrigen drei Profile, ebenso neu gemessen (eine Person zu Hause), passen besser: ruhig, geht +1,3 je Frame (312 /
+  1,46 / 1,72 m / 2,70 m / 0,92 / 1,49 m, viel breiter), stehend bewegt +0,19, ruhig +0,23. Nicht übernommen: an einem
+  Abend (8.11.) ohne Wirkung, über alle Fenster nicht geprüft.
   n ≈ 2: eine Amplitude (Radargleichung). Der Schweif ist kein Sonderfall eines Raums (Arbeitszimmer
-  allein und die übrigen vier: τ 0,42 / 0,39, ℓ 1,59 / 1,67 m). Nach dem Winkel flach bis 45–60°
-  (Strahl voll bis 50°, 0 ab 70°, angenommen darüber). Die Amplitude einzelner Aufenthalte streut um
-  das Profil (Gewinn g auf dem Profil je Aufenthalt einer Person ≥ 30 s). Nur aus Frames, die auch der
-  Filter als Messung nimmt (`tools/ld2410/amplitude2.py`: das LD2450-Ziel nicht gehalten und nicht
-  hinter einer Wand): innerhalb eines Sensors log g Streuung 0,47 ruhig (6.10. 18–23 Uhr, 88
-  Aufenthalte) bzw. 0,25 (7.10. 6–8 Uhr, 39), als Gamma(β, β) β 5–16; ruhig und bewegt derselbe
-  Gewinn (0,82–0,88); mit der Wiederfinderate des LD2450 innerhalb Sensor und 1 m Entfernung Spearman
-  0,37 bewegt / 0,47 ruhig. Die erste Messung (erste Fassung von `amplitude2.py`: 0,93, β 1,6, Flur −1,1, Spearman 0,62)
-  nahm auch gehaltene Ziele: Der LD2450 hält ein eingefrorenes Ziel bis 35 s, nachdem die Person
-  gegangen ist, und die Küche hat ihre Echos hinter der Wand; dort war wenig Energie, daher die
-  niedrigsten Gewinne und ein Teil der Kopplung an κ. Je Sensor (Mittel von log g ruhig, beide Tage):
-  Arbeitszimmer −0,2 / +0,2, Esszimmer +0,3 / −0,1, Flur −0,2 / +0,3, Küche +0,9 / +1,5 (je ein
-  Aufenthalt), Wohnzimmer +1,0 / +1,1 (alle in 5–7,5 m). Wo im Profil die Abweichung liegt
-  (`tools/ld2410/shape2.py`, gemessen/Profil je Abstand des Rings hinter der Person): Die Hauptkeule
-  passt in Arbeitszimmer, Flur und Küche (0,9–1,3), der Schweif hinter der Person ist je Raum
-  verschieden (Küche ×2,5–4,6, Flur ×1,5–2,4, Arbeitszimmer ×1–1,3, Esszimmer ×0,5–0,7); im
-  Wohnzimmer liegt alles ×1,5–5 höher. Vorbehalt: Bezug ist „genau ein LD2450-Ziel“, und der LD2450
-  unterdrückt Sitzende; wo jemand sitzt (Ess-, Wohnzimmer), zählt dessen Energie mit. Nach dem
-  Winkel kein beständiger Verlauf (6.10. +0,17 je 10°, 7.10. 0,0). Im Modell ist davon nur die
-  Amplitude je Aufenthalt (unten; Maßstab und Schweif je Sensor: 10).
+  allein und die übrigen vier: τ 0,42 / 0,39, ℓ 1,59 / 1,67 m). Nach dem Winkel flach bis 45–60°.
+  Die Amplitude einzelner Aufenthalte streut um das Profil (Gewinn g auf dem Profil je Aufenthalt einer Person
+  ≥ 30 s; nur Frames, deren LD2450-Ziel weder gehalten noch hinter einer Wand ist, `tools/ld2410/amplitude2.py`):
+  innerhalb eines Sensors log g Streuung 0,47 ruhig (6.10. 18–23 Uhr, 88 Aufenthalte) bzw. 0,25 (7.10. 6–8 Uhr, 39),
+  als Gamma(β, β) β 5–16; ruhig und bewegt derselbe Gewinn (0,82–0,88); mit der Wiederfinderate des LD2450
+  innerhalb Sensor und 1 m Entfernung Spearman 0,37 bewegt / 0,47 ruhig. Je Sensor (Mittel von log g ruhig,
+  beide Tage): Arbeitszimmer −0,2 / +0,2, Esszimmer +0,3 / −0,1, Flur −0,2 / +0,3, Küche +0,9 / +1,5 (je ein
+  Aufenthalt), Wohnzimmer +1,0 / +1,1 (alle in 5–7,5 m). Die Abweichung liegt vor allem im Schweif hinter der
+  Person (`tools/ld2410/shape2.py`, gemessen/Profil je Abstand des Rings hinter der Person: Hauptkeule 0,9–1,3 in
+  Arbeitszimmer, Flur und Küche; Schweif Küche ×2,5–4,6, Flur ×1,5–2,4, Arbeitszimmer ×1–1,3, Esszimmer ×0,5–0,7;
+  im Wohnzimmer alles ×1,5–5). Vorbehalt: Bezug ist „genau ein LD2450-Ziel“, und der LD2450 unterdrückt Sitzende;
+  wo jemand sitzt (Ess-, Wohnzimmer), zählt dessen Energie mit. Nach dem Winkel kein beständiger Verlauf (6.10.
+  +0,17 je 10°, 7.10. 0,0). Im Modell ist davon nur die Amplitude je Aufenthalt (unten; Maßstab und Schweif je
+  Sensor: 10).
 - **Zeit:** Die Ruhig-Energien folgen einer Person mit etwa 2 s (zwei Fälle: Kommen und Gehen; nah
   gekappt bei 100, darum dort 3 s länger voll). Korrelationszeit des Log-Likelihood-Verhältnisses „Person
   / niemand“: 4 s bewegt, 13 s ruhig.
@@ -393,75 +392,72 @@ Ziele des LD2450 im selben Gehäuse (der unterdrückt Sitzende und hat Geister: 
   dazu Breitband-Schübe (alle Bewegt-Ringe 15–30 für etwa eine Sekunde).
 
 Das Modell, je Sensor:
-- **Messung:** jede Energie ~ Gamma(Form α, Mittel μ), 100 zensiert (`P(e ≥ 99,5)`); α 2,5 bewegt, 2,0
-  ruhig (gemessen 2,4–3,0 / 1,6–2,4). Die Form der Likelihood je Auflösungszelle wie bei
+- **Messung:** jede Energie ~ Gamma(Form α, Mittel μ), gekappt bei 100 (`P(e ≥ 99,5)`); α 2,5 bewegt, 2,0
+  ruhig (gemessen 2,4–3,0 / 1,6–2,4). Die Energien sind ganze Zahlen; eine 0 zählt als 0,5. Ein Frame mit lauter
+  Nullen ist das „kein Wert“ der Firmware und zählt nicht. Die Form der Likelihood je Auflösungszelle wie bei
   Track-before-detect (Salmond & Birch 2001; Boers & Driessen 2004), Amplitude als Merkmal wie Lerro &
   Bar-Shalom 1993.
 - **Mittel = (Hintergrund + Summe der Personen) × gemeinsamer Pegel** (inkohärente Überlagerung,
   superpositionaler Sensor): `μ_g = u · (b_g + w_m·M_g + (1 − w_m)·Σ_i S_g(x_i))`. S ist das Profil oben
-  mal Strahl mal Sicht (Wände wie beim LD2450: der Anteil der Person, den der LD2450 im selben Gehäuse
-  ohne Wand dazwischen sehen könnte, über ihren Versatz gemittelt wie in 4.1; bis 0.10.0 ja/nein). Ruhig zählt das Verzögerte: M ist, was die Personen
-  zuletzt hineingaben (geglättet mit 2 s), w_m sein Anteil im Block; bewegt w_m = 0.
+  mal Strahl mal Sicht. Der Strahl ist voll bis 50° neben der Achse und fällt linear auf 0 bei 70° (darüber
+  angenommen); r ist unten bei 0,3 m begrenzt. Die Sicht: Wände wie beim LD2450, der Anteil der Person, den der
+  LD2450 im selben Gehäuse ohne Wand dazwischen sehen könnte, über ihren Versatz gemittelt wie in 4.1. Ruhig zählt
+  das Verzögerte: M ist, was die Personen zuletzt hineingaben (geglättet mit 2 s), w_m sein Anteil im Block; bewegt
+  w_m = 0. Auch die Echoquellen (unten) geben ruhig nur (1 − w_m) ihres Profils; in M gehen nur die Personen ein.
 - **Blick in einen anderen Raum:** Die Sicht durch eine Türöffnung oder über den Raumteiler ist die geometrische.
   Was dem LD2410C nicht mehr als `FLOOR` gibt, ist außerhalb seines Blicks und wird nicht gewogen (Faktor 1, neutral)
-  statt „mit null Energie gesehen“. Ein gemessener Faktor je Paar „Sensor ← Raum“ (`ld_view`, 0.30–0.54) ist entfernt
-  (30.10.): `fast_eval` über die 94 h ohne ihn: Wahrheit 0,48 / 3,28 gleich, leere Nacht und leeres Haus 0, Bad-Fenster
-  gleich, Licht in 55,7 min anders, netto 4,3 min mehr „dunkel mit Person“ (Rauschboden 4–7 min). Er galt nur für die
-  Sensorlage der Messung, stand live seit 29.10. leer, und ein Wert je Wand erklärt die Raumpaare nicht besser als
-  undurchsichtige Wände; gemessen lässt eine Wand (alle Innenwände gemauert) etwa 4 % durch, sie bleiben undurchsichtig.
+  statt „mit null Energie gesehen“. Wände sind undurchsichtig: Gemessen lässt eine Innenwand (alle gemauert) etwa 4 %
+  durch, und ein Wert je Wand erklärte die Raumpaare nicht besser. Einen gemessenen Faktor je Paar „Sensor ← Raum“
+  (`ld_view`) gibt es seit 30.10. nicht mehr: Er galt nur für die Sensorlage, unter der er gemessen war.
 - **Amplitude je Aufenthalt** (Swerling III: langsam, fest über einen Aufenthalt): Eine Stehende mit
   Spur gibt g·S ab, g ~ Gamma(6, 6) (gemessen β 5–16, s. o.). Der Filter führt den Posterior von g,
   nicht seine Momente: ein Gitter von 9 Zellen gleichen Abstands in log g zwischen dem 0,1-%- und dem
   99,9-%-Quantil, je am bedingten Mittel mit der Masse des Priors in der Zelle (0,21 / 0,30 / 0,40 /
   0,54 / 0,72 / 0,97 / 1,28 / 1,70 / 2,28 mit 0,004 / 0,013 / 0,041 / 0,108 / 0,211 / 0,282 / 0,228 /
   0,096 / 0,018; ein Punktmassenfilter über g wie die Kacheln über den Ort, 0_Arulampalam2002 Abschn.
-  II-B). Bis 0.19.0 3 Quadraturpunkte wie κ (0,58 / 1,22 / 2,20): Eine Person, die ein Drittel des
-  Profils zurückgab, erklärte die Energie schlechter als eine Echoquelle mit ihrer Stufe 0,3 (10,
-  „Meldungen 7.10. abends“). Neu bei jedem Stehenbleiben, innerhalb mit 1/(600 s) neu gezogen,
-  **zusammen mit κ** (seit 8.10.): Eine Haltung, die wenig zurückwirft, sieht auch der LD2450 seltener
+  II-B). Mit 3 Punkten erklärte eine Person, die ein Drittel des Profils zurückgab, die Energie schlechter als
+  eine Echoquelle mit ihrer Stufe 0,3 (10, „Meldungen 7.10. abends“). Neu bei jedem Stehenbleiben, innerhalb mit
+  1/(600 s) neu gezogen, **zusammen mit κ**: Eine Haltung, die wenig zurückwirft, sieht auch der LD2450 seltener
   (oben: Spearman 0,37 bewegt / 0,47 ruhig zwischen g und seiner Wiederfinderate). Unabhängig
-  gerechnet zählten beide Hinweise gegen eine solche Sitzende doppelt (Review 8.10., 1.8.5). Der
+  gerechnet zählten beide Hinweise gegen eine solche Sitzende doppelt. Der
   gemeinsame Prior von κ und g ist eine Gauß-Copula (Nelsen 2006) mit der Korrelation der
   Normal-Scores ρ = 2 sin(π ρ_S / 6) = 0,44 aus dem Mittel ρ_S = 0,42 (Kruskal 1958), auf den Zellen
-  beider Gitter (5 × 9, die Ränder exakt Gamma(1) und Gamma(6, 6)); E[g | κ] 0,59 / 0,68 / 0,79 /
-  0,96 / 1,20. Die Gauß-Mischung führt die gemeinsame Verteilung (5 × 9 Zahlen); bis 0.21 zwei
-  Vektoren, und ein Teil ohne Messung des LD2410C zählte beim Mischen mit gleich wahrscheinlichen
-  Zellen statt mit dem Prior. Vorbehalt: Gemessen ist die Kopplung an die Wiederfinderate, nicht an κ
-  selbst. Gehende: g = 1.
-  **Personen ohne Spur** (seit 9.10., `hidden.Hidden.amp`): *Das Ende einer Spur ist nicht das Ende des
+  beider Gitter (5 × 9, die Ränder exakt die Priors Gamma(3, 3) von κ, 4.1, und Gamma(6, 6) von g); E[g | κ]
+  0,60 / 0,72 / 0,86 / 1,05 / 1,29. Die Gauß-Mischung führt die gemeinsame Verteilung (5 × 9 Zahlen).
+  Vorbehalt: Gemessen ist die Kopplung an die Wiederfinderate, nicht an κ selbst. Gehende: g = 1.
+  **Personen ohne Spur** (`Amp` in `filter/densities.rs`): *Das Ende einer Spur ist nicht das Ende des
   Aufenthalts.* Die Kacheln führen je Stufe von κ und Kachel die bedingte Verteilung von g auf den neun
   Stufen des Gitters und einer zehnten, g = 1. Ein Aufenthalt, dessen Amplitude eine Spur gemessen hat, behält
   ihren Posterior dort, wo er steht (Swerling III: g fest über einen Aufenthalt; im PMBM ist die Dichte
   einer Bernoulli der ganze Zustand der Person, der Wechsel Gauß → Kacheln, 5.4, ändert nur die Darstellung,
   B_GarciaFernandez2018 Gl. 31). Neu gezogen wird g nur mit κ (1/(600 s)) oder mit einem neuen Aufenthalt,
-  und was so ohne Messung beginnt, hat wie bisher g = 1 (das Mittel des Priors; der volle Prior auch für nie
+  und was so ohne Messung beginnt, hat g = 1 (das Mittel des Priors; der volle Prior auch für nie
   gemessene Aufenthalte erfindet Personen, 10 „Sitzende im Bad und auf dem Sofa“). Gewogen wird eine Kachel
-  Stufe für Stufe nur, wo mehr als 10⁻⁴ Personen mit gemessener Amplitude stehen (`LD_TILE_MASS`), sonst an
-  ihrem Mittel (ohne Gemessenes: g = 1, die Rechnung bis 0.26). Bekommt die Person wieder eine Spur,
-  bringt sie ihr g mit (der Teil g = 1: der Prior gegeben κ). Gemessen (9.10., Profil einer Stehenden am Ort,
-  Maximum-Likelihood je 30 s, ruhige Ringe 3–8): Sitzende im Bad an der Westwand g 0,35 (10–90 % 0,21–0,61,
-  ohne LD2450-Ziel 0,27), auf dem Sofa 0,58 (0,40–1,14; ohne Ziel 0,46) (die 0,42 „am Esstisch“, 8.10.
-  19:04–19:10, waren keine Person, sondern ein Geist, 10 „0.27“); je Platz streut
+  Stufe für Stufe nur, wo mehr als 10⁻⁴ Personen mit gemessener Amplitude stehen (`ld_tile_mass`), sonst an
+  ihrem Mittel (ohne Gemessenes: g = 1). Bekommt die Person wieder eine Spur,
+  bringt sie ihr g mit (der Teil g = 1: der Prior gegeben κ). Gemessen (9.10., Aufnahmen gelöscht; Profil einer
+  Stehenden am Ort, Maximum-Likelihood je 30 s, ruhige Ringe 3–8): Sitzende im Bad an der Westwand g 0,35 (10–90 %
+  0,21–0,61, ohne LD2450-Ziel 0,27), auf dem Sofa 0,58 (0,40–1,14; ohne Ziel 0,46); je Platz streut
   log g um 0,3–0,6 (Gamma(6, 6): 0,43), zwischen den Plätzen liegen die Mediane bei 0,3–2,9 (alle Stillen in
   Bad, Wohn- und Esszimmer, 881 Blöcke: Median 0,76, 10–90 % 0,24–2,4). Mit g = 1 widerlegte das LD2410C
   eine Sitzende im Bad in Sekunden, sobald ihre Spur endete (9 Punkt 1).
-- **Gemeinsamer Pegel u** je Block (1 s) und Art: 1/u ~ Gamma(κ, κ), κ = 16 bewegt, 50 ruhig (gemessen,
-  s. o.), gemischt mit 2 % Schüben, 1/u ~ Gamma(4) mit u um 2,5 (angenommen; nur nach oben: ein
+- **Gemeinsamer Pegel u** je Block (1 s) und Art: 1/u ~ Gamma(k, k), Form k = 16 bewegt, 50 ruhig (`ld_gain`;
+  gemessen, s. o.), gemischt mit 2 % Schüben, 1/u ~ Gamma(4) mit u um 2,5 (angenommen; nur nach oben: ein
   niedriger Pegel darf eine fehlende Person nicht entschuldigen). Konjugiert: für die nicht gekappten
   Energien exakt herausintegriert; die gekappten (100, `P(e ≥ 99,5)`) rechnen mit dem Mittel μ ohne
-  den Pegel (`Stats._mu_part`), eine kleine Abweichung vom Modell.
+  den Pegel (`Prepared::mu_part` in `ld2410/likelihood.rs`), eine kleine Abweichung vom Modell.
   Ohne ihn erklärte eine gleichmäßig erhöhte Energie aller Ringe (nachts im Arbeitszimmer ruhig
   doppelt so hoch wie gelernt, Schübe) eine Person am Rand des Strahls.
-- **Hintergrund b je Sensor, Ring und Art: von der App gelernt**: Online-EM der
+- **Hintergrund b je Sensor, Ring und Art: von der App gelernt** (`ld2410/background.rs`): Online-EM der
   Überlagerung, der Anteil des Hintergrunds an einer Energie ist im Mittel `e · b/μ` (Richardson 1972;
   Shepp & Vardi 1982), μ aus dem Stand vor diesen Frames (die Energien lernen nicht ihr eigenes Urteil,
-  J_Park2020). Die Personen ohne Spur zählen in μ mit; so hält ein zu niedriger Hintergrund einen Eintrag und der
-  Eintrag den Hintergrund (Fixpunkt des EM bei `e = b + r·S`; 10 „Störquellen“, dritter Durchgang: leer0111). Sie aus
-  μ zu nehmen (immer, oder nach 600 s ohne LD2450-Ziel im Gehäuse) lässt den Hintergrund Sitzende und Schlafende lernen,
-  die der LD2450 selten sieht, und ist verworfen. Eine gekappte Energie (100) zählt mit dem, was sie war: `b · Q(α+1, x) / Q(α, x)`,
-  `x = α · 100/μ`, der Anteil des Hintergrunds an `E[e | e ≥ 100]` (E-Schritt zensierter Daten,
-  Dempster, Laird & Rubin 1977; bis 0.20 zählte sie als 100, und neben einer Person, die mehr gibt,
-  lernte der Hintergrund zu wenig: Arbeitszimmer Ring 2 abends 2,0 statt leer 6,5, 10 „Lernschleifen“).
+  J_Park2020). Die Personen ohne Spur zählen in μ mit: Sonst lernte der Hintergrund Sitzende und Schlafende, die
+  der LD2450 selten sieht. Der Preis ist ein Fixpunkt des EM bei `e = b + r·S`: Ein zu niedriger Hintergrund hält
+  einen Eintrag und der Eintrag den Hintergrund (10 „Störquellen“); darum zählen sie nach langer Stille nicht
+  (unten). Eine gekappte Energie (100) zählt mit dem, was sie war: `b · Q(α+1, x) / Q(α, x)`,
+  `x = α · 99,5/μ`, der Anteil des Hintergrunds an `E[e | e ≥ 99,5]` (E-Schritt zensierter Daten,
+  Dempster, Laird & Rubin 1977; als 100 gezählt lernte der Hintergrund neben einer Person, die mehr gibt,
+  zu wenig, 10 „Lernschleifen“).
   Gelernt wird nur aus der Zeit, in der der LD2450 im selben Gehäuse kein Ziel in Sicht hat (ein
   unabhängiges Signal: wo er etwas sieht, ist es eine Person oder ihr Echo, und dort sagen die Energien
   über b wenig, solange das Profil nicht genau stimmt), und nur, soweit keine Echoquelle an ist
@@ -470,45 +466,43 @@ Das Modell, je Sensor:
   erklärt, wurde Hintergrund. Ohne beides lernte der Hintergrund Sitzende und Schlafende (10
   „Lernschleifen“). Nicht nach dem Urteil des Filters über Personen ohne Spur: Dort halten die Energien
   selbst eine Person, wenn b zu klein ist, und das Lernen stünde still (gemessen: 4 h Licht im leeren
-  Schlafzimmer, 10).
-  **Nach langer Stille zählen Personen ohne Spur nicht** (seit 0.61.0): Der Anteil des Hintergrunds `b/μ` nahm μ mit
-  allen Personen, auch denen ohne Spur. Hielt die Energie selbst einen Eintrag (eine Person ohne Spur), erklärte er,
-  was über b lag, b lernte nur seinen eigenen Wert zurück, und der Eintrag blieb: ein Fixpunkt des EM (3.11.
-  14:00–15:00: die Waschmaschine im Bad, ruhig Ring 2 um 55 statt 4,5, gelernt blieb 7; kein Ziel des Bad-LD2450 in
-  einer Stunde). Jetzt nimmt μ nur die Personen mit Spur, sobald der LD2450 im selben Gehäuse seit `ld_anchor_quiet`
-  (10 min, wie für den Anker) nichts in Sicht hatte: So lange sieht er niemanden, der in seinem Blick ist (gemessen
-  5.11., `dev/personenzahl/luecken.py`: in 46 Aufenthalten einer Person die längste Lücke 240 s, im Bad 98 s). Was dann
-  an Energie bleibt, lernt b mit seinem Vergessen (0,7 h), und der Eintrag hängt wieder an den Messungen des LD2450.
-  Gemessen (alle Fenster, je mehrere Starts, gegen 0.60): Bad 3.11. 69 → 59 belegte Minuten, Licht zu viel 464 → 453
-  Raumminuten, Personen zu viel 167 → 145; leeres Haus, Nächte, Morgen und Meldungen gleich. Schneller geht es nicht:
-  b folgt mit 0,7 h, und jedes Ziel des LD2450 (3.11. 14:45 eines an der Badtür) beginnt die Stille neu. Der Preis:
-  Wer im Blick eines Sensors länger als 10 min ohne ein Ziel seines LD2450 sitzt oder liegt, dessen Energie wird nach
-  etwa 0,7 h Hintergrund; ihn hält dann nur noch κ. Bei wachen Personen kam das in den Aufnahmen nicht vor (s. o.),
-  bei einer Schlafenden allein im Zimmer kann es vorkommen (zu zweit sieht der LD2450 den anderen; Leon 9.10.:
-  Schlafende wollen das Licht ohnehin aus). Die Tests mit einer Sitzenden (`tests/test_learning.py`) nehmen seitdem
-  die gemessene längste Lücke (240 s) statt 15 min. Prior: bewegt Ring 0
-  13, Ring 1 9, sonst 4,5, ruhig 5 mit dem Gewicht 10 min (gemessen 6.10., 4,3 h; auf 19 h 16 / 9 /
-  4,3 / 4,9, gleiche Lichtfehler, 10 „Die Stille vor einem Frame“). **Vergessen 0,7 h** (seit 9.10.,
-  gemessen): Der Hintergrund wandert; im Flur springt bewegt Ring 4 morgens von 1,7 auf 5,1 und Ring 5 von
-  3,6 auf 1,5 (Stundenmittel ohne LD2450-Ziel im Blick ±60 s) und bleibt so stundenlang. Als lokales
-  Niveau-Modell (Irrfahrt von log b plus das Rauschen eines Stundenmittels, aus den zwei Hälften jeder Stunde;
+  Schlafzimmer, 10). Nichts gelernt wird (Hintergrund, Anker, ρ), solange „Lernen pausieren“ an ist (10 „Lernen
+  pausieren“), und aus den ersten 300 s Frames je Sensor nach „Tracks zurücksetzen“ (`Background::hold`): Wen der
+  Filter dann noch nicht kennt, lernte sonst der Hintergrund.
+  **Nach langer Stille zählen Personen ohne Spur nicht** (seit 0.61.0): Hielt die Energie selbst einen Eintrag
+  (eine Person ohne Spur), erklärte er, was über b lag, b lernte nur seinen eigenen Wert zurück, und der Eintrag
+  blieb (3.11. 14:00–15:00: die Waschmaschine im Bad, ruhig Ring 2 um 55 statt 4,5, gelernt blieb 7; kein Ziel des
+  Bad-LD2450 in einer Stunde). Darum nimmt μ nur die Personen mit Spur, sobald der LD2450 im selben Gehäuse seit
+  `ld_anchor_quiet` (10 min, wie für den Anker) nichts in Sicht hatte: So lange sieht er niemanden, der in seinem
+  Blick ist (gemessen 5.11., `dev/personenzahl/luecken.py`: in 46 Aufenthalten einer Person die längste Lücke 240 s,
+  im Bad 98 s). Die Stille beginnt mit jedem Ziel dieses LD2450 neu, ebenso mit dem ersten Frame und nach einer Lücke
+  in den Daten über 6 s (4.4). Was dann an Energie bleibt, lernt b mit seinem Vergessen (0,7 h), und der Eintrag
+  hängt wieder an den Messungen des LD2450. Gemessen (alle Fenster, je mehrere Starts, gegen 0.60): Bad 3.11. 69 → 59
+  belegte Minuten, Licht zu viel 464 → 453 Raumminuten, Personen zu viel 167 → 145; leeres Haus, Nächte, Morgen und
+  Meldungen gleich. Schneller geht es nicht: b folgt mit 0,7 h, und jedes Ziel des LD2450 (3.11. 14:45 eines an der
+  Badtür) beginnt die Stille neu. Der Preis: Wer im Blick eines Sensors länger als 10 min ohne ein Ziel seines LD2450
+  sitzt oder liegt, dessen Energie wird nach etwa 0,7 h Hintergrund; ihn hält dann nur noch κ. Bei wachen Personen
+  kam das in den Aufnahmen nicht vor (s. o.), bei einer Schlafenden allein im Zimmer kann es vorkommen (zu zweit
+  sieht der LD2450 den anderen; Schlafende sind kein Ziel, 1).
+  Prior: bewegt Ring 0 13, Ring 1 9, sonst 4,5, ruhig 5 mit dem Gewicht 10 min (gemessen 6.10., 4,3 h; Aufnahmen
+  gelöscht). **Vergessen 0,7 h** (gemessen): Der Hintergrund wandert; im Flur springt bewegt Ring 4 morgens von 1,7
+  auf 5,1 und Ring 5 von 3,6 auf 1,5 (Stundenmittel ohne LD2450-Ziel im Blick ±60 s) und bleibt so stundenlang. Als
+  lokales Niveau-Modell (Irrfahrt von log b plus das Rauschen eines Stundenmittels, aus den zwei Hälften jeder Stunde;
   Harvey 1989) ist das beste exponentielle Vergessen 0,7 h, bewegt und ruhig gleich, über alle sieben Sensoren
-  6.–9.10. (je Sensor 0,4–2,5 h). Bis 0.26 6 h (angenommen; leere Nächte 24 h
-  auseinander unterscheiden sich je Sensor um höchstens 7 %, aber mit 1 Tag Log-Evidenz bis 6.10. −2530, 10):
-  Der Hintergrund des Flurs hing morgens stundenlang beim Nachtwert, und eine Person mit kleinem g erklärte
-  den Überschuss (10 „Sitzende im Bad und auf dem Sofa“). Seine Zellen sind Entfernungen vom Sensor. Er gilt
-  nur unter der Geometrie, unter der er gelernt wurde (9, „Gelerntes und Geometrie“; seit 0.51 beginnt er bei jeder
-  gespeicherten Änderung von Sensorlage oder Grundriss für alle Sensoren neu, 0.28–0.50 nur für einen anders
-  montierten, bis 0.27 bei jeder Änderung der Lage). Gespeichert mit dem Schlüssel der Geometrie.
-  **Anker (seit 0.28):** Vergessen wird nicht mehr zum Prior hin (ruhig 5), sondern zum eigenen Niveau des
+  6.–9.10. (je Sensor 0,4–2,5 h; Aufnahmen gelöscht). Mit 6 h (bis 0.26) hing der Hintergrund des Flurs morgens
+  stundenlang beim Nachtwert, und eine Person mit kleinem g erklärte den Überschuss (10 „Sitzende im Bad und auf dem
+  Sofa“). Seine Zellen sind Entfernungen vom Sensor; er gilt nur unter der Geometrie, unter der er gelernt wurde:
+  Bei jeder gespeicherten Änderung von Sensorlage oder Grundriss beginnt er für alle Sensoren neu, mit Anker und ρ
+  (`learn/mod.rs`; 9, „Gelerntes und Geometrie“). Gespeichert mit dem Schlüssel der Geometrie.
+  **Anker (seit 0.28):** Vergessen wird nicht zum Prior hin (ruhig 5), sondern zum eigenen Niveau des
   Sensors: derselbe Online-EM, mit 1 Tag vergessen und nur aus Frames nach 10 min, in denen der LD2450 des
   Gehäuses nichts sah (ein leerer Raum: Stunden; Sitzende und Schlafende lassen Lücken von Sekunden bis
   Minuten). Ein lokales Niveau, das um das Mittel seines Sensors wandert (stationäres AR(1)-Niveau, Harvey
-  1989; der Anker wie ein empirischer Bayes-Prior). Bis 0.27 zog der Prior mit seinem festen Gewicht in
-  Stunden ohne Lernen (der LD2450 sieht nachts jemanden) den Schlafzimmer-Hintergrund von leer 9 auf 5 zurück;
-  den Überschuss im leeren Raum erklärten dann unbekannte Personen, deren Intensität ohne Messung wuchs, bis
-  das Licht anging (9.10. 08:25, 16:58–17:53; 10.10. 12:18–14:35; 10 „Licht im leeren Schlafzimmer“). Der
-  Anker eines Sensors beginnt nach einem Update leer (der Prior) und lernt sich über Stunden ein.
+  1989; der Anker wie ein empirischer Bayes-Prior). Zum festen Prior hin zog das Vergessen in Stunden ohne Lernen
+  (der LD2450 sieht nachts jemanden) den Schlafzimmer-Hintergrund von leer 9 auf 5 zurück; den Überschuss im leeren
+  Raum erklärten dann unbekannte Personen, deren Intensität ohne Messung wuchs, bis das Licht anging (bis 0.27;
+  10 „Lernschleifen“). Der Anker wird mit dem Hintergrund gespeichert; leer (der Prior) beginnt er nur
+  mit einer neuen Geometrie und lernt sich dann über Stunden ein.
 - **Zeit:** Die Frames werden je Sekunde gesammelt (Gamma: die Summen von Δt, Δt·e, Δt·ln e und Δt der
   gekappten genügen), jeder mit Δt / τ, τ 4 s bewegt / 13 s ruhig (zusammengesetzte Likelihood mit der
   Korrelationszeit als effektiver Stichprobengröße; Varin, Reid & Firth 2011). Ein Frame steht für
@@ -516,13 +510,14 @@ Das Modell, je Sensor:
   beide Flags aus) sendet die Firmware nur alle 5 s einen Herzschlag (4.4); der erste Frame danach
   kommt, weil etwas gestiegen ist. Die Stille davor steht deshalb für die Energien des Frames davor
   (des Herzschlags), wie die nicht gesendeten Frames bis dahin waren; eine Lücke über 6 s sagt nichts
-  (10, „Die Stille vor einem Frame“).
+  (10, „Die Stille vor einem Frame“). Folgt ein Frame auf einen ohne Wert (lauter Nullen), steht er selbst für die
+  Zeit seit diesem.
 - **Verrechnung:** Kein Produkt über die Personen. Je Hypothese die Personen nacheinander (erst die mit
   Spur, dann die ohne, zuletzt die unbekannten), jede gegeben die vorigen mit dem, was sie danach
   hineingeben (exakt für Personen an bekanntem Ort). Jede Person (Kacheln bzw. Komponenten an ihrem
   Mittel) wird dann mit `ℓ(e | Rest + S(x)) / ℓ(e | Rest)` gewichtet, der Rest = alle anderen, gemischt
   über die Hypothesen, die sie halten (Marginale wie bei JIPDA; was andere erklären, sagt über diese
-  Person nichts, 0.6.13). Eine zweite Person am selben Ort bekommt so nur, was die erste nicht erklärt;
+  Person nichts). Eine zweite Person am selben Ort bekommt so nur, was die erste nicht erklärt;
   gekappte Werte (100) sprechen dabei nur für mehr Energie, nie dagegen (geprüft 7.10., 10). **Die unbekannten Personen: höchstens eine von ihnen im
   Blick**, gerechnet wie eine Person ohne Spur (ein Bernoulli mit r = ihrer Masse M im Blick; `M' = M L̄ /
   (1 − M + M L̄)` ≤ 1, wobei L̄ das mittlere Verhältnis über diese Masse ist, per Momentenabgleich zurück in
@@ -532,59 +527,64 @@ Das Modell, je Sensor:
   Wohnzimmer das Profil ×1,5–5), und wo gekappt ist, sagt sie nach oben nichts. Die Zahl kommt von den Spuren
   des LD2450 und den Türen; dafür gibt es keine Grenze (1, 3.4), nur die Energie legt allein keine zweite
   Person je Blick dazu (10, „Kaltstart“).
-- **Echoquellen** (`ld2410.Echoes`): Energie, die von keiner Person kommt (7.10. 01:07:52–01:08:34 in
+- **Echoquellen** (`Echoes`, `ld2410/echoes.rs`): Energie, die von keiner Person kommt (7.10. 01:07:52–01:08:34 in
   der leeren Küche: bewegt Ring 0–1 Schübe bis 100, ruhig Ring 2–4 bis 60–90, kein LD2450-Ziel, niemand
   ging). Wie die Geister des LD2450 (4.2) unterscheidet sie, wie sie beginnt und endet: Je Sensor aus
   oder eine Quelle an – das Profil einer Stehenden auf der Achse in 0,75–6,5 m (Schritt 0,25 m) mal
-  8 Stärken 0,2–5 (gleich in log) –, Beginn mit der Rate ρ (gleich über die Quellen), Lebensdauer Erlang(2) mit Mittel 20 s.
-  **So beweglich wie eine Person** (seit 0.60.0): Bis 0.59 Schritt 0,5 m und 0,3 / 1 / 3. Eine Person ohne Spur liegt auf
-  Kacheln von 0,4 m mit einer Verstärkung, deren Gitter (Gamma(6, 6), 9 Stufen) fein ist; gleichmäßige Energie, die
-  zwischen zwei Quellen lag, erklärte sie in jedem Block besser, und das wog mehr als das Nicht-Sehen des LD2450
-  (3.11. 14:00–15:44: die Waschmaschine im Bad hielt eine Person 1,4 m vor dem Sensor, ohne ein einziges Ziel; ohne
-  den Bad-LD2410C entsteht sie nicht). Jetzt ist der Schritt kleiner als eine Kachel, und eine Stufe (0,46 in log) so
-  groß wie die Streuung der Verstärkung einzelner Aufenthalte (0,47, oben); der Prior einer Quelle verteilt sich über
-  mehr Zellen, ρ bleibt. 0,1 m und 12 Stärken (doppelte Rechenzeit) machten im leeren Haus 1.11. bei einem Start 12 min
-  Licht im Flur; 0,25 m und 8 Stärken kosten etwa 10 % Rechenzeit.
+  8 Stärken 0,2–5 (gleich in log) –, Beginn mit der Rate ρ (gleich über die Quellen), Lebensdauer Erlang(2).
+  **So beweglich wie eine Person** (seit 0.60.0): Eine Person ohne Spur liegt auf Kacheln von 0,4 m mit einer
+  Verstärkung, deren Gitter (Gamma(6, 6), 9 Stufen) fein ist. Mit dem Schritt 0,5 m und 3 Stärken (bis 0.59)
+  erklärte sie gleichmäßige Energie, die zwischen zwei Quellen lag, in jedem Block besser, und das wog mehr als das
+  Nicht-Sehen des LD2450 (3.11. 14:00–15:44: die Waschmaschine im Bad hielt eine Person 1,4 m vor dem Sensor, ohne
+  ein einziges Ziel; ohne den Bad-LD2410C entsteht sie nicht). Jetzt ist der Schritt kleiner als eine Kachel, und
+  eine Stufe (0,46 in log) so groß wie die Streuung der Verstärkung einzelner Aufenthalte (0,47, oben); der Prior
+  einer Quelle verteilt sich über mehr Zellen, ρ bleibt. 0,1 m und 12 Stärken (doppelte Rechenzeit) machten im
+  leeren Haus 1.11. bei einem Start 12 min Licht im Flur; 0,25 m und 8 Stärken kosten etwa 10 % Rechenzeit.
   **Kurz- und langlebige Quellen** (seit 0.59.0, `ld_echo_long` = [0,11; 245 s]): Eine beginnende Quelle lebt mit 0,89
   Erlang(2) mit Mittel 20 s, mit 0,11 Erlang(2) mit Mittel 245 s (zwei parallele Ketten, Mischung wie bei den Geistern 4.2).
   Gemessen 4.11. über 103 h App-Aufnahmen: Episoden mit der Summe der ruhigen Ringe 2–4 über 3 × ihrem Pegel ohne
   LD2450-Ziel des Sensors ±60 s (ohne Dobby), Lücken < 3 s überbrückt: Mischung zweier Exponentialverteilungen 0,89 mit
   12 s, 0,11 mit 245 s (n = 179; die längste 26 min, die Waschmaschine im Bad 3.11. 12:00–15:55). Mit Lücken < 60 s
   überbrückt 0,93 mit 52 s, 0,07 mit 36 min: Die Waschmaschine zerfällt an der Schwelle in Stücke, die lange Lebensdauer
-  liegt also zwischen 4 und 36 min. Bis 0.58 erklärte nach 20 s nur noch eine Person beständige Energie ohne Person (9,
-  „Lang anhaltende Energie ohne Person“). Mit 0,07 × 36 min blieb bei einem von sechs Starts im leeren Haus (1.11.) der
-  Flur 5,5 h belegt; mit 0,11 × 245 s in allen 16 Starts der vier Leer-Fenster kein Licht.
-  Gemessen in der leeren Nacht 22:56–02:15 (3,3 h, Ruhig-Energie über 3× ihrem Pegel ≥ 3 s, ohne
-  LD2450-Ziel ±60 s): Küche 3,6 je Stunde (Dauer Median 10 s, Mittel 15 s, bis 59 s), die anderen vier
-  Sensoren keine. ρ lernt die App je Sensor mit dem Hintergrund (Gamma-Poisson: erwartete Zahl
-  begonnener Quellen je Beobachtungszeit; Prior 1 je 3 h mit dem Gewicht von 3 h, angenommen). Gezählt
-  wird nur, wo niemand im Blick ist (beides, Zahl und Zeit, gewichtet mit P(niemand im Blick) vor den
+  liegt also zwischen 4 und 36 min. Mit nur der kurzen Kette (bis 0.58) erklärte nach 20 s nur noch eine Person
+  beständige Energie ohne Person (9, „Lang anhaltende Energie ohne Person“). Mit 0,07 × 36 min blieb bei einem von
+  sechs Starts im leeren Haus (1.11.) der Flur 5,5 h belegt; mit 0,11 × 245 s in allen 16 Starts der vier
+  Leer-Fenster kein Licht.
+  Gemessen in der leeren Nacht 6./7.10. 22:56–02:15 (3,3 h, Ruhig-Energie über 3× ihrem Pegel ≥ 3 s, ohne
+  LD2450-Ziel ±60 s; Aufnahme gelöscht): Küche 3,6 je Stunde (Dauer Median 10 s, Mittel 15 s, bis 59 s), die anderen
+  vier Sensoren keine. ρ lernt die App je Sensor mit dem Hintergrund (Gamma-Poisson: erwartete Zahl
+  begonnener Quellen je Beobachtungszeit; Prior 1 je 3 h mit dem Gewicht von 3 h, angenommen). Zahl und Zeit
+  vergessen wie der Hintergrund mit 0,7 h; gegen die 3 h des Priors wiegen die Daten also höchstens etwa 0,7 h.
+  Gezählt wird nur, wo niemand im Blick ist (beides, Zahl und Zeit, gewichtet mit P(niemand im Blick) vor den
   Frames: Echoquellen sind Energie von niemandem, und neben einer Person zählte, was ihr Profil nicht
   erklärt, als Quelle), und jede Zählung ohne die gelernte Rate beurteilt: die
   Odds „eine Quelle begann“ mit ρ_Prior/ρ statt ρ (J_Park2020 Gl. 37–41). Sonst wäre, was die Rate
   sagt, Beleg für sie selbst (bis 0.20: Simulation, eine Sitzende 1,8 m vor dem Sensor, 0,33 → 0,73
   je Stunde in einer Stunde; jetzt 0,34, 10 „Lernschleifen“).
   Verrechnung: Die Personen wie oben, die Echoquellen zuletzt (für die Gewichte der Hypothesen). Eine
-  Quelle ist, was die bekannten Personen nicht erklären: Sie wird gegen die Personen mit Spur und die
-  bekannten ohne Spur so, wie sie vor diesen Frames waren, gewichtet (sonst erklärt eine von der Energie
-  hereingezogene Person die Quelle weg), die Unbekannten zählen dabei nicht. Eine Person ohne Spur und
-  eine Quelle sind Alternativen (beide selten), gerechnet wie Ziel und Clutter in der
+  Quelle ist, was die bekannten Personen nicht erklären: Sie wird gegen die Personen mit Spur, wie diese Frames sie
+  gewogen haben, und die bekannten ohne Spur, wie sie vor diesen Frames waren, gewichtet (sonst erklärt eine von der
+  Energie hereingezogene Person die Quelle weg); die Unbekannten zählen dabei nicht. Eine Person und eine Quelle
+  sind Alternativen (beide selten), gerechnet wie Ziel und Clutter in der
   Bernoulli-Aktualisierung (B_GarciaFernandez2018 Gl. 45: `ρ = e + c`, die Alternative steht im Nenner,
-  auf dem Ziel liegt kein Faktor): Die Dichte einer Person ohne Spur bekommt im Blick `ℓ(Person)`,
-  außerhalb `Z = max(1, P(keine Quelle) + Σ P(Quelle) ℓ(Quelle))`. Hält eine Quelle die Energie über ihre
+  auf dem Ziel liegt kein Faktor): Jede Person im Blick, mit Spur, ohne Spur und die Unbekannten, bekommt dort
+  `ℓ(Person) / Z` und bleibt außerhalb, wie sie ist; `Z = max(1, P(keine Quelle) + Σ P(Quelle) ℓ(Quelle))`, gegeben
+  die übrigen Personen (`marginal` in `filter/ld_weigh.rs`). Hält eine Quelle die Energie über ihre
   Lebensdauer hinaus, steht sie nach jedem Block wieder auf „an“, weil im Zustand der Quellen nichts
-  sonst sie erklärt; die Vorhersage aber gibt ihr nur `≈ 0,9` je Sekunde (Lebensdauer 20 s), und eine
-  Person, die gleich gut erklärt, wächst so um etwa 11 % je Sekunde: Was Minuten bleibt, wird eine Person,
-  was 20–60 s dauert, bleibt eine Quelle. `Z ≥ 1`, weil eine Quelle, die nichts mehr erklärt, kein Beleg
-  für eine Person ist: Ohne die Grenze steigt die Person um das, was die Quelle verliert (10,
-  „Echoquellen als Alternative“).
+  sonst sie erklärt; die Vorhersage gibt ihr in der kurzen Kette nur `≈ 0,9` je Sekunde (Mittel 20 s), in der
+  langen `≈ 0,99` (Mittel 245 s). Was anhält, wandert in die lange Kette, und eine Person, die gleich gut erklärt,
+  wächst gegen sie nur um etwa 1 % je Sekunde statt 11 % gegen die kurze: Was viele Minuten bleibt, wird eine
+  Person, was Sekunden bis wenige Minuten dauert, bleibt eine Quelle (gerechnet, nicht gemessen). `Z ≥ 1`, weil
+  eine Quelle, die nichts mehr erklärt, kein Beleg für eine Person ist: Ohne die Grenze steigt die Person um das, was
+  die Quelle verliert (10, „Echoquellen als Alternative“).
   „Im Blick“ heißt für eine Person mit Spur wie für Kacheln: eine Komponente, die dem LD2410C mehr als
-  `FLOOR` gibt; eine Komponente außerhalb wird nicht gewogen (seit 8.10. abends, `_ld_points`). Bis 0.25
-  zählte jede Komponente als im Blick jedes LD2410C, mit null Energie, und jede wahrscheinliche Echoquelle
-  irgendwo schob so alle Personen mit Spur im Haus durch eine Tür hinaus (10, „Meldungen 8.10. abends“).
-  Exakt gerechnet (Prototyp `tools/ld2410/clutter_hmm.py`) spricht das Ereignis von 01:08 gegen eine
-  Person (log Bayes-Faktor Person + Quelle / Quelle −5,0 über 56 s, höchstens +2,5 zwischendurch), eine
-  Sitzende im Esszimmer (21:03) dafür (+9,0 nach 40 s, +17,3 nach 2 min).
+  `FLOOR` gibt; eine Komponente außerhalb wird nicht gewogen (`tile_points`, `mixture_points` in
+  `filter/ld_weigh.rs`). Zählte jede Komponente als im Blick jedes LD2410C, mit null Energie, schob jede
+  wahrscheinliche Echoquelle irgendwo alle Personen mit Spur im Haus durch eine Tür hinaus (bis 0.25; 10, „Meldungen
+  8.10. abends“).
+  Exakt gerechnet (Prototyp `tools/ld2410/clutter_hmm.py`, auf den gelöschten Aufnahmen vom Oktober) spricht das
+  Ereignis von 01:08 gegen eine Person (log Bayes-Faktor Person + Quelle / Quelle −5,0 über 56 s, höchstens +2,5
+  zwischendurch), eine Sitzende im Esszimmer (21:03) dafür (+9,0 nach 40 s, +17,3 nach 2 min).
 - Alles in Log-Größen; Verhältnisse auf e^600 begrenzt.
 
 ### 4.4 Lücken zwischen Frames
@@ -609,10 +609,10 @@ aufgehalten werden:
   verarbeitet, als wäre nichts aufgehalten worden. Erst nach `STALL` = 60 s ohne jeden Frame (länger als ein Stau,
   alle Boards wirklich weg) gilt die Wanduhr: Dann sind alle Sensoren still, ihre Spuren enden, und ein Raum ist
   nach 60 s *nicht verfügbar* (6) statt nach 30 s. Fällt ein einzelnes Board aus, geht das Modell mit den anderen
-  weiter, und es ist still wie oben. Die Wiedergabe wartet ebenso auf ihre Frames (seit 0.54.2: vorher lief ihre Uhr
-  bei Überlast weiter, das Modell ging bis zu 40 min über Frames hinaus, die noch kamen, jeder Sensor schien länger
-  still als seine Spuren leben, und jeder späte Frame begann sie neu – 25 Personen statt 2).
-- Nicht abgedeckt: ein Stau länger als 60 s (die Frames danach kommen zu ihrer Empfangszeit wie bis 0.54.2) und ein
+  weiter, und es ist still wie oben. Die Wiedergabe wartet ebenso auf ihre Frames: Lief ihre Uhr bei Überlast weiter
+  (bis 0.54.2), ging das Modell bis zu 40 min über Frames hinaus, die noch kamen, jeder Sensor schien länger still
+  als seine Spuren leben, und jeder späte Frame begann sie neu (25 Personen statt 2).
+- Nicht abgedeckt: ein Stau länger als 60 s (die Frames danach kommen zu ihrer Empfangszeit) und ein
   Board, das während eines Staus neu startet (seine Frames nach dem Neustart kommen zu ihrer Empfangszeit, also nach
   den gestauten der anderen, die das Modell dann überholt hat).
 
@@ -620,9 +620,9 @@ aufgehalten werden:
 **Seit 0.61** (5.11.; 10 „Störquellen“). Ein Objekt, das keine Person
 ist und an einem festen Ort immer wieder Spuren eines LD2450 macht: ein Luftentfeuchter
 (5.11., Esszimmer-LD2450 auf ein Gerät im Wohnzimmer, 08:23–13:50+, 46 Spuren der App, eine bis 71 min), ein
-Spiegelbild. Bis 0.60 war im Modell das einzige dauerhafte Objekt die Person: Ein Geist lebt 3 / 39 s (4.2), also
+Spiegelbild. Ohne sie wäre im Modell das einzige dauerhafte Objekt die Person: Ein Geist lebt 3 / 39 s (4.2), also
 gewann bei einer Spur von Minuten die Person, und jede weitere Spur an derselben Stelle hing sich billig an sie (5.11.:
-stundenlang Licht im leeren Wohnzimmer). Jetzt eine eigene Objektklasse neben den Personen, die Clutter-Generatoren von
+stundenlang Licht im leeren Wohnzimmer). Darum eine eigene Objektklasse neben den Personen, die Clutter-Generatoren von
 D_Mahler2011 (Abschn. III-A, Gl. 13–18: eigene Geburt, eigenes Überleben, eigene Erfassung; Personen werden nie
 Störquellen und umgekehrt), im PMBM wie die Personen (B_GarciaFernandez2018; `filter/clutter.rs`):
 - **Gehört zu einem LD2450** und macht nur in ihm Spuren. Die anderen Sensoren und das LD2410C sehen sie nicht, sie geht
@@ -636,19 +636,25 @@ Störquellen und umgekehrt), im PMBM wie die Personen (B_GarciaFernandez2018; `f
   Verhältnis der Anfangsdichten, 0,72). Der gemessene Ort des Luftentfeuchters streut weniger als der Versatz einer
   Person (je Achse 0,07 m innerhalb von 10 s, 0,05 m die 10-s-Mittel), aber ruhende Spuren von Personen ebenso
   (0,04–0,08 m und 0,05–0,11 m, Ein-Personen-Fenster 2.–4.11.); ein eigener, enger Versatz der Störquelle (0,047 /
-  0,05 m) machte eine Sitzende mit gemessenem Zittern in 10 s zur Störquelle (P(belegt) 0,06) und ist verworfen.
-- **Entstehen** überall im Blick ihres Sensors mit `clutter_birth` = 2,2·10⁻⁷ je m² und s, gleich verteilt, keine Karte.
+  0,05 m) machte eine Sitzende mit gemessenem Zittern in 10 s zur Störquelle (P(belegt) 0,06).
+- **Entstehen:** Eine Störquelle, die der Filter noch nicht kennt, beginnt mit ihrer ersten Spur. Diese Spur kommt
+  mit `clutter_birth` = 2,2·10⁻⁷ je m² und s, gleich verteilt im Blick ihres Sensors, keine Karte (im Gleichgewicht
+  bekommen so viele ihre erste Spur, wie entstehen; D_Mahler2011 Gl. 13–15); unbekannte Störquellen ohne Spur führt
+  der Filter nicht (`clutter_children` in `filter/branch.rs`, `watch` in `filter/evidence.rs`).
   Gemessen in den leeren Fenstern (17 h ohne Dobby, 7 Sensoren, im Mittel 21 m² Blick): zwei Orte, an denen eine Spur
   länger als jeder Geist lebte, der Luftentfeuchter (Esszimmer) und 25 min an einer Stelle 0,3 m vor dem
   Wohnzimmer-Sensor; 2 / (120 Sensorstunden × 21 m²). Unsicher (2 Ereignisse, ein Faktor 3 nach jeder Seite).
-- **Lebensdauer** exponentiell, Mittel `clutter_life` = 1,9 h: die Zeit, in der die zwei Orte in den leeren Fenstern da
-  waren (3,4 h und 0,4 h), je Geburt (Little). So ist die Dichte der Störquellen beim Start ohne Wissen
+- **Lebensdauer** exponentiell, Mittel `clutter_life` = 1,9 h; es stirbt nur eine Störquelle ohne Spur, eine mit
+  laufender Spur nicht. 1,9 h ist die Zeit, in der die zwei Orte in den leeren Fenstern da waren (3,4 h und 0,4 h), je
+  Geburt (Little). So ist die Dichte der Störquellen beim Start ohne Wissen
   (`clutter_birth` × `clutter_life` × Anteil mit Spur ≈ 1,5·10⁻³ je m²) die gemessene Belegung. Die Maximum-Likelihood mit
   Zensur gab 5,3 h und damit beim Start die dreifache Dichte.
 - **Erfassung:** Ohne laufende Spur beginnt ihr Sensor eine mit `clutter_acquire` = 0,115 /s (gemessen am Luftentfeuchter:
   21 Lücken zwischen den Spuren der App, zusammen 182 s, Median 5 s; 24 weitere Spuren begannen, während die vorige
   noch gehalten wurde), überall gleich (die feste Erfassung bei D_Mahler2011), weniger neben seinen laufenden Zielen
-  (Auflösung, 4.1). Eine Spur auf ihr dauert im Mittel 420 s (für die Spuren, die bei einem Start schon laufen, 4.1).
+  (Auflösung, 4.1). Eine Spur auf ihr dauert im Mittel 420 s. Das gilt beim ersten Frame eines Sensors und nach einer
+  Lücke (4.1): für die Spuren, die dann schon laufen, und für die bekannten Störquellen ohne Spur, die mit dem
+  stationären Anteil `1/(1 + a · 420 s)` keine haben (`clutter_censor`).
   Verlieren, Wiederfinden (auf ihr wie der Geist auf seiner Quelle, mit dem Kern um die gehaltene Stelle) und das
   Ende einer Spur wie bei einer Person: Das Ende sagt nichts, sie bleibt.
 - **Was sie von einer Person trennt**, kommt allein aus dem Modell: Eine Person an der Stelle sähen die anderen
@@ -664,9 +670,11 @@ Störquellen und umgekehrt), im PMBM wie die Personen (B_GarciaFernandez2018; `f
 Deterministisch: Was diskret ist und wenige Werte hat, wird aufgezählt, nicht gezogen. Das Ergebnis
 hängt nicht davon ab, wie die Zeit zerlegt wird (Test).
 
-**Takt:** Alle Personen und Geisterquellen werden gemeinsam vorgerückt und mit „keine neue Spur“
-gewichtet, höchstens alle 0,2 s (`MAX_STEP`), und sofort vor jedem Ereignis, das alle betrifft:
-neue Spur, wiedergefundene, endende, Start oder Datenlücke. Eine gemessene Position rückt nur die
+**Takt:** Alle Personen werden gemeinsam vorgerückt und mit „keine neue Spur“ gewichtet, sobald
+0,2 s (`max_step`) seit dem letzten Mal vergangen sind (`Tracker::step`), und sofort vor jedem
+Ereignis, das alle betrifft: neue Spur, wiedergefundene, endende, Start, Datenlücke oder eine Rückgabe
+an die Intensität (5.5). Die Quellen der Geister rücken mit vor, aber ohne Wände und Türen und ohne
+Gewicht (4.2). Eine gemessene Position rückt nur die
 Gauß-Mischungen vor, zu denen ihre Spur gehört; jede hat dafür ihre eigene Zeit. Zwischen zwei
 Takten wirkt „gehalten, nicht wiedergefunden“ auf den Stand des letzten Takts, und die Ausgaben
 werden nur nach einem Takt oder Ereignis neu berechnet (bis 0,2 s alt). Vorher (0.8) wurde bei jedem
@@ -677,10 +685,12 @@ Frame jedes Sensors alles vorgerückt: etwa 23-mal je Sekunde, ein Hauptteil der
   Hypothese mit exaktem Gewicht (Datenassoziation eines PMBM, B_GarciaFernandez2018; δ-GLMB,
   B_Reuter2014).
 - Eine neue Spur verzweigt jede Hypothese: Geist; eine bekannte Störquelle ihres Sensors ohne Spur (mit ihrem r und
-  `1 − e^(−a·Δt)`, mal der Dichte von z) oder eine neue (`clutter_birth`, gleich verteilt wie ein Geist; 4.5);
-  eine Person, die schon Spuren anderer Sensoren hat; eine bekannte Person ohne Spur (mit ihrem r, 5.5); eine unbekannte
-  (5.5). Eine wiedergefundene: ihr Eigentümer (Person, Geist oder Störquelle); eine andere Person nahe der Stelle;
-  Geist/Reflexion.
+  `1 − e^(−a·Δt)`, mal der Dichte von z; Δt die Zeit seit dem letzten Frame des Sensors, höchstens eine
+  Frameperiode) oder eine neue (`clutter_birth`, gleich verteilt wie ein Geist; 4.5);
+  eine Person mit Spur, außer sie hat schon eine messende Spur desselben Sensors (eine gehaltene zählt
+  nicht); eine bekannte Person ohne Spur (mit ihrem r, 5.5); eine unbekannte
+  (5.5). Eine wiedergefundene: ihr Eigentümer (Person, Geist oder Störquelle); eine andere Person nahe der Stelle
+  (mit Spur, bekannt ohne Spur oder unbekannt); Geist/Reflexion (`filter/branch.rs`).
 - **Erst zusammenlegen, dann abschneiden** (seit 8.10.): Die Kinder einer Verzweigung, die über die
   laufenden Spuren dasselbe sagen, werden zuerst eine Hypothese (5.6). Der Schlüssel sagt nicht,
   *welcher* Person eine Spur gehört: „sie gehört u₁“, „u₂“, „einer neuen Person“ desselben
@@ -691,21 +701,22 @@ Frame jedes Sensors alles vorgerückt: etwa 23-mal je Sekunde, ein Hauptteil der
   stärkste Kind). Die verworfene Masse zählt in der Evidenz mit (7). Bis 0.21 wurde jedes Kind
   einzeln abgeschnitten, unter 10⁻⁷ des *stärksten*, bevor gleiche zusammengelegt wurden: viele kleine
   Alternativen gingen verloren, deren Summe geblieben wäre (Zahlen: 10, „Review 8.10.“).
-- **Keine laufende Spur verliert eine Alternative ganz** (seit 8.10. abends, `Tracker._cut`): Ob eine Spur
+- **Keine laufende Spur verliert eine Alternative ganz** (seit 8.10. abends, `cut_hyps` in `filter/merge.rs`): Ob eine Spur
   ein Geist ist oder einer Person gehört, ist die Frage dieser Spur (in einem spurorientierten PMBM ihr
   eigener Bernoulli, B_GarciaFernandez2018 Abschn. IV; ebenso hält JIPDA je Spur ihre Existenz). Was ihre
   späteren Messungen dazu sagen (ein Geist lebt 3 / 39 s, 4.2; eine Person bleibt), wirkt nur auf eine
   Alternative, die noch da ist. Sagen alle behaltenen Hypothesen über eine laufende Spur dasselbe
-  („Geist“ oder „Person“), bleibt von den verworfenen die stärkste, die das andere sagt (die Grenze von 12
-  wird dafür um höchstens die Zahl der laufenden Spuren überschritten). Mit Störquellen (4.5) drei Antworten (Person, Geist,
-  Störquelle, 4.5): Von den verworfenen bleibt je fehlender Antwort einer laufenden Spur die stärkste. Bis 0.25 fiel die Alternative
+  („Geist“ oder „Person“), bleibt von den verworfenen die stärkste, die das andere sagt. Mit Störquellen gibt es drei
+  Antworten (Person, Geist, Störquelle, 4.5): Von den verworfenen bleibt je fehlender Antwort einer laufenden Spur die
+  stärkste; die Grenze von 12 wird dafür um höchstens das Doppelte der Zahl der laufenden Spuren überschritten. Bis 0.25 fiel die Alternative
   „Person“ einer Spur, die dort begann, wo der Filter niemanden kannte, schon bei der Geburt unter die
-  Schwelle; danach sagten alle Hypothesen „Geist“, der Faktor der Lebensdauer (`_ghost_life`) kürzte
+  Schwelle; danach sagten alle Hypothesen „Geist“, der Faktor der Lebensdauer (`ghost_life`) kürzte
   sich bei der Normierung heraus, und die Spur blieb ein Geist, wie lange sie auch gemessen wurde (das
   Bett 8.10. 00:29–06:14, der Schreibtisch 7.10. 08:59–09:49; 10, „Meldungen 8.10. abends“).
-- Bis 0.21 (Zahlen dieses Absatzes): höchstens 12, solange über 10⁻⁷ des stärksten (Abschneiden nach
-  Gewicht, B_Vo2017). Auf den 11 h aus 3.1 greift die Grenze von 12 bei 8 % der Schnitte (461 von 5588), im
-  Mittel bleiben 4,7 Hypothesen. Log-Evidenz gegenüber 12 ab 10⁻⁷ / Lichtfehler (fälschlich an von
+- Alte Messung (Python-Kern bis 0.21, Aufnahme gelöscht, Lichtfehler nach der damaligen, ungenauen
+  Wahrheitstabelle): höchstens 12, solange über 10⁻⁷ des stärksten (Abschneiden nach
+  Gewicht, B_Vo2017). Auf den 11 h aus 3.1 griff die Grenze von 12 bei 8 % der Schnitte (461 von 5588), im
+  Mittel blieben 4,7 Hypothesen. Log-Evidenz gegenüber 12 ab 10⁻⁷ / Lichtfehler (fälschlich an von
   41, aus von 15) / Rechenzeit (21 Uhr, 5 Sensoren, Anteil eines Kerns):
 
   | höchstens | ab | Evidenz | an / aus | CPU |
@@ -721,7 +732,7 @@ Frame jedes Sensors alles vorgerückt: etwa 23-mal je Sekunde, ein Hauptteil der
   | 24 | 10⁻⁹ | +275 | 0,9 / 2,0 | 5,9 % |
   | 24 | 10⁻¹² | +215 | 0,9 / 2,0 | |
 
-  Die Evidenz ist nicht konvergiert und hängt nicht monoton von den Grenzen ab. Der Unterschied
+  Die Evidenz war nicht konvergiert und hing nicht monoton von den Grenzen ab. Der Unterschied
   zwischen 12 ab 10⁻⁷ und 24 ab 10⁻⁹ entsteht in wenigen Minuten des belebten Abends (22:02 +69,
   22:10 +93), nachts nicht: Eine Hypothese unter 10⁻⁷ wurde später die beste. Die Lichtfehler kennen
   zwei Ausgänge; mit mehr Hypothesen verliert das Modell um 21:24 die Person im Wohnzimmer nicht
@@ -739,21 +750,20 @@ Zwei Komponenten *steht* / *geht*, je ein Kalman-Filter über Position, Geschwin
 Schritt (Buch_SarkkaSvensson2023 S. 352; B_Li2019 Gl. 26–33):
 1. Übergänge *steht → geht* (`Σ p_l (1 − e^(−λ_l Δt))`) und *geht → steht* (`1 − e^(−μΔt)`), je
    Ziel-Betriebsart per Momentenabgleich zu einer Komponente zusammengefasst.
-2. Lineare Vorhersage je Komponente (3.1 bzw. OU-Näherung 3.2), Kalman-Update mit der Spur, danach
+2. Lineare Vorhersage je Komponente (3.1 bzw. OU-Näherung 3.2). **Wände in der Vorhersage**
+   (`motion/imm.rs`): Die Sigma-Punkte (Kubatur, 2n = 16 Punkte; Buch_SarkkaSvensson2023 Alg.
+   8.11/8.16) von Position, Geschwindigkeit und Rauschen der Komponente *geht* vor dem Schritt werden
+   linear bewegt; wer dabei eine Wand kreuzt, endet an ihr gespiegelt, die Geschwindigkeit auch.
+   Danach Momentenabgleich, die Versätze der Spuren folgen über ihre Regression. Was schon an oder
+   hinter einer Wand liegt, bleibt (anders als das verworfene Abschneiden, 10). Für Ausgaben und den
+   Wechsel auf Kacheln (5.4) zählt die Masse hinter einer Wand, vom Mittel aus gesehen, nicht
+   (außer es läge alles dahinter). Mit einer Messung der Spur folgt das Kalman-Update, danach wird
    die Position auf die Sicht des messenden Sensors beschnitten (4.1).
 3. Nicht-Erfassung durch andere Sensoren: Faktor je Komponente, als Erwartung über ihre Position
-   (`E[e^(−r(x)Δt)]`), ebenso die Rate einer neuen Spur, die Sicht beim Wiederfinden (unter dem Kern
-   gewichtet) und „geht in Sicht“: Unscented-Transformation der Position je Achse (diagonale
-   Kovarianz, n + κ = 3: Mitte 1/3, ±√3 σ je 1/6; Buch_SarkkaSvensson2023 Gl. 8.70–8.71). Punkte
-   hinter einer Wand, vom Mittel aus gesehen, werden an ihr gespiegelt (Wände reflektieren). Das
-   LD2410C sieht die Komponenten weiter an ihrem Mittel (über Sigma-Punkte: Log-Evidenz −524).
-   **Wände in der Vorhersage:** Die Sigma-Punkte (Kubatur, 2n = 16 Punkte; ebd. Alg. 8.11/8.16)
-   von Position, Geschwindigkeit und Rauschen der Komponente *geht* vor dem Schritt werden linear
-   bewegt; wer dabei eine Wand kreuzt, endet an ihr gespiegelt, die Geschwindigkeit auch. Danach
-   Momentenabgleich, die Versätze der Spuren folgen über ihre Regression. Was schon an oder hinter
-   einer Wand liegt, bleibt (anders als das verworfene Abschneiden, 10). Für Ausgaben und den
-   Wechsel auf Kacheln (5.4) zählt die Masse hinter einer Wand, vom Mittel aus gesehen, nicht
-   (außer es läge alles dahinter).
+   (`E[e^(−r(x)Δt)]`), ebenso die Rate einer neuen Spur und die Sicht beim Wiederfinden (unter dem
+   Kern gewichtet): Unscented-Transformation der Position je Achse (diagonale Kovarianz, n + κ = 3:
+   Mitte 1/3, ±√3 σ je 1/6; ebd. Gl. 8.70–8.71). Punkte hinter einer Wand, vom Mittel aus gesehen,
+   werden an ihr gespiegelt (Wände reflektieren). Das LD2410C sieht die Komponenten an ihrem Mittel.
 4. **Durch eine Tür** in einen Bereich ohne Sensor: Die Komponente *geht* verliert dorthin mit der
    Rate der Türkacheln (5.3), gewichtet mit ihrer Masse dort (jede Türkachel als ihr kleiner Gauß).
    Das wandert in einen Teil „durch eine Tür“ (eine Dichte über Kacheln und Bereiche mit Gewicht a).
@@ -761,46 +771,54 @@ Schritt (Buch_SarkkaSvensson2023 S. 352; B_Li2019 Gl. 26–33):
    keinen solchen Teil: Dort ist eine Tür nur eine Lücke in der Wand.
 
 ### 5.3 Personen ohne Spur: Kacheln
-`world/tiles.rs`, `filter/densities.rs`. Punktmassenfilter (0_Arulampalam2002 Abschn. II-B) über Kacheln statt über
+`world/tiles.rs`, `filter/densities.rs`, `motion/walk.rs`, `motion/stay.rs`, `filter/step.rs`. Punktmassenfilter (0_Arulampalam2002 Abschn. II-B) über Kacheln statt über
 ein gleichmäßiges Raster:
-- **Kacheln:** Quadrate von 0,4 m, an den Raumgrenzen geschnitten (ein Quadrat über eine Wand sind zwei
-  Kacheln). Innerhalb einer Kachel wird der Ort nicht unterschieden: gleichverteilt. Wo ein Ort
+- **Kacheln:** Quadrate von 0,4 m, an den Grenzen der beobachteten Räume geschnitten (ein Quadrat über
+  zwei Räume sind zwei Kacheln). Eine Wand innerhalb eines Raums schneidet nicht: Eine Kachel kann auf
+  beiden Seiten liegen und ihr Schwerpunkt in der Wand. Innerhalb einer Kachel wird der Ort nicht unterschieden: gleichverteilt. Wo ein Ort
   gebraucht wird (eine Spur beginnt, Gehen durch eine Tür), zählt die Kachel als die
   Gauß-Verteilung mit ihrem Schwerpunkt und ihrer Streuung (dieselben ersten zwei Momente).
-  Verglichen am 6.10. auf 20 min (CPU / Log-Evidenz): 0,6 m an den Sichtgrenzen der Sensoren
-  geschnitten 53 s / 17039,6; einfache Quadrate 0,6 m 50 s / 17030,1, 0,4 m 55 s / 17039,5, 0,3 m
-  62 s / 17036,6; 0,4 m mit der Gleichverteilung exakt integriert (Fehlerfunktion) 62 s / 17032,2.
-  Der Schnitt an den Sichtgrenzen und das exakte Integral bringen nichts, was den Code wert wäre.
-  Wohnung 6.10.: 341 Kacheln statt 1153 Zellen zu 0,2 m.
+  Alte Messung (Python-Kern, 6.10., 20 min einer gelöschten Aufnahme; CPU / Log-Evidenz): 0,6 m an
+  den Sichtgrenzen der Sensoren geschnitten 53 s / 17039,6; einfache Quadrate 0,6 m 50 s / 17030,1,
+  0,4 m 55 s / 17039,5, 0,3 m 62 s / 17036,6; 0,4 m mit der Gleichverteilung exakt integriert
+  (Fehlerfunktion) 62 s / 17032,2. Der Schnitt an den Sichtgrenzen und das exakte Integral änderten
+  dort kaum etwas. Die Wohnung hat heute etwa 700 Kacheln (Kommentar zu `MAX_TILES` = 4000).
 - **Raten** (Erfassung, Wiederfinden) sind je Kachel das Mittel über ihre Punkte eines 0,2-m-Rasters:
   die Projektion der Likelihood auf den gröberen Zustand (G_Liao2003 Gl. 2).
-- **Zustand:** `geht[Kachel]`, `steht[Art l, Stufe κ, Kachel]`, `Bereich[k, Alter]` (Altersklassen
-  2 s … 36 h), `außer Haus`.
+- **Zustand:** `geht[Kachel]`, `steht[Art l, Stufe κ, Kachel]`, `Bereich[k, Alter]`, `außer Haus` und
+  `amp[κ, Stufe a, Kachel]`, die gemessene LD2410C-Amplitude des Aufenthalts (4.3, 5.4). Altersklassen:
+  0, 2, 4 … 131 072 s (36,4 h), die Grenzen verdoppeln sich, die letzte reicht bis zum Doppelten. Das
+  Altern ist exponentiell: Eine Klasse geht mit der Rate 1/Breite in die nächste über.
 - **Gehen** zwischen Kacheln als Diffusion (3.2) in finiten Volumen: von Kachel i zum Nachbarn j mit
   `D · L_ij / (A_i · d_ij)` (gemeinsame Kante L, Fläche A, Abstand der Schwerpunkte d), durch eine
   Tür in einen Bereich ohne Sensor oder nach draußen (ins Treppenhaus, 2) ebenso, mit d = doppelter
   Abstand zur Tür. Wände sind keine
-  Kante. Exakt diskretisiert als Matrixexponential je Takt von 0,1 s. Anhalten mit μ, Aufstehen mit
-  λ_l wie in 3.1/3.2. Eine Tür zwischen zwei Räumen mit Sensor ist eine Kante wie jede andere.
+  Kante. Ein Takt von 0,1 s Gehen ist das Matrixexponential des Generators (Anteile unter 10⁻¹² als
+  0); gegangen wird nur in ganzen Takten, der Rest eines Schritts wartet auf den nächsten. Anhalten
+  mit μ, Aufstehen mit λ_l und neues κ (3.1/3.2) rechnet jeder Schritt (höchstens 0,2 s) vorher
+  getrennt (`motion/stay.rs`): eine Aufteilung der Operatoren, kein gemeinsames Matrixexponential.
+  Eine Tür zwischen zwei Räumen mit Sensor ist eine Kante wie jede andere.
 - Nicht-Erfassung, Nicht-Wiederfinden und die Rate einer neuen Spur sind exakte Summen über die
   Kacheln.
 
 **Neustart der App:** Was über die Personen bekannt ist, speichert die App alle 10 Minuten und beim
-Beenden (`people.json`, `Tracker.people_state`): je Hypothese ihr Gewicht, die bekannten und die
-unbekannten Personen als Dichten über den Kacheln. Das Speichern ändert am Modell nichts (es rechnet auf
-Kopien; bis 0.28 wandte das Lesen einer gespeicherten Amplitude ihre aufgeschobene Mischung, `Hidden.amp`,
-im Modell selbst an, und der Lauf ging nach jedem Speichern anders weiter als ein Nachspiel). Laufende Spuren überleben den Neustart nicht (die
+Beenden (`people.json`, `Filter::people_state` in `filter/mod.rs`): je Hypothese ihr Gewicht, die
+bekannten und die unbekannten Personen als Dichten über den Kacheln. Das Speichern ändert am Modell
+nichts (es rechnet auf Kopien). Laufende Spuren überleben den Neustart nicht (die
 nächsten Frames der Sensoren sind ein Start, 4.1): Personen mit Spur gehen auf die Kacheln wie am Ende
 ihrer letzten Spur (5.4), Geisterspuren enden, und Hypothesen, die danach dasselbe sagen, werden eine
-(5.6; eine je Zahl bekannter Personen). Beim Start ist dieser Zustand der Prior, die PMBM-Rekursion
+(5.6). Ohne laufende Spuren sagen alle dasselbe: Gespeichert wird eine Hypothese, verschieden viele
+Personen sind darin Bernoullis mit r < 1. Bekannte Störquellen (4.5) werden nicht gespeichert; nach
+einem Neustart sind sie wieder unbekannt. Beim Start ist dieser Zustand der Prior, die PMBM-Rekursion
 geht von ihm aus weiter (B_GarciaFernandez2018). Die Zeit dazwischen ist eine Datenlücke (4.4): Alle
 werden mit der Dynamik aus 3 vorgerückt, nichts gewichtet; die letzten 120 s wie immer, davor in
-Sprüngen von 15 s (höchstens 2000, `Hidden.leap`): Wer aufsteht, geht seinen Weg in einem Sprung ganz,
+Sprüngen von 15 s (`leap` in `motion/walk.rs`; höchstens 2000, bei einer längeren Lücke, ab gut 8 h,
+werden die Sprünge länger: Vorlauf / 2000): Wer aufsteht, geht seinen Weg in einem Sprung ganz,
 bis er anhält oder durch eine Tür geht (wo ein Weg endet: `μ (μI − Q)⁻¹`, Q die Gehmatrix, eigene
 Herleitung aus 3.2); ein kurzer Aufenthalt, der in einem Sprung beginnt, endet frühestens im nächsten.
-Gegen 3 h in Takten liegen die Räume damit bis 0,022 daneben (7.10. 08:06, 8 Personen); 8 h kosten
-1,7 s CPU. Gespeichert werden die Massen als Anteile in float16 (unter 10⁻⁶ als 0), zlib, base64:
-27–40 kB für 8 Personen (7.10. 08:00 und 08:06; als float32 0,7–1,3 MB). Passt der Zustand nicht zu den
+Gegen 3 h in Takten lagen die Räume damit bis 0,022 daneben (alte Messung, Python-Kern, 7.10.,
+8 Personen). Gespeichert werden die Massen als Anteile in float16 (unter 10⁻⁶ als 0), zlib, base64
+(`filter/saved.rs`): etwa 6 kB je Person statt 80 kB als float32 (7.10. 08:06). Passt der Zustand nicht zu den
 Kacheln (anderer Grundriss) oder fehlt er, weiß das Modell nichts. Nach einem Fehler des Modells beginnt
 es aus dem Zustand unmittelbar davor, wenn der sich noch speichern lässt, sonst aus dem letzten
 gespeicherten.
@@ -811,19 +829,22 @@ je ein Drittel im beobachteten Bereich (stehend, gleichverteilt nach Fläche, ei
 zu zufälliger Zeit gesehen), in den Bereichen ohne Sensor und außer Haus. Keine feste Zahl: Wer in
 Sicht ist, wird über seine Spur zur bekannten Person (5.5), gleich wie viele es sind; wo niemand
 erfasst wird, schwindet die Intensität mit der Nicht-Erfassung. Ohne Anteil in Sicht könnte, wer beim
-Start in Sicht sitzt, nur ein Geist sein (wie mit der früheren festen Zahl `start_people` unter der
-Zahl der Anwesenden, 10, Meldung 7.10. 08:07). Der Preis: Hinter Türen und außer Haus bleibt die
+Start in Sicht sitzt, nur ein Geist sein. Der Preis: Hinter Türen und außer Haus bleibt die
 Intensität, wie viele auch gefunden werden (die Zahlen eines Poisson-Prozesses sind unabhängig), bis
-dort niemand herauskommt oder sie vergessen wird (3.4). 0,3 / 1 / 3 Personen ändern die Lichtfehler
-nicht (bei jedem App-Start ohne Wissen, 6./7.10.: 0,14 von 41 fälschlich an), die Log-Evidenz steigt
-mit der Zahl (−279 / 0 / +265).
+dort niemand herauskommt oder sie vergessen wird (3.4). Alte Messung (Python-Kern, 6./7.10., bei jedem
+App-Start ohne Wissen; Aufnahmen gelöscht, Wahrheit ungenau): 0,3 / 1 / 3 Personen änderten die
+Lichtfehler nicht (0,14 von 41 fälschlich an), die Log-Evidenz stieg mit der Zahl (−279 / 0 / +265).
 
 Neu beginnt das Modell, wenn sich die Welt der Personen ändert (Wände, Räume, Türen, Parameter,
 welche Sensoren es gibt, der beobachtete Bereich), wie nach einem Neustart: aus dem Zustand davor,
-solange die Kacheln dieselben bleiben (etwa nur andere Parameter), sonst ohne Wissen. Wird nur ein
+solange die Dichten dazu passen, sonst ohne Wissen. Sie passen bei denselben Kacheln, Bereichen und
+Altersklassen und denselben Arten des Aufenthalts und Stufen von κ (`World::fingerprint`); `go_share`,
+`go_time`, `stay_points`, `kappa_shape`, `kappa_levels` oder `ld_amp_levels` zu ändern, verwirft also
+das Wissen. Wird nur ein
 Sensor gedreht, verschoben oder neu kalibriert, bleibt, was über die Personen bekannt ist, ganz (die
 Konfiguration sagt etwas über den Sensor, nichts über sie); seine Spuren beginnen neu wie nach einer
-Datenlücke (4.1).
+Datenlücke (4.1). Ändert sich dadurch, welche Räume beobachtet sind, beginnt das Modell neu wie oben
+(`Tracker::recalibrate`).
 
 ### 5.4 Wechsel der Darstellung
 - **Kacheln → Gauß**, wenn eine Spur auf der Person beginnt oder wiedergefunden wird: je Kachel
@@ -835,17 +856,17 @@ Datenlücke (4.1).
 - **Gauß → Kacheln**, erst wenn die letzte laufende Spur endet, nicht schon beim Verlieren (gehaltene
   Spuren behalten so ihren Versatz). Komponenten werden mit ihrer Dichte auf die Kacheln verteilt;
   verloren gehen Geschwindigkeit und Versätze. Die Amplitude des Aufenthalts (je κ) geht mit, wo die
-  Komponente *steht* steht (4.3; bis 0.26 ging sie verloren, die Kacheln rechneten mit g = 1).
+  Komponente *steht* steht (4.3).
 
 ### 5.5 Die unbekannten Personen
-`hidden.Undetected`: der unentdeckte Teil des PMBM (B_GarciaFernandez2018 Gl. 7–10, 18–24) über den
+Eine Dichte der Art `Intensity` (`filter/densities.rs`): der unentdeckte Teil des PMBM (B_GarciaFernandez2018 Gl. 7–10, 18–24) über den
 Kacheln aus 5.3, als Intensität (Massen sind erwartete Zahlen). Dieselbe lineare Bewegung, dazu die
 Ankünfte und das Vergessen aus 3.4.
 - Wer nicht erfasst wird, wiegt mit der Leerwahrscheinlichkeit `exp(−(Masse vorher − nachher))`.
 - Eine neue Spur auf einer unbekannten Person hat das Gewicht `∫ Intensität × Erfassungsrate ×
   Dichte der Messung`; daraus wird eine bekannte Person (5.2). Die Intensität bleibt (eine Geburt ist
   ein Punkt des Prozesses).
-- **Bekannte Personen ohne Spur sind Bernoullis** (`hidden.Hidden.r`, B_GarciaFernandez2018 Gl. 31;
+- **Bekannte Personen ohne Spur sind Bernoullis** (Dichte der Art `Person` mit Existenz r, B_GarciaFernandez2018 Gl. 31;
   der Spurteil eines PMBM): Es gibt sie mit der Wahrscheinlichkeit r, dann mit ihrer Dichte. Was gegen
   sie spricht (keine neue Spur, kein Wiederfinden, die Energien, 4.1–4.3), wirkt als
   `1 − r + r ∫ Dichte × Likelihood`: Dichte und r werden zusammen aktualisiert, ohne Regel. Eine neue
@@ -856,9 +877,9 @@ Ankünfte und das Vergessen aus 3.4.
   verschiedener Personenzahl; wurde die mit weniger Personen abgeschnitten (höchstens 12, 5.1), kam
   sie nie zurück, und die erfundene Person blieb mit r = 1 (9, 10). Ausgaben zählen r × Dichte; die
   Anzeige zeigt Personen mit r ≥ 0,5 (Schätzer der Literatur, B_GarciaFernandez2018 Abschn. VI).
-- **Was keine Messung prüfen kann, läuft ab** (`unseen_life` = 2 min, `Tracker._expire`, seit 8.10.;
-  Review des Algorithmus 1.3). Wo ein Sensor eine bekannte Person ohne Spur sähe, entscheiden die
-  Messungen allein (`1 − r + r ∫ Dichte × Likelihood`, oben); dort endet nichts (Vorgabe 1.3): Eine
+- **Was keine Messung prüfen kann, läuft ab** (`unseen_life` = 2 min, `expire` in `filter/step.rs`, seit
+  8.10.). Wo ein Sensor eine bekannte Person ohne Spur sähe, entscheiden die
+  Messungen (`1 − r + r ∫ Dichte × Likelihood`, oben); dort endet sonst nur `record_life` (unten): Eine
   Sitzende in Sicht bleibt, solange keine Messung gegen sie spricht, wie lang ihre Lücke auch ist, und
   zwei, die der LD2450 als ein Ziel sieht, bleiben zwei (weder Erfassung noch Wiederfinden zählen gegen die
   Unaufgelöste, 4.1; bis 0.61 tat es das Wiederfinden). Wo kein Sensor hinsieht – ein toter Winkel
@@ -871,26 +892,23 @@ Ankünfte und das Vergessen aus 3.4.
   Fehlern der Messmodelle (Mehrwegeechos, LD2410C), nicht aus Personen, die durch eine Tür kamen.
   Deshalb läuft der Teil eines Eintrags ab, den kein Sensor prüfen kann:
   `p_S(x) = e^(−Δt/τ · (1 − s(x)))`, s(x) wie gut der beste *lebende* Sensor eine Person dort sieht
-  (`Tiling.observed`: die Sicht des LD2450, 4.1, oder die des LD2410C, Strahl × Sichtlinie bis zu
+  (`World::observed`: die Sicht des LD2450, 4.1, oder die des LD2410C, Strahl × Sichtlinie bis zu
   seinem letzten Ring, 4.3; je über die Kachel gemittelt), 0 in allen Bereichen ohne Sensor (offen wie
   geschlossen, 2) und außer Haus. **Auch geschlossene Bereiche** (keine Tür nach draußen, ihre Türen führen
-  nur in den beobachteten Bereich: der Balkon) laufen ab. 0.26 ließ sie nicht ablaufen: Wer dort ist, komme nur
-  durch eine dieser Türen zurück, und dass niemand herauskommt, sei die Prüfung. Begründet war das mit einem
-  Gast, der 8.10. nach 15 min vom Balkon an den Esstisch zurückkam; den gab es nicht (am 8.10. war niemand auf
-  dem Balkon, die „Person am Esstisch“ war ein Geist), und was die Regel dort hielt, waren Einträge aus
-  Geistern an der Balkontür, die später als Personen „zurückkamen“. Seit 0.27 wieder wie bis 0.25 (9 Punkt 2,
-  10 „0.27“).
+  nur in den beobachteten Bereich: der Balkon) laufen ab. 0.26 ließ sie nicht ablaufen, begründet mit
+  einer Wahrheit, die falsch war; gehalten wurden dort Einträge aus Geistern an der Balkontür (10 „0.27“).
   r fällt um r × diesen Anteil × (1 − e^(−Δt/τ)); in voller Sicht ist p_S = 1. Das ist eine Annahme über
   Einträge ohne Beleg, kein Teil der Bewegung: die Existenz-Kette von D_MusickiEvans2005 (Markov-Kette 1,
-  Gl. 6, p₁₁ < 1), aber nur, wo die Erkennbarkeit (Kette 2, hier κ, 4.1) nichts ausrichten kann (Review
-  1.3: „p_S(x), das ehrlich als Annahme über Records ohne Beleg dasteht“). Vorgabe 1.3 gilt damit für
-  Personen in Sicht; wer hinter einer Tür, in einem toten Winkel oder außer Haus ist, wird nach Minuten
-  vergessen und kommt, wenn er herauskommt, als neue Person (5 s Bestätigung genügen, 1; die Zahl
+  Gl. 6, p₁₁ < 1), aber nur, wo die Erkennbarkeit (Kette 2, hier κ, 4.1) nichts ausrichten kann. In
+  Sicht verschwindet so niemand ohne Messung dagegen (1, Punkt 3 und 5); wer hinter einer Tür, in
+  einem toten Winkel oder außer Haus ist, wird nach Minuten
+  vergessen und kommt, wenn er herauskommt, als neue Person (5 s Bestätigung genügen, 1, Punkt 4; die Zahl
   hinter Türen zählt nur für das Herauskommen). Über eine Datenlücke (Neustart, 5.3) zählen die
   Sensoren, die da sind (sie hätten geprüft, nur die App sah nicht hin); ein Sensor, dessen Frames
   ausbleiben (4.4), prüft nichts. τ = 2 min wie der Median der Aufenthalte in Bereichen ohne Sensor
-  (3.3, angenommen); wo es überall galt, war 2 min die kürzeste Zeit ohne fälschlich an (10, „Tote
-  Winkel und Existenz“). Tote Winkel der Wohnung (config10, s < 0,05 auf 1,9 m²): die Vorratsecke der
+  (3.3, angenommen); wo es überall galt, war 2 min die kürzeste Zeit ohne fälschlich an (alte Messung
+  auf gelöschten Daten, 10, „Tote Winkel und Existenz“). Tote Winkel der Wohnung (alte Konfiguration
+  config10, s < 0,05 auf 1,9 m²): die Vorratsecke der
   Küche hinter der Wand bei y = 7,7 m (x 3,6–4,7, y 7,9–9,2) und ein Streifen von 0,4 m an der Südwand
   des Schlafzimmers (x −2,3 bis −1,0); s < 0,5 auf 3,1 m². **Bis 0.22** lief die Existenz überall ab, auch in
   voller Sicht (`record_life`, `e^(−t/2 min)`); in Sicht kostete das die zweite Person, die der LD2450
@@ -903,20 +921,19 @@ Ankünfte und das Vergessen aus 3.4.
 - **Zurückgeben:** Eine bekannte Person ohne Spur, die zu weniger als 1 % existiert (r < 0,01), geht
   mit r × ihrer Dichte in die Intensität (Bernoulli → Poisson), wo sie auch ist. Wer das Haus verlassen
   hat, dessen Eintrag läuft draußen ab wie überall, wo kein Sensor prüft (oben), und geht erst dann
-  zurück. Bis 7.10. ging zurück, wer zu
-  weniger als 1 % existierte *und im Haus war* (r × P(im Haus) < 0,01): Wer hinausging, kam sofort mit
-  seinem ganzen r in die Intensität außer Haus, kehrte von dort mit 1/(4 h) zurück und wurde erst nach
-  einem Tag vergessen, während alle anderen ohne Stütze in Minuten verblassen (10, „Wer hinausging,
-  blieb erwartet“). Das
+  zurück (sonst käme, wer hinausgeht, mit seinem ganzen r in die Intensität außer Haus und würde erst
+  nach einem Tag vergessen; bis 7.10. so, 10, „Wer hinausging, blieb erwartet“). Geprüft wird einmal je
+  Sekunde (`RECYCLE_EVERY`); gibt eine Hypothese jemanden zurück, rücken alle vor, und es wird
+  zusammengelegt (5.6). Das Zurückgeben
   ändert nur P(mehrere davon kommen zurück), um höchstens 0,01²/2. Sonst würde jeder Gast für immer
   verfolgt. (Die Literatur verwirft Bernoulli-Teile unter 10⁻⁵, B_GarciaFernandez2018 Abschn. VII,
   oder r < 10⁻³, B_Reuter2017 S. 166; hier geht keine Masse verloren.) Die Intensität ist eine für alle
   Hypothesen wie im PMBM (B_GarciaFernandez2018 Gl. 7–10): Was die Hypothesen zurückgeben, kommt nach
   ihrem Gewicht hinzu. Vorher trug jede Hypothese ihre eigene Kopie; mit den vielen kleinen Bernoullis
   (r von wenigen %, aus „vielleicht eine neue Person“ jeder Spur, solange beim Start ohne Wissen
-  Intensität in Sicht ist) kostete das Rechenzeit (10). 5 % statt 1 %: 14 % weniger Rechenzeit, aber
-  Licht fälschlich aus 1,67 statt 1,17 von 15 (Arbeitszimmer 21:36 knapp unter der Schwelle),
-  Log-Evidenz −49.
+  Intensität in Sicht ist) kostete das Rechenzeit (10). Alte Messung (Python-Kern, Aufnahme gelöscht,
+  Wahrheit ungenau): 5 % statt 1 % sparten 14 % Rechenzeit, aber Licht fälschlich aus 1,67 statt 1,17
+  von 15 (Arbeitszimmer 21:36 knapp unter der Schwelle), Log-Evidenz −49.
 
 - **Störquellen** (4.5; `filter/clutter.rs`) wie die Personen: Die unbekannten sind eine Poisson-Intensität,
   gleich über den Blick jedes Sensors und gleich in allen Hypothesen; im Gleichgewicht bekommen so viele ihre erste Spur,
@@ -924,27 +941,31 @@ Ankünfte und das Vergessen aus 3.4.
   bekannten sind Bernoullis je Hypothese, benannt nach der Spur, mit der sie zuerst gesehen wurden (so ist „diese Spur
   ist eine neue Störquelle“ in allen Hypothesen dieselbe). Ohne Spur überlebt eine mit `e^(−Δt/clutter_life)`, und
   solange ihr Sensor lebt, gewichtet „keine neue Spur auf ihr“ mit `1 − r + r e^(−a Δt)` und senkt r (dieselbe
-  Bernoulli-Aktualisierung wie oben). Unter r < 1 % geht sie zurück in die Intensität. Beim Zusammenlegen (5.6) wird
+  Bernoulli-Aktualisierung wie oben). Unter r < 1 % fällt sie weg (zurück in die Intensität, die so bleibt, wie sie ist). Beim Zusammenlegen (5.6) wird
   dieselbe Störquelle nach ihrem Namen gemischt (Momentenabgleich, r = Σ Gewicht × r, wo sie fehlt r = 0).
 
 ### 5.6 Zusammenlegen
-Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
+Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine (`merge_alike` in
+`filter/merge.rs`). Was in allen dasselbe Objekt ist, bleibt unverändert; sonst:
 - Personen mit denselben Spuren: Gauß-Mischungen vereinigt, je Betriebsart per Momentenabgleich.
+  Ebenso die Quellen derselben Geisterspur und die Intensität der Unbekannten (gewichtet gemischt).
 - Personen ohne Spur sind austauschbar: so gepaart, dass die Summe der L1-Abstände (von r × Dichte)
-  minimal ist, dann gemischt (eigene Herleitung; beliebige Reihenfolge erzeugt „je zu 50 % hier und
+  minimal ist (alle Paarungen durchprobiert, für 2 bis 6 Personen; über 6 wird nicht gepaart), dann
+  gemischt (eigene Herleitung; beliebige Reihenfolge erzeugt „je zu 50 % hier und
   dort“ statt „einer hier, einer dort“, B_Reuter2014 Fig. 1–3). Für mehr als eine Person ist das die
   Multi-Bernoulli-Näherung.
 - Auch Hypothesen mit verschieden vielen Personen ohne Spur werden eine (seit 7.10.): Wo eine
   Hypothese eine Person weniger hat, steht dort „niemand“ (r = 0); gemischt wird daraus ein
-  Bernoulli mit r = Σ Gewicht × r (`Hidden.mixture`). Für genau eine fehlende Person exakt; vorher
-  nicht zusammengelegt (9: „Bekannte Personen sammelten sich an“). Ein Neustart speichert dadurch
-  eine Hypothese statt einer je Zahl (5.3).
+  Bernoulli mit r = Σ Gewicht × r (`Densities::mixture`); ist r = 0, fällt er weg. Für genau eine
+  fehlende Person exakt. Ein Neustart speichert dadurch eine Hypothese (5.3).
+- Bekannte Störquellen nach ihrem Namen (5.5).
 
 ## 6. Ausgaben
-- **Je beobachtetem Raum:** Verteilung der Personenzahl (5.1); an Home Assistant geht
-  P(belegt) = 1 − P(0) als Attribut `probability` (in 5-%-Schritten). Nur Auskunft: Nichts entscheidet danach,
+- **Je beobachtetem Raum:** Verteilung der Personenzahl (5.1); an Home Assistant geht P(belegt) = 1 − P(0) als
+  Attribut `probability` der Entität *Personen* (in 5-%-Schritten, neben `moving` und `still`). Ein Raum ohne
+  Sensor bekommt die seines Bereichs ohne Sensor. Nur Auskunft: Nichts entscheidet danach,
   und die Oberfläche zeigt sie nicht, weil sie den Unbekannten (5.5) mitzählt: Ein Schlafzimmer ohne Person stand
-  in zwei Stunden der Aufnahme drei Viertel der Zeit über 50 % (10).
+  in zwei Stunden der Aufnahme drei Viertel der Zeit über 50 % (Messung vor dem 31.10., Aufnahme gelöscht; 10).
 - **Personen und Belegt, eine Zuordnung:** Jede Zahl von Personen und jedes *besetzt* kommt aus einer Quelle
   (Leon, 30.10.: „Ich will, dass das Licht dem folgt, was angezeigt wird“; bis 0.54 Maximum je Randverteilung für die
   Zahl, P(belegt) über c für das Licht, Punkte aus der wahrscheinlichsten Hypothese: drei Quellen).
@@ -955,21 +976,25 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
     selbst; ihr Anteil am Ort (enthält r und den Teil durch eine Tür), gewichtet mit der Hypothese. Eine Hypothese,
     die die Spur einen Geist nennt, trägt nichts bei. Damit hängt die Wahrscheinlichkeit an der Person, keine je
     Raum wird ausgewertet.
-  - *Regel* (`Occupied::update`, Zustand bei den Ausgaben, nicht im Filter): Ein Raum geht an, wenn eine ihm
-    zugeordnete Person `sure` ≥ c erreicht, c = K_an / (K_an + K_dunkel) = `light_cost` / (`light_cost` + 1) = 2/3
-    (Bayes-Entscheidung; I_GneitingRaftery2007 S. 364–365, Satz 3, jetzt je Person), und aus, wenn keine
-    zugeordnete Person `occupied_off` erreicht. Keine Nachlaufzeit: Das verzögerte Ausschalten bleibt in Home
+  - *Regel* (`Occupied::update` in `outputs.rs`, Zustand bei den Ausgaben, nicht im Filter): Ein Raum geht an, wenn
+    eine ihm zugeordnete Person `sure` ≥ c erreicht, c = K_an / (K_an + K_dunkel) = `light_cost` / (`light_cost` + 1)
+    (Bayes-Entscheidung; I_GneitingRaftery2007 S. 364–365, Satz 3, hier je Person; mit dem Default `light_cost` = 2
+    ist c = 2/3), und aus, wenn keine zugeordnete Person `occupied_off` erreicht (Default 1/3, höchstens c). Der
+    Default 2 stammt vom 6.10. und passt nicht zu 1 (dort wiegt dunkel mit Person etwa 5× Licht ohne Person); offen
+    in 9. Keine Nachlaufzeit: Das verzögerte Ausschalten bleibt in Home
     Assistant (bzw. Node-RED). Die App schaltet keine Lichter, sie liefert je Raum *besetzt* und *Ziel* (unten).
     Die Regel ist zustandsarm und doppelt angewandt dieselbe; nach einem Neustart beginnt der Zustand leer und baut
     sich aus ihr auf. Bereiche ohne Sensor genauso, ein Bereich aus mehreren Räumen als ein Ort.
   - *Wer zählt:* Wer `occupied_off` erreicht und in einem Raum steht, der an ist. Wer zugeordnet ist, aber nicht
     zählt, ist für die Anzeige keine Person, nur eine Wolke ohne Punkt: Der dunkle Raum zeigt 0, nicht 1. Es
-    gilt ohne Ausnahme: *besetzt* ⇔ Zahl ≥ 1, Räume + Bereiche ohne Sensor = Haus, *bewegt* + *ruhig* = Zahl des Raums,
-    und Karte, Liste, Kopfzeile, `*_count` und `*_occupancy` sagen dasselbe. Unbekannte ohne Person der Anzeige
-    zählen nicht.
+    gilt ohne Ausnahme: *besetzt* ⇔ Zahl ≥ 1, Räume + Bereiche ohne Sensor = Haus, und Karte, Liste, Kopfzeile,
+    `*_count` und `*_occupancy` sagen dasselbe. *Bewegt* + *ruhig* = Zahl gilt nur in beobachteten Räumen: Wer in
+    einem Bereich ohne Sensor zählt, ist nicht gezeichnet und weder bewegt noch ruhig (so auch im Haus).
+    Unbekannte ohne Person der Anzeige zählen nicht.
   - *Warum so:* Die Personen der Anzeige und ihre Orte gab es schon, sie sind der Schätzer der Literatur
-    (B_GarciaFernandez2018 Abschn. VI); sie allein zu zählen ließ Hypothesen zu 0,51 / 0,46 Räume schalten, die
-    Sicherheit über die Hypothesen nimmt das heraus, die Hysterese das Pendeln um die Schwelle.
+    (B_GarciaFernandez2018 Abschn. VI); sie allein zu zählen ließ Hypothesen zu 0,51 / 0,46 Räume schalten (2 h
+    Aufnahme, 30.10., gelöscht), die Sicherheit über die Hypothesen nimmt das heraus, die Hysterese das Pendeln um
+    die Schwelle.
   - *Sensor des Raums stumm:* Der Sensor des Raums ist der, dessen Name die ID des Raums ist (`kueche` für die
     Küche), sonst der Anzeigename des Raums, sonst der Raum, in dem er hängt (0,3 m um den Umriss, nur wenn
     eindeutig). Hat jeder eingeschaltete, platzierte Sensor des Raums seit mehr als `SILENT_AFTER` = 30 s keinen Frame gesendet (länger als die WLAN-Lücken von 6–20 s,
@@ -982,21 +1007,27 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
     von Wohn- und Esszimmer aus; der Raum war 1,5 h „frei“ und das Licht ging aus, während jemand auf
     dem Sofa saß). Räume ohne eigenen Sensor, Bereiche und das Haus: unverändert.
 - **Bereiche ohne Sensor:** wie oben; eine Zahl am Raum nur, wenn der Bereich ein Raum ist.
+- **Bereiche** (im Grundriss gezeichnet, etwa das Sofa oder das Vorratszimmer): in Home Assistant wie ein Raum mit
+  *besetzt*, *Personen*, *Bewegung* und *Ziel*. Sie zählen die gezählten Personen, deren gezeichneter Punkt in
+  ihrem Umriss liegt (`zone_numbers` in `outputs.rs`), zusätzlich zu deren Raum; in die Zahl des Hauses gehen sie
+  nicht noch einmal ein. Kein `probability`, nie *nicht verfügbar*.
 - **Außer Haus** (auch das Treppenhaus): keine Zahl, kein Zustand, keine Entität in Home Assistant und
   in der Anzeige. Die Zahl im Haus (`presence_haus_count`) zählt alles außer *außer Haus*. Entitäten, die
   der Broker von früher hält (etwa die alten der Treppe), löscht die App beim Verbinden (`ha.py`: leere
   Konfiguration und leerer Zustand, beibehalten).
-- **Bewegt / ruhig:** aus den gezeichneten Personen (geht-Gewicht > 0,5 und > 0,15 m/s).
-- **Ziel** (`Tracker.targets`, `learn/destination.rs`, je beobachtetem Raum und je Bereich): P(ein Gehender geht
+- **Bewegt / ruhig:** aus den gezeichneten Personen. *Bewegt*: mit messender Spur, geht-Gewicht > 0,5 und
+  > 0,15 m/s (`Person::moving`); *ruhig*: gezeichnet und nicht bewegt.
+- **Ziel** (`targets` in `learn/destination.rs`, je beobachtetem Raum und je Bereich): P(ein Gehender geht
   als Nächstes dorthin), ohne Horizont, allein aus der gelernten Karte, wohin Gänge gingen (eine ortsabhängige
   Karte der Raumnutzung aus Spuren, J_Luber2014 Kap. 6, Abschn. 6.5; Übergänge aus Daten gelernt, G_Liao2003).
-  - *Die Karte:* Je Zelle (0,3 m, an den Räumen geteilt wie die Kacheln), Richtung (16) und Tempo (0,3–0,7 /
-    0,7–1,1 / ab 1,1 m/s) zählt sie die Gänge je Ausgang: der Raum hinter der ersten Tür, ein Bereich ohne
+  - *Die Karte:* Je Zelle (0,3 m, an den Räumen geteilt wie die Kacheln), Richtung (16) und Tempo (Klassen um
+    0,5 / 0,9 / 1,35 m/s) zählt sie die Gänge je Ausgang: der Raum hinter der ersten Tür, ein Bereich ohne
     Sensor, außer Haus, ein Bereich (unten) oder „bleibt“ (der Gang endet ohne Tür, 2 s Stehen, in keinem
     Bereich). Jeder Schritt eines Gangs zählt mit einem Kern (0,3 m, 0,3 m/s, wie in der Untersuchung) auf
-    den Zellen um ihn, nur im eigenen Raum und nicht durch Wände, so normiert, dass ein Gang durch die Mitte
-    einer Zelle in ihrer Geschwindigkeit dort 1 zählt. Gefragt wird sie über die Zellen um den Ort (0,15 m)
-    und linear zwischen Richtungen und Tempi. Ein Gang durch mehrere Räume ist je Raum einer: Nach jeder Tür
+    den Zellen um ihn, nur im eigenen Raum (Räume an einem Raumteiler zählen als einer) und nicht durch Wände, so
+    normiert, dass ein Gang durch die Mitte einer Zelle in ihrer Geschwindigkeit dort 1 zählt. Gefragt wird sie
+    über die Zellen um den Ort (0,15 m) und linear zwischen Richtungen und Tempi. Langsamer als 0,3 m/s zählt kein
+    Schritt, und die Karte wird nicht gefragt. Ein Gang durch mehrere Räume ist je Raum einer: Nach jeder Tür
     beginnt ein neuer, die Schritte davor zählen für den Raum dahinter (fürs Licht genügt der nächste Raum;
     zwei Räume voraus verteilten die Gänge auf viel mehr Ausgänge).
   - *Bereiche als Ausgang* (seit 0.56; Leon, 4.11.: die Speisekammer hinter der Küche, „Vorratszimmer“, ohne
@@ -1009,15 +1040,17 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
     (dort pendelt man, ZIEL-Untersuchung 3.1; Wohn- und Esszimmer sind eine Lichtgruppe). Ein Gang über
     den Raumteiler geht weiter, sein Ausgang ist die nächste Tür; die Karte sagt dort für den Raum
     jenseits des Teilers 0.
-  - *Gelernt in der App aus den eigenen Gehenden*: je Hypothese und Person mit
-    Spur, gewichtet mit dem Gewicht der Hypothese und P(geht) (weiche Zählungen über alle behaltenen
-    Hypothesen, 10 „Geisterkarte“). Weich sind nur die Schritte: Der Ausgang eines Gangs (wo die Person
-    nach der Tür ist) kommt aus der schwersten Hypothese, die sie hält (`learn/destination.rs`, `observe`). Eine Person ist ihre früheste laufende Spur; endet sie, übernimmt den
+  - *Gelernt in der App aus den eigenen Gehenden*: je Person mit Spur über alle Hypothesen, die sie halten,
+    gewichtet mit dem Gewicht der Hypothese und P(geht) (weiche Zählungen). Weich sind nur die Schritte: Der
+    Ausgang eines Gangs (wo die Person nach der Tür ist) kommt aus der schwersten Hypothese, die sie hält
+    (`Learner::observe`). Eine Person ist ihre früheste laufende Spur; endet sie, übernimmt den
     Gang, wer binnen 1,5 s höchstens 1 m daneben auftaucht (Übergabe an einer Tür). Der Ausgang: der Raum
     oder Bereich ohne Sensor, in dem die Person zwei Takte nach einer Tür ist, ein Bereich (oben), oder
-    „bleibt“ nach 2 s mit P(geht) < ½. Vergessen mit 14 Tagen.
-    Gespeichert mit dem Übrigen Gelernten (`destinations.json`, Fehlermeldungen). Andere Räume, Türen oder
-    Zonen: die Karte beginnt leer.
+    „bleibt“ nach 2 s mit P(geht) < ½. Schritte, die älter als 60 s sind, fallen aus dem laufenden Gang. Während
+    „Lernen pausieren“ werden laufende Gänge verworfen und nichts gezählt. Vergessen mit 14 Tagen.
+    Gespeichert in `destinations.json` (und in jeder Fehlermeldung); sie übersteht Neustarts und Updates. Jede
+    Änderung der Geometrie (Räume, Türen, Zonen, ein Sensor platziert, verschoben, gedreht oder neu kalibriert)
+    verwirft sie mit allem Gelernten (`Learned::follow` in `learn/mod.rs`); die Karte beginnt leer.
   - *Nur Ausgabe:* Die Karte liest die Hypothesen, sie ändert keinen Zustand und kein Gewicht des Filters.
     Darum kann sie keinen Fehler des Verfolgens verstärken (10: aus den eigenen Urteilen lernt das Modell
     seine Fehler; hier lernt nur die Ausgabe).
@@ -1035,79 +1068,104 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine:
     einen Raumteiler mit f = 0; ein Bereich ihres Raums, in dem sie nicht schon sind), gemittelt mit P(geht)
     und dem Gewicht ihrer Hypothese.
 
-  Wo die Karte nichts weiß (n = 0), ist *Ziel* aus. Bis 0.55 war der Prior die eigene Bewegung (*wird
-  betreten*: das OU-Modell 2 s vorausgerechnet, `P = (1 − λ) q_move + λ q_map`, ohne Gelerntes genau *wird
-  betreten*); Leon (4.11.): „eine komplett dumme Mischung aus zwei unterschiedlichen Systemen“, die
-  Vorhersage aus der Bewegung überflüssig, dass die Karte erst lernen muss, hinnehmbar. *Wird betreten*
-  ist mit ihr weg. Gemessen ist der Wechsel nicht (die Aufnahmen vom 6.–14.10. sind gelöscht); im
-  Test (`test_destination`, 20 gleiche Wege) liegt P vor der Tür bei 0,8–0,87 und flackert bei 0,8 um die
-  Schwelle, mit 0,66 ist es 80 % der Takte bis zur Tür an.
+  Wo die Karte nichts weiß (n = 0), ist *Ziel* aus. Bis 0.55 mischte P die eigene Bewegung (*wird betreten*,
+  das OU-Modell 2 s vorausgerechnet) mit der Karte; Leon (4.11.) hielt die Vorhersage aus der Bewegung für
+  überflüssig, seither zählt nur die Karte. Gemessen ist der Wechsel nicht. Im Test (`test_destination`, 20
+  gleiche Wege, Schwelle 0,66) ist *Ziel* mindestens 2 s vor der Tür an und danach in mindestens 80 % der Takte
+  bis zur Tür.
 
   **An**, wenn `n > 0` und `P(Z) ≥ c_Z` mit `c_Z = K_Fehl / (K_Fehl + K_spät)` je Zone (Bayes-Entscheidung
   wie für *besetzt*; K_Fehl ein Licht auf Verdacht ohne Person, K_spät ein Eintritt ins Dunkle).
   `target_threshold` = 0,8 (K_Fehl = 4 K_spät), je Raum oder Bereich anders (`target_thresholds`). Die
   Schwelle wirkt auf eine kalibrierte Wahrscheinlichkeit (von den Momenten mit 0,9–0,95 traten 89 % ein,
-  ZIEL-Untersuchung 3.4). Die Wahl ist eine der Kosten, also Leons (live 0,66).
+  ZIEL-Untersuchung 3.4 vom 7.10., auf den gelöschten Aufnahmen und mit der damaligen Formel für P). Die Wahl
+  ist eine der Kosten.
 
   Attribute: die Wahrscheinlichkeit, aus welchem Raum der Gehende kommt, der am wahrscheinlichsten
   hingeht, sein Abstand zur nächsten Tür dorthin (ein Bereich: zu seiner nächsten Zelle; Luftlinie) und die
-  Zeit bei seinem Tempo, seine Nummer und die Gänge dahinter (n). Räume ohne Sensor: kein Ziel. Die Karte
-  lernt in der App nur aus dem, was die App live sieht; nach einem Update beginnt sie leer.
+  Zeit bei seinem Tempo, seine Nummer und die Gänge dahinter (n). Räume ohne Sensor: Das Modell rechnet kein
+  Ziel; die Entität *Ziel* gibt es in Home Assistant trotzdem, immer aus mit Wahrscheinlichkeit 0. Die Karte
+  lernt in der App nur aus dem, was die App live sieht.
   *Anzeige* (Tab *Gelerntes*, `DestMap::shown`): je Zelle die Richtungen (über die Tempi) zu Spitzen
   zusammengefasst, jede Richtung zu der, zu der sie ansteigt; jede Spitze mit mindestens 15 % der Gänge der
   Zelle ein Pfeil (höchstens 6) mit dem mittleren Tempo, ihren Gängen und dem häufigsten Ausgang mit seinem
   Anteil. Ein Weg verschmiert beim Lernen über 2–3 Nachbarrichtungen (Kern 0,3 m/s); einzelne Richtungen über
   einer Schwelle wären ein Fächer aus Pfeilen für einen Weg.
-- **An Home Assistant** (`ha.py`, `ZoneState.to_dict`): Jede Änderung von Zustand oder Attributen einer
+- **An Home Assistant** (`ha.py`, `ZoneState.to_dict` in `zones.py`): Jede Änderung von Zustand oder Attributen einer
   Entität ist eine Zeile im Recorder von Home Assistant. Deshalb: Wahrscheinlichkeiten in 5-%-Schritten,
   Zeiten in 0,5 s, Wege in 0,5 m; die Zustände (*besetzt*, Zahl, *Bewegung*, *Ziel*)
   gehen in dem Takt hinaus, in dem sie wechseln; die Attribute einer Entität (`Discovery.steady`) neu mit
   jedem Wechsel ihres Zustands, sonst nur, wenn eines um mindestens zwei Stufen wanderte (eine Stufe ist
   Rundungsflackern) und die letzte Änderung mindestens 10 s (Personenzahl: 60 s) her ist. *Ziel* aus:
   feste Attribute (Wahrscheinlichkeit 0, der Rest leer). Nur die Ausgabe an Home
-  Assistant; die Anzeige der App bekommt die gerundeten Werte ungehalten.
+  Assistant; die Anzeige der App bekommt dieselben gerundeten Werte ungehalten. Dort wie in Home Assistant ist
+  ein *Ziel* unter c/2 (oder unter 0,01) 0 ohne Angaben; die Oberfläche hält ein *Ziel*, das anging, 2 s sichtbar
+  (`static/js/store.js`).
 - Anzeige: Personen der wahrscheinlichsten Hypothese, die eher existieren als nicht (r ≥ 0,5, 5.5),
   ihre Dichten (r × Dichte) als Wärmekarten; einen Punkt und eine Zeile in der Liste hat nur, wer zählt (oben).
+  Die LD2410C-Präsenz je Sensor (bewegt oder ruhig) mit Lücken bis `ld2410_hold` = 1,5 s überbrückt (`sensors.rs`;
+  nur Anzeige).
 
 ## 7. Evidenz
-Die Summe der Normierungen ist die Log-Evidenz der Aufnahmen (`Tracker.loglik`; Summe der
+Die Summe der Normierungen ist die Log-Evidenz der Aufnahmen (`Filter::loglik` in `filter/mod.rs`, das Paar
+(Log-Evidenz, Anteil der weggefallenen Hypothesen); Summe der
 prequentiellen Log-Scores, I_GneitingRaftery2007 S. 372): je Schritt die Vorhersagedichte der neuen
 Daten unter dem Posterior, den der Filter davor behalten hat. Was beim Abschneiden (5.1) wegfällt,
-zählt in seinem Schritt mit (die Masse aller Kinder ist die Vorhersage); `Tracker.loglik_cut` weist
+zählt in seinem Schritt mit (die Masse aller Kinder ist die Vorhersage); der zweite Wert weist
 aus, wie viel davon auf weggefallene Hypothesen kommt (`report_eval.py`: „dropped hypotheses“). Weil
 der Filter deterministisch ist, brauchen Vergleiche keine Seeds (I_Kantas2015 S. 8–9). **Glatt in den
-Parametern ist sie nicht** (bis 8.10. stand das hier): Das Abschneiden, die Obergrenze der Hypothesen,
+Parametern ist sie nicht:** Das Abschneiden, die Obergrenze der Hypothesen,
 die Paarung beim Zusammenlegen (5.6, ein argmin), die Rückgabe bei r < 0,01 (5.5) und die Grenze,
-ab der eine Kachel im Blick des LD2410C liegt (`ld2410.FLOOR`), springen; deshalb hängt sie nicht monoton von den
+ab der eine Kachel im Blick des LD2410C liegt (`ld2410::FLOOR`), springen; deshalb hängt sie nicht monoton von den
 Grenzen ab (5.1), und Gradienten oder EM-Schritte über sie sind unzuverlässig. Vergleichbar ist sie
 außerdem nur bei derselben Vorverarbeitung (welche Messungen verworfen werden, hängt von Kalibrierung
 und Grundriss ab) und derselben Temperierung der LD2410C-Terme (4.3: Potenzen von Dichten, keine
 Dichten). Gedacht ist sie für grobe Vergleiche von Parametern und Varianten auf Aufnahmen ohne
-Wahrheit, bei mehr als einer Einstellung der Grenzen (5.1). Bisher ist damit nur die Lebensdauer der
-Geister geschätzt (4.2).
+Wahrheit, bei mehr als einer Einstellung der Grenzen (5.1). Bisher verglichen damit: Varianten auf den
+gelöschten Aufnahmen vom 6./7.10., etwa die Zahl der Arten des Aufenthalts (3.1) und die Stufen κ (4.1).
 
 ## 8. Prüfung
-- **Wahrheitsdaten:** am 6.10.2026 gelöscht, die Bewertung wird neu aufgebaut. Maßstab sind die
-  Lichtfehler aus 1.1 je Raum (keine einzelne Prozentzahl).
-- **Fehlermeldungen** (App, *Fehler melden*): 15 Minuten Sensordaten, die Anzeige der App, der Start
-  des Modells und das Gelernte von diesem Start (sonst vom Moment der Meldung). Das Nachspiel ab dem
-  Start glaubt genau, was die App glaubte; mit dem Gelernten vom Moment der Meldung lag es am 6.10.
-  um bis zu 1,0 daneben. Lag der Start früher, hat ein Nachspiel ohne Wissen nach 15 Minuten vergessen,
-  was es nicht wusste (22:40, 22:42: |ΔP| < 0,01 am gemeldeten Moment, anfangs bis 0,11).
+- **Aufnahmen:** Der Rekorder in der App (Einstellung *Aufzeichnung*, `presence_tracker/recording.py`) schreibt je
+  Stunde eine Datei aller eingehenden Nachrichten; er ist die Quelle der Aufnahmen seit dem 31.10. Alle älteren
+  Aufnahmen und die Wahrheitstabellen sind am 31.10. gelöscht (die Tabellen waren ungenau). `tools/record.py`
+  schreibt dasselbe Format von außen über MQTT.
+- **Fehlermeldungen** (App, *Fehler melden*) sind die Wahrheit: aus ihnen entsteht eine private Wahrheitsdatei
+  (Fenster und Zahlen je Raum, nur wo die Meldung etwas sagt). Maßstab sind die Lichtfehler je Raum (1: dunkel mit
+  Person wiegt etwa 5× Licht ohne Person), keine einzelne Prozentzahl. Eine Meldung enthält 15 Minuten
+  Sensordaten, die Anzeige der App, die Konfiguration samt den später ohne Neustart übernommenen
+  (`config_changes`), die Pausen, den Start des Modells, das Gelernte und den gespeicherten Zustand der Personen
+  von diesem Start (sonst das Gelernte vom Moment der Meldung). Das Nachspiel ab dem Start glaubt genau, was die
+  App glaubte; mit dem Gelernten vom Moment der Meldung wich es am 6.10. ab (gelöschte Daten). Lag der Start
+  früher, hat ein Nachspiel ohne Wissen nach 15 Minuten vergessen, was es nicht wusste (6.10. 22:40, 22:42:
+  |ΔP| < 0,01 am gemeldeten Moment, anfangs bis 0,11; gelöschte Daten).
 - **Hintergrundaktivität** (10, „Lernen pausieren“): Fenster, die in eine Pause reichen (Schalter in den
   Aufnahmen, für die Tage davor die Zeiten des Saugroboters, `--pauses`), werden nicht bewertet; die
   Nachspiele lernen dort nichts, wie die App.
-- **Tests** (`tracker/tests`): bitgleiche Läufe, Unabhängigkeit von der Zeitzerlegung,
-  Bewegungsstatistik, Szenen aus `sim.py`, Invarianten der Buchführung (`Tracker.check`).
+- **Tests:** die Rust-Tests im Kern (`#[cfg(test)]` in `presence-core/src`, etwa `outputs.rs`,
+  `learn/destination.rs`, `silent.rs`, `filter/tests.rs`) und die Python-Tests (`tracker/tests`): bitgleiche Läufe,
+  Unabhängigkeit von der Zeitzerlegung, Bewegungsstatistik, Szenen aus `sim.py`, Invarianten der Buchführung
+  (`Filter::check`, aus Python `core.check()`).
 - **Geplant:** simulationsbasierte Kalibrierung (0_Talts2018 Alg. 1): Welten aus diesem Modell
   erzeugen; der Rang der wahren Zahl unter der Filterverteilung muss gleichverteilt sein.
-- Werkzeuge: `tools/record.py` (Aufnahme), `tools/replay.py` (Aufnahmen durch den Tracker),
-  `tools/calibrate_offline.py` (Kalibrierung aus
-  Aufnahmen mit dem Modell der App, dazu Block-Bootstrap, Spiegel- und Maßstabsprofile und freie Positionen;
-  10; seit 0.45.0 rechnet der Kern den Schätzer, `presence-core/src/calibration/`, die Analysen des Werkzeugs
-  laufen auf einem Baum von 0.43.0).
+- Werkzeuge:
+  - `tools/replay.py`: Aufnahmen oder eine Fehlermeldung durch den Tracker, druckt je Raum und Person, was er zeigt.
+  - `tools/report_eval.py`: bewertet den Tracker gegen die Wahrheit aus den Fehlermeldungen; die Aufnahmen
+    laufen wie in der App (frisches Modell bei jedem Start, Gelerntes und Zustand der Personen weitergetragen),
+    je gemeldetem Moment und Raum P(belegt), P(gemeldete Zahl), Lichtfehler und die Log-Evidenz (7).
+  - `tools/baseline_eval.py`: einfache Grundlinien ohne Modell (rohe LD2450-Ziele mit Haltezeit, dazu LD2410C)
+    gegen den Filter, bewertet wie `report_eval.py`, mit dem Licht der Node-RED-Regel.
+  - `tools/vacuum_history.py`: die Zeiten des Saugroboters aus der Historie von Home Assistant als Pausen
+    (`--pauses`) für die Tage vor dem Schalter.
+  - `core/presence-replay`: eine Aufnahme durch den Rust-Kern ohne Python (`trace`: Zustände Zeile für Zeile,
+    `prof`: Rechenzeit).
+  - `tools/calibrate_offline.py`: Kalibrierung aus Aufnahmen mit dem Modell der App, dazu Block-Bootstrap,
+    Spiegel- und Maßstabsprofile und freie Positionen (10); seit 0.45.0 rechnet der Kern den Schätzer
+    (`presence-core/src/calibration/`), die Analysen des Werkzeugs laufen auf einem Baum von 0.43.0.
 
 ## 9. Bekannte Schwächen und Offenes
+Zahlen aus den Aufnahmen 6.–14.10. und den Wahrheitstabellen sind mit diesen am 31.10. gelöscht. Wo sie unten
+stehen, sind sie alte Messungen: neu messen, an Meldungen und Aufnahmen der App.
+
 **Offen nach 0.63: Personen verschwinden noch über fremde Spuren** (10 „Nacht 8./9.11.“). (1) Die Spur eines fernen
 Sensors (Esszimmer auf das Sofa in 6–7,5 m) misst eine Person 1,5 m daneben (Mehrweg, 20 min dieselbe Stelle an der Wand).
 Bekommt eine Person ohne Spur sie, steht sie dort fest (die Gauß-Mischung verschiebt sich durch Nicht-Erfassung nicht, sie
@@ -1119,211 +1177,127 @@ in Sicht des Sensors, aber eine Person, die er durch eine Wand nicht sehen kann,
 Person, die der Sensor ihres Raums nicht sieht, ist woanders, nicht fort. Ein „Wer nicht da ist, wo er erwartet wird, ist
 woanders im Raum“ (der Musicki-Zustand „unsichtbar“, D_MusickiEvans2005 Kette 2, mit eigener Dauer) und eine Prüfung der
 Sicht beim Beginn einer Spur auf einer Person mit Spur sind die nächsten Kandidaten; beide nicht gemessen.
-Offen beim LD2410C (4.3): Flur 21:35 und 21:56 (Eintretende zu 0,5 statt 0,9 im Flur) liegen nicht
-am LD2410C: ohne seine Echoquellen im Flur 0,54 / 0,46, ganz ohne den Flur-LD2410C 0,51 / 0,62
-(sonst 0,52 / 0,40). Die Person steht in der Tür zum Arbeitszimmer (−1,5 / 5,0), und welche Seite,
-entscheiden 0,2 m. Ob und wie stark er durch Wände und Türen sieht (bisher: gar nicht; die zweite Person im
-Bad erscheint im Arbeitszimmer, wenn doch); die Amplitude einzelner Aufenthalte streut um einen Faktor
-1,3–1,6 um das Profil, der Schweif je Raum um bis zu 3 (4.3), das Modell nimmt das mittlere; δ ist gegen teils
-unkalibrierte LD2450 gemessen (0,07–0,5 m je nach Sensor); die Addition mehrerer Personen ist nicht an
-Zwei-Personen-Zeiten geprüft; α, τ, κ, die Verzögerung und das Vergessen des Hintergrunds sind über die
-Evidenz (7) zu schätzen; das Bewegt-Flag ist ohne Ablation weggelassen. Ein Raumteil, den kein Sensor
-sieht (die Vorratsecke der Küche hinter der Wand bei y = 7,7 m, x 3,6–4,7), hält eine Person nur noch so
-lange, bis ihr Eintrag abläuft (5.5, 2 min); wer dort wirklich länger steht, wird ebenso vergessen.
-Schwach Gesehenes (Sicht 0,1–0,5, etwa der Rand der Vorratsecke bei x 3,4) prüfen die Messungen nur
-langsam; dort läuft der Eintrag mit dem ungesehenen Anteil ab. Ob ein schwacher, aber beständiger
-Überschuss der LD2410C-Energie eine Person dort hält (7.10. 11:22–11:37: r 0,09 → 0,99 ohne Ablauf), hängt
-an der Kalibrierung seiner Likelihood (4.3, Review 1.8).
 
-Offen: **Der Filter verliert Personen, die sein eigener LD2450 weiter misst**, und findet sie nicht wieder
-(10, „Filter oder LD2450 des Raums“). 8.10. abends war er 38,9 von 64 belegten Minuten „frei“, der LD2450
-des Raums nur 2,4 min (Bad: sitzt an der Wand, 98 % „frei“); 7.10. 08:59–09:49 im Arbeitszimmer 50 min
-P = 0,00 bei einer gemessenen Spur am Schreibtisch, 8.10. 00:29–06:14 im Schlafzimmer 5,8 h bei Spuren am
-Bett bis 45 min. Vermuteter Mechanismus: Die Spur wird bei ihrer Geburt in jeder überlebenden Hypothese
-ein Geist (neue Person nur bei harter Evidenz, danach H = 1–2), und mit nur einer Hypothese normiert sich
-jede Evidenz gegen „Geist“ weg (e^−71 für 46 min Geist). Bis das im Filter (5.1, Abschneiden, Geister)
-behoben ist, hängen *besetzt*, die Personenzahl und *Ziel* an den verlorenen Personen; die
-Ausgaberegel, die *besetzt* bis 0.54 darüber hinweg hielt, ist weg (10, „Eine Zuordnung“).
+**Der Filter verliert Personen, die der LD2450 ihres Raums weiter misst** (10, „Filter oder LD2450 des Raums“). Im
+Oktober gemessen (7./8.10., vor 0.55–0.63, Daten gelöscht): Bad, Arbeitszimmer und Schlafzimmer minutenlang bis stundenlang
+„frei“ bei Spuren am Platz. Vermuteter Mechanismus: Die Spur wird bei ihrer Geburt in jeder überlebenden Hypothese ein
+Geist, und mit nur einer Hypothese normiert sich jede Evidenz gegen „Geist“ weg (5.1). Ob es heute noch vorkommt, ist
+neu zu messen. Solange es vorkommt, hängen *besetzt*, die Personenzahl und *Ziel* an den verlorenen Personen.
+
+Offen beim LD2410C (4.3):
+- Durch Wände sieht er im Modell nicht (am 30.10. etwa 4 % gemessen, bewusst undurchsichtig gelassen), durch
+  Türöffnungen geometrisch wie jeder Sensor. In einen geschlossenen Bereich ohne Sensor sieht kein Sensor
+  (`prior_pd`, `world/build.rs:178`), auch nicht durch eine Glastür.
+- Gemessen sind inzwischen κ (`kappa_shape`, 0.60) und das Profil der Gehenden (0.63). Offen: die Ruhe-Profile
+  (`ld_still`), α, die Addition mehrerer Personen (nicht an Zwei-Personen-Zeiten geprüft) und das Bewegt-Flag
+  (ohne Ablation weggelassen). Die Amplitude einzelner Aufenthalte streut um das Profil; das Modell nimmt das mittlere.
+- Ob die langlebigen Echoquellen (`ld_echo_long`, 0.59) und die Klasse Störquelle (4.5, 0.61) beständige Energie ohne
+  Person und wiederkehrende Spiegelziele (Balkontür, Esstisch) abdecken, ohne wache Sitzende im Bad und auf dem Sofa
+  zu verlieren, ist an neuen Meldungen zu prüfen.
+
+**Sitzende ohne gemessene Spur** (10, „Meldungen 8.10. abends“, „Sitzende im Bad und auf dem Sofa“):
+1. *Personen ohne Spur haben beim LD2410C die Amplitude g = 1* (4.3, `amp_prior`, `filter/densities.rs:154`), soweit
+   keine Spur eine gemessen hat: Die Kacheln tragen die Amplitude weiter, die eine Spur gemessen hat (je Stufe und
+   Kachel), und der Hintergrund vergisst mit `ld_forget` = 0,7 h. Wer an einem Platz weniger zurückwirft (Bad, Sitz an
+   der Westwand), ohne dass eine Spur das je gemessen hat, wird von der Energie schnell widerlegt. Zwei Varianten
+   wurden im Oktober an den gelöschten Aufnahmen gemessen und nicht übernommen: die Amplitude der letzten Spur als
+   Mittelfeld weitertragen, und g je Aufenthalt auf den Kacheln mit vollem Prior (machte eine Person mit kleinem g zur
+   gleichwertigen Erklärung für beständige Energie). Beides war vor den langlebigen Echoquellen (0.59); neu zu messen.
+   Offen: was eine wenig zurückwerfende Person von einer Echoquelle trennt (wie sie kam: durch eine Tür).
+2. *Wer aus einem Bereich ohne Sensor zurückkommt, nachdem sein Eintrag dort abgelaufen ist* (5.5, `unseen_life`
+   2 min, `filter/step.rs:190`), hat keinen Eintrag mehr; seine neue Spur bekommt die Person, die ungesehen am
+   nächsten ist, oder sie beginnt als neue. Das ist der Preis des Ablaufs: Wer in einem Raum ohne Sensor bleibt, ist
+   nach wenigen Minuten nicht mehr bekannt.
+3. *Ein Raumteil, den kein Sensor sieht* (etwa die Vorratsecke der Küche hinter der Wand bei y = 7,7 m, x 3,6–4,7),
+   hält eine Person nur so lange, bis ihr Eintrag abläuft (5.5, 2 min). Schwach Gesehenes (Sicht 0,1–0,5) prüfen die
+   Messungen nur langsam; dort läuft der Eintrag mit dem ungesehenen Anteil ab (`fade`).
+
+**Wen der Filter verliert, lernt der LD2410C-Hintergrund** (10, „Lernschleifen“), soweit keine Echoquelle seine Energie
+hält. Der langfristige Pegel (Anker) lernt seit 0.61 nur aus Frames nach 10 min, in denen der LD2450 im Gehäuse nichts
+sieht (`ld_anchor_quiet`, `ld2410/background.rs:6`); der Hintergrund selbst lernt mit den Personen, wie der Filter sie sah.
+
+- **Doppelte Personen bleiben möglich** (10, Fälle 2 und 5): Bekommt eine Spur die „falsche“ bekannte
+  Person (eine überzählige, die näher an der Tür ist, als die wirkliche ungesehen hätte gehen können),
+  ist dieselbe Person zweimal da. In Sicht widerlegen die Messungen die überzählige; wo kein Sensor
+  hinsieht, läuft sie in Minuten ab (5.5); sie entsteht aber weiter. Eine Hypothese „diese beiden sind
+  dieselbe“ kennt das Modell nicht.
+- **Der Versatz einer Spur bleibt, solange sie lebt** (Meldung 7.10. 18:31). Mit einem Sensor sind Ort x und
+  Versatz c der Spur nicht zu trennen (`z = x + c + o + w`, `filter/evidence.rs:60`); was c ist, legt der Moment fest,
+  in dem die Spur beginnt, danach ändert keine Messung mehr die Aufteilung. Beginnt eine Spur neben der eines
+  anderen Sensors, trägt sie dessen Abstand die ganze Zeit mit (im Oktober 0,3 m über 50 min am Schreibtisch
+  gemessen, Daten gelöscht). Der konstante Anteil (`const_share` 0,57) ist an Spuren um 60 s gemessen; über einen Weg
+  ist der Fehler zweier Sensoren nicht derselbe. Abhilfe wäre ein Versatz, der mit dem Weg oder der Zeit dekorreliert
+  (Gauß-Markov mit gemessener Länge); zu messen an Paaren langer Spuren.
+- **Gelerntes und Geometrie** (seit 0.51, Leon 29.10.): Ändert der Nutzer Lage oder Sicht eines Sensors (Ort,
+  Blickrichtung, Höhe, Spiegelung, Maßstab, Öffnungswinkel, Reichweite, platziert oder nicht) oder den Grundriss
+  (Wände, Türen, Zonen) und speichert, werden alle Messungen der Kalibrierung, der LD2410C-Hintergrund und die
+  Zielkarte (aller Sensoren) verworfen; ebenso, wenn ein Kalibrierergebnis übernommen wird (es ändert Richtung und
+  Maßstab). Eine Quelle: der Schlüssel der Geometrie (`Config::geometry_key`, `config/mod.rs:541`), den jede Datei
+  des Gesammelten trägt; passt er beim Start nicht, wird sie verworfen. Namen, ein Sensor aus- oder eingeschaltet und
+  die Parameter verwerfen nichts. Das ist keine Schwäche, sondern der Preis: Nach jeder Änderung lernt alles neu.
 
 Näherungen, die man prüfen oder ersetzen kann:
 - Auf den Kacheln ist Gehen eine Diffusion: Kurzzeitig gerades Gehen und die Richtung gehen verloren,
   beim Wechsel Gauß → Kacheln auch Geschwindigkeit und Versätze. Innerhalb einer Kachel ist die
   Masse nicht weiter aufgelöst; Raten sind über die Kachel gemittelt, auch wo eine Sichtgrenze sie
   schneidet. Die Gauß-Näherung kennt Wände nur über ihre Sigma-Punkte (5.2): Fünf Punkte je
-  Komponente, Spiegelung höchstens einmal; was hinter einer Wand liegt, entscheidet die Sicht
-  vom Mittel aus.
-- Zwischen zwei Takten (0,2 s) wirken „gehalten, nicht wiedergefunden“ und die Ausgaben auf einen
+  Komponente, Spiegelung höchstens einmal (`filter/mixture.rs`); nur die Bewegung der Gehenden an Wänden nutzt
+  16 Kubaturpunkte (`motion/imm.rs:238`). Was hinter einer Wand liegt, entscheidet die Sicht vom Mittel aus.
+- Zwischen zwei Takten (`max_step` 0,2 s) wirken „gehalten, nicht wiedergefunden“ und die Ausgaben auf einen
   bis 0,2 s alten Stand.
-- Versatzvarianz je Achse gemittelt, obwohl entlang/quer verschieden gemessen.
-- Jenseits von 7 m zählt die Entfernung zweimal: in `g_s` (Abfall ab Reichweite + 1 m, aus 0.6.17)
-  und in `P_m(r)`. Gegen welches `g_s` ρ und r₅₀ gefittet wurden, ist nicht festgehalten.
-- Erkennbarkeit nur für Stehende; α, Wechselrate, Ankunft/Weggang, und Aufenthalts-Prior sind
-  angenommen, nicht über die Evidenz geschätzt. Das Kostenverhältnis `light_cost` ist zu klären.
-- Höchstens 12 Hypothesen; Paarung beim Zusammenlegen bis 6 Personen (darüber in der Reihenfolge,
-  „niemand“ am Ende). Jede neue Spur kann auch „unbekannt“ sein:
-  Solange Spuren laufen, gibt es mehr Hypothesen (Simulation, zwei kommen herein: etwa doppelte
-  Rechenzeit gegenüber fester Personenzahl).
-- Wer aus dem beobachteten Bereich durch eine Tür nach draußen geht, die nicht in einen gezeichneten
-  Raum führt (Tür in einer Außenwand ohne Raum dahinter) oder durch eine Eingangszone, verlässt das Haus
-  nicht: Das Gehen über die Kacheln braucht Zellen hinter der Tür. Hereinkommen geht dort. Abhilfe:
-  den Raum dahinter zeichnen und *Eingang* setzen.
-- ν, das Vergessen und `start_unknown` sind angenommen.
-- **Bekannte Personen sammelten sich an** (bis 7.10., behoben, 10): Nachgespielt ab 6.10. 19:28 mit den
-  App-Starts bis 7.10. 13:30 (e0e26e8 → jetzt), im Haus erwartet je volle Stunde: 22 Uhr 3,9 → 2,1
-  (wahr 2); 9 Uhr 4,7 → 2,9 (die zweite Person ging um 9:07); 10–13 Uhr 3,1–3,6 → 1,07–1,15 (wahr
-  1); Küche 12/13 Uhr 0,81 / 0,77 → 0,02 / 0,01 (mit 30 min Abklingen). Der Preis des Ablaufs
-  (5.5): Wer in einem Raum ohne Sensor schläft, ist nach wenigen Minuten nicht mehr bekannt; morgens
-  kommt er als neue Person heraus. Die Zahl hinter Türen zählt nur fürs Herauskommen (Leon), das Licht
-  der beobachteten Räume ist davon nicht berührt (report_eval, `phantom.py`). Seit Bad und Schlafzimmer
-  Sensoren haben (config10), schlafen beide in Sicht; dort läuft seit 8.10. nichts mehr ab (Zahlen im
-  Haus gegen die Telefone: 10, „Tote Winkel und Existenz“).
-- **Ein Sitzplatz, dessen Spuren der Filter für Geister hält:** Die zweite Person saß am 6.10. von
-  etwa 19:25 bis 22:05 im Arbeitszimmer bei (−2,3; 8,6) (aus den Daten: LD2450-Ziel dort, Energie des
-  LD2410C im Ring 3,75–4,5 m im Median 29–33 statt 16–19, wenn Leon allein am Schreibtisch saß; allein
-  20:51–20:55, 21:08–21:11, 21:36–22:00, 22:03–22:06). Von ihren 20 Spuren dort hielt der Filter 19
-  für Geister (P > 0,5), mit der Prior-Rate überall statt der Karte 15 (bis 21:20 alle). Das kommt
-  nicht von der Karte und nicht vom Abschneiden: Bei der Geburt ist sie unbekannt (P(Geist)
-  0,81–0,9999), und danach sprechen die Frames des Arbeitszimmer-Sensors gegen eine Person dort (bis
-  zu 7 log je Frame, die großen Sprünge mit denen der LD2410C-Energie im Ring 3–3,75 m; die erste
-  Spur mit 466 s Leben endete bei P(Person) ≈ e⁻³⁷, obwohl ihr Leben allein 12 log für eine Person
-  gab). Die Geisterkarte verstärkte das bis 0.12.0 (10): Die Stelle wurde 21-mal die Prior-Rate, und
-  die Person war in den Fenstern, in denen sie allein dort saß (33 min), zu 0 im Arbeitszimmer; jetzt
-  1,9-mal, 21:37–22:00 zu 0,97, 20:51 0,55, 21:08 und 22:03 weiter 0.
-  Das Fenster 21:36 der Meldungen („aus“ 1,50 statt 1,17 von 15 mit 30 min Abklingen) hing nicht an
-  der Karte (mit der Prior-Rate überall ebenso 0,46), sondern daran, dass ihre bekannte Person
-  verblasste, bevor die neue Spur dort begann; seit 8.10. läuft in Sicht nichts ab (5.5), und es ist
-  richtig (0,47 → 1,00; aus 1,50 → 1,00 von 15). Offen: das Messmodell des LD2410C an diesem Platz
-  (4.3).
-- **Doppelte Personen bleiben möglich** (10, Fälle 2 und 5): Bekommt eine Spur die „falsche“ bekannte
-  Person (eine überzählige, die näher an der Tür ist, als die wirkliche ungesehen hätte gehen können),
-  ist dieselbe Person zweimal da. In Sicht widerlegen die Messungen die überzählige; wo kein Sensor
-  hinsieht, läuft sie in Minuten ab (5.5); sie entsteht aber weiter. Eine Hypothese „diese beiden sind
-  dieselbe“ kennt das Modell nicht.
-- **Zwei in einer Spur** (10, „Zwei an einer Stelle“): Stehen zwei so dicht, dass der LD2450 nur ein
-  Ziel meldet, stützt keine Messung die zweite (das LD2410C trennt zwei nicht von einer mit größerer
-  Amplitude); bis 0.22 klang ihre Existenz deshalb ab, und zwei wurden nach Minuten eine. Seit 8.10.
-  läuft in Sicht nichts ab (5.5): Zwei im Bett 7.10. 22:20–22:26 P(=2) 1,00 / 0,94 / 1,00 statt
-  1,00 / 0,32 / 0,87 (10, „Tote Winkel und Existenz“). Wer beim Betreten eines Raums ohne eigene Spur
-  bleibt, wird weiter eher hinter einer Tür vermutet (7.10. Bad: Licht richtig, Zahl 1 statt 2).
-- Der Start ohne Wissen kostet Rechenzeit: Solange Intensität in Sicht ist, hat jede neue Spur eine
-  kleine Alternative „neue Person“, und daraus werden nach dem Zusammenlegen viele Bernoullis mit
-  r von wenigen %, je eine Dichte (latency.py 21 Uhr: 30 s statt 18,5 s mit einer bekannten Person
-  „irgendwo“ statt der Intensität; 5 % statt 1 % beim Zurückgeben 26 s, 5.5).
-- **Gelerntes und Geometrie** (seit 0.51, Leon 29.10., ohne Ausnahme): Ändert der Nutzer Lage oder Sicht eines
-  Sensors (Ort, Blickrichtung, Höhe, Spiegelung, Maßstab, Öffnungswinkel, Reichweite, platziert oder nicht) oder
-  den Grundriss (Wände, Türen, Zonen) und speichert, werden alle Messungen der Kalibrierung, der
-  LD2410C-Hintergrund und die Zielkarte (aller Sensoren) verworfen;
-  ebenso, wenn ein Kalibrierergebnis übernommen wird (es ändert Richtung und Maßstab). Eine Quelle: der Schlüssel
-  der Geometrie (`Config::geometry_key`), den jede Datei des Gesammelten trägt; passt er beim Start nicht, wird
-  sie verworfen. Öffnungswinkel und Reichweite gehören dazu: Aus ihnen folgt die Sicht jedes Sensors je Kachel,
-  welche Räume beobachtet sind, und was die Kalibrierung „außerhalb der Sicht“ nennt. Namen, ein Sensor aus- oder
-  eingeschaltet und die Parameter verwerfen nichts. 0.28–0.50 unterschied die App „neu kalibriert“ (Teile
-  bleiben) von „anders montiert“ (mehr als 0,5 m oder 30°, `remounted`, angenommen); die Messungen der
-  Kalibrierung verwarf nur „Neu sammeln“. Bis 0.27 ließ jede neue Kalibrierung die Geisterkarte aller Sensoren
-  und den LD2410C-Hintergrund des Sensors neu beginnen (10, „Gelerntes bleibt bei neuer Kalibrierung“).
-- **Wen der Filter verliert, lernt der LD2410C-Hintergrund** (10, „Lernschleifen“), soweit der LD2450 im
-  Gehäuse ihn nicht sieht und keine Echoquelle seine Energie hält. Die Schlafenden im Schlafzimmer
-  7./8.10. verlor der Filter um 00:25 an eine Echoquelle, die bis zum Morgen an blieb (bis 0.54: 4.3, 10
-  „Echoquellen als Alternative“). Ihre Spuren im Bett endeten als Geister.
+- Versatzvarianz je Achse gemittelt, obwohl entlang/quer verschieden gemessen (`offset_var`, `frames.rs:401`).
+- Jenseits der Reichweite + 1 m zählt die Entfernung zweimal: in der Sicht des Sensors (`prior_pd`,
+  `world/build.rs:198`) und in der Erfassung (`RateModel::pd`, `ld2450/rates.rs:51`). Gegen welche Sicht ρ und r₅₀
+  gefittet wurden, ist nicht festgehalten.
+- Erkennbarkeit nur für Stehende; α, Wechselrate, Ankunft/Weggang und Aufenthalts-Prior sind
+  angenommen, nicht über die Evidenz geschätzt. Ebenso `guest_rate` (ν), `forget_rate` und `start_unknown`.
+- Höchstens 12 Hypothesen (`max_hyps`); Paarung beim Zusammenlegen bis 6 Personen (`filter/merge.rs:376`, darüber in
+  der Reihenfolge). Jede neue Spur kann auch „unbekannt“ sein: Solange Spuren laufen, gibt es mehr Hypothesen und mehr
+  Rechenzeit.
 
-- **Kalibrierung (10, „Kalibrierung der App neu“):** Beim Flur widersprechen sich Grundriss (36–41°)
-  und Paare (50° mit Ess- und Wohnzimmer durch die Tür, 29° beim Gang im Flur selbst); frei gefittet
-  liegt seine Position in 6 von 7 2-h-Fenstern 0,4–0,8 m weiter nördlich an der Badwand (y 3,05–3,49
-  statt 2,67). Nachmessen. Die Küche hat keine verlässlichen eigenen Paare (ihre Echos jenseits der
-  Wand laufen mit den Personen mit). Der Wohnzimmer-Maßstab ist auf 8 m (durch die Tür in den Flur) 1,07,
-  auf 2–6 m 1,13: ein Entfernungsversatz statt eines Maßstabs ist ungeprüft. Ein Faktor auf
-  sin(Azimut) je Sensor (Phasen-Monopuls) machte die Fenster nicht einheitlicher.
+**Unstimmigkeiten zwischen Code und Absicht (Prüfung 10.11.)**, jeweils zu klären (Pfade unter
+`core/presence-core/src/`, sonst unter `tracker/`):
+- a) **Kosten der Lichtfehler.** `light_cost` ist im Standard 2 (`config/mod.rs:369`; Schwelle c / (c + 1) = 2/3,
+  `params.rs:506–562`, `derived.rs:56`): Licht ohne Person wiegt doppelt so schwer wie Dunkelheit mit Person.
+  Abschnitt 1 sagt seit 10.11. das Umgekehrte (etwa 5×). Eine Änderung braucht eine Messung.
+- b) **Geister von Gehenden** (`walker_ghosts`, 4.2). Die Rate steht nur in der Geburtsdichte der Verzweigung
+  (`filter/branch.rs:341–349`). Der Faktor „kein Geist von Gehenden entstanden“ fehlt in `Filter::watch`
+  (`filter/evidence.rs:52–57`), der nur die übrigen Geisterarten und Störquellen zählt. Es zählen alle Personen mit
+  Spur der Hypothese mit ihrem Gewicht auf *geht*, für jeden Sensor, unabhängig von seinem Blick.
+- c) **Die Quelle eines Geists** (`Mixture::phantom`, 4.2) bewegt sich ohne Wände (`Bounds::Free`,
+  `filter/step.rs:161–165`), wird nicht auf die Sicht beschnitten (`Mixture::in_sight`, `filter/mixture.rs:528`) und
+  nie mit „keine neue Spur“ gewichtet (`filter/step.rs:312`, `399`). Eine Person bekommt alle drei.
+- d) **Nicht-Wiederfinden (0.62/0.63) gegen *geht*.** `resolved_from` (`filter/evidence.rs:319–333`) übergibt das
+  gehaltene Ziel als ruhend (`moving: false`); `RateModel::masks` überspringt dann *geht* (`ld2450/rates.rs:99`). Gegen
+  die Komponente *geht* einer anderen Person zählt das Nicht-Wiederfinden so ohne Auflösung, voll.
+- e) **Kacheln an Wänden innerhalb eines Raums.** Kacheln werden nur an Raumgrenzen geschnitten (Schlüssel Block und
+  Raum, `world/tiles.rs:163–166`); die Wege zwischen Kacheln achten Wände, die Masse innerhalb einer Kachel nicht.
+  Eine Kachel kann so beide Seiten einer Wand im selben Raum umfassen, etwa an der Vorratsecke der Küche.
+- f) **Außentür ohne gezeichneten Raum dahinter: hinein ja, hinaus nein.** Eine Tür ohne Raum auf der anderen Seite
+  ist ein Weg nach draußen (`plan.rs:684`) und damit ein Eingang (`world/tiles.rs:464`). Hinaus geht es nur zu Zellen
+  eines Bereichs oder eines Außenraums (`world/tiles.rs:288`); hinter einer solchen Tür liegt keine. Ebenso eine
+  Eingangszone im beobachteten Bereich. Abhilfe heute: den Raum dahinter zeichnen und *Eingang* setzen.
+- g) **„Ziel“ auch für Räume ohne Sensor.** Die Hülle meldet die HA-Entität „Ziel“ für jede Zone außer dem Haus
+  (`presence_tracker/ha.py:30–46`, `180`); der Kern rechnet *Ziel* nur für beobachtete Räume und Flächen
+  (`outputs.rs:810–818`), sonst bleibt es aus.
+- h) **Bekannte Störquellen gehen beim Neustart verloren.** Der gespeicherte Zustand (`Filter::people_state`,
+  `filter/mod.rs:234–298`) trägt Personen und Unbekannte, keine Störquellen (4.5).
+- i) **`RESET_HOLD` = 300 s** (wie lange der LD2410C-Hintergrund nach einem Zurücksetzen nicht lernt) ist eine
+  Modellzahl in der Hülle (`presence_tracker/app.py:49`), nicht im Kern.
+- j) **Die Oberfläche nennt noch die Geisterkarte** (seit 0.55 entfernt): `presence_tracker/static/js/util.js:284`,
+  Test `tests/test_geometry_change.py:142`.
 
-- **Der Versatz einer Spur bleibt, solange sie lebt** (Meldung 7.10. 18:31: „Der LD2450 ortet mich
-  immer leicht oberhalb meiner Position. Müsste sich meine Position nicht annähern?“). Mit einem Sensor
-  sind Ort x und Versatz c der Spur nicht zu trennen (`z = x + c + o + w`); was c ist, legt der Moment
-  fest, in dem die Spur beginnt, danach ändert keine Messung mehr die Aufteilung. Nachgespielt (config10):
-  18:58:17 begann die Arbeitszimmer-Spur auf Leon in der Tür, 0,5 m neben der Flur-Spur derselben
-  Person; c = (0,32; 0,26) m. Die Spur lebte 50 min (der LD2450 hält einen Sitzenden), und die ganze
-  Zeit lag die Messung im Mittel (0,28; 0,24) m neben der Schätzung, nach oben rechts. 18:30–18:41
-  (Spur begonnen ohne zweiten Sensor) nur (−0,04; +0,01). Die 57 % konstanter Versatz sind an Spuren um
-  60 s gemessen; über einen Weg von der Tür zum Schreibtisch ist der Fehler zweier Sensoren nicht
-  derselbe (Kalibrierung und Winkel hängen vom Ort ab). Abhilfe wäre ein Versatz, der mit dem Weg oder
-  der Zeit dekorreliert (Gauß-Markov mit gemessener Länge); zu messen an Paaren langer Spuren.
-- **Kalibrierung des Schlafzimmers** (Meldungen 7.10. abends): offline 47,9° ± 2,8° / 1,04 ± 0,04 statt
-  50,2° / 1,02 (aus der alten App-Rechnung), aber Grundriss allein 44°, Paare allein 51°; frei
-  gefittet wandert die Lage 0,8 m an der Wand entlang. Lage des Sensors und der Wände nachmessen.
-- **Sitzende verliert der Filter weiter, wo der LD2450 minutenlang keine gemessene Spur hat** (10,
-  „Meldungen 8.10. abends“; nach den zwei Korrekturen dort):
-  1. *Personen ohne Spur haben beim LD2410C die Amplitude g = 1* (4.3). Wer an einem Platz weniger
-     zurückwirft (Bad, Sitz an der Westwand: g ≈ 0,3, 7.10. und 8.10.), wird in Sekunden widerlegt, sobald
-     seine Spur endet: 8.10. 18:51 und 18:59 im Bad r 0,76 → 0,39 → 0,05 in 10 s bei Energien von 6–10×
-     dem Hintergrund (Lücken ohne gemessene Spur 140 s und 122 s). Die Amplitude der letzten Spur mit der
-     Person weiterzutragen (Posterior des Gitters, mit der Erkennbarkeit neu gezogen; der geparkte Zweig
-     `algo-ld2410` trug ihr Mittel) hielt das Bad (0,70 → 0,99), kostete aber anderswo (bis 6.10. aus 1,00 →
-     2,00 von 15; 7.10. früh an 0,39 → 0,50 von 13; Test: Geister ohne Wissen 5,6 s Licht): Ein Mittelfeld
-     (Ort und g unabhängig) gibt die Amplitude des alten Aufenthalts auch einem neuen, und eine aus einer
-     Geisterspur gelernte kleine Amplitude macht eine erfundene Person schwer widerlegbar. Nicht übernommen.
-     *g je Aufenthalt auf den Kacheln* (9.10. gebaut und verworfen, 10 „Kandidat 0.26“): dasselbe Gitter wie
-     bei Personen mit Spur, je Kachel bedingt auf „steht dort“, neu bei jedem neuen Aufenthalt und mit κ;
-     Rechenzeit +9 %. Das Bad 8.10. bleibt ganz (Filter allein 328 s → 0 s aus), verloren in Sicht 133 → 76
-     min (Schlafzimmer 61 → 7). Aber eine Person ohne Spur mit kleinem g ist jetzt dieselbe Erklärung für eine
-     beständige Energie wie eine Echoquelle, und die Lebensdauer spricht dann für die Person: Das Schlafzimmer
-     war 7.10. abends stundenlang besetzt (P > 2/3 ohne eigenen LD2450 690 statt 18 min in den 26 h bis 8.10. 19:10; Licht im leeren Raum
-     auf den vier Wahrheiten 8,8 → 17,1 min). Offen: was eine wenig zurückwerfende Person von einer
-     Echoquelle trennt (wie sie kam: durch eine Tür; Echoquellen nicht), ohne die Amplitude zu verlieren.
-     **Teilweise erledigt** (9.10., 4.3, 10 „Sitzende im Bad und auf dem Sofa“): Die Kacheln tragen die
-     Amplitude weiter, die eine Spur gemessen hat (je κ und Kachel, nicht als Mittelfeld); was ohne Messung
-     beginnt, hat weiter g = 1, und der Hintergrund vergisst mit 0,7 h statt 6 h. Das Bad 8.10. bleibt ganz
-     (veröffentlicht „frei“ 350 s → 0 s), das Sofa bis 19:04 (danach nimmt ein Geist am Esstisch seinen
-     Eintrag, unten „Seit der korrigierten Wahrheit“). Der volle Prior auf den Kacheln erfand Personen:
-     Eine Person mit kleinem g erklärt jeden kleinen Fehler des Hintergrunds (Flur 8.10. 06:55, 12 min in der
-     leeren Wohnung: bewegt Ring 4 morgens 5 statt der gelernten 1,9), und nichts widerlegt sie.
-  2. *Wer aus einem Bereich ohne Sensor zurückkommt, nachdem sein Eintrag dort abgelaufen ist* (5.5, 2 min),
-     hat keinen Eintrag mehr; seine neue Spur bekommt die Person, die ungesehen am nächsten sitzt (die
-     Alternative „neue Person“ hat im Blick die Intensität 0,002). Das bleibt der Preis des Ablaufs (5.5). Der
-     Fall, der dafür stand, war falsch: „8.10. 19:04:19 kam ein Gast nach etwa 15 min vom Balkon zurück an den
-     Esstisch“. Am 8.10. war niemand auf dem Balkon, und die Spur am Esstisch war ein Geist (unten „Seit der
-     korrigierten Wahrheit“, 10 „0.27“). Dass sie die Person auf dem Sofa bekam (Wohnzimmer 19:04–19:09 zu
-     0,02–0,16 belegt, die weiteren Spuren auf dem Sofa wurden Geister), war richtig beobachtet, nur nicht der
-     Grund. Die Regel, die 0.26 daraus machte (geschlossene Bereiche laufen nicht ab), ist in 0.27
-     zurückgenommen: Ihr gemessener Nutzen (Sofa und Esstisch dunkel 0,4 → 0,1 min) kam aus genau diesem
-     falschen Fenster.
-  3. *Was die Sensoren des Esszimmers durch die Balkontür sehen* (7.10. 22:19–22:25, 10 „Kandidat 0.26“): Das
-     LD2410C des Esszimmers zeigt ruhende Energien von 30–67 (Hintergrund etwa 7), der LD2450 ein Ziel an der
-     Ostwand neben der Balkontür (3,6; 4,2), danach eines auf dem Balkon (4,7; 2,2), durch die Türöffnung. Beide
-     Bewohner waren im Schlafzimmer. Der Filter macht daraus eine Person an der Balkontür (P bis 0,99), die
-     „vom Balkon kam“ (dort 0,013 erwartete Unbekannte: der Start ohne Wissen um 17:13 und zurückgegebene
-     Bernoullis, keine Geburt). Das LD2410C sieht nach dem Modell nicht durch Wände und Türen (4.3), und eine
-     beständige Energie dort erklärt eine Person besser als eine Echoquelle (Lebensdauer 20 s). Ob der Fall
-     kommt, hängt an der Vorgeschichte (gleiche Kette mit g je Aufenthalt auf den Kacheln: 9 s statt 3 min,
-     dazu der Balkon ohne Ablauf: 4,4 min). Offen; wohl nur mit einem Modell der Sicht durch Türen (Glas) in
-     geschlossene Bereiche zu lösen. Mit 0.27 (der Balkon läuft wieder ab) kommt der Fall auf der korrigierten
-     Wahrheit nicht (Licht im leeren Esszimmer 7.10. 22:22 2,5 → 0 min); die Ursache bleibt (unten).
-- **Seit der korrigierten Wahrheit 8.10. offen** (10 „0.27: korrigierte Wahrheit 8.10.“):
-  1. *Der Geist am Esstisch mit LD2410C-Energie.* 8.10. 19:04:10–19:10:39 bei (1,8; 3,7) beginnt eine frische
-     Spur des Esszimmer-LD2450, ohne Weg dorthin, und die ruhigen Ringe 2–4 des Esszimmer-LD2410C steigen von
-     etwa 10 auf 42 / 100 / 76. Beide Sensoren sagen „jemand“, niemand war da; Ursache unbekannt. Der Filter
-     gibt der Spur den Eintrag der Person auf dem Sofa (Wohnzimmer dunkel mit Person 0 → 0,3 min, der einzige
-     Rückschritt von 0.27.0 gegen 0.26.1), und über die Ausgaberegel „Filter oder eigener LD2450“ (6) ist das
-     Esszimmer besetzt: der Boden von 6,0 min Licht im leeren Esszimmer auf allen Wahrheiten (8,55 min mit der
-     Balkon-Regel). 0.26.1 hatte das Sofa nur zufällig: Ein Eintrag auf dem Balkon, hinter dem niemand stand,
-     war als Ersatz übrig.
-  2. *Wiederkehrende Geister an der Balkontür* (Punkt 3 oben): Das Ziel auf der Balkonseite bei (4,6–5,0;
-     2,0–2,3) ist ein Geist des Esszimmer-LD2450, der wiederkommt (8.10. 18:50–18:52 und 19:02–19:03; 7.10.
-     22:08, 22:16 und 22:22–22:25). Er liegt so weit vom Sensor wie die Person auf dem Sofa: ein Spiegel- oder
-     Winkelgeist. Wird er zur Person, „kommt“ sie vom Balkon.
-  3. *Die Geisterkarte begann bei jeder Änderung der Lage neu*: 8.10. 10:07 setzte die neue Kalibrierung des
-     Arbeitszimmers die Karte aller Sensoren zurück; um 18:20 wusste sie nichts von den Geistern an der
-     Balkontür. Jetzt bleibt sie (4.2, 10 „Gelerntes bleibt bei neuer Kalibrierung“).
-  4. *Lang anhaltende Energie ohne Person.* Für beständige LD2410C-Energie kennt das Modell nur Personen und
-     Echoquellen mit 20 s Lebensdauer (4.3); was minutenlang Energie gibt, ohne dass jemand da ist (Esstisch
-     8.10. 19:04, Balkontür 7.10. 22:19–22:25), erklärt eine Person besser. Zu modellieren, ohne wache Sitzende
-     im Bad und auf dem Sofa zu verlieren (Leon: beide Fehler zählen gleich, Schlafende sind kein Ziel, nicht
-     auf Fehlerfälle optimieren).
-
-Nicht geprüft (Ablationen ausstehend): λ_d = 0,85 gegen langsamere Richtungswechsel; OU-Näherung
-gegen weißes Rauschen in der Beschleunigung; Swerling-I gegen logistisch; Form der Erkennbarkeit.
-(Geisterkarte gegen globale Rate: gemessen 30.10., 4.2.)
+Nicht geprüft (Ablationen ausstehend): λ_d (`turn_rate` 0,85) gegen langsamere Richtungswechsel; OU-Näherung
+gegen weißes Rauschen in der Beschleunigung; Swerling I (`ld2450/rates.rs:49`) gegen logistisch; Form der Erkennbarkeit.
 
 ## 10. Erfahrungen
-Was frühere Versionen gezeigt haben. Die Zahlen stammen von gelöschten Wahrheitsdaten oder anderen
-Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen.
+Was frühere Versionen gezeigt haben: was passierte und warum. Das sind Hinweise, keine Verbote; ein neuer
+Ansatz darf alles neu prüfen. Fast alles hier stammt aus der Zeit vor dem 31.10. Die Aufnahmen 6.–14.10.,
+die Wahrheitsfenster (die vom 8.10. waren falsch) und die Bewertungswerkzeuge (report_eval, fast_eval)
+sind am 31.10. gelöscht; die Zahlen lassen sich nicht nachrechnen. Viele beruhen auf einem Abend, wenigen
+Fenstern oder einem einzigen Start. „Schlechter“ heißt dann: auf diesen Daten, nicht allgemein. Die
+damaligen Maße gewichteten die Fehler anders als heute (1). Die Versionsgeschichte steht in
+`CHANGELOG.md` und in git, nicht hier.
 
 - **Frames als unabhängige Messungen** machen überkonfident; Kovarianz aufblähen half in 0.6.x nicht.
   Daher die Spuren als Messgröße.
@@ -1334,1888 +1308,504 @@ Filtern; das sind Hinweise, keine Verbote. Ein neuer Ansatz darf sie neu prüfen
   Wiederfinden passte die Messung ~9× besser zu einem Geist.
 - **Ohne Erkennbarkeit κ** ist eine Sitzende, die minutenlang nicht erfasst wird, extrem
   unwahrscheinlich, und das Modell schickt sie zur Tür.
-- **Ohne Geisterkarte** wurden wiederkehrende Reflexionen (Ecken, Ladestation, Küchentür) zu Personen
-  (0.6.x und 0.8-Entwicklung). Mit dem heutigen Filter nicht mehr messbar, die Karte ist seit 30.10. weg (4.2).
-- **Zeitbasierte Leckraten** („nach x s ungesehen ist sie weg“) schicken Sitzende in Sekunden zur
-  Tür. Masse darf nur durch Gehen wandern.
+- **Ohne Geisterkarte** wurden in 0.6.x wiederkehrende Reflexionen (Ecken, Ladestation, Küchentür) zu
+  Personen. Die Karte ist seit 30.10. weg, heute gibt es eine globale Geisterrate (4.2); mit dem heutigen
+  Filter ist der Effekt nicht neu gemessen.
+- **Schnelle zeitbasierte Leckraten** („nach x s ungesehen ist sie weg“) schickten in 0.5/0.6 Sitzende in
+  Sekunden zur Tür (ohne Zahlen, Daten gelöscht). Heute laufen Einträge ab, aber nur wo kein Sensor sie
+  prüfen konnte (`unseen_life`, 2 min) und sonst langsam (`record_life`, 1 Tag; 5.5).
 - **Wiener-Prozess für die Geschwindigkeit** (bis 0.6.21): Gehende behalten ihre Richtung viel zu
   lange und sind zu schnell. Eine OU-Geschwindigkeit war im Partikelfilter 0.6.x trotzdem schlechter
   (Commit 5379fd1); im IMM ist sie ungeprüft drin.
-- **Rechenzeit** (gemessen 6.10., dieselbe Stunde, 3 Sensoren, Anteil eines Kerns): 0.6.21 4,4 %,
-  0.8.1 14,7 % (Raster 0,2 m mit 8 Richtungen, je Person mit Spur ein zweites Raster für „durch eine
-  Tür“, alles bei jedem Frame vorgerückt; einzelne Frames bis 28 ms, die App ruckelte), 0.9 mit
-  Kacheln und Takt 4,0 % (Log-Evidenz +29 gegenüber 0.8.1 auf 20 min), mit LD2410C 4,6 %. Die Form der
-  Kacheln macht dabei kaum etwas aus (5.3); gespart haben die wegfallenden 8 Richtungen und der Takt.
-  7.10., 5 Sensoren, je 20 min der Stunden 21/22: 0.9.3 2,2 / 3,5 %; die Zählverteilungen aller Spalten
-  auf einmal und die Bewegung der Kacheldichten in zwei statt sechs Durchgängen über `steht` 2,1 /
-  3,3 % (−4 %, Ergebnisse bis auf Rundung gleich). Alle Kacheldichten in gemeinsamen Arrays, gemeinsam
-  bewegt und gewichtet (Branch `stack-densities`), sparte darüber hinaus nichts: die Zeit steckt in
-  der Arithmetik über die L·K = 35 Schichten von `steht` (seit 7.10. 15) und in der Gehmatrix
-  (518 Kacheln, ~20 µs je Dichte und Takt), nicht in den numpy-Aufrufen. Als ein Matrixprodukt über alle Dichten startet
-  OpenBLAS ab drei Dichten Threads, deren Warten ein Vielfaches an CPU kostet. Größte Posten danach:
-  `Gauss.predict` 22 %, Kacheldichten bewegen 15 % und gewichten 8 %, LD2410C 16 %, Ausgaben 13 %.
-  Mit den Energien des LD2410C (7.10., 5 Sensoren, 21 Uhr): 3,8 % statt 2,8 % mit Flag und
-  Entfernung. Die Energien selbst kosten etwa ein Sechstel (je Sensor und Sekunde ein Verhältnis je
-  Kachel und Person); der Rest kommt von mehr getrennten Dichten über die Hypothesen (im Mittel 8,6
-  statt 4,6 Personen auf Kacheln).
-- **Rechenzeit: kompilierte Kernel (Numba, 7.10.; bis 0.38, seit 0.39 ersetzt durch den Kern in Rust, s. u.)**. Profil von 2eea738 (py-spy mit nativen Frames,
-  5 Sensoren, 21:00–21:20, 14 916 Proben): 41 % im Python-Interpreter, 39 % in numpys Aufwand je
-  Aufruf (Typauflösung, Iteratoren, Prüfungen), 7 % Speicher anlegen und freigeben, nur 13 % in
-  numpys Rechenschleifen. Die meisten Arrays sind klein (2 Achsen × 4–6 Zustände, 5–16 Punkte); bei
-  ihnen kostet der Aufruf, nicht die Rechnung. In `kernels.py` (`@njit(cache=True)`, ohne fastmath)
-  stehen deshalb als Schleifen: IMM-Mischung und lineare Vorhersage von `Gauss.predict`, die
-  Sigma-Punkte an den Wänden, Spiegeln und Wandkreuzung, die Erfassungsraten eines Sensors samt
-  Maske, `Hidden.move` und `_regions`, die Poisson-Binomial-Zählverteilung. Ergebnisse gleich
-  (report_eval auf den Meldungen vom 6.10.: Log-Evidenz −1186122,4 in beiden, Licht falsch an 0 von
-  41, aus 2,08 von 15 in beiden); CPU-Zeit (bench.py, 6.10. 21:00–21:20, je dreimal abwechselnd,
-  gleiche Python-Umgebung): 36,7–39,2 → 26,1–27,5 s (−29 %); Antwortzeit je Frame im Mittel
-  1,39 → 0,99 ms, p99 16 → 12 ms. Im Container (Podman, derselbe Rechner, je dreimal): Alpine wie
-  bisher 50,0–54,7 s, Debian slim ohne Numba 41,6–44,1 s (−18 %: musl ist für diese vielen kleinen
-  Aufrufe langsamer), slim mit Numba 29,5–31,4 s (−42 % gegenüber Alpine). Die ganze App im
-  Container (15 min Nachspiel ab 21:00 mit offener Live-Ansicht, CPU-Zeit des Prozesses): Alpine
-  6,6 %, slim 5,5 %, slim mit Numba 4,0 % eines Kerns. Kosten: Image 430 statt 150 MB (llvmlite
-  173 MB), Speicher des Prozesses 201 statt 84 MB (LLVM wird zum Laden der kompilierten Kernel
-  gebraucht), Bauen ~10 s länger (hier; die Kernel werden beim Bauen kompiliert und liegen in
-  `NUMBA_CACHE_DIR`, Start dann 0,2 s statt 6 s Kompilieren). Ein Aufruf mit anderen Typen oder
-  einem nicht zusammenhängenden Array kompiliert zur Laufzeit neu (hier 1–4 s, auf Home Assistant
-  ein Vielfaches); `tests/test_kernels.py` prüft, dass das nicht vorkommt. Nicht übernommen: die
-  LD2410C-Likelihood (`Stats._mu_part`) als Kernel war genauso schnell wie numpy – dort rechnen
-  k × 16 Logarithmen je Aufruf, und numpys vektorisierter Logarithmus ist schneller als der skalare.
-  Was danach bleibt (Profil mit Kerneln): LD2410C 28 %, Ausgaben 11 %, `Hidden.move` 8 % (reine
-  Arithmetik über die 15 Schichten), der Rest verteilt.
-- **Rechenzeit: zwei weitere Kernel, Schleife ohne Stillstände (8.10., Performance-Review von
-  0.18.0)**. In `Stats._mu_part` steckte der größte Teil nicht im Logarithmus, sondern in
-  `log_censored` (`np.unique`, Masken, `np.interp`: 242 von 278 µs bei 500 Zeilen). Jetzt interpoliert
-  `kernels.ld_censored` die zensierten Zellen auf dem gleichmäßigen Gitter genau wie `np.interp` und
-  nimmt den Logarithmus von numpy; die Summe über die Zellen bleibt ein numpy-Produkt.
-  `Tiling.gauss_points` rechnet die Exponenten über die 2410 Stützpunkte als Schleife
-  (`kernels.gauss_exponents`), `np.exp` bleibt bei numpy: Numbas skalares `exp` weicht bei etwa 5 %
-  der Werte im letzten Bit ab, und schon solche Rundungsunterschiede schaukelten sich im Review über
-  Stunden zu Evidenz ±6 auf. So sind die Ergebnisse bitgleich: `report_eval --trace` auf den Meldungen
-  bis 6.10. (config5, 15 815 Zeilen) und vom 7.10. früh (config7, 4765 Zeilen) zeichengleich mit
-  9c0f294, Log-Evidenz je Lauf gleich, Licht gleich (an 0 von 41 / aus 1,50 von 15, an 0 von 13 / aus 0
-  von 7), leere Nacht 0 min. CPU (App-Harness des Reviews: die echte `App` mit rohen MQTT-Frames, Takt,
-  HA-Zuständen, Live-Ansicht und Speichern; `config10`, vollste Stunde 7.10. 17 Uhr mit 107 210 Frames,
-  ein Kern, je dreimal abwechselnd, Mediane): 0.19.0 215,1 s, mit dem Amplitudengitter (4.3) 218,1 s,
-  mit den Kerneln 197,4 s (−9,5 %, 6,1 → 5,5 % eines Kerns; Takt 58,0 → 44,4 s, Frames 155,1 →
-  148,4 s). Ruhige Stunde (3 Uhr) 8,7 s vorher wie nachher.
-  Stillstände der Schleife, die Frames, Takt und Home Assistant warten lassen (gemessen mit einem
-  Herzschlag von 1 ms, ein Tag Kalibrierdaten mit 119 491 Zeilen, 15 min Meldepuffer mit 24 398
-  Nachrichten, hier; auf Home Assistant etwa ×8): Fehlerbericht 522 → 5–10 ms (Zeilen und gzip jetzt im
-  Thread, Stufe 6 statt 9: 523 → 248 ms bis zur Datei, 0,95 statt 0,86 MB); Kalibrierstatus der
-  Live-Ansicht (alle 30 s, solange ein Browser offen ist) 24 → 5 ms (gezählt im Thread an einer
-  Kopie); Speichern alle 10 min 14 → 5 ms (`calibration.npz` unkomprimiert: 6,0 statt 1,5 MB, 4 statt
-  80 ms; die Zielkarte wird in der Loop kopiert und im Thread komprimiert). Was bleibt, sind der
-  Personenzustand (4 ms, er wird aus dem Modell gebaut) und bis zu 5 ms, die ein rechnender Thread den
-  GIL hält (`sys.getswitchinterval`).
-- **Rechenzeit: ein Aufruf je Gauß-Mischung und Schritt, vektorisiertes log/exp (27.10., 0.31.0)**. Leon wollte
-  bei gleicher Erkennung weniger CPU; die Bitgleichheit ist dafür aufgegeben, das Modell nicht. Messung: 10.10.
-  12–13 Uhr, `live_config.json` (7 Sensoren), wie die App getrieben, die ersten 20 min: 0.30.0 56,7 s CPU (4,7 %
-  eines Kerns, Ryzen 9800X3D), auf inge 3,8-mal so lang. py-spy: Interpreter 32 %, numpy je Aufruf 32 %, Kernel
-  17 %, BLAS 8 %. Umgebaut: (1) `kernels.sync_step` macht einen Schritt einer Gauß-Mischung in einem Aufruf –
-  Vorhersage, Wände, Abfluss durch Türen, Sigma-Punkte, Raten aller Sensoren und die Gewichtung durch keine
-  neue Spur samt dem Teil hinter der Tür; `Gauss.predict` ruft ihn ohne Gewichtung. (2) Die Teile hinter einer
-  Tür bewegen sich mit den Kacheldichten in einem `Hidden.move_all` (Runde für Runde, jede mit ihrem eigenen dt):
-  das Matrixprodukt des Gehens (687 × 687) liest die Matrix einmal für alle. Vor einer Messung (`_measured`)
-  wird dieser Teil nicht mehr bewegt: `Gauss.update` verwirft ihn ohnehin, es zählt nur sein Gewicht a (exakt).
-  (3) Die LD2410C-Likelihood ganz kompiliert (`kernels.ld_ratio`, `ld_rows`, `ld_ratio_tail`), je Bewertung bis zu
-  570 Punkte zu 16 Zellen: Ihre Zeit ist log und exp (26 je Punkt). Numba ruft `math.log` je Zahl auf (2 ns,
-  numpy auf Arrays 1 ns, Numba hat hier kein SVML); `kernels.vlog` und `vexp` sind fdlibms e_log.c und e_exp.c
-  als Schleifen, die LLVM vektorisiert (`error_model="numpy"`, sonst prüft jede Division auf 0): 0,3 ns, höchstens
-  1 ulp von numpy (Test). Zelle für Zelle über alle Punkte gerechnet, denn Punkt für Punkt warten die Summen
-  aufeinander (vorher 110, jetzt 55 ns je Punkt). Punkte ohne Masse (bei Gauß-Mischungen 60 %: der Teil hinter
-  der Tür liegt meist in Regionen) bekommen −LOG_CAP ohne Rechnung; ihr Faktor multipliziert nichts. CPU
-  56,7 → 49,8 s nach (1)–(2), 48,9 s nach (3) (−14 %). Über die ganze Stunde max |ΔP(belegt)| 0,003, keine
-  Schwelle gekippt. Gemessen und verworfen: die Gehmatrix dünn (151 von 687 je Zeile) in Numba, auch mit den
-  Dichten als innerer Dimension, 1,5–3-mal langsamer als BLAS; ein Numba-Aufruf mit 20 Arrays kostet nur
-  1,2 µs, ein gemeinsamer Speicher aller Objekte lohnt den Umbau also nicht. Was bleibt (py-spy): Evidenz je
-  Frame 27 % (Verzweigen und Verschmelzen 11 %, gehaltene Spuren 6 %), LD2410C-Bewertung 24 % (davon
-  Likelihood 10 %, Punkte 6 %), Bewegen 20 % (davon BLAS 8 %), Ausgaben 11 %. 0.31.1: die zensierten Zellen
-  ohne Aufruf je Punkt interpoliert (27 → 3 ns je Punkt und Zelle), 47,8 s (−16 %). Verworfen: mehrere Takte
-  des Gehens als ein Produkt mit T² (−1 %): Schon `W @ [T | T_in]` in einem BLAS-Aufruf statt zweien rundet
-  anders, und das schaukelte sich in der Stunde zu einer anders entschiedenen Hypothese auf (ein Raum 30 min
-  belegt statt leer, 844 Raum-Sekunden gekippt) – die Rauschgrenze oben, an einem Beispiel.
-- **Rechenzeit: das Modell in Rust (27.–29.10., 0.32–0.42)**. Phase für Phase portiert, jede gegen die Python-Fassung
-  (Spuren byte-gleich, Welt gegen Digests von 0.38.1); 0.39 löschte den Python-Kern und Numba, 0.41 brachte
-  `presence-replay` (Wiedergabe ohne Python, dieselben Spuren wie über die Hülle). CPU der ersten 20 min von
-  10.10. 12 Uhr (`ab.sh 1200`, ein Kern): 0.31.1 47,8 s → 0.39 16,8 s → 0.53 16,5 s; die Python-Hülle kostet davon
-  ~0,4 s. Seit 0.43–0.51 gilt die Grenzregel: der Kern ist das Modell (auch Kalibrierung, Ableitungen, Konfiguration
-  und ihre Prüfung), Python verbindet und legt ab, die Oberfläche bedient und formuliert. 0.53: `hypot` richtig
-  gerundet statt der C-Bibliothek, seitdem rechnen hermann und das Image gleich; dieselbe Stunde 10.10. 12 Uhr kippt
-  dabei 841 Raum-Sekunden (der Schnitt der Hypothesen entscheidet dort auf Rundungsniveau, wie 0.31.1 oben).
-- **Die Zeit des Modells darf den Frames nicht davonlaufen** (0.54.2/0.54.3). Ging das Modell weiter, während Frames
-  noch unterwegs waren (Wiedergabe unter Überlast; live ein Stau von HA, Broker oder inge, 18.10. ~35 s), galt jeder
-  Sensor als still: Spuren endeten als verlorene Daten und begannen mit den späten Frames neu, aus 2 Personen wurden
-  23–25 (Wiedergabe) bzw. kurz 3–4 (Stau). Seitdem geht die Zeit des Modells mit dem neuesten Frame, hält ohne Frames
-  bis 60 s und gibt gestauten Frames die Zeit aus der Laufzeit des Boards (4.4). Dabei gefunden: zwei Wege zu NaN an
-  der Untergrenze der f64 (`from_tiles`, `collapse`), im normalen Betrieb nie erreicht.
-- **Rechenzeit: weniger Aufrufe, bitgleich (12./13.10., Qualitätsrunde nach 0.28.0)**. Profil der vollsten
-  Stunde der Aufnahmen (10.10. 12–13 Uhr, 154 398 Frames, cProfile): kein einzelner Brennpunkt, sondern
-  Pythons und numpys Aufwand je Objekt und Schritt – LD2410C-Bewertung 24 %, Bewegen der Gauß-Mischungen
-  (`_sync`) 25 %, `Hidden.move` 8 %, 50 Mio. numpy-Reduktionen auf winzigen Arrays. Neu in `kernels.py`:
-  Gewichten der Kacheldichten (`hidden_weigh`, auch für `_normalize`, `_expire` und nur an den Kacheln im
-  Blick des LD2410C, `hidden_weigh_at`), die Raten aller Sensoren an den Sigma-Punkten in einem Aufruf
-  (`gauss_rates`, die lebenden Spuren je Bewegung aller einmal gepackt), Sigma-Punkte mit Wänden
-  (`sigma_points`, `near_parts`), Sichtraster (`grid_at`), die Vorhersage einer Gauß-Mischung bis zu den
-  Gewichten (`gauss_predict`), die LD2410C-Likelihood zwischen numpys Logarithmen und Produkten
-  (`ld_gain_*`, was nur von den Frames abhängt einmal je Bewertung), ihre Profile je Komponente
-  (`ld2410.expected_rows`), Punkte und Verhältnisse (`ld_tile_masses`, `ld_tile_points`, `ld_ratio_parts`),
-  `Hidden.distance`. Dazu: was für alle Objekte eines Schritts gleich ist, einmal (die Faktoren für keine
-  neue Spur hoch MAX_STEP / dt je Bewegung statt je Gauß-Mischung, expm1 der Raten je Schritt, der Faktor
-  des Nicht-Wiederfindens); Polygone prüfen zuerst ihr Rechteck. Bitgleich heißt hier: dieselben
-  Rechenschritte in derselben Reihenfolge. Was numpy anders rechnet als eine Schleife, bleibt numpy: `exp`,
-  `log` und Potenzen (SIMD, weichen vom skalaren libm bei bis zu 5 % der Werte im letzten Bit ab), die
-  BLAS-Produkte (deren Bits hängen von Form und Lage der Zeile im Array ab, nicht von der Adresse:
-  geprüft), Summen als numpys paarweise Summation (`_pairwise`, als Schleife: Numbas Cache lädt rekursive
-  Funktionen nicht – ein gecachter rekursiver Kernel stürzte beim zweiten Start ab). Jeder Kernel hat einen
-  Test gegen den numpy-Code von 0.28.0 (`tests/test_kernels.py`, bitweise). Geprüft mit einer Spur je
-  Schritt (Hypothesengewichte und Zählverteilungen mit allen Stellen): 10.10. 12–13 Uhr zeichengleich mit
-  0.28.0; über alle Aufnahmen (ein Lauf ohne Abschnitte, 6.–10.10., 5,27 Mio. Frames, 4651 s CPU) die
-  Ausgabe zeichengleich mit `fast/ckpt/base_0280/continuous.jsonl`. CPU (dieselbe Stunde, ein Kern, je dreimal, Median): 0.28.0
-  386,3 s, nach den fünf Commits 352,7 → 309,9 → 291,9 → 267,5 → 263,1 s (−32 %, 1,47-mal so schnell).
-  Was bleibt (Profil danach): die Matrix des Gehens in `Hidden.move` (687 × 687, dicht, 11 %: als dünne Matrix in
-  einer Schleife langsamer als BLAS, 46 statt 35 µs), die LD2410C-Bewertung 24 % (Python über Hypothesen
-  und Personen, die BLAS-Produkte), Gewichten der Dichten (gerechnet, nicht Aufruf). Nicht gemacht, weil
-  nur bis auf Rundung gleich: alle Dichten eines Schritts als ein Matrixprodukt (anders gerundet als
-  einzeln; startet in OpenBLAS Threads, s. o.), die LD2410C-Likelihood ganz kompiliert (skalares log/exp
-  und eigene Summen statt BLAS). Beides zusammen schätzungsweise weitere 10–15 %; Rundungsunterschiede
-  schaukeln sich im chaotischen Filter zu Minuten Licht auf (die Rauschgrenze von `fast_eval`: 6,3 min in
-  87 h).
-- **Weniger Schichten je Kachel** (7.10., 11 h aus 3.1): 5 statt 7 Arten des Aufenthalts und 3 statt
-  5 Stufen κ, also 15 statt 35 Schichten von `steht`: Evidenz −1 (bei 24 Hypothesen ab 10⁻⁹ −3,
-  ab 10⁻⁷ +56), Lichtfehler gleich, Rechenzeit 3,0 statt 3,3 % (21 Uhr). Mehr spart das nicht,
-  weil Gauß-Mischungen, LD2410C und Ausgaben gleich bleiben. 4 Arten −11
-  bzw. −9, 3 Arten −53 bzw. −100 und mehr Lichtfehler. Die Grenzen der Hypothesen bewegen die
-  Evidenz um Hunderte (5.1); kleine Unterschiede zwischen Varianten sind nur sicher, wenn sie bei
-  mehreren Grenzen dasselbe Vorzeichen haben.
-- **LD2410C ohne Modell seiner Reichweite** (0.9-Entwicklung): Mit fester Reichweite 3,3 m musste das
-  lange „an“ des Wohnzimmersensors (Sitzende im Esszimmer in 6,2 m) von einer erfundenen Person nahe
-  am Sensor kommen. Daher hält jetzt, wer in der gemeldeten Entfernung ist. Ohne LD2410C blieb in der
-  Küche nach dem Gehen minutenlang „zu 80 % jemand da“, obwohl beide Sensoren nichts sahen.
-- **Gauß an Wänden abgeschnitten** (7.10., verworfen): abgeschnittener Kalman-Filter
-  (H_SimonSimon2006) nach jeder Vorhersage, an den achsparallelen Wänden auf der Seite des Mittels.
-  Half in einem Fall: Wer auf den Küchensensor zuging (Lichtschalter, 6.10. 21:57), lief ohne ihn in
-  der Vorhersage durch die Wand, die wiedergefundene Spur wurde ein Geist (Küche 0,3, Esszimmer 0,6;
-  mit ihm 1,0 / 0,0). Schadete aber mehr: Der nicht kalibrierte Küchensensor misst Personen etwa 1 m
-  zu weit hinten, also hinter der Wand zum Vorratszimmer (y 7,72). Mit dem Abschneiden blieb die
-  Gauß-Verteilung dort gefangen, wenn die Spur abriss, und wurde eine ungesehene Person im
-  Vorratszimmer; bis zu vier solcher Personen sammelten sich in der Ecke (4,5 / 8,1). Küche 22:01–22:15
-  P(belegt) 0,8–1,0, obwohl leer (Energien auf Grundniveau, Licht nur vergessen); danach die ganze
-  Nacht 0,1–0,2 und um 01:08 bei einem Energiestoß 38 s über der Schwelle. Wände setzen einen
-  Grundriss und Kalibrierungen voraus, zu denen die Messungen passen.
-- **Küchensensor „hinter der Wand“** (7.10., Aufnahmen ab 6.10. 18:10): Seine Ziele jenseits der
-  Außenwand sind Mehrwegechos von Personen in Ess-, Wohnzimmer oder Flur, kein falscher Maßstab:
-  Bei allen misst gleichzeitig (±0,5 s) ein anderer Sensor dort jemanden (bei Zielen in der Küche
-  47 %), und ihre Entfernung wächst mit dem Abstand dieser Person zum Küchensensor (4,8 m + 0,71·d,
-  Korrelation 0,79). Kein Maßstab holt sie in den Raum (bei 0,7 noch 17 %). Die Wege zur
-  Vorratstür kreuzen die Wandlinie schon bei Maßstab 1 und 90° zu 92 % in der Öffnung.
-- **Kalibrieren ohne große Überschneidung** (7.10., `tools/calibrate_offline.py`): Paare gleichzeitiger
-  Messungen (mit Ausreißeranteil, Myronenko & Song 2010), dazu der Grundriss je LD2450-Spur: Person
-  im sichtbaren freien Raum oder Echo (Likelihood-Feld wie Thrun, Burgard & Fox 2005, 6.4;
-  Kameraposen aus Wegen und Karte wie Mohedano, Cavallaro & García 2014). Der Grundriss bestimmt
-  Richtung und Lage, keinen Maßstab: gleichverteilt auf der sichtbaren Fläche schiebt er die Punkte
-  an die Wände (Küche 1,55), ohne Jacobi-Faktor zieht er die Echos herein (0,53). Ohne Paare kommt
-  der Maßstab deshalb von den übrigen LD2450 (hierarchisch, hier 1,05–1,08 ± 0,06–0,09).
-  Ergebnisse: Arbeitszimmer 320° → 324° (±0,3°, je nach Variante 323–326°), Maßstab 1,04–1,06,
-  Spiegel wie gezeichnet (die gespiegelte Lösung, die die Paare allein erlauben, 295°, ist um 465 log
-  schlechter); Schritte über eine Wandlinie durch die Tür 11 von 82 → 90 von 98, Paare mit dem Flur
-  im Median 0,55 → 0,32 m. Flur: Die Paare wollen 50° (Esszimmer–Flur 0,53 → 0,18 m), dann gehen
-  aber mehr Schritte durch die Wand neben der Arbeitszimmertür; mit freier Lage passt beides (0,6 m
-  weiter an seiner Wand, 44°, Maßstab 0,94). Die eingezeichnete Lage ist zu prüfen. Küche: 94° ± 4°,
-  ohne eigenen Maßstab. report_eval: keine Variante nachweislich besser (falsch aus 2,0–4,7 von 15
-  statt 3,0, falsch an immer 0 von 41); die Unterschiede liegen an Lichtschaltern in Türen, wo 0,2 m
-  den Raum entscheiden. Die Log-Evidenz ist zwischen Maßstäben nicht vergleichbar (die Dichte der
-  Messungen im Haus ändert sich mit dem Maßstab).
-- **Kalibrierung der App neu** (7.10. abends, `calibration.py`): Leon ging 16:13–16:22 allein kreuz
-  und quer (neuer Badsensor, Küche nicht betreten). Die alte App-Rechnung (Paare je Sensorpaar mit
-  RANSAC, gemeinsame kleinste Quadrate, Spiegel frei) schlug vor: Arbeitszimmer gespiegelt (294°),
-  Esszimmer Maßstab 1,27, Flur −15°. Ursachen, nachgerechnet auf denselben Frames:
-  1. *Spiegelsuche:* Der alphabetisch erste Sensor (Arbeitszimmer) war immer ungespiegelt, die
-     Alternative „alle umgedreht“ ist nur bei zwei Sensoren eine Symmetrie. Die eingebaute Lage (alle
-     gespiegelt) hätte nach dem eigenen Maß die meisten passenden Paare gehabt (1463 gegen 1361),
-     wurde aber nie gerechnet.
-  2. *Paare in einem Fleck:* 6 der 7 Sensorpaare hatten ihre Paare im Flur zwischen den Türen um
-     (−1,3 / 4,2), quer 0,15–0,23 m Streuung, das Wohnzimmer 8 m entfernt durch die Tür. Ein Fleck legt
-     je Sensorpaar nur eine Kombination fest; drinnen entscheidet er den Spiegel kaum (passende Paare
-     richtig gegen gespiegelt 3–30 % auseinander).
-  3. *Falsche Paare:* bei den gezeichneten Lagen lagen nur 45–70 % der Bad-Paare innerhalb 1 m.
-  4. *Maßstab frei, Kette:* Das Esszimmer hing nur über 251 Paare an einer Stelle am Wohnzimmer, dessen
-     Maßstab der Fleck auf 8 m setzte (1,07 statt 1,15) – Esszimmer 1,27.
-  5. *Frames als unabhängig:* Paare alle 0,1 s; die Unsicherheit wurde nicht ausgewiesen.
-  Neu (eine Rechnung für App und `tools/calibrate_offline.py`; seit 0.45 im Kern, `calibration/`): alle Sensoren gemeinsam (Bündelausgleich,
-  Triggs et al. 2000); Paare mit Ausreißeranteil (Myronenko & Song 2010); Übergänge zwischen
-  Sichtfeldern wie Rahimi, Dunagan & Darrell 2004, mit dem OU-Gehmodell aus 3.2 über bis zu 2 s;
-  Grundriss je LD2450-Spur (Person im sichtbaren freien Raum oder Echo); Maßstabsprior mit der
-  gemessenen Streuung der LD2450 (ln-Maßstab 0,05) um den Median der Sensoren mit eigenen Paaren;
-  Spiegel aus der Konfiguration (nur auf Wunsch verglichen); Paare und Grundrisspunkte je 1 s.
-  Unsicherheit: cluster-robuste Kovarianz über 30-s-Blöcke (Liang & Zeger 1986) plus Modellfehler.
-  Vorgeschlagen wird ein Wert nur, wenn er bestimmt ist (Richtung ≤ 4°, Maßstab ≤ 0,05: so viel wie
-  der LD2450 selbst in 5 m), die Richtung keinen zweiten Modus hat und Grundriss allein und Paare
-  allein dieselbe Richtung wollen. Die App sammelt laufend die Messungen Gehender der letzten 24 h.
-  Gemessen:
-  - *Modellfehler:* 2-h-Fenster vom 6./7.10. streuen über ihre eigene Unsicherheit hinaus um
-    0,9–3,3° (Flur 3,3) und 0,017–0,073 im Maßstab (Esszimmer 0,073); quadratisch gemittelt 2,1° und
-    0,042, das steht jetzt in jeder Unsicherheit. Die Streuung zwischen den Fenstern ist 2–4-mal so
-    groß wie die robuste Kovarianz, der Block-Bootstrap (120 s) innerhalb eines Laufs 1–2-mal.
-  - *Spiegel:* auf Leons Gang ist die eingebaute Lage für jeden Sensor besser (bereinigt um die
-    Korrelation, Log-Posterior: Arbeitszimmer +29, Esszimmer +54, Wohnzimmer +52, Bad +45, Flur +250).
-  - *Nur Leons Gang gegen alle Daten:* Arbeitszimmer 324,2° / 1,11 gegen 324,4° / 1,05, Bad 50,8° /
-    1,05 gegen 55,1° / 0,99, aber Esszimmer 326,8° / 1,20 gegen 319,6° / 1,07 und Flur 33,6° gegen
-    (Widerspruch, bleibt 50°). Der Gang allein verbessert die Wände (Schritte durch Wände auf dem
-    Gang 39 → 9) und verschlechtert den Alltag: Paare innerhalb 0,5 m 54 % → 24 %, Schritte durch
-    Wände 232 → 121 von 646. Alle Daten: 54 % → 56 %, Wände 232 → 214, Punkte außer Sicht 3,4 → 2,8 %,
-    Übergänge innerhalb 1 m 36 → 38 %. Daher sammelt die App jetzt laufend.
-  - *report_eval* (Meldungen 7.10., config7-Lagen): alle Varianten Licht falsch an 0 von 13, aus 0
-    von 7 (alte App-Rechnung aus 0,01); P im Fenster der Meldungen 08:45 (zwei im Arbeitszimmer):
-    Bad 0,12 (config7) / 0,09 (alle Daten) / 0,24 (nur Gang) / 0,70 (alt); Küche 11:39 0,08 / 0,10 /
-    0,32 / 0,00.
-  - *Log-Evidenz* (mit dem Jacobi-Term 2 ln k je Positionsdichte, damit Maßstäbe vergleichbar sind;
-    gegen config7/config8 auf denselben Frames): alle Daten 7.10. 07:44–12:55 +1945, 6.10. 19–22 Uhr
-    −1000, Stunde des Gangs +159 (zusammen +1104); nur Gang −5785 / −4002 / +1063 (auf seinen eigenen
-    Daten); alt −3913 / −27728 / +886. „Nur Gang“ und „alt“ verwenden dabei 3200–4000
-    Flur-Messungen weniger (mit 34–35° liegen sie hinter Wänden), „alt“ abends 9700
-    Arbeitszimmer-Messungen weniger (gespiegelt). Die Änderungen mit allen Daten sind klein (außer dem
-    neuen Bad, 45° → 55°) und liegen bis auf das Esszimmer (−4,1° ± 2,1°) innerhalb ihrer
-    Unsicherheit; die Evidenz entscheidet zwischen ihnen und config8 nicht.
-  Offen: Flur-Position, Küche, Entfernungsversatz (9).
-- **Ein Gang ist kein Alltag** (7.10. abends, Test der App 0.13.0 mit config8 und der Aufnahme 16:00–16:40):
-  Vorgeschlagen wurden Flur −17° (33,6° ± 2,7°) und Esszimmer +3–5°, beide „bestimmt“. Beim Esszimmer
-  lagen danach mehr Gehende außer Sicht (32 → 37 %, 65 Punkte aus 12 Spuren); der Flur mit 34° legt im
-  Alltag 3200–4000 seiner Messungen hinter Wände (report_eval, oben). Warum die Prüfungen hielten: Der
-  Gang ist in sich stimmig. Ein Jackknife über seine Minuten gibt für den Flur ± 1,6° (Esszimmer ± 4,1°),
-  Grundriss allein und Paare allein liegen beide bei 30–36°; der Widerspruch zu den Paaren durch die
-  Wohnzimmertür (50°) steckt nur in Alltagsdaten. Der Modellfehler (2,1°) war an 2-h-Fenstern gemessen:
-  kurze Alltagsfenster (10 min, 1–10 Spuren) weichen vom Gesamtfit im Mittel nur 3–4° ab, der Gang um
-  15°: Er ist eine ungewöhnliche Auswahl von Orten (fast nur der Fleck im Flur zwischen den Türen), keine
-  Stichprobe des Alltags. Keine Statistik innerhalb des Gangs kann das zeigen. Deshalb jetzt (`solve`):
-  Ein Wert wird nur vorgeschlagen, wenn der Sensor Gehende aus mindestens 3 verschiedenen Stunden hat;
-  seine Unsicherheit enthält ein Jackknife, bei dem je eine von bis zu 8 Gruppen aufeinanderfolgender
-  Stunden wegfällt (Künsch 1989); und nicht, wenn die neue Lage Punkt für Punkt mehr Gehende außer Sicht
-  legt (gepaart: mehr hinaus als herein um mehr als die Wurzel ihrer Summe). Die gesammelten Daten
-  überstehen jetzt einen Neustart. 16:00–16:40 allein: nichts vorgeschlagen, auch das Bad nicht (sein
-  Ergebnis hängt am Flur: 50,8° mit dem Flur bei 34°, 55,1° mit den Alltagsdaten, Grundriss allein 54,3°).
-  Alle Daten (6.10. 18:00 – 7.10. 16:39): Esszimmer, Wohnzimmer, Arbeitszimmer wie zuvor (Jackknife
-  0,3–0,8° und 0,004–0,020), Flur Widerspruch, Küche mehr außer Sicht (19 → 20 %), Bad erst eine Stunde.
-- **Sigma-Punkte statt Mittel, Wände über Sigma-Punkte** (7.10., 5.2): Fehlerberichte 6.10.
-  (Stand 0.10.0 → mit allem): Licht zu spät aus 3,00 → 1,67 von 15, fälschlich an 0 von 41 (beide),
-  Log-Evidenz +470. Küche 21:57 (zum Lichtschalter, wie oben): Tiefpunkt Küche 0,02 → 0,75; Küche
-  22:01–22:15 und die Nacht wie vorher (0,00 / 0,02, keine Sekunde über der Schwelle). Ablationen
-  (zu spät aus von 15 / Log-Evidenz gegenüber allem): nur Sigma-Punkte ohne Wände 4,17 / −27;
-  ohne Spiegeln in der Vorhersage 3,50 / −44; ohne Masse hinter Wänden 2,67 / −21; ohne Spiegeln
-  der Sigma-Punkte bei den Raten 1,67 / −41; Wände, aber Raten am Mittel 2,17 / −205; zusätzlich das
-  LD2410C über Sigma-Punkte 1,79 / −524 (nicht übernommen). Ein Fenster (Wohnzimmer 21:24) kippt
-  zwischen den Varianten ganz; die Log-Evidenz ist das stabilere Maß. Rechenzeit: +10 % (CPU-Zeit,
-  6.10. 21:00–21:20, 5 Sensoren, je dreimal: 33,9 → 37,1 s), verteilt auf die Sigma-Punkte bei den
-  Raten, Spiegeln in der Vorhersage, Masse hinter Wänden und Wiederfinden. Mehr Punkte für die Raten
-  (7.10., Stand 0.11.0): statt der 5 Punkte die Gauß-Hermite-Produktregel mit 3×3 = 9 (Grad 5 je
-  Achse, mit gemischten Termen) oder 5×5 = 25 Punkten (Grad 9). Licht in allen Fenstern gleich
-  (Meldungen bis 6.10.: an 0 von 41, aus 1,17 von 15; 7.10.: 0 von 13 / 0 von 7, Küche und Flur
-  unverändert); Log-Evidenz bis 6.10. −42 / −11, 7.10. +9 / +0,5 (im Rauschen der Hypothesen-Grenze,
-  5.1); Rechenzeit +1–2 %. Der Fehler der Näherung ist nicht, was fehlt: 5 Punkte bleiben.
-- **Die gemeldete Entfernung des LD2410C erfindet Personen** (0.9.3): Sie ist der Ring, in dem die
-  Energie gerade über ihrer Schwelle liegt. Leon allein am Schreibtisch in 1,5 m (Arbeitszimmer
-  6.10. 22:20–22:50): in 27 % der Ruhig-Frames 2,6–6 m. Das Modell brauchte dafür eine zweite Person
-  und stellte die zweite Person (im Schlafzimmer) 25 Minuten lang zu 100 % ins Arbeitszimmer (Fehlerberichte
-  22:40, 22:42). Die Energie in den fernen Ringen kommt vom Schweif seines eigenen Profils (4.3). Mit
-  den Energien dort: Arbeitszimmer genau 1, Schlafzimmer 0,82.
-- **Energien gegen einzelne LD2450-Frames geprüft** wollten eine zweite Person (dieselbe halbe
-  Stunde: +224 log für eine zweite in 2,5 m); gegen die geglättete Position der Person nicht (−543).
-  Die Energien zählen deshalb gegen die Personen des Filters, nie gegen Frames.
-- **Energien ohne Verzögerung und ohne gemeinsamen Pegel** (Entwicklung der Energien, 7.10.):
-  Nachdem Leon an der Küche vorbei durch die Tür gegangen war, blieben die Ruhig-Energien 3 s bei 100
-  und fielen dann mit etwa 2 s; das Modell holte eine zweite Person in die Küche, die dort in den
-  Teil hinter der Wand ging und blieb (Licht an ohne Person in 3,3 von 41 leeren Raum-Fenstern).
-  Mit der Verzögerung 2,3; mit dem gemeinsamen Pegel je Sekunde 0 (Schübe und gleichmäßig erhöhte
-  Ringe nachts im Arbeitszimmer hatten Personen am Rand des Strahls erklärt).
-- **Textur je Ring statt Echoquellen** (7.10.): Ein langsam veränderlicher Gamma-Pegel je Ring
-  (Compound-Gauß- / K-verteiltes Clutter, Ward 1981; Ward, Tough & Watts 2006; als Markov-Kette mit
-  30–120 s, Verteilung aus der leeren Nacht) trennt das Ereignis von 01:08 nicht von Personen: log
-  Bayes-Faktor Person / niemand mit Textur +14–18 für das Ereignis (56 s), +18–39 für echte Personen
-  (40–60 s); eine Person in 0,75 m in der Küche (22:15) nur noch +3 statt +1877. Eine Textur, die
-  das Ereignis erklärt, erklärt jede Person. Auch eine Textur je Sekunde (ohne Gedächtnis) half
-  nicht. Die Echoquellen haben eine Form (ein Profil) und eine Lebensdauer; daran trennen sie.
-- **Echoquellen zuerst, gegen die Personen, wie sie vorher waren** (7.10.): nahmen eintretenden
-  Personen mit und ohne Spur ihre Energie (Licht zu spät aus in 5,3 von 15 Fenstern statt 2,0).
-  Jetzt sind sie Alternative nur zu Personen ohne Spur und zuletzt in der Kette: 3,0.
-- **Amplitude je Aufenthalt beim LD2410C** (7.10., verworfen): der Gewinn g auf dem Profil einer
-  Stehenden (gemessen 4.3) als Gamma(2, 2) in 5 Stufen (Swerling III: langsam, fest über einen
-  Aufenthalt), neu bei jedem Stehenbleiben, innerhalb mit 1/(600 s) neu gezogen wie κ. Geprüft (a) an
-  κ gekoppelt (k-te Stufe von κ = k-te Stufe von g) auf Kacheln und Gauß-Komponenten, (b) nur auf den
-  Personen mit Spur, gekoppelt oder eigene Stufen, (c) dazu auf Gehenden (Gamma(3,5)), (d) wie (b)
-  mit Gamma(4, 4). Log-Evidenz um +1800 bis +2250 besser, Licht fälschlich aus aber in 3,50 / 3,17 /
-  4,42 / 3,17 statt 3,0 von 15 Fenstern (an weiterhin 0 von 41). Der Flur um 21:56 wird besser (0,40 →
-  0,57, mit (d) 0,55), der um 21:35 und das Wohnzimmer um 21:24 nicht; schlechter werden das Wohnzimmer
-  um 21:21 (0,89 → 0,52–0,81) und die zweite Person im Bad (21:30: 0,86 → 0,02–0,08): Mit freier
-  Amplitude erklärt die Person in der Küche (auf einer Spur, die teils aus Mehrwegechos hinter der Wand besteht, siehe „Küchensensor hinter der Wand“)
-  ihre Energie mit niedrigem g, und eine ungesehene Person nahe dem Sensor nimmt den Rest. Mit
-  Gehenden zusätzlich das Arbeitszimmer 21:36 (0,86 → 0,33). Die Streuung ist echt, aber solange
-  Kalibrierung und Profilform nicht stimmen, nutzt das Modell die Freiheit für Fehlpassungen.
-- **Neubeginn bei neuer Kalibrierung** (bis 0.10.0, Meldung 7.10. 08:07 „Person verloren“: Leon am
-  Schreibtisch, der LD2450 misst ihn minutenlang, der LD2410C ruhig Ring 2–3 bei 100): Jede neue
-  Konfiguration, auch nur Richtung und Maßstab eines Sensors, ließ das Modell ohne Wissen beginnen:
-  `start_people` (in Leons Konfiguration 1) bekannte Personen, keine unbekannten (Intensität im Blick
-  danach ~10⁻⁸; Neuankömmlinge nur über die Treppe, ν = 1/(2 Tage)). Waren dabei beide Bewohner in Sicht,
-  erklärte die eine bekannte Person die andere (im Esszimmer), die Spur am Schreibtisch blieb ein Geist:
-  Nachgespielt (Gelerntes ab 6.10. 19:28, App-Start 06:50:17, neue Kalibrierung 07:44:30) mit einem
-  weiteren Neubeginn um 08:05:30, 08:06:00, 08:06:15 (Modellfehler) bzw. 08:05:30, 08:05:55, 08:06:15
-  (Konfiguration): in 4 von 6 Fällen Arbeitszimmer P(belegt) 0,000 bis 08:08, die Person-Alternative der
-  Spur binnen 15 s unter 10⁻⁷ abgeschnitten und nie wieder da, die Energien von einer immer neu
-  beginnenden Echoquelle erklärt (P(an) 1,000), der Hintergrund unverändert (5,4). Der Neubeginn um
-  07:44:30 allein schadete nicht (Leon allein in Sicht). Jetzt bleiben die Personen bei neuer Kalibrierung
-  (5.3): dieselben Konfigurationen (Richtung 325° statt 324°) um 08:05:30, 08:05:55, 08:06:15 ergeben
-  1,000 bis 08:08. Ein Neubeginn nach einem Modellfehler bleibt wie bisher. Verworfen: eine Intensität
-  unbekannter Personen beim Start (Poisson, 0,1 bzw. 0,5 Personen „irgendwo“, B_GarciaFernandez2018):
-  behebt den Fall, holt aber um 21:28 (6.10., 10 min nach einem App-Start) eine dritte Person ins leere
-  Wohnzimmer (Licht fälschlich an 0,88 von 41 statt 0, aus 2,0 statt 3,0 von 15). `start_people` = 2 statt
-  1: report_eval unverändert (0 / 3,0, Log-Evidenz +83), der Fall auch mit dem Neubeginn um 08:06:15
+- **Rechenzeit.** Im Python-Kern (bis 0.38) steckte die Zeit im Aufwand je Aufruf auf winzigen Arrays,
+  nicht in der Rechnung; Numba-Kernel brachten je Runde 10–30 %, der Kern in Rust (0.39) knapp das Dreifache
+  (dieselben 20 min: 47,8 s → 16,8 s CPU). Die Lehre, die bleibt: **Rundung schaukelt sich chaotisch auf.**
+  Schon ein BLAS-Produkt in anderer Form (0.31) oder ein anders gerundetes `hypot` (0.53) kippte in
+  einer Stunde rund 840 Raum-Sekunden, weil der Schnitt der Hypothesen dort auf Rundungsniveau
+  entscheidet. Unterschiede dieser Größe zwischen zwei Fassungen sind Rauschen.
+- **Die Zeit des Modells darf den Frames nicht davonlaufen** (0.54.2/0.54.3). Ging das Modell weiter,
+  während Frames noch unterwegs waren (Wiedergabe unter Überlast; live ein Stau von HA, Broker oder inge,
+  18.10. ~35 s), galt jeder Sensor als still: Spuren endeten als verlorene Daten und begannen mit den
+  späten Frames neu, aus 2 Personen wurden 23–25 (Wiedergabe) bzw. kurz 3–4 (Stau). Seitdem geht die
+  Zeit des Modells mit dem neuesten Frame, und gestaute Frames bekommen ihre Zeit aus der Laufzeit des
+  Boards (4.4).
+- **Weniger Schichten je Kachel** (7.10., 11 h, Daten gelöscht): 5 statt 7 Arten des Aufenthalts
+  kosteten nichts Messbares, 4 Arten etwas Evidenz, 3 Arten deutlich mehr und mehr Lichtfehler. Heute 5 Arten × 5
+  Stufen κ = 25 Schichten von `steht`. Dabei gelernt: Die Grenzen der Hypothesen bewegen die Evidenz um
+  Hunderte (5.1). Kleine Unterschiede zwischen Varianten sind nur sicher, wenn sie bei mehreren Grenzen
+  dasselbe Vorzeichen haben.
+- **Die gemeldete Entfernung des LD2410C erfindet Personen** (0.9.x, Daten gelöscht). Mit fester
+  Reichweite 3,3 m musste das lange „an“ des Wohnzimmersensors (Sitzende im Esszimmer in 6,2 m) von einer
+  erfundenen Person nahe am Sensor kommen. Die gemeldete Entfernung ist nur der Ring, in dem die Energie
+  gerade über ihrer Schwelle liegt: eine Person allein am Schreibtisch in 1,5 m (6.10. 22:20–22:50) lag
+  in 27 % der Ruhig-Frames bei 2,6–6 m; das Modell stellte dafür die zweite Person 25 min ins
+  Arbeitszimmer. Die Energie in den fernen Ringen ist der Schweif des eigenen Profils (4.3). Heute
+  nutzt das Modell die Energien je Ring; die Entfernung dient nur der Weboberfläche.
+- **Gauß an Wänden abgeschnitten** (6./7.10., ein Abend, je ein Fall, Daten gelöscht): abgeschnittener
+  Kalman-Filter (H_SimonSimon2006) an den achsparallelen Wänden. Half in einem Fall (zum Lichtschalter
+  in der Küche), schadete in einem anderen: Der damals nicht kalibrierte Küchensensor maß Personen etwa
+  1 m zu weit hinten, hinter der Wand zum Vorratszimmer; abgeschnitten blieb die Verteilung dort
+  gefangen und wurde zu ungesehenen Personen in der Ecke (bis zu vier, Küche 14 min fälschlich belegt).
+  Lehre: Wände setzen einen Grundriss und Kalibrierungen voraus, zu denen die Messungen passen. Mit
+  kalibrierten Sensoren nicht neu geprüft; heute wirken Wände über gespiegelte Sigma-Punkte (5.2).
+- **Küchensensor „hinter der Wand“** (7.10., Daten gelöscht): Seine Ziele jenseits der Außenwand sind
+  Mehrwegechos von Personen in Ess-, Wohnzimmer oder Flur, kein falscher Maßstab. Bei allen misst
+  gleichzeitig ein anderer Sensor dort jemanden, und ihre Entfernung wächst mit dem Abstand dieser Person
+  zum Küchensensor (Korrelation 0,79). Kein Maßstab holt sie in den Raum.
+- **Kalibrierung der App neu** (7.10., Daten gelöscht). Die alte Rechnung (Paare je Sensorpaar mit
+  RANSAC, Spiegel frei) schlug nach einem Gang von 9 min falsche Lagen vor (Arbeitszimmer gespiegelt,
+  Esszimmer Maßstab 1,27). Ursachen: die Spiegelsuche hielt einen Sensor fest; fast alle Paare lagen in
+  einem Fleck im Flur, der je Sensorpaar nur eine Kombination festlegt; viele falsche Paare; freie
+  Maßstäbe in einer Kette; Frames als unabhängig ohne ausgewiesene Unsicherheit. Der Grundriss bestimmt
+  Richtung und Lage, keinen Maßstab: gleichverteilt auf der Sichtfläche schiebt er die Punkte an die
+  Wände. Heute (`calibration/`): alle Sensoren gemeinsam (Bündelausgleich, Triggs et al. 2000), Paare mit
+  Ausreißeranteil (Myronenko & Song 2010), Übergänge zwischen Sichtfeldern (Rahimi, Dunagan & Darrell
+  2004), Grundriss je Spur, Maßstabsprior um die anderen Sensoren, Spiegel aus der Konfiguration;
+  cluster-robuste Kovarianz plus Modellfehler. Vorgeschlagen wird nur, was bestimmt ist.
+- **Ein Gang ist kein Alltag** (7.10., ein Gang und ein Tag Alltag, Daten gelöscht). Ein bewusster Gang
+  durch die Wohnung ist in sich stimmig, aber eine ungewöhnliche Auswahl von Orten. Er schlug Flur −17°
+  und Esszimmer +3–5° vor, beide „bestimmt“; im Alltag lagen danach mehr Gehende außer Sicht bzw. Tausende
+  Flur-Messungen hinter Wänden. Keine Statistik innerhalb des Gangs kann das zeigen. Daher: Ein Wert wird
+  nur vorgeschlagen, wenn der Sensor Gehende aus mindestens 3 verschiedenen Stunden hat; die
+  Unsicherheit enthält ein Jackknife über bis zu 8 Gruppen von Stunden (Künsch 1989); und nicht, wenn
+  die neue Lage mehr Gehende außer Sicht legt.
+- **Sigma-Punkte statt Mittel** (7.10., 15 belegte / 41 leere Fenster vom 6.10., Daten gelöscht, 5.2):
+  Die Erfassungsraten am Mittel der Vorhersage sind 0, wo das Mittel knapp außer Sicht liegt; dann hat
+  „die neue Spur ist diese Person“ das Gewicht 0. Raten über 5 Sigma-Punkte mit Wänden: Licht zu spät
+  aus 3,00 → 1,67 von 15, Evidenz +470. 9 oder 25 Punkte änderten nichts: Der Fehler der Näherung ist
+  nicht, was fehlt. Das LD2410C ebenfalls über Sigma-Punkte: Evidenz −524, Licht etwas schlechter.
+  Ein einzelnes Fenster kippte zwischen Varianten ganz; die Evidenz war das stabilere Maß.
+- **Energien gegen einzelne LD2450-Frames** (6.10. 22:20–22:50, eine halbe Stunde, Daten gelöscht)
+  wollten eine zweite Person (+224 log für eine zweite in 2,5 m); gegen die geglättete Position der
+  Person nicht (−543). Daher zählen die Energien gegen die Personen des Filters.
+- **Energien ohne Verzögerung und ohne gemeinsamen Pegel** (7.10., Daten gelöscht): Nach einem Gang
+  durch die Küche blieben die Ruhig-Energien 3 s bei 100 und fielen dann langsam; ohne Modell dieser
+  Verzögerung holte das Modell eine zweite Person in die Küche. Schübe und gleichmäßig erhöhte Ringe
+  nachts erklärten ohne einen gemeinsamen Pegel je Sekunde Personen am Rand des Strahls.
+- **Textur je Ring statt Echoquellen** (7.10., Daten gelöscht): Ein langsam veränderlicher Gamma-Pegel
+  je Ring (K-verteiltes Clutter, Ward 1981) trennt ein Echo-Ereignis nicht von Personen: Eine Textur,
+  die das Ereignis erklärt, erklärt jede Person. Echoquellen haben eine Form (ein Profil) und eine
+  Lebensdauer; daran trennen sie (4.3).
+- **Echoquellen gegen welche Personen?** (7.10. bis 30.10., 15 belegte Fenster, Daten gelöscht):
+  Echoquellen zuerst in der Kette, gegen die Personen, wie sie vorher waren, nahmen eintretenden
+  Personen ihre Energie (Licht zu spät aus 5,3 statt 2,0 von 15). Danach waren sie Alternative nur zu
+  Personen ohne Spur (3,0 von 15). Seit 30.10. sind sie Alternative zu den bekannten Personen, ohne die Unbekannten
+  (10 „Echoquellen als Alternative“).
+- **Amplitude je Aufenthalt beim LD2410C** (7./8.10., 15 belegte Fenster vom 6.10. und eine Episode,
+  Daten gelöscht). Wie viel eine Person zurückgibt, streut stark zwischen Aufenthalten (4.3); ohne diese
+  Amplitude erklärte eine zweite Person oder eine Echoquelle den Überschuss einer lauten Person, und eine
+  leise wurde aus dem Raum geschoben. Versucht: (a) Gamma-Amplitude, meist an κ gekoppelt: Evidenz +1800
+  bis +2250, aber mehr Licht zu spät aus (3,2–4,4 statt 3,0 von 15); die freie Amplitude nahm
+  Fehlpassungen von Kalibrierung und Profil auf. (b) Maßstab oder Schweif je Sensor online gelernt:
+  nahmen die Energie Sitzender auf (wer einen Sensor lauter macht, lässt die leise Person dort woanders
+  hin), mehr Lichtfehler. (c) Eigene Stufen neben κ: keine neuen Fehler, übernommen. Seit dem Review
+  8.10. ein Gitter in log g, über eine Gauß-Copula an κ gekoppelt (`ld_amp_levels` 9, `kappa_amp_corr`
+  0,44 aus der gemessenen Rangkorrelation; volle Kopplung war zu stark, gemessen Spearman 0,4).
+- **Neubeginn bei neuer Kalibrierung** (bis 0.10.0, eine Meldung 7.10., 6 nachgespielte Neubeginne,
+  Daten gelöscht): Jede neue Konfiguration, auch nur Richtung oder Maßstab eines Sensors, ließ das Modell
+  mit einer bekannten Person neu beginnen. Waren beide Bewohner in Sicht, erklärte die eine bekannte
+  Person die andere, und die Spur am Schreibtisch blieb ein Geist (4 von 6 Fällen). Seitdem bleiben die
+  Personen, wenn sich nur Sensoren ändern (5.3). Eine Intensität unbekannter Personen beim Start
+  behob den Fall, holte aber an einem Abend eine dritte Person ins leere Wohnzimmer; das lag später an
+  einer Episode, die alle Varianten hatten (unten). Heute ist das der Start ohne Wissen (`start_unknown`
+  1, 5.3).
+- **Neustart mit dem gespeicherten Zustand** (7.10., 15 / 41 Fenster vom 6.10., Daten gelöscht, 5.3): Nach
+  einem App-Start mit dem gespeicherten Zustand statt mit festen bekannten Personen: Licht gleich bis auf
+  eine Episode von 20 s, Evidenz +215. Ob dabei jemand im Wohnzimmer zurückblieb, kippte mit
+  Kleinigkeiten (30 s Pause, eine beendete Spur); Ursache war eine überzählige bekannte Person in allen
+  Varianten.
+- **Energie auf mehrere Personen aufteilen?** (7.10., Leons Frage zu einer Meldung „zwei im
+  Schlafzimmer, eine geht ins Arbeitszimmer, gemeldet werden beide dort“; Daten gelöscht.) Die
+  Überlagerung teilt schon: Das Mittel ist die Summe, eine zweite Person am selben Ort bekommt nur, was
+  die erste nicht erklärt. Eine Regel „wo schon jemand ist, bestätigt die Energie niemanden“ wäre keine
+  Wahrscheinlichkeit und hätte geschadet, als wirklich zwei im Arbeitszimmer waren. Die drei Meldungen des
+  Morgens kamen aus der Rate am Mittel statt über die Verteilung (oben, Sigma-Punkte), aus der fehlenden
+  Amplitude je Aufenthalt (eine Person gab mehr, eine weniger als das Profil) und aus einer Echoquelle, die gegen Personen ohne Spur gewogen wurde, als
+  wären sie da, und die Person dann, als nähme die Quelle ihren Platz ein (oben, Echoquellen).
+- **Die Stille vor einem Frame** (7.10., 19 h leeres Haus, Daten gelöscht; 4.3, 4.4): Die Firmware sendet
+  einen Frame je LD2450-Frame (0,089 s), solange der LD2450 ein Ziel hat oder ein Flag des LD2410C an ist,
+  sonst alle 5 s einen Herzschlag. Der erste Frame nach einer Stille kommt, weil eine Energie stieg.
+  Stand er für die ganze Stille davor (bis 2eea738), war die Energie bewegt um 25–30 % zu hoch und der
+  gelernte Hintergrund entsprechend. Heute steht die Stille für die Energien des Frames davor (geprüft
+  auf Strecken mit vollem Takt: ×0,99–1,07 gegen den vollen Strom). Die Flags sind keine Schwellen auf die
+  gemeldeten Energien.
+- **Woher erfundene Personen kamen und warum sie blieben** (7.10., ein Tag nachgespielt, Daten
+  gelöscht). Neue Personen aus der Intensität waren selten; die überzähligen bekannten entstanden so:
+  1. *Das Ende einer Geisterspur sprach für eine Person* (bis 26-mal am Tag). Heute konkurrierende
+     Risiken (4.2).
+  2. *Harte Schattenkanten*: Eine Spur am Rand eines Türschattens; an allen Sigma-Punkten der Vorhersage
+     war die Sicht 0, „das ist Leon“ hatte das Gewicht 0, und Leon war zweimal da. Heute die Sicht über
+     den Versatz (4.1).
+  3. *Unsichtbare Streifen*: Kacheln entlang einer Wand ohne jede Sicht hielten eine Person. Ebenso 4.1.
+  4. *Abschneiden statt Zusammenlegen*: „die Spur war ein Geist“ und „eine neue Person“ blieben zwei
+     Hypothesen mit verschiedener Personenzahl; fiel die erste aus den 12, gab es keinen Weg zurück (im
+     Haus erwartet 3,9–4,7 statt 2). Heute Bernoulli-Existenz und Zusammenlegen über die Personenzahl
+     hinweg (5.5, 5.6).
+  5. *Doppelte Personen in Ecken ohne Sicht*: Keine Messung konnte sie treffen, sie hielt sich durch ihre
+     bloße Existenz (Küche 0,7–0,9 über eine Stunde). Heute klingt die Existenz ohne Stütze ab (5.5;
+     erst 30 min, nach Messung der Lücken echter Sitzender 2 min, Herleitung in 10 „Tote Winkel und
+     Existenz“).
+- **Die Geisterkarte lernte einen Sitzplatz als Geisterquelle** (bis 0.12.0, ein Abend, Daten gelöscht).
+  Zwei Lernschleifen aus dem eigenen Urteil des Filters: Die Karte zählte die Spuren einer Sitzenden, die
+  der Filter für Geister hielt, und machte den Platz bis 21-mal so wahrscheinlich; die online gelernte
+  Lebensdauer der Geister stieg von 39 auf 148 s, und damit sprach ein langes Leben kaum noch gegen einen
+  Geist, das Merkmal, an dem Sitzende von Geistern zu trennen sind. Daher sind die Lebensdauern fest
+  (`ghost_types`, 4.2). Die Karte selbst ist seit 30.10. weg.
+- **Das Treppenhaus war ein Bereich der Wohnung** (bis 0.12.0): Wer hinausging, blieb dort minutenlang
+  „im Haus“, und Home Assistant bekam eine Personenzahl für öffentlichen Raum (Leon, 7.10.: „Die
+  Personenzahl hinter Treppe macht keinen Sinn, da dies öffentlicher Raum ist.“). Heute außer Haus (2,
+  3.3).
+- **Wer hinausging, blieb erwartet** (7.10., Daten gelöscht): Zurückgegeben wurde nur, wer zu weniger als
+  1 % *im Haus* existierte. Wer hinausging, ging also mit seinem ganzen Gewicht an die Unbekannten
+  draußen, und die kehrten an der Tür zurück und sammelten sich an schlecht sichtbaren Plätzen. Heute
+  geht zurück, wer zu weniger als 1 % existiert, wo er auch ist (`give_up`, 5.5).
+- **Bewegung als Merkmal einer Person?** (7.10., Leons Vorschlag; ein Tag Aufnahmen, Daten gelöscht.)
+  Ein Ziel, das sich bewegt, eine Weile bleibt und neben dem sonst niemand ist, soll mehr als Person
+  zählen. Die Literaturform wäre ein Merkmal mit eigenem Likelihood-Verhältnis je Klasse (Lerro &
+  Bar-Shalom 1993) mit Verteilungen aus den Daten. Damals gemessen: Geister des LD2450 waren nach dem
+  Verwerfen hinter Wänden so selten (drei Spuren an einem Tag), dass sich ihre Bewegung nicht schätzen
+  ließ. Der Filter bestätigte Gehende ohnehin in 3–7 s (Lebensdauer der Geister, Türen); die eine
+  Ausnahme scheiterte nicht an fehlender Bewegung, sondern daran, dass keine bekannte Person mehr dort
+  hätte gehen können. Eine kleinere Entstehungsrate fern von Personen: Evidenz +81 / +2226, Licht und
+  Zahl gleich, damals nicht geändert. Am 4.11. forderte Leon die Prüfung erneut; seitdem gibt es eine
+  gemessene Rate der Geister mit Gehenden (`walker_ghosts`, 4.2) und 10 „Personen nur mit
+  Bewegungsmuster“. `tests/test_together.py` hält fest: Wer allein hereinkommt, ist binnen Sekunden eine
+  Person; eine Kopie neben einem Gehenden geht nicht mit.
+- **Zwei an einer Stelle: Wer steht, kann zwei sein?** (7.10., Leons Vorschlag; eine Episode im Bad,
+  Daten gelöscht.) Zwei standen lange im Bad, angezeigt wurde nach einer Weile nur eine. Ursache war
+  nicht das Abklingen allein: Als die Spuren der zweiten Person an der Badtür endeten, lag sie 3 s später
+  zu 0,89 im Schlafzimmer ohne Sensor, denn ungesehen im Bad zu gehen kostet die Erfassungsrate,
+  ins Schlafzimmer zu gehen nichts. Danach stützte nichts eine zweite: Der LD2450 sah ein Ziel, und die
+  Energien des LD2410C trennten eins und zwei im Bad nicht (im Arbeitszimmer besser). Geprüft:
+  Überleben abhängig vom Ort (p_S(x), B_GarciaFernandez2018), kein Abklingen, wo sie von einem gemessenen
+  Ziel nicht zu trennen wäre. In der Simulation hilft es, in der Episode nicht, weil ihre Masse an der
+  Stelle schon klein war. Literaturform: unaufgelöste Messungen (Koch & van Keuk 1997; A_Beard2015).
+  Seit 0.62/0.63 (6.–9.11.) nimmt das Modell zwei Ruhende als ein Ziel des LD2450 (10 „0.62: Zwei als
+  ein Ziel“).
+- **Vorausschauend einschalten und Ziel** (7.10., ein Tag Aufnahmen, Daten gelöscht; „wird betreten“
+  seit 0.56 entfernt). Aus Ort und Geschwindigkeit allein zielt man im Median erst 1,0 s / 1,4 m vor der
+  Tür auf sie (Tempo an der Tür ~1 m/s, also 1 s ≈ 1 m). Ein Vorlauf von 1 s / 1 m ging für etwa 60 % der
+  Eintritte, mit ~4 vergeblichen 30-s-Lichtern je Stunde. Der offene Raumteiler zwischen Ess- und
+  Wohnzimmer ist keine Wand; dort blieben vergebliche Lichter bei jeder Schwelle. Wer 1 m vor einer Tür
+  auf sie zugeht, geht nur in 75–85 % der Fälle hindurch; mehr gibt es nur aus Wissen über Wege, und das
+  nur für Routinen. *Ziel* (6) ist seit 0.56 nur die gelernte Karte; sie ist reine Ausgabe und ändert
+  das Belegt-Urteil nicht (`tests/test_destination.py`).
+- **Meldungen 7.10. abends** (Bad und Schlafzimmer neu mit Sensor; 11 belegte Fenster, Daten gelöscht).
+  Eine Sitzende im Bad an der Westwand: Bad P = 0,00. Zwei Ursachen, beide nachgewiesen:
+  1. *Hinter der Wand, an der der Sensor hängt* (4.1): Bad- und Schlafzimmersensor hängen an derselben
+     Wand und blicken an ihr entlang. „0,4 m zurück entlang der Sichtlinie“ lag für ein Ziel wenige cm
+     jenseits der Wand noch hinter ihr; 11 % bzw. 20 % der ruhigen Ziele zählten nicht. Heute quer zur
+     Wand gemessen (2 % / 0,4 %). Allein das: Bad 0,00 → 0,75–0,98.
+  2. *Amplitude als 3 Quadraturpunkte* (4.3): Die Person gab ein Drittel des Profils zurück, unter der
+     untersten Stufe 0,58; eine Echoquelle erklärte die Energie besser, bis die Person-Hypothese
+     abgeschnitten war. Mit dem Gitter in log g: Bad 0,92–0,98.
+  Nicht die Ursache: Hintergrund und Kalibrierung. Gemessen schlechter: eine Person mit Spur nicht als
+  Alternative zu einer Echoquelle zu wiegen (Bad unverändert, dafür Licht fälschlich an im Flur). Zwei im
+  Bett: die zweite liegt ungesehen neben der ersten, nichts stützt sie, P(=2) 0,29; das Licht ist
   richtig.
-- **Maßstab und Schweif je Sensor, Amplitude je Aufenthalt, zweiter Versuch** (7.10., verworfen bzw.
-  offen): Die Streuung war zu groß gemessen (4.3: gehaltene Ziele und Echos), echt sind β 5–16. Geprüft
-  mit report_eval (Basis: fälschlich aus 3,00 von 15, an 0 von 41, Log-Evidenz −1187650):
-  (a) ein Maßstab je Sensor auf dem ganzen Profil, von der App gelernt wie der Hintergrund (Lösung der
-  Likelihood-Gleichung der Gamma-Verteilung, Σ w (e − μ) U/μ² = 0, aus den Personen vor den Frames,
-  Prior log-Streuung 0,5): gelernt Esszimmer 1,7, Wohnzimmer 1,9, Küche 2,4, Flur 0,9, Arbeitszimmer
-  0,9; aus 3,67, Evidenz +717. (b) Wohnzimmer fest ×2,7 (der Offline-Wert): 3,92, +173. (c) ein
-  Faktor auf den Schweif je Sensor, ebenso gelernt (Nachhall des Raums): Küche 3,5, Esszimmer 1,5, die
-  anderen 0,9–1,0; 3,83, +636. In allen dreien kippt das Wohnzimmer um 21:21 (0,89 → 0,46–0,58): Wer
-  einen Sensor lauter macht, lässt die Person, die dort wenig abgibt, woanders hin. Online gelernt
-  nehmen Maßstab und Schweif außerdem die Energie Sitzender, die der Filter nur ungefähr kennt
-  (Esszimmer 1,5–1,7, offline um 1). (d) Amplitude je Aufenthalt Gamma(6) an κ gekoppelt: 3,08,
-  +1598, aber die zweite Person im Bad (21:28–21:30) wieder in der Küche (Bad 0,02–0,05). (e) dieselbe
-  mit eigenen 3 Stufen (unabhängig von κ, a priori unabhängig, also exakt als eigener Vektor neben κ
-  an der Gauß-Mischung): Gamma(6) 3,08 (Wohnzimmer 21:21 eine Sekunde unter der Schwelle), +1361,
-  Bad und Küche richtig, Flur 21:56 0,40 → 0,51; leere Räume nachts 0 min wie die Basis; Rechenzeit
-  gleich. Gamma(10) 3,08 / +1027; Gamma(3) 3,17 / +1795, aber das Bad wieder falsch. Die Kopplung an
-  κ ist zu stark (gemessen Spearman 0,4, nicht 1): Sie zieht über die Energie κ und damit das Urteil
-  des LD2450. Keine Variante macht weniger Lichtfehler; (e) ist die einzige ohne neuen Fehler und ist drin (Branch
-  `ld-amplitude-2-s1`).
-- **Energie auf mehrere Personen aufteilen?** (7.10., Leons Frage zur Meldung 08:52 „zwei im
-  Schlafzimmer, eine geht ins Arbeitszimmer, gemeldet werden beide dort“; am Modell nichts geändert.)
-  Die Überlagerung teilt schon: Das Mittel ist die Summe, jede Person wird gegeben das gewichtet, was
-  die anderen hineingeben; eine zweite am selben Ort bekommt nur, was die erste nicht erklärt.
-  Gekappte Werte (100) können nur für mehr Energie sprechen (P(e ≥ 100) wächst mit dem Mittel); eine
-  zweite Person kostet in den übrigen Ringen. Eine Regel „wo schon jemand ist, bestätigt die Energie
-  niemanden“ wäre keine Wahrscheinlichkeit und hätte um 08:43–08:45 geschadet, als wirklich zwei im
-  Arbeitszimmer waren (der LD2410C sprach mit +1 bis +3 je Sekunde für die zweite). Die drei Meldungen
-  des Morgens, nachgerechnet (Aufnahmen ab 6.10. 19:28 abgespielt wie in der App, mit Neustarts und
-  der Umkalibrierung um 07:44):
-  - 08:52: (1) Der LD2450 im Arbeitszimmer begann um 08:51:31,6 eine Spur auf Leon im Flur, 0,6 m neben
-    dessen Vorhersage. Am Mittel der Vorhersage sieht dieser Sensor nichts (1 bzw. 6 % der beiden
-    Komponenten liegen in seiner Sicht), die Rate am Mittel ist 0 (9: am Mittel statt über die
-    Verteilung), „die Spur ist Leons“ hatte das Gewicht 0. Sie ging an die zweite Person (zu 0,97 in
-    Schlafzimmer und Bad, 0,64) oder einen Geist (0,35); mit dem Wiederfinden der Flur-Spur tauschten
-    die Personen, und die zweite lag ohne Spur dicht bei Leon (Arbeitszimmer 0,40). Die Auflösung q
-    trug dazu kaum bei (ohne sie 0,43 statt 0,47). Mit der Rate über die Verteilung (5 Sigma-Punkte,
-    Prototyp) gehört die Spur zu 0,999 Leon, im Arbeitszimmer sind 08:51:40–08:55:10 im Mittel 1,03
-    statt 1,96 Personen. (2) Der LD2410C hielt die zweite Person dort (1,00 nach 30 s, bis 08:55;
-    ohne seine Energien 0,18, ohne die gekappten Werte 0,91). Leon allein am Schreibtisch
-    (08:50:05–08:50:55, 08:52:15–08:56:05) gab mehr zurück als das mittlere Profil: bewegt Ring 1–3
-    1,5–1,9-fach, ruhig Ring 5–8 (3,75–6,75 m) 2–2,5-fach. Eine ruhende zweite Person irgendwo im Raum:
-    log-Bayes-Faktor +86 (die gekappten Werte allein +109); mit seinem Gewinn auf dem Profil (ML 2,3,
-    log-Likelihood +87 gegenüber 1) noch +14. Am selben Platz am 6.10. 22:22–22:50: Gewinn 0,8, eine
-    zweite −71 (`tools/ld2410/second.py`). Ob der ferne Überschuss am Morgen von Leon kommt oder von
-    der zweiten Person hinter der Wand (das Bad liegt in 4–7 m, 35° neben der Achse, 9), ist offen.
-  - 08:45 (zwei im Arbeitszimmer, eine im Bad gezeigt): Der Überschuss über die beiden Profile schaltete
-    ab 08:42:56 eine Echoquelle ein (0,10 → 0,98 bis 08:43:06). Mit der Quelle an zählt die zweite
-    Person im Blick nur mit P(keine Quelle) und ging ins Bad (08:43–08:45 im Mittel 1,04 Personen im
-    Arbeitszimmer; ohne Echoquellen 2,12, ohne diesen LD2410C 1,72). Das ist nicht konsistent: Die
-    Quelle wird gegen die Personen ohne Spur gewichtet, als wären sie da, die Person dann, als nähme
-    die Quelle ihren Platz ein. Geprüft und verworfen: (a) Person und Quelle addieren sich wie zwei
-    Personen, die Person gegeben die Quellen als Mischung über deren Zustände (exakt für das Paar):
-    08:45 richtig (2,00); Licht fälschlich aus 2,67 statt 3,00 von 15, an 0 von 41, Log-Evidenz +809;
-    aber im leeren Raum 71 statt 0 Minuten Licht an (Küche 6.10. 19:10–20:15), Personen ohne Spur
-    bleiben (Arbeitszimmer 08:46 25 s nach dem Gehen), Rechenzeit 3,7 statt 2,7 %. (b) Dasselbe mit
-    dem Mittel der Quellen statt der Mischung, und (c) die Quellen auch in ihrer eigenen Gewichtung
-    gegen die Personen ohne Spur als Alternative: die unbekannten Personen wuchsen auf 1,4 bzw. 5,7 im
-    Blick. Der Ausschluss unterdrückt Geister, solange eine Person mehr zurückgibt als ihr Profil.
-  - 08:29 (die zweite Person „durch die Wand ins Treppenhaus“): Sie saß 1 m vor dem Esszimmersensor
-    und gab weniger zurück als das Profil (Gewinn 0,6, ruhig fern 0,2–0,3-fach); der LD2410C sprach je
-    Sekunde mit −0,4 bis −1,7 gegen sie, und als ihre Spur riss, ging sie durch die Tür (08:29:22–29
-    Treppenhaus 0,99). Ohne diesen LD2410C blieb sie (1,00).
-  Alle drei kommen aus der Amplitude einer Person je Aufenthalt (4.3: 10–90 % 0,14–2,3), die das
-  Modell bis 0.10.0 nicht hatte (seitdem drin, siehe den Eintrag davor): zu groß erklären eine zweite Person oder eine Echoquelle den Rest, zu klein schiebt
-  die Energie die Person hinaus.
-- **Neustart mit dem gespeicherten Zustand statt `start_people`** (7.10., 5.3). `report_eval.py`
-  gegen die Wahrheit vom 6.10. (41 leere, 15 belegte Fenster), wie die App gelaufen ist (App-Starts
-  19:28, 21:02, 21:14, 21:18, 22:19, 2:07): vorher (b3669ff, bei jedem Start `start_people` = 1)
-  Licht fälschlich an 0 von 41, aus 1,67 von 15, Log-Evidenz −1187179,8, CPU 333 s; mit dem
-  gespeicherten Zustand 0,88 / 1,67, −1186965,1 (+215), 634 s; dasselbe mit 30 s Pause vor jedem Start
-  (die App lief nicht, die Aufnahme schon) 0,14 / 1,17; bei jedem Start ohne Wissen 0,14 / 1,67.
-  Durchgehend ohne Neustart: Start ohne Wissen 0,88 / 1,67 (−1192861,3), mit `start_people` = 1
-  0 / 1,67 (−1193001,8). Die 0,88 sind eine Episode von etwa 20 s in zwei Meldungen (21:28:14 und
-  21:28:36): Leon geht aus dem Wohnzimmer in die Küche, das Modell hält dort noch jemanden (0,98 → 0,26
-  in 20 s), durchgehend mit `start_people` = 1 sofort 0. Sie hängt an der dritten bekannten Person seit
-  20:56 (9), die alle Varianten haben; ob jemand im Wohnzimmer zurückbleibt, kippt mit Kleinigkeiten
-  (Spuren, die der Neustart beendet; 30 s Pause; der Start um 19:28), auch mit der Intensität nur in
-  Sicht oder halb in Sicht, halb hinter Türen (je 0,88). Vorher verschwand die dritte Person beim Start
-  um 21:02. Die oben verworfene Intensität beim Start ist jetzt der Start ohne Wissen; ihr Fehler um 21:28
-  war diese Episode. Meldung 7.10. 08:07 nachgespielt (Gelerntes und Zustand ab 6.10. 19:28 mit den
-  App-Starts, neue Kalibrierung 07:44:30 mit config6, Neustart 08:06:00): mit dem Zustand von 08:06 und
-  mit dem gespeicherten von 08:00:17 Arbeitszimmer und Esszimmer ab 10 s nach dem Start durchgehend
-  1,000 bis 08:09, ohne Wissen ebenso (die Intensität in Sicht nimmt beide); die Küche dabei
-  mindestens 0,34 / 0,95 / 0,01 (wer dort war, ist nicht bekannt). `phantom.py` 18:00–6:15 0,0 min.
-- **Die Stille vor einem Frame** (7.10., 4.3, 4.4): Die Firmware sendet einen Frame je LD2450-Frame
-  (0,089 s), solange der LD2450 ein Ziel hat oder ein Flag des LD2410C an ist, sonst alle 5 s einen
-  Herzschlag; den ersten leeren Frame nach einem vollen sofort. Bis 2eea738 stand jeder Frame für die
-  Zeit seit dem vorigen: Der erste Frame nach einer Stille, gesendet, weil eine Energie gestiegen war,
-  stand für die ganze Stille davor (im Mittel 2–3 s statt 0,089 s; 70–120 solche Frames je Stunde und
-  Sensor, Küche 3, fast alle Episoden nur der Flags). Nachgespielt auf Strecken mit vollem Takt (der
-  LD2450 hatte ein Ziel, die Flags meist aus; 11–82 min je Sensor, `tools/ld2410/thinning.py`), die
-  mittlere Energie gegen den vollen Strom: so bewegt ×1,01–1,30, ruhig ×0,99–1,02; „die Stille gehört
-  zum Frame davor“ ×0,99–1,02 / ×1,01–1,07; „in der Stille liegt jeder Ring unter seiner Schwelle“
-  (zensierte Gamma-Beobachtung mit den Schwellen der Firmware) ×1,05–1,44 / ×1,05–1,65. Die Flags sind
-  keine Schwellen auf die gemeldeten Energien: Bei Bewegt-Flag aus liegt ein Ring in 2–32 % der Frames
-  über seiner Schwelle, bei Ruhig-Flag aus in 4–18 %; und die Gamma-Form trägt die Aussage „unter 15–50“
-  nicht. Ohne Person (kein LD2450-Ziel ±30 s, 6./7.10., 19 h) war die Energie mit der alten Gewichtung
-  bewegt um 25–30 % zu hoch (Arbeits-, Ess-, Wohnzimmer; Flur 8 %, Küche 0), ruhig gleich. Gelernt im
-  Filter (6.10. 18:00 bis 7.10. 06:00), alle Ringe zusammen alt gegen neu: Arbeitszimmer +14 %,
-  Esszimmer +13 %, Wohnzimmer +15 %, Flur +5 %, Küche 0; bewegt Ring 2–8 5,6–5,8 → 4,1–4,3 (offline
-  4,0–4,3); die Echorate im Flur 0,51 → 0,24 je Stunde. Die Messungen in 4.3 (Hintergrund, Profil,
-  Formen, Gewinn, Amplitude) waren schon „bis zum nächsten Frame“ gewichtet (`tools/ld2410/geom.py`),
-  τ auf Strecken mit vollem Takt gemessen: Sie bleiben. report_eval (Fenster bis 6.10.): Licht
-  fälschlich aus 2,08 → 1,00 von 15 (Wohnzimmer 21:24 0,23 → 0,86), an 0 von 41; mit 16 Hypothesen
-  ab 10⁻⁷ aus 2,08 → 1,00, an 0,12 → 0; leere Räume 18:00–06:15 0 min wie vorher; Rechenzeit (21:00–21:20, je zweimal
-  gleichzeitig) 2,7 statt 3,6 %. Niedriger werden
-  Bereiche ohne Sensor (Bad 22:18 0,99 → 0,52, Schlafzimmer 21:31 0,94 → 0,51; welcher der beiden,
-  zählt nur für die Türen) und die Sitzende im Esszimmer 21:03 (0,93 → 0,74, über der Schwelle). Die
-  Log-Evidenz ist zwischen den Gewichtungen nicht vergleichbar (die Gewichte der Messungen ändern
-  sich). Der Prior des Hintergrunds aus den 19 h (bewegt Ring 0 16, Ring 1 9, sonst 4,3, ruhig 4,9
-  statt 13 / 9 / 4,5 / 5): Lichtfehler gleich, Evidenz +17, nicht übernommen. Offen: Der erste leere
-  Frame nach einem vollen steht für die Stille danach, obwohl die Ruhig-Energien noch abklingen (ruhig
-  bis ×1,07).
-- **Woher erfundene Personen kamen und warum sie blieben** (7.10., Leons Vorgabe in 1; nachgespielt
-  ab 6.10. 19:28 mit den App-Starts, `diag.py` im Arbeitsordner: je neue Spur die Anteile Geist /
-  Person mit Spur / bekannte ohne Spur / neue, je Abschneiden das verworfene Gewicht). Neue Personen
-  aus der Intensität waren selten (über den ganzen Tag zusammen 0,95 neue Personen, davon 0,86 beim
-  Start um 19:28); die überzähligen bekannten Personen entstanden anders:
-  1. *Das Ende einer Geisterspur sprach für eine Person* (4.2, Ende der Spur): bis 26-mal. Im Test
-     „ohne Wissen niemand in Sicht“ (sim mit Herzschlag-Ausdünnung) wurde dadurch eine Geisterspur bei
-     52,8 s zur Hälfte eine Person (P(Geist) am Ende 0,49 statt 0,80), 2,7 s Licht.
-  2. *Harte Schattenkanten* (4.1, Sicht einer Person): 6.10. 20:55:41 begann der Arbeitszimmer-Sensor
-     eine Spur auf Leon im Flur bei (−2,01; 4,50), am Rand des Türschattens; an allen Sigma-Punkten
-     seiner Vorhersage (y ≤ 4,45) war die Sicht 0, „das ist Leon“ hatte das Gewicht 0. Es blieben
-     Geist (0,96) und „neue Person“ (0,0005); der Geist starb, als die Spur durchs Zimmer ging, und Leon
-     war zweimal da – einmal am Schreibtisch, einmal ohne Spur an der Badtür (21:00 im Haus 2,66 statt 2).
-  3. *Unsichtbare Streifen*: Die Küche hatte entlang ihrer Wand (x 2,2–2,4) Kacheln ohne jede Sicht,
-     auch für das LD2410C. Die Person der Live-App vom 7.10. (seit 10:57) stand genau dort (2,29; 7,70);
-     im Nachspiel 7.10. 07:10 Küche 0,76 durch eine Person an dieser Stelle.
-  4. *Abschneiden statt Zusammenlegen* (5.1, 5.6): „Die Spur war ein Geist“ und „sie war eine neue
-     Person“ blieben zwei Hypothesen mit verschiedener Personenzahl; fiel die erste aus den 12, gab es
-     keinen Weg zurück. Nachgespielt (e0e26e8) bekannte Personen 4 ab 22:00, 5 ab 8:00, 6 um 13:00;
-     im Haus erwartet 3,9 um 22:00 und 4,7 um 9:00 statt 2 (Telefone: beide zu Hause bis 9:07, danach
-     eine Person).
-  5. *Doppelte Personen in Ecken ohne Sicht*: Eine überzählige Person (aus dem Zustand von 9:28
-     übernommen) übernahm um 10:58–11:21 Leons Weg durch die Küche, Leon behielt seine; als er ging,
-     blieb die doppelte in der Vorratsecke der Küche (x 3,4–4,6, y 7,7–9,2, Sicht 0 für jeden LD2450 und
-     das LD2410C, auch über den Versatz gemittelt). Sie hatte r = 1 (ihre Spur), keine Messung konnte
-     sie treffen, und die Aufenthaltsdauer (3.1) ließ sie nur langsam aufstehen: Meldungen 11:39–12:55
-     Küche 0,94 / 0,80 / 0,71 (bacc9ce). Weder das LD2410C (Sicht dort 0) noch der Neustart um 9:28 als
-     solcher hielten sie, nur dass sie existierte.
-  Geändert: 1. Ende einer Geisterspur als konkurrierende Risiken (4.2); 2./3. Sicht einer Person über
-  ihren Versatz (4.1); 4. Bernoulli-Existenz der bekannten Personen ohne Spur und Zusammenlegen über
-  die Personenzahl hinweg (5.5, 5.6); 5. Existenz klingt ohne Stütze ab (5.5, zuerst 30 min, nach
-  Messung der Lücken echter Sitzender 2 min). Nicht geändert:
-  die Zuordnung, die eine Person verdoppelt (2, 5: eine Spur auf der „falschen“ bekannten Person), und
-  der Start ohne Wissen. Zahlen in 5.5 und im CHANGELOG.
-- **Die Geisterkarte lernte einen Sitzplatz als Geisterquelle** (bis 0.12.0; nachgespielt ab 6.10.
-  19:28 mit den App-Starts, je endende Spur P(Geist) bei der Geburt und am Ende, was die Karte zählte,
-  `p_spy.py` im Arbeitsordner). Zwei Schleifen, beide aus dem eigenen Urteil des Filters (wie das
-  Verhaltenslernen in 0.6.0, unten):
-  1. *Ort:* Der Prior wog 4 h Beobachtung, bei 1,8·10⁻⁵ /m²/s 0,04 Geister je Zelle; eine ganz
-     gezählte Spur (davon 0,28 in ihrer Zelle) machte die Stelle schon 5–8-mal so wahrscheinlich.
-     Die Korrektur nach J_Park2020 (der Faktor der Karte bei der Geburt herausgerechnet) half nicht,
-     weil P(Geist) am Ende meist genau 1 war (15 von 20 Spuren am Platz): die Hypothesen mit der
-     Person waren unter 10⁻⁷ gefallen. Am Platz (−2,3; 8,6) 1,1-mal die Prior-Rate um 19:37, 4,2 um
-     20:44, 9,1 um 20:51, 12,7 um 21:48, 21 um 22:09; die Spuren dort wurden bei der Geburt mit bis zu
-     33-mal der Prior-Rate gewogen.
-  2. *Lebensdauer:* Die Arten der Geister wurden mit derselben Gewichtung online weitergelernt. Die
-     erste Spur am Platz (466 s, P(Geist) 1) hob die lange Art von 39 auf 72 s, bis 20:51 auf 148 s
-     (am Morgen 101 s). Damit sprach ein langes Leben kaum noch gegen einen Geist – das Merkmal, an
-     dem Sitzende von Geistern zu trennen sind. Auch Spuren am Schreibtisch (bis 744 s) zählten als
-     Geister.
-  Nicht die Ursache des Fensters 21:36: Mit der Prior-Rate überall (Karte nicht gelernt) hielt der
-  Filter 15 der 20 Spuren am Platz ebenso für Geister (9). Geändert: Prior ein Geist je Zelle (Form
-  α = 1 wie J_Luber2014 Gl. 6.13), Lebensdauern fest (4.2). Nicht übernommen: P(Geist) für die Karte
-  aus den Odds bei der Geburt (alle Alternativen, ohne die Karte) mal dem Überleben der Geister über
-  das Leben der Spur, das kein Abschneiden verliert – am Platz zählte das 11,9 statt 15,7 der 20
-  Spuren (die Odds bei der Geburt sind schon 10³–10⁴), in den Sitzfenstern keine Änderung (3,78 von 4
-  „aus“ wie ohne). Nachgespielt (report_eval, 12 Hypothesen; Meldungen bis 6.10. / 7.10.; dazu die
-  vier Fenster aus den Daten, in denen sie allein am Platz saß, 33 min):
+- **Lernschleifen** (8.10., Review des Algorithmus; Nachspiele und Simulationen, Daten gelöscht). Was die
+  App aus dem Urteil des Filters lernt, kann dessen Fehler lernen:
+  - *Der Hintergrund lernte Personen*, in beiden Richtungen. Eine gekappte Energie zählte als 100, obwohl
+    die Person mehr gab; so lernte der Hintergrund zu wenig (Arbeitszimmer Ring 2 2,0 statt leer 6,5),
+    und der leere Platz sah nach dem Gehen wie eine Person aus. Im Schlafzimmer nahm eine Echoquelle die
+    Energie der Schlafenden, und der Hintergrund lernte sie (Ring 2 7,7 → 29 über eine Nacht). Heute
+    (4.3): gekappte Energien mit E[e | e ≥ 100]; gelernt nur aus der Zeit ohne Ziel des LD2450 im selben
+    Gehäuse (ein von den Energien unabhängiges Signal) und nur, soweit keine Echoquelle an ist.
+  - *Gemessen schlechter:* (1) Lernen nur, wo nach dem Posterior niemand im Blick ist (Koller et al.
+    1994; Toyama et al. 1999): In der Simulation richtig, aber ein neuer Sensor lernte seinen Pegel nie,
+    weil die zu leise Annahme eine Person erscheinen ließ, die das Lernen anhielt (ein Sensor, ein Abend:
+    vier Stunden Licht im leeren Schlafzimmer). Die Energien halten die Person, die ein zu kleiner
+    Hintergrund erfindet. (2) Langsamer vergessen (1 Tag statt damals 6 h): Evidenz −2530. Heute vergisst
+    der Pegel mit `ld_forget` (0,7 h) zu einem über Tage gelernten Anker (4.3).
+  - *Offen:* Wen der Filter verliert und der LD2450 nicht sieht, lernt der Hintergrund weiter. Aus den
+    Energien allein ist eine reglose Person von anderem Hintergrund nicht zu trennen.
+  - *Die Echorate lernte aus Personen*: Neben einer Person zählte, was ihr Profil nicht erklärt, als
+    begonnene Quelle. Heute nur, wo niemand im Blick ist, und mit der Rate des Priors beurteilt
+    (J_Park2020).
+  - *Die Zielkarte* (6) ist nur Ausgabe; keine Schleife.
+- **Review 8.10.: Abschneiden, κ als Gitter, κ und g gemeinsam** (5.1, 4.1, 4.3; 3 Wahrheitssätze,
+  Daten gelöscht). Drei Näherungen, die in der Theorie falsch waren:
+  1. *Abschneiden vor dem Zusammenlegen* (5.1): Heute werden die Kinder einer Verzweigung nach ihrem
+     Schlüssel zusammengelegt, dann wird abgeschnitten (höchstens `hyp_mass` 10⁻⁷ der Masse verworfen,
+     höchstens `max_hyps` 12). Die verworfene Masse war auf allen Sätzen unter 1 in der Evidenz: Die
+     Grenzen schneiden fast nur die Zahl, kaum Masse ab.
+  2. *κ als Posterior-Gitter* (4.1): 5 Zellen in log κ statt 3 Quadraturpunkten; 3 / 5 / 7 Zellen
+     gaben gleiches Licht.
+  3. *κ und g gemeinsam* (4.3): Gauß-Copula mit ρ aus der gemessenen Rangkorrelation.
+  Licht blieb, wo es war. Die Evidenz bewegte sich je Satz um bis zu einige Hundert, mit wechselndem
+  Vorzeichen zwischen 12 und 16 Hypothesen (5.1: nicht sicher). Die Schlafzimmernacht blieb unverändert:
+  Die harten Zählungen der Geisterkarte kamen nicht vom Abschneiden, sondern von der Echoquelle, die die
+  Schlafenden nahm.
+- **Tote Winkel und Existenz** (8.10., Review des Algorithmus; 5.5). Bis 0.22 lief jede bekannte Person ohne
+  Spur überall mit e^(−t/2 min) ab, auch in voller Sicht (damals hieß das `record_life`; heute meint der Name
+  etwas anderes, unten). Das Review nannte das einen Sterbeprozess. Nachgespielt wie die App auf den Wahrheiten
+  6.–8.10. (report_eval; Daten gelöscht), drei Varianten:
+  1. *Ohne Ablauf* sammelten sich Einträge mit r 0,8–0,99 aus Identitätsteilungen in schwach gesehenen Ecken
+     (Vorratsecke der Küche), und das LD2410C hob dort eine Person in 15 min von r 0,09 auf 0,99. Wer das Haus
+     verließ, blieb bekannt; die Rechenzeit verdoppelte sich.
+  2. *Tote Winkel als eigene Bereiche* mit Aufenthalt wie 3.3 waren schlechter: Gehende an der Grenze kamen per
+     Diffusion hinein und blieben einen Aufenthalt lang. Ein Aufenthalt senkt r nur bei r < 1; Einträge mit
+     r ≈ 1 hält er beliebig lange. Die Kacheln geben einem toten Winkel schon den Aufenthalt des Raums. Der Code
+     fiel weg.
+  3. *Ablauf nur, wo kein Sensor prüft* (`p_S(x)`, auch außer Haus) war am besten: In Sicht blieben Sitzende und
+     zwei im Bett, die Vorratsecke wurde nach Minuten vergessen. Vergessen außer Haus erst nach einem Tag ließ
+     Gegangene zurückkommen. Das ist heute `unseen_life` (`filter/step.rs`: Rate (1 − Sicht) / `unseen_life` je
+     Kachel, in Bereichen und außer Haus ganz).
 
-  | Karte | bis 6.10.: an / aus, Evidenz | 7.10.: an / aus, Evidenz | allein am Platz: aus von 4 | leere Nacht |
-  |---|---|---|---|---|
-  | 0.12.0 (0,04 Geister, Leben gelernt) | 0 / 1,68, −1121539 | 0 / 0, −449321 | 4,00 | 0 min |
-  | Leben fest | 0 / 1,50, −1121619 | | 3,78 | |
-  | **Leben fest, ein Geist je Zelle** | **0 / 1,50, −1121544** | **0 / 0, −449405** | **2,64** | **0 min** |
-  | nicht gelernt (Prior-Rate überall) | 0 / 1,50, −1149617 | 0 / 0, −458489 | 2,88 | 0 min |
-
-  Küche 7.10. 11:39–12:55 unverändert 0,04 / 0,01 / 0,00, Flur 9:49 0,07 statt 0,05. Die Lichtfehler
-  bis 6.10.: Flur 21:35 (1,00, wie 0.11.0) und Arbeitszimmer 21:36 (0,50); weg sind Wohnzimmer 21:22
-  (0,17) und Schreibtisch 22:40 (0,02), die die gelernten langen Geister kosteten. Die Karte bleibt
-  nützlich: ohne sie Log-Evidenz −28 073 bis 6.10., −9 084 am 7.10.; Lichtfehler und leere Nacht sind
-  in diesen Fenstern ohne sie gleich (dass ohne Karte Reflexionen zu Personen werden, oben, zeigt sich
-  hier nicht; eine Karte, die nicht lernt, wäre die einfachere Form – die Evidenz spricht dagegen).
-  Am Ende des Abends (10,8 h) stehen die stärksten Stellen je Sensor bei 1,2–2,8-mal statt
-  2,1–17,6-mal der Prior-Rate (Esszimmer (4,2; 3,0) 1,9 statt 7,3; der Platz 2,8 statt 17,6).
-- **Das Treppenhaus war ein Bereich der Wohnung** (bis 0.12.0): ein offener Bereich ohne Sensor mit
-  Aufenthalt 30 min / 2,0 und 1/(2 h) nach außer Haus. Wer hinausging, blieb dort minutenlang „im
-  Haus“; die Anzeige und Home Assistant bekamen eine Personenzahl für öffentlichen Raum (Leon, 7.10.:
-  „Die Personenzahl hinter Treppe macht keinen Sinn, da dies öffentlicher Raum ist.“). Jetzt außer
-  Haus (2, 3.3): Licht gleich (bis 6.10. an 0 / aus 1,68; 7.10. 0 / 0), Log-Evidenz −5 bzw. −35
-  (davon +1 durch das Verwerfen der Messungen dort, also fast alles aus der Dynamik: kein eigener
-  Aufenthalt mehr, zurück mit 1/(4 h) je Weg statt nach einem Aufenthalt im Treppenhaus). Weggehen
-  7.10. 8:57 (zweite Person; Telefon „not_home“ 9:06:59): im Haus erwartet 8:57:00 1,10 statt 1,99,
-  8:58:31 1,20 statt 1,85; angezeigt 1 statt 2 bis 8:59. Ab 9:01 verblasst die gebliebene Person in
-  beiden Fassungen hinter Türen (Bad, mit config7 ohne Sensor; 9, 5.5). Leere Nacht 0 min.
-- **Wer hinausging, blieb erwartet** (7.10., nach dem Zusammenführen des Treppenhauses außer Haus mit der
-  Geisterkarte 0.14.0): Licht fälschlich an im Flur 09:48:50–09:49:18 (P 0,14, 11 % des Fensters; jede
-  Änderung allein 0,05 / 0,07). Ein Geist des Flur-LD2450 bei (−0,15; 4,33), 1,6 m vor der
-  Wohnungstür, während Leon am Schreibtisch saß. Die Hypothese „der Geist ist Leon, die Spur am
-  Schreibtisch eine neue Person“ hatte 09:48:46–50 0,15–0,79 statt höchstens 0,01 (Geisterkarte allein),
-  weil die unbekannten Personen in Sicht 0,014–0,058 statt 0,004–0,006 wogen. Ursache: Zurückgegeben wurde, wer zu weniger als 1 % *im Haus*
-  existierte; wer hinausging, also sofort mit seinem ganzen r (09:01:05: r 0,995, die Unbekannten
-  draußen 0,27 → 1,25). Draußen verblasst die Intensität nicht (vergessen nach einem Tag), und mit
-  1/(4 h) kehrten diese Unbekannten zurück: Zufluss an der Tür etwa 7·10⁻⁵/s, der sich als Unbekannte
-  an schlecht sichtbaren Plätzen sammelte. Vorher (Treppe als Bereich) blieb, wer hinausging, eine
-  bekannte Person im Haus und verblasste mit 2 min wie jeder (5.5). Jetzt geht zurück, wer zu weniger als
-  1 % existiert, wo er auch ist (5.5): bis 6.10. an 0 / aus 1,50, −1121573 (vorher −1121572); 7.10.
-  0 / 0, −449450 (vorher 0,11 / 0, −449502); leere Nacht 0 min.
-- **Bewegung als Merkmal einer Person?** (7.10., Leons Vorschlag, nicht übernommen.) Leon: Ein Ziel
-  des LD2450, das sich bewegt, eine Weile bleibt und neben dem sonst niemand ist, ist ein sicheres
-  Zeichen einer neuen Person; das soll beim Urteil Geist oder Person mehr zählen. Im Modell bewegt sich
-  die Quelle eines Geists wie eine Person (4.2): Tempo, Weglänge und Richtung sagen nichts; es trennen
-  Entstehungsort (Karte, Türen), Lebensdauer und die anderen Sensoren. Die Literaturform wäre ein
-  Merkmal mit eigenem Likelihood-Verhältnis je Klasse (merkmalsgestütztes Tracking, Amplitude bei Lerro
-  & Bar-Shalom 1993; Klassen mit eigener Bewegung, Bar-Shalom, Kirubarajan & Gokberk 2005) oder eine
-  eigene Bewegung der Geisterquellen, beides mit Verteilungen aus den Daten, nicht mit einem Gewicht.
-  *Gemessen* (alle Aufnahmen 6.10. 18:00 bis 7.10. 17:58, die Spuren, wie der Filter sie sieht, config8;
-  `kin.py` im Arbeitsordner):
-  - Leere Nacht 22:56–06:15 (beide im Bett, Schlafzimmer ohne Sensor): in 7,3 h und fünf Sensoren
-    eine einzige Spur in einem beobachteten Raum (05:23, der Arbeitszimmer-Sensor durch seine Tür in
-    den Flur, 18 s, 1,3 m in den ersten 5 s, Geschwindigkeit springend ±2,5 m/s); insgesamt 18 s mit
-    einem gemessenen Ziel.
-  - Eine Person zu Hause (7.10. 09:10–16:50, Telefone): 171 Spuren; 144 bestätigt ein zweiter Sensor
-    (≥ 50 % ihrer gemeinsamen Zeit näher als 1 m), 2 sind sicher Geister (fern einer bestätigten
-    Spur), 25 unbestätigt (meist Küche, deren Sicht sich mit keiner anderen überschneidet). In 110 von
-    26 110 Sekunden mit Zielen lagen zwei Ziele mehr als 2 m auseinander (0,4 %; obere Grenze für
-    Geister fern der Person, Kalibrierfehler eingeschlossen).
-  - Die 144 bestätigten Personenspuren in ihren ersten 5 s: Weg (zwischen den Mitteln je Sekunde)
-    Median 0,80 m, ≥ 1 m 46 %, ≥ 1 m und Leben ≥ 5 s 37 %; Leben Median 9,8 s (10–90 % 2–120 s).
-  Geister des LD2450 sind hier nach dem Verwerfen hinter Wänden (4.1) so selten, dass sich keine
-  Verteilung ihrer Bewegung schätzen lässt (drei Spuren, die eine der Nacht bewegte sich); was es an
-  Mehrwegekopien nahe bei Personen gibt, ist von den Versätzen zwischen Sensoren nicht zu trennen. Ein
-  Merkmal ohne gemessene Verteilung wäre ein Gewicht von Hand (1.4). *Wie schnell bestätigt der Filter
-  jetzt?* Nachgespielt 7.10. 06:50–17:58 wie die App (Neustarts, config8; `judge.py` im Arbeitsordner),
-  P(Geist) jeder Spur nach 0, 1, 2, 3, 5, 10 s: Von den 148 Spuren, die in 5 s mindestens 1 m gingen und
-  so lange lebten, sind im Median schon bei der Geburt 0,05 und nach 5 s 0,00 Geist; 16–18 % liegen
-  nach 5 s über 0,5, fast alle zweite Spuren einer Person, die schon eine hat (sie zählt ohnehin).
-  Nur 6 begannen mehr als 1,5 m von jeder anderen Spur; eine davon hielt der Filter länger als 5 s für
-  einen Geist: 17:32:14 die Person, die das Bad verließ (2,1 m in 5 s; P(Geist) 1,00 / 0,92 nach 5 s /
-  0,51 nach 10 s / 0,02 am Ende nach 25 s), weil die zweite Person im Bad verblasst war (unten, „Zwei
-  an einer Stelle“): Ihr fehlte nicht die Bewegung als Merkmal, sondern jede bekannte Person, die dort
-  hätte gehen können. *Die andere Hälfte des Vorschlags, „sonst niemand in der Nähe“,* gehört in die
-  Entstehungsrate der Geister (4.2): fern von Gehenden nur die Karte λ_s, mit Gehenden im Blick dazu
-  λ_e. Wie oft Spuren entstehen, wenn kein LD2450 in den 30 s davor irgendwo im Haus ein Ziel gemessen
-  hat (aus den Sensoren bestimmt, ohne Wahrheit; `quiet.py` im Arbeitsordner): 14 Spuren in je 8,2 h
-  stiller Zeit der fünf Sensoren, 9 davon näher als 1,5 m an einer Tür (meist Leute, die aus Bad oder
-  Schlafzimmer kommen), 2 am Schreibtisch (Leon nach langem ungesehenem Sitzen). Auch alle 14 als
-  Geister gezählt sind das höchstens 3,2·10⁻⁶ /m²/s, fern von Türen 1,1·10⁻⁶; das Prior-Mittel der Karte
-  ist 1,8·10⁻⁵ (per EM über Tag und Nacht geschätzt, wo λ_e = 3·10⁻⁴ angenommen ist und Echos der Gehenden
-  mit in λ_s landen können). Geprüft mit 3,2·10⁻⁶ als Prior-Mittel (λ_e unverändert): Licht auf allen
-  Sätzen gleich (bis 6.10. an 0 / aus 1,50; 7.10. an 0,11 / aus 0; Bad-Fenster gleich; leere Nacht 0 min),
-  Zahlen gemischt (Arbeitszimmer 6.10. 21:36 0,44 → 0,52, Flur 7.10. 9:49 0,14 → 0,09 besser; Bad ohne
-  Sensor 6.10. 21:36 0,96 → 0,71, Schlafzimmer 7.10. 08:52 0,24 → 0,16 schlechter), im Haus je Stunde
-  gegen die Telefone gleich (0,22 daneben), die Spur von 17:32:14 nach 5 s weiter 0,90 Geist; Log-Evidenz
-  +81 / +2226 / Bad +46 bzw. −6; Rechenzeit in report_eval +21–24 % (unter Last). Die Evidenz spricht für
-  eine kleinere Rate fern von Personen, Licht und Zahl ändern sich nicht: nicht übernommen. Offen: λ_s und
-  λ_e gemeinsam per EM schätzen (I_Kantas2015, wie die Karte); dann trüge die Rate ohne Gehende, was Leon
-  mit „sonst niemand in der Nähe“ meint. Simulation (ein Sensor, Start ohne Person im Raum): Wer
-  durch die Tür hereinkommt, ist nach 3–4 s eine Person (P(Geist) der Spur 0,96 → 0,14 nach 3 s → 0,01
-  nach 4 s; ohne Wissen 0,78 → 0,04 nach 4 s); wer mitten im Raum auftaucht (ohne Tür), nach 6–7 s.
-  Das trägt schon die Lebensdauer der Geister (40 % mit 3 s) und dass Personen nur durch Türen kommen. Die
-  Tests in `tests/test_together.py` halten fest: Wer allein hereinkommt, macht 5 s nach dem ersten Frame
-  Licht; eine Kopie 0,8 m neben einem Gehenden (6 s, ein Sensor) ist eine Minute später keine zweite
-  Person (dazwischen bis 1,5 erwartete Personen im ohnehin besetzten Raum).
-- **Zwei an einer Stelle: Wer steht, kann zwei sein?** (7.10., Leons Vorschlag, nicht übernommen.)
-  Leon: Zwei Personen standen um 17:22 lange an einer Stelle im Bad, angezeigt wurde nach einer Weile
-  nur eine; wer steht, könnte zwei sein, wer geht, kaum (niemand geht dieselbe Route dicht neben einem
-  anderen). *Die Episode aus den Daten* (Spuren aller sechs LD2450 in Hauskoordinaten mit config9 und
-  die Energien des Bad-LD2410C, je 5–30 s): 17:12:45 geht Person A vom Schreibtisch durch den Flur ins
-  Bad (Flur-, dann zwei Bad-Spuren); die zweite Person ist im Ess- und Wohnbereich, steht 17:14:00–17:14:45
-  im Flur an der Badtür (Flur-, Wohnzimmer- und Arbeitszimmer-Sensor) und geht 17:14:50 hinein. Von
-  17:15:05 bis 17:31:35 misst kein Sensor außerhalb des Bads ein Ziel, der Bad-LD2450 genau eine Spur
-  (bei (−4,4…−3,3; 3,4…4,3), 0,05–0,15 m/s), sein LD2410C ruhig Ring 2–4 bei 100 und Ring 5–8 etwa
-  doppelt so hoch wie bei einer Person allein im selben Abstand vorher (35–47 / 24–30 / 17–29 statt
-  15–22 / 10–15 / 7–9). 17:31:35 geht eine hinaus (Flur → Wohnzimmer → Küche), die andere bleibt bis
-  etwa 17:40. Wahrheitsfenster (Arbeitsordner, nicht im Repository): Bad = 2 von 17:15:30 bis 17:31:00,
-  Bad = 1 von 17:13:10 bis 17:14:00 und von 17:33 bis 17:39, die übrigen beobachteten Räume dabei leer.
-  *Was das Modell tut* (Stand 0f6da68, Start ohne Wissen um 16:00; config8 mit Bad 45° / config9 mit
-  55°): Licht in allen Fenstern richtig (Bad besetzt, sonst leer), aber Bad = 2 nur zu 0,06 / 0,01; nach
-  17:33 (eine Person) mit config8 zu 0,97 zwei. Ursache ist nicht das Abklingen allein: Als die drei
-  Spuren der zweiten Person an der Badtür enden (17:14:48), liegt sie 3 s später zu 0,89 im Schlafzimmer
-  (ohne Sensor). Ungesehen im Bad zu gehen kostet die Erfassungsrate Gehender (0,5 /s), ins Schlafzimmer
-  zu gehen nichts; die erste Bad-Spur (17:14:51) bekommt sie nur zu 0,30 (Geist 0,31, A 0,39), ihre
-  zweite lebt 16 s und endet 0,7 m neben A. Danach stützt nichts eine zweite Person: der LD2450 sieht ein
-  Ziel, und die Energien des LD2410C trennen eins und zwei hier nicht. Gerechnet mit der Likelihood aus
-  4.3 je Sekunde (Amplitude beider über ihre Stufen gemittelt, Hintergrund des leeren Bads): zwei an
-  A's Platz gegen A allein im Fenster mit zweien +0,74 je Sekunde, aber nach 17:33 mit einer Person
-  ebenso +0,89 / +1,08, an der Stelle bei der Wand (eine Person) −0,70 / −0,36. Im Filter nimmt die
-  Amplitude je Aufenthalt (4.3) den Überschuss. Im Arbeitszimmer trennen sie besser (7.10. 08:43–08:44,
-  zwei in einer Spur: +1,26 je Sekunde; Leon allein am Schreibtisch 09:52–10:04: −0,16), dort nahm die
-  Echoquelle den Überschuss (oben, „Energie auf mehrere Personen aufteilen?“; P(=2) 0,05).
-  *Literaturform* (Koch & van Keuk 1997; Svensson et al. 2012, A_Svensson2012; Beard et al. 2015,
-  A_Beard2015): Eine unaufgelöste Messung entsteht aus einer Gruppe; die Likelihood ist eine Summe über
-  die Aufteilungen der Ziele in Gruppen (A_Beard2015 Gl. 16–18). Für die zweite Person heißt das: Neben
-  einem gemessenen Ziel spricht ihr Fehlen nicht gegen sie (das ist q in 4.1, schon im Modell), aber die
-  gemeinsame Messung hebt ihre Existenz auch nicht – sie ist mit und ohne sie gleich wahrscheinlich.
-  Was sie dann hält oder nicht, ist allein ihr Überleben. Die Abhängigkeit von der Geschwindigkeit
-  braucht keine eigene Annahme: Die zweite Person bewegt sich unabhängig; geht A, verlässt die
-  Auflösungszelle sie, und „keine eigene Spur“ spricht wieder gegen sie (Simulation unten: niemand geht
-  mit). *Geprüft:* Überleben abhängig vom Ort (p_S(x), B_GarciaFernandez2018 Abschn. II), kein Abklingen
-  dort, wo sie von einem gemessenen Ziel nicht zu trennen wäre: `p_S = exp(−Δt/τ · (1 − u(x)))`,
-  `u(x) = 1 − Π_k q_k(x)` über die messenden Spuren k (q wie in 4.1). Simulation mit einem Sensor, zwei
-  stehen 0,25 m nebeneinander 5 min: P(=2) 0,70 → 0,95; mit zwei Sensoren 0,97 / 0,99; danach geht eine
-  hinaus, eine weg: 1,00 / 1,00 (niemand bleibt, niemand folgt); eine Mehrwegekopie neben einem Gehenden
-  unverändert. Auf den Aufnahmen (12 Hypothesen): Bad 2 0,01 → 0,01 (config9), 0,06 → 0,06 (config8),
-  Arbeitszimmer 08:45 0,05 → 0,05; Licht bis 6.10. an 0 / aus 1,50 wie vorher, Log-Evidenz −7; 7.10.
-  an 0,11 / aus 0 wie vorher, −20; Bad-Fenster Licht gleich; leere Nacht 0 min; im Haus erwartet je
-  Stunde gegen die Telefone (7.10. 06:50–17:58) gleich (im Mittel 0,22 daneben); Rechenzeit +3–5 %
-  (report_eval). Es hilft nicht, weil die zweite Person zu dem Zeitpunkt, an dem sie mit A
-  verschmilzt, schon im Schlafzimmer vermutet wird und ihre Masse an A's Platz klein ist; das Überleben
-  dort erhält
-  nur diesen kleinen Teil. Was fehlt, ist eine Messung, die zwei von einem mit größerer Amplitude
-  unterscheidet; ohne sie ist „eine stehende Person kann zwei sein“ genau das Festhalten ohne Beleg, das
-  1 ausschließt. Für das Licht ist der Fall harmlos (der Raum bleibt besetzt). Die Tests in
-  `tests/test_together.py` halten fest: zwei, die zusammen stehen, bleiben (mit zwei Sensoren) zwei;
-  eine Kopie neben einem Gehenden ist eine Minute später keine zweite Person.
-- **Vorausschauend einschalten** (7.10., 6: „wird betreten“). Leon: „Ich würde gerne versuchen, ob es
-  mit 1 s / 1 m Vorlauf beim Einschalten und 2 Minuten Nachlauf machbar ist. […] Ich will nicht, dass
-  die Präsenz-App direkt Lichter steuert.“ *Wahrheit:* Türdurchgänge aus den eigenen Spuren der LD2450
-  (eine Spur durch eine Türöffnung, Übergaben zwischen Sensoren, Spuren in Bereiche ohne Sensor; gegen
-  die von Hand geschalteten Deckenlichter 74 % gefunden, im Median 0,45 s vor dem Tastendruck), Aufnahmen
-  6.10. 18:00 – 7.10. 18:25 nachgespielt wie in der App (Takt 0,2 s, Konfiguration je Zeitraum), 23,0 h
-  bewertet: 418 Eintritte in Räume mit Sensor, 329 davon in einen dunklen (P(belegt) 4–6 s vorher unter
-  c). *Vorlauf* = Eintritt minus der Moment, ab dem das Licht bis dahin an war; *Weg* = wo die Person da
-  war (ihre Spur). *Vergeblich* = mit der Regel aus DOCS.md (auf Verdacht an, ohne *besetzt* binnen 30 s
-  wieder aus; *besetzt* aus → 2 min Nachlauf, ein Verdacht darin hält ≥ 30 s), Verdachte, nach denen der
-  Raum nie besetzt war; je Stunde über 23 h gemittelt (also auch die Nacht). Anteil der Eintritte mit
-  Licht mindestens so lange / so weit vorher:
-
-  | Signal | ≥ 0,5 s | ≥ 1 s | ≥ 2 s | ≥ 1 m | 1 s und 1 m | Median | vergeblich je h | Licht vergeblich |
-  |---|---|---|---|---|---|---|---|---|
-  | *besetzt* allein (bis jetzt) | 3 % | 2 % | 2 % | 2 % | 2 % | −0,34 s | 0 | 0 |
-  | Flag bis 0.15.0 (1 s) | 44 % | 9 % | 2 % | 10 % | 5 % | 0,47 s | 2,0 | 1,2 min/h |
-  | Flag 2 s | 68 % | 46 % | 5 % | 50 % | 42 % | 0,95 s | 4,1 | 2,7 min/h |
-  | Flag 2 s, nicht durch Wände | 58 % | 36 % | 4 % | 39 % | 32 % | 0,78 s | 2,5 | 1,6 min/h |
-  | `p_enter` T = 1 s, c_v 0,048 | 74 % | 39 % | 6 % | 45 % | 30 % | 0,91 s | 2,9 | 1,9 min/h |
-  | T = 1,5 s, c_v 0,048 | 76 % | 57 % | 9 % | 60 % | 50 % | 1,08 s | 3,4 | 2,3 min/h |
-  | **T = 2 s, c_v 0,048** | **76 %** | **60 %** | **10 %** | **62 %** | **55 %** | **1,14 s** | **4,0** | **2,7 min/h** |
-  | T = 2 s, c_v 0,10 | 72 % | 40 % | 6 % | 46 % | 34 % | 0,93 s | 2,8 | 1,8 min/h |
-  | T = 2 s, c_v 0,15 | 65 % | 24 % | 3 % | 29 % | 19 % | 0,76 s | 2,4 | 1,5 min/h |
-  | T = 2 s, c_v 0,20 | 58 % | 13 % | 3 % | 17 % | 9 % | 0,60 s | 2,1 | 1,3 min/h |
-  | T = 2 s, c_v 0,30 | 32 % | 6 % | 2 % | 6 % | 4 % | 0,32 s | 1,6 | 0,9 min/h |
-  | T = 3 s, c_v 0,048 | 78 % | 66 % | 14 % | 64 % | 59 % | 1,29 s | 4,2 | 2,9 min/h |
-
-  Je Raum (T = 2 s, c_v 0,048; Anteil ≥ 1 s, vergeblich je h): Flur 59 % / 0,30, Arbeitszimmer 61 % /
-  0,22, Esszimmer 59 % / 0,61, Küche 69 % / 0,70, Wohnzimmer 62 % / 1,79, Bad 3 von 5 / 0,26,
-  Schlafzimmer 2 von 4 / 0,09. Ohne Wohnzimmer 60 % / 61 % bei 2,2 vergeblichen je Stunde. Im
-  Wohnzimmer bleiben 1,6–1,8 je Stunde bei jeder Schwelle (auch das alte Flag 1,05): Der offene Raumteiler
-  zum Esszimmer ist keine Wand; dort entweder Ess- und Wohnzimmer als eine Lichtgruppe oder ohne
-  Vorausschau. Was das zeigt:
-  - 1 s / 1 m vorher geht für etwa 60 % der Eintritte, mit ~4 vergeblichen 30-s-Lichtern je Stunde im
-    Tagesmittel (~1 h Licht im leeren Raum je Tag). Aus Ort und Geschwindigkeit allein zielt man im Median
-    erst 1,0 s / 1,4 m vor der Tür auf sie (Tempo an der Tür 1,07 m/s); mehr gäbe nur Wissen über Wege
-    und Absichten.
-  - **Zeit oder Weg:** Eine Vorausschau als Weg (je Gehendem D / Tempo, D = 1 / 1,5 / 2 m, auch kombiniert
-    mit T = 1 s) lag gleichauf mit der Zeit, die ihm im Tempo entspricht (c_v 0,05; D = 1,5 m: 55 % ≥ 1 s,
-    61 % ≥ 1 m, 3,8 vergeblich je h; T = 1,5 s: 54 % / 59 %, 3,4; D = 2 m: 61 % / 63 %, 3,9; T = 2 s:
-    60 % / 61 %, 3,9): Bei ~1 m/s an der Tür sind 1 s und 1 m dasselbe. Nur die Zeit, ein Parameter
-    weniger.
-  - **Gegen das alte Flag:** Bei gleich vielen vergeblichen Verdachten wie das Flag mit 2 s (4,1 je h)
-    60 % statt 46 % ≥ 1 s; bei der Hälfte (Flag 2 s ohne Wände, 2,5 je h) etwa gleich (`p_enter`
-    T = 2 s, c_v 0,10: 40 % statt 36 %). Der Gewinn liegt beim großen Vorlauf. Wände zu beachten halbiert
-    beim Flag die kurzen Fehl-Ein (15,5 → 8,1 je h, Zählung der Untersuchung).
-  - **Kalibrierung:** `p_enter` ist zu klein (6). Momente vor einem leeren Raum, Anteil mit Eintritt
-    oder *besetzt* binnen T + 1 s (T = 2 s): `p_enter` 0,02–0,05 → 21 %, 0,05–0,1 → 28 %, 0,1–0,2 → 45 %,
-    0,2–0,3 → 55 %, 0,3–0,5 → 76 %, ab 0,5 → 93 %. Reihenfolge richtig, Höhe nicht: die OU-Näherung (9).
-  - *Besetzt* unverändert: report_eval an 0 / aus 1,50 von 41 / 15 (bis 6.10.) und 0 / 0 von 13 / 7
-    (7.10.), Log-Evidenz bitgleich zu 93feb02; leere Nacht (`phantom.py`) 0 min.
-  - **Rechenzeit** (6.10. 21:00–21:20, config7, ein Kern, je drei Läufe): 26,3 → 27,5 s, 2,19 → 2,29 %
-    eines Kerns (+0,1 Prozentpunkte); je Takt mit Ausgaben 0,37 → 0,54 ms. Im Nachspiel über 23 h im
-    Mittel 0,13 ms je Aufruf (p99 2,5 ms). Der Prototyp der Untersuchung (5 Horizonte in Schritten von
-    0,2 s) brauchte 4,8 ms je Aufruf.
-
-- **Ziel** (7.10., 6: „Ziel“). Leon: „Ist es möglich, zu bestimmen, mit welcher Wahrscheinlichkeit eine
-  Person gerade in einen anderen Raum läuft? […] Und es nicht von der Zeit/Strecke abhängig machen.“ Die
-  Untersuchung dazu (gelernte Karte gegen Kinematik, zielgerichtete Bewegung und einen Klassifikator,
-  nur Ausgabe) fand: Wer 1 m vor einer Tür auf sie zugeht, geht nur in 75–85 % der Fälle hindurch (Küche
-  33–48 %, Raumteiler 34–72 %); mehr als 0,8 gibt es vor der Tür nur aus Wissen über Wege, und das nur
-  für Routinen (Arbeitszimmer → Flur). Umgesetzt als Karte, die die App aus ihren Gehenden lernt (6).
-  *Nachspiel* wie in der App mit `tools/entries.py` (Takt 0,2 s, Konfiguration je Zeitraum, neues Modell
-  bei jedem Start der App, Gelerntes weiter, Karte von leer an gelernt, *Vorausschau* 1 s wie in allen
-  Konfigurationen und in der App), 6.10. 18:34 – 7.10. 20:40, 25,8 h bewertet, 342 Eintritte in dunkle
-  Räume. Wahrheit und Vorlauf wie „Vorausschauend einschalten“; *Fehl-Ein* hier: das Signal an, der Raum
-  dunkel, kein Eintritt bis Vorausschau + 3 s nach dem Ende und der Raum nicht besetzt (Mittel 0,8–1,1 s;
-  nicht die 30-s-Verdachte von oben). Zeiträume: (a) bis 7.10. 17:09 (kein Schlafzimmersensor, Bad erst ab
-  16:15), (b) ab 17:09 (config10, alle Sensoren). Eintritte in Bad und Schlafzimmer, bevor sie einen Sensor
-  hatten (nur aus einer an der Tür endenden Spur erschlossen: Bad 7, Schlafzimmer 9, ein Raum ohne Sensor
-  7), zählen nicht. Anteil der Eintritte mit Licht ≥ 1 s / ≥ 2 s / ≥ 1 m vorher, Fehl-Ein je Stunde:
-
-  | Signal | ganz | (a) 22,3 h, 255 Eintritte | (b) 3,5 h, 87 Eintritte |
-  |---|---|---|---|
-  | *wird betreten* | 39 / 6 / 52 %, 15,2 | 41 / 7 / 51 %, 13,9 | 33 / 3 / 56 %, 24,0 |
-  | *Ziel* 0,8 | 26 / 3 / 37 %, 8,1 | 28 / 4 / 37 %, 7,1 | 21 / 2 / 39 %, 14,8 |
-  | *Ziel* 0,7 | 34 / 4 / 45 %, 9,0 | 35 / 4 / 45 %, 7,9 | 29 / 2 / 46 %, 16,0 |
-  | *Ziel* 0,6 | 42 / 5 / 51 %, 10,0 | | |
-  | *Ziel* 0,5 | 46 / 8 / 55 %, 11,3 | 49 / 9 / 55 %, 10,2 | 40 / 6 / 55 %, 18,3 |
-
-  - *Ohne Gelerntes gleich:* Nachspiel mit leerer Karte (`--no-learning`): in allen 1 561 880 Raum-Takten
-    *Ziel* = *wird betreten*, alle Zahlen gleich. Mit Lernen: in den 98 % der Raum-Takte, in denen die
-    Karte für keinen Gehenden etwas weiß (meist geht niemand), ebenfalls nie verschieden.
-  - *Lernkurve:* Je Stunde (4–60 Eintritte) war *Ziel* mit 0,8 in keiner Stunde in beidem schlechter als
-    *wird betreten*: Fehl-Ein nie mehr (meist halb so viele, schon in der ersten Stunde 20 statt 50 je h),
-    Vorlauf ≥ 1 s meist weniger (Stunde 3 mit 58 Eintritten 19 statt 34 %, Stunde 21 62 statt 73 %). Mit 0,5
-    ebenfalls nie in beidem schlechter (von 19 Stunden mit Eintritten mehr Vorlauf ≥ 1 s in 11, weniger
-    in einer; mehr Fehl-Ein in 2, dort mit gleichem oder mehr Vorlauf). Das Gewicht der Karte, wenn sie gefragt wird, steigt in den ersten Stunden auf Median 0,6–0,8.
-    Mit config8 (Bad) und config10 (Schlafzimmer) änderten sich die Räume: Die Karte begann zweimal leer
-    (855 Gänge verloren), daher wieder Gewicht 0,2–0,3 am 7.10. ab 16 Uhr.
-  - *Je Raum* (ganz, ≥ 1 s, Fehl-Ein je h, 0,8): Arbeitszimmer 18 statt 28 %, 0,6 statt 1,0; Flur 37 statt
-    35 %, 1,4 statt 2,1; Esszimmer 22 statt 47 %, 2,5 statt 4,1; Küche 17 statt 42 %, 0,6 statt 2,0;
-    Wohnzimmer 30 statt 56 %, 2,3 statt 4,7. Je Tür gewinnt die Routine: Arbeitszimmer → Flur 60 statt
-    36 % (in (b) 86 statt 43 %, n = 7). In (b) allein mit 0,5: Flur 52 statt 31 % (n = 29), Esszimmer 50
-    statt 45 % (22), Küche 67 statt 17 % (6), Arbeitszimmer 8 statt 33 % (12), Bad 0 / 0 % (7),
-    Schlafzimmer 40 / 40 % (5); Fehl-Ein in jedem Raum weniger oder gleich. Dünn.
-  - *Kalibrierung:* Momente mit P(Ziel) 0,8–0,9 vor einem dunklen Raum: 53 % mit Eintritt binnen 5 s, ab
-    0,9 70 % (die Untersuchung: 77 / 89 %, Karte aus 18 h ohne Neubeginn). Die Mischung mit `q_move`, das
-    keine Trefferquote ist (6), und die zweimal neu begonnene Karte drücken das. Darum ist 0,8 hier
-    vorsichtiger, als die Kosten meinen; die Wahl der Schwelle bleibt Leons.
-  - *Recorder* (`ha.py`, Nachspiel derselben 26 h mit den Vorlagen der Entitäten in Jinja wie in Home
-    Assistant, je Takt; alle Zonen): Zeilen je Stunde in der vollsten Stunde (7.10. 17 Uhr) / im Mittel
-    der 25 ganzen Stunden, 0.16.0 → jetzt:
-
-    | Entitäten | vollste Stunde | Mittel |
-    |---|---|---|
-    | Personenzahl (9) | 2 969 → 975 | 741 → 151 |
-    | *wird betreten* (9) | 838 → 274 | 274 → 88 |
-    | *Ziel* (8, neu) | – → 244 | – → 68 |
-    | *besetzt* (9), *Bewegung* (9) | 213, 932 (gleich) | 67, 238 (gleich) |
-    | zusammen | 4 952 → 2 638 | 1 320 → 611 |
-
-    Am Tag 31 500 → 14 600 Zeilen. Ohne die Mindestabstände (nur zwei Stufen) wären es 25 600, vor allem
-    die Wahrscheinlichkeit am Personenzähler (12 000 statt 3 600). Alle Wechsel von *besetzt*, Zahl,
-    *Bewegung* und *wird betreten* (1 734 / 2 807 / 6 219 / 2 269) liegen in beiden Versionen im selben
-    Takt. Leons Messung live (0.16.0, ruhige Stunde): *wird betreten* etwa 74, Personenzahl 75–79 Zeilen
-    je Stunde und Entität; die App veröffentlicht alle 0,1 s, das Nachspiel nur bei Frames, live sind es
-    also eher mehr.
-  - *Besetzt* unverändert: report_eval an 0 / aus 1,50 von 41 / 15 und 0 / 0 von 13 / 7, die Ausgabe
-    Zeile für Zeile gleich 0.16.0 (Log-Evidenz −1 121 572,7 / −449 450,2); leere Nacht 0 min.
-  - *Rechenzeit* (6.10. 21:00–21:20, config7, ein Kern, je drei Läufe, mit dem Bau der Nachrichten an
-    Home Assistant): 27,7 → 28,7 s, 2,31 → 2,39 % eines Kerns (+4 %; auf Home Assistant etwa ×8, also
-    18,5 → 19,1 %). `Tracker.targets` im Nachspiel über 26 h im Mittel 0,04 ms je Takt (p99 0,3 ms).
-
-- **Meldungen 7.10. abends** (Bad und Schlafzimmer mit eigenem Sensor; config10; Wahrheit aus den
-  Texten und den Wegen der Sensoren, Arbeitsordner). Nachgespielt wie die App ab dem Start 17:13 (Starts
-  17:48, 18:04, 18:41, 19:38, 21:39). 0.19.0: Licht fälschlich aus in 3,69 von 11 belegten Fenstern, an
-  0 von 43. Die zweite Person saß 22:09–22:20 im Bad an der Westwand (Spur des Bad-LD2450 bei (−5,1; 4,2–4,7),
-  LD2410C ruhig Ring 2–3 bei 30–100): Bad P = 0,00 in allen drei Fenstern. Zwei Ursachen, beide
-  nachgewiesen:
-  1. *Hinter der Wand, an der der Sensor hängt* (4.1): Bad- und Schlafzimmersensor hängen in Ecken
-     derselben Westwand und blicken an ihr entlang. „0,4 m zurück entlang der Sichtlinie“ lag für ein
-     Ziel 5–10 cm jenseits dieser Wand noch hinter ihr: 11 % der ruhigen Ziele des Bad-LD2450 und 20 %
-     des Schlafzimmer-LD2450 waren keine Messung (7.10. 18–23 Uhr; Flur 39 %, Küche 39 %). Jetzt quer
-     zur Wand gemessen: 2 % / 0,4 % (Flur 16 %, Küche 26 %, dort die Echos hinter der Außenwand). Allein
-     diese Änderung: Bad 0,00 → 0,87 / 0,75 / 0,98.
-  2. *Amplitude je Aufenthalt als 3 Quadraturpunkte* (4.3): Die Person gab ein Drittel des Profils
-     zurück (Gamma-Likelihood je Sekunde, 22:12:40–22:13:05, über 25 s: g = 0,3–0,4 am besten, +95,8
-     gegen niemand; g = 0,58 +93,7, 1,22 +78,7). Mit der untersten Stufe 0,58 erklärte eine Echoquelle
-     (Stufe 0,3) die Energie besser: Je Sekunde gewann „die Spur ist ein Geist, eine Quelle im Bad“
-     +0,3 bis +0,8 log über „die Spur ist sie“ (LD2410C des Bads und die Frames zu gleichen Teilen),
-     bis die Person-Hypothese nach 20–60 s unter 10⁻⁷ fiel. Mit dem Gitter in log g (4.3): Bad 0,94 /
-     0,92 / 0,98.
-  Geprüft und **nicht** die Ursache: der gelernte Hintergrund (Bad ruhig 4,7–4,9 die ganze Zeit, das
-  Schlafzimmer 7,5–8,3 bei gemessen 7–8 im leeren Raum: er nahm keine Person auf); die Kalibrierung
-  (Bad offline 53,7° ± 2,4° / 1,011 ± 0,045 statt 55,06° / 0,991, im Rahmen der Unsicherheit;
-  Schlafzimmer 47,9° ± 2,8° / 1,04, aber Grundriss 44° gegen Paare 51°: Lage nachmessen). Verworfen:
-  eine Person mit Spur nicht als Alternative zu einer Echoquelle zu wiegen (Bad unverändert 0,00, dafür
-  im Flur 7.10. 09:49 Licht fälschlich an 0,32 von 13); die Schwelle 10⁻⁷ erst nach dem Zusammenlegen
-  der Kinder in `_branch` (Licht gleich, Log-Evidenz +416 / +107 / −13, Rechenzeit +5 %: nicht in
-  diesem Zweig). Zwei im Bett (22:20–22:26): P(=2) im Fenster 22:22–22:24 0,00 → 0,29; ohne das
-  Abklingen der Existenz (5.5) 1,00: Die zweite liegt ungesehen neben der ersten, und keine Messung
-  stützt sie (9, „Zwei in einer Spur“); das Licht ist richtig. Die Meldung 18:32 (Geist im
-  Schlafzimmer, 10 min) ist ohne die Datei der Meldung nicht nachzuspielen (die App hatte bis 18:29
-  andere Kalibrierungen); nachgespielt ab 18:04 steigt die Intensität der Unbekannten im Schlafzimmer
-  von 0,11 auf 0,21, P(belegt) bleibt unter 0,2.
-
-  | | Abend (11 / 43) | 6.10. (15 / 41) | 7.10. früh (7 / 13) | leere Nacht |
-  |---|---|---|---|---|
-  | 0.19.0 | aus 3,69, an 0; −710 089 | aus 1,50, an 0; −1 121 532 | aus 0, an 0; −449 439 | 0 min |
-  | + quer zur Wand (auf 0.18.0) | aus 0,54, an 0; −703 333 | aus 1,50, an 0 | aus 0, an 0 | 0 min |
-  | **+ Gitter in log g** | **aus 0,14, an 0; −702 755** | **aus 1,50, an 0; −1 121 044** | **aus 0, an 0; −448 559** | **0 min** |
-
-  Die Zahlen hinter Türen (6.10., Bad und Schlafzimmer ohne Sensor) verschieben sich in beide
-  Richtungen; sie zählen nur für das Herauskommen.
-- **Lernschleifen** (8.10., Review des Algorithmus 3.2–3.5: „Hintergrund und Echorate lernen ungesichert
-  aus dem Urteil des Filters“). Vier Dinge lernt die App aus ihrem eigenen Urteil; je Schleife, ob sie in
-  den Daten wirkt und was sie schließt. Nachgespielt wie die App (Starts, Gelerntes weiter, 12
-  Hypothesen); `replay_bg.py` und die Simulationen im Arbeitsordner.
-  - *Der Hintergrund lernte Personen* (4.3), in beiden Richtungen:
-    - 6.10. abends, Arbeitszimmer: Ring 5–6 (3,75–5,25 m, der Platz der zweiten Person, deren Spuren der
-      Filter für Geister hält, 9) 7,5–8,6 statt leer 5,8; Ring 2 (Leon am Schreibtisch in 1,5 m, Energien
-      bei 100 gekappt) 2,0–2,3 statt leer 6,5. Der zweite Fall ist eine Verzerrung des E-Schritts: Eine
-      gekappte Energie zählte als 100, obwohl die Person mehr gibt; so lernte der Hintergrund nur 100/μ
-      seines Anteils. Ein zu kleiner Hintergrund lässt den leeren Platz nach dem Gehen wie eine Person
-      aussehen. Simulation (Person 1,8 m vor Sensor a, eine Stunde, der LD2450 sieht sie alle 15 min eine
-      Sekunde): Ring 2 5,0 → 2,2.
-    - 7./8.10. Schlafzimmer (neuer Sensor, zwei schlafen): bis 00:25 gehalten (P 0,95–1,00), dann nimmt
-      eine Echoquelle des Schlafzimmers die Energie und bleibt die ganze Nacht an (0,93–1,00; Echos
-      leben 20 s, 4.3), die Spuren im Bett (Leben 8–22 min) enden mit P(Geist) 1,000. Der Hintergrund
-      lernte die Schlafenden: Ring 2 7,7 → 29 (06:00), Ring 3 7,5 → 19, ruhig im Mittel 7,7 → 12,8; leer
-      gibt das Schlafzimmer 7,8–8,3 (17:20–21:40 und 06:20). Ihr LD2450 hatte in 67–100 % jeder
-      10 Minuten ein Ziel in Sicht.
-    - Der leere Raum ist stationär: leere Nächte 6./7. und 7./8. (ruhig, Mittel der Ringe) Arbeitszimmer
-      5,8 / 6,2, Esszimmer 6,2 / 6,2, Flur 3,4 / 3,4, Küche 2,7 / 2,5, Wohnzimmer 4,9 / 4,9; Schlafzimmer
-      abends 7,8, morgens 8,0–8,3. Zwischen Sensoren aber bis Faktor 2 (Küche 2,5, Schlafzimmer 7,8,
-      Prior 5).
-  - *Geprüft und verworfen:* (1) Lernen nur, wo nach dem Posterior niemand im Blick ist (EM mit der
-    Verantwortung „niemand im Blick“ über alle Hypothesen, mit diesen Frames; selektive Aktualisierung,
-    Koller et al. 1994, Toyama et al. 1999; Vorschlag des Reviews). In der Simulation richtig (Ring 2
-    4,9, Echorate gleich), aber der neue Schlafzimmersensor lernte seinen Pegel nie: 5,0 statt 7,8 von
-    17:13 bis 22:43, weil die um ein Drittel zu leise Annahme eine Person erscheinen ließ (P(Schlafzimmer)
-    1,00 von 18:23 bis 22:03, der Raum leer), die das Lernen anhielt – vier Stunden Licht im leeren Raum.
-    Dasselbe gilt für „nicht lernen, solange eine Hypothese jemanden im Raum hält“: Die Energien selbst
-    halten die Person, die ein zu kleiner Hintergrund erfindet. (2) Vergessen 1 Tag statt 6 h (die
-    Stationarität oben): Schlafzimmer Ring 2 06:43 26 statt 40, aber Log-Evidenz bis 6.10. −2530.
-  - *Jetzt* (4.3): gekappte Energien mit `E[e | e ≥ 100]` (E-Schritt zensierter Daten); gelernt nur aus
-    der Zeit ohne LD2450-Ziel im selben Gehäuse (ein Signal, das von den Energien unabhängig ist, also
-    kein Stillstand durch eine erfundene Person) und nur, soweit keine Echoquelle an ist. Ergebnisse:
-    - Arbeitszimmer 6.10. 21:00 / 23:00 ruhig 5,4 5,3 5,2 5,4 5,1 5,0 4,9 / 5,9 5,6 5,7 5,9 5,6 5,4 5,2
-      (vorher 2,0 3,1 3,6 7,8 7,5 5,6 3,9 / 2,3 3,1 4,0 7,9 7,9 6,4 5,5), am Morgen 6,5 6,0 5,8 5,8 5,8
-      5,8 5,8 (leer gemessen 6,54 6,04 5,84 5,83 5,83 5,84 5,79; vorher 5,8 5,5 5,5 6,2 6,2 5,9 5,8).
-    - Schlafzimmer 7./8.10.: Ring 2 höchstens 12,1 statt 29, ruhig im Mittel 06:00 8,4 statt 12,8. Nur
-      gekappte Energien richtig: 43,5 (der E-Schritt gibt den Schlafenden jetzt, was sie gaben); dazu
-      ohne Lernen bei Echoquelle: 24,5.
-    - Simulation wie oben: Ring 2 5,8 statt 2,2, alle Ringe beider Sensoren innerhalb 30 % (Test), die
-      Person bleibt, nach dem Gehen niemand.
-    - report_eval: bis 6.10. an 0 / aus 1,50 von 41 / 15 wie vorher, Log-Evidenz +2116; 7.10. früh 0 / 0
-      von 13 / 7, +1553; 7.10. abends 0 / 0,14 von 43 / 11, +616; leere Nacht (`phantom.py`) 0 min.
-    - *Offen:* Wen der Filter verliert und der LD2450 nicht sieht, lernt der Hintergrund weiter, soweit
-      nichts seine Energie erklärt (Simulation, Start ohne Wissen, eine Sitzende 1,8 m vor Sensor a: a
-      bleibt richtig, weil dort eine Echoquelle an ist, der 5 m entfernte Sensor b lernt 87 % ihrer
-      Energie in einer Stunde; ein schwach gehaltener Platz in 4,6 m 15 %). Aus den Energien allein ist
-      eine Person, die sich nicht bewegt, von einem anderen Hintergrund nicht zu trennen; schließen
-      muss das der Filter: dass er sie verliert (bis 0.22 das Abklingen auch in Sicht, 5.5; eine
-      Echoquelle, die stundenlang an bleibt, weil sie gegen ungesehene Personen anders gewogen wird als
-      diese gegen sie, 9).
-  - *Die Echorate lernte aus Personen* (4.3): neben einer Person zählte, was ihr Profil nicht erklärt,
-    als begonnene Quelle (Simulation oben: 0,33 → 0,73 je Stunde am nahen, 0,47 am fernen Sensor). Jetzt
-    nur, wo niemand im Blick ist, und ohne ihre eigene Rate beurteilt (J_Park2020, wie die Karte): 0,34 /
-    0,33. Auf den Aufnahmen 0,17–0,53 je Stunde (vorher 0,15–0,37).
-  - *Die Geisterkarte* (4.2, Review 3.1: der Kartenfaktor herausgerechnet, aber durch das Abschneiden
-    harte Zählungen): Nach dem Abend 6.10. der Platz der zweiten Person 2,9-mal die Prior-Rate (der
-    Arbeitszimmersensor zählte 25 Geister in 10,4 h), nach der Nacht 7./8.10. das Bett 3,5-mal (der
-    Schlafzimmersensor 73 in 13,4 h, darunter die langen Spuren der Schlafenden mit P(Geist) 1,000), mit
-    und ohne die Änderungen oben. Bei 14 Tagen Vergessen stünde ein Bett, in dem jede Nacht so gezählt
-    wird, bei etwa 10-mal (überschlagen). Die Zählung hängt am Abschneiden und an der
-    Echoquelle, die die Schlafenden nimmt (beides im Filter); die Statistik, die vom Abschneiden
-    unabhängig ist (je Spur die Odds bei der Geburt ohne die Karte mal dem Überleben eines Geists über
-    ihr Leben, oben „Die Geisterkarte lernte einen Sitzplatz“), ist nach der Arbeit am Abschneiden neu zu
-    prüfen. Hier nicht geändert.
-  - *Die Zielkarte* (6) ist nur Ausgabe: Mit gelernter, mit leerer und ohne Lernen sind Zählverteilung
-    und Log-Evidenz bitgleich (`test_destination.py`). Keine Schleife.
-- **Review 8.10.: Abschneiden, κ als Gitter, κ und g gemeinsam** (Review des Algorithmus, P0; 5.1,
-  4.1, 4.3, 7). Drei Näherungen, die in der Theorie falsch waren:
-  1. *Abschneiden vor dem Zusammenlegen* (5.1): Jetzt werden die Kinder einer Verzweigung nach ihrem
-     Schlüssel gewogen (die Summe der gleichen), dann wird abgeschnitten (höchstens 10⁻⁷ der Masse
-     verworfen statt jedes unter 10⁻⁷ des stärksten, höchstens 12), dann zusammengelegt; was verworfen
-     wird, wird nicht mehr gemischt. Die verworfene Masse zählt in der Evidenz (7): auf allen Sätzen
-     unter 1 (bei 12 und 16 Hypothesen); die Grenzen schneiden also fast nur die Zahl, kaum Masse ab.
-     Allein die Masse-Schwelle ohne das Zusammenlegen davor kostete auf dem Abend −476 (auf 0.20.1,
-     Licht gleich); mit dem Zusammenlegen davor sind Masse- und relative Schwelle fast gleich (−2).
-  2. *κ als Posterior-Gitter* (4.1): 5 Zellen in log κ statt 3 Quadraturpunkten. 3 / 5 / 7 Zellen (auf
-     0.20.1, 12 Hypothesen, Abend / bis 6.10. / 7.10. früh, gegen 0.20.1): Licht gleich (aus 0,16 /
-     0,15 / 0,16 von 11 statt 0,14, sonst gleich), Log-Evidenz −34 / −16 / −16, −13 / −9 / −9, 0 / +83
-     / +6. 5 genügt (gerechnet höchstens 25 % neben der Gamma-Verteilung, 4.1).
-  3. *κ und g gemeinsam* (4.3): Gauß-Copula, ρ = 0,44 aus der gemessenen Rangkorrelation. Kosten keine
-     messbaren (5 × 9 Zahlen je Gauß-Mischung, die Kacheln tragen g nicht).
-
-  Nachgespielt wie die App (report_eval, 0.21.0 als Basis; Licht fälschlich an / aus, Log-Evidenz
-  gegen 0.21.0; Spalten: Abend 7.10. (43 / 11 Fenster), bis 6.10. (41 / 15), 7.10. früh (13 / 7)).
-  Die Varianten „nur 1“, „nur 2“ usw. waren Vergleiche auf dem Entwicklungsstand; im Code gibt es nur
-  noch alle drei (ρ ist ein Parameter, `kappa_amp_corr`):
-
-  | 12 Hypothesen | Abend | bis 6.10. | 7.10. früh |
-  |---|---|---|---|
-  | 0.21.0 | 0 / 0,14; −702 139 | 0 / 1,50; −1 118 928 | 0 / 0; −447 006 |
-  | nur 1 (Zusammenlegen, Masse-Schwelle) | 0 / 0,14; +105 | 0 / 1,50; −139 | 0 / 0; −29 |
-  | nur 2 (κ-Gitter) | 0 / 0,13; −67 | 0 / 1,50; −11 | 0 / 0; −291 |
-  | 2 und 3 | 0 / 0,13; −66 | 0 / 1,50; −135 | 0 / 0; −423 |
-  | **1, 2 und 3** | **0 / 0,13; +100** | **0 / 1,50; −144** | **0 / 0; −50** |
-  | 1 und 2, ρ = 0 | 0 / 0,14; +105 | 0 / 1,50; −144 | 0 / 0; −104 |
-  | 1, 2, 3 mit α = 2 | 0 / 0,13; +98 | 0 / 1,50; −162 | 0 / 0; −240 |
-
-  | 16 Hypothesen | Abend | bis 6.10. | 7.10. früh |
-  |---|---|---|---|
-  | 0.21.0 | 0 / 0,14; −702 103 | 0 / 1,50; −1 118 945 | 0,14 / 0; −447 072 |
-  | nur 1 | 0 / 0,14; +62 | 0 / 1,50; −114 | 0,07 / 0; +122 |
-  | nur 2 | 0 / 0,12; −4 | 0 / 1,50; −7 | 0,14 / 0; −267 |
-  | **1, 2 und 3** | **0 / 0,14; +42** | **0 / 1,50; −117** | **0,11 / 0; −62** |
-  | 1 und 2, ρ = 0 | 0 / 0,14; +63 | 0 / 1,50; −106 | 0,11 / 0; −69 |
-  | 1, 2, 3 mit α = 2 | 0 / 0,14; +35 | 0 / 1,50; −117 | 0,11 / 0; −226 |
-
-  Leere Nacht (`phantom.py`) 0 min wie 0.21.0. Das Licht bleibt, wo es war; fälschlich an (16
-  Hypothesen, Flur 7.10. 09:49, 9) 0,14 → 0,11. Wo jemand war, steigt P(belegt) etwas (bis 6.10.:
-  Wohnzimmer 0,93 → 0,96, Küche 21:57 0,75 → 0,87; hinter Türen Schlafzimmer 22:15 0,32 → 0,57, Bad
-  0,76 → 0,81), Bad 7.10. 22:09–22:20 0,95 / 0,95 / 0,97 → 0,96 / 0,94 / 0,97, zwei im Bett
-  (22:22–22:24) P(=2) 0,29 → 0,32. Die Evidenz bewegt sich in beide Richtungen und je Satz um bis zu
-  einige Hundert, mit wechselndem Vorzeichen zwischen 12 und 16 Hypothesen (5.1: nicht sicher); einzig
-  das κ-Gitter allein kostet auf 7.10. früh bei beiden Grenzen (−291 / −267, fast ganz im Lauf ab
-  07:44, Start ohne Wissen), mit dem Zusammenlegen davor nur −50 / −62. α = 2 ist nicht besser.
-  *Die Schlafzimmernacht 7./8.10.* (10, „Lernschleifen“: die Geisterkarte zählte das Bett, weil die
-  Spuren der Schlafenden mit P(Geist) 1,000 endeten; nachgespielt ab 17:13 bis 05:30): unverändert. Das
-  Schlafzimmer 00:30–05:30 P = 0,00 in beiden, von 40 Geisterspuren des Schlafzimmersensors 00:00–06:30
-  38 bzw. 37 mit P(Geist) über 0,999, die Karte danach 3,58- bzw. 3,66-mal die Prior-Rate. Die harten
-  Zählungen kommen also nicht vom Abschneiden, sondern von der Echoquelle, die die Schlafenden nimmt (9).
-  Rechenzeit: die vollste Stunde (7.10. 17:00–17:20, config10, wie die App, ein Kern, je dreimal
-  abwechselnd) 0.21.0 51,9 s, nur 1 50,1 s, 1 und 2 50,6 s, alle drei 50,6 s (−2,5 %; mit 3 / 7
-  Zellen 50,3 / 52,2 s): Was verworfen wird, wird nicht mehr gemischt, das wiegt die 25 statt 15
-  Schichten von `steht` auf. Über die ganzen Nachspiele (report_eval, je drei gleichzeitig) +6 %
-  (887 → 938 s), mit 16 Hypothesen +10 % (921 → 1016 s; nicht weiter zerlegt).
-- **Tote Winkel und Existenz** (8.10., Review des Algorithmus 1.3, P1.6, Ablation A5; 5.5). Der Befund
-  des Reviews: Das Abklingen (`record_life`, `e^(−t/2 min)` für jede bekannte Person ohne Spur, auch mit
-  r = 1, auch in voller Sicht) ist ein Sterbeprozess und widerspricht Vorgabe 1.3; es ersetzte ehrliches
-  r < 1 und ein Modell der toten Winkel; empfohlen: tote Winkel als Pseudo-Bereiche mit eigenem
-  Aufenthalt (3.3). Geprüft, nachgespielt wie die App (report_eval, 12 Hypothesen; fälschlich an / aus;
-  Küche in den drei Fenstern 7.10. 11:39–12:55; zwei im Bett 7.10. 22:20–22:26 P(=2); CPU des Nachspiels):
-
-  | Variante | Abend (43 / 11) | bis 6.10. (41 / 15) | 7.10. früh (13 / 7), Küche | Bett P(=2) | CPU s |
-  |---|---|---|---|---|---|
-  | 0.22.0 (Abklingen überall) | 0 / 0,13 | 0 / 1,50 | 0 / 0; 0,05 / 0,02 / 0,01 | 1,00 / 0,32 / 0,87 | 457 / 226 / 357 |
-  | ohne Abklingen | 0 / 0,04 | 0 / 1,00 | 1,16 / 0; 0,80 / 0,55 / 0,29 | 0,99 / 0,24 / 0,65 | 1186 / 391 / 896 |
-  | tote Winkel als Bereiche (Aufenthalt log-normal wie 3.3), ohne Abklingen | | | 3,14 / 0; 0,98 / 0,97 / 0,82 | | – / – / 945 |
-  | dazu Ablauf in Bereichen und toten Winkeln (Sicht < 0,05) | 0 / 0 | 0 / 1,00 | 0,11 / 0; 0,42 / 0,05 / 0,00 | 0,99 / 0,28 / 0,52 | 834 / 261 / 538 |
-  | dasselbe, tote Winkel bei Sicht < 0,1 | | | 0,11 / 0; 0,39 / 0,05 / 0,01 | | – / – / 553 |
-  | Ablauf nach Sicht `p_S(x)`, keine Bereiche, außer Haus nach 1 Tag vergessen | 0 / 0,10 | 0 / 1,00 | 0,07 / 0; 0,01 / 0,01 / 0,00 | 1,00 / 0,24 / 0,55 | 807 / 265 / 544 |
-  | **`p_S(x)`, auch außer Haus (5.5)** | **0 / 0,01** | **0 / 1,00** | **0 / 0; 0,05 / 0,02 / 0,01** | **1,00 / 0,94 / 1,00** | **458 / 228 / 323** |
-
-  Mit 16 Hypothesen (0.22.0 aus der Tabelle „Review 8.10.“ oben): Abend 0 / 0,01 (0.22.0: 0 / 0,14), bis 6.10.
-  0 / 1,00 (0 / 1,50), 7.10. früh 0,11 / 0 wie 0.22.0 (Flur 9:49, 9), Küche 0,05 / 0,02 / 0,01, Bett 1,00 /
-  0,94 / 1,00. Leere Nacht (`phantom.py`) 0 min. Was die Varianten zeigten:
-  1. *Ohne Abklingen* kommt die Küche wieder (Licht an 1,16 von 13): Einträge mit r 0,8–0,99 aus
-     Identitätsteilungen (welche bekannte Person eine Spur bekam; zusammengelegt zu Bernoullis, 5.6)
-     sammeln sich in der Vorratsecke und an ihrem schwach gesehenen Rand (x 3,4, Sicht 0,07–0,1). Dazu
-     hob das Küchen-LD2410C eine Person dort 11:22–11:37 von r 0,09 auf 0,99 (Log-Odds +7 in 15 min, so
-     viel, wie das Abklingen mit 1/120 s abzog). Die Rechenzeit wächst um das Doppelte: Wer das Haus
-     verließ, blieb bekannt.
-  2. *Tote Winkel als Bereiche* (die Kacheln ohne jede Sicht als ein Ort mit Aufenthalt und Alter wie
-     3.3, betreten durch Gehen über ihre Grenze, verlassen gehend auf die Kacheln daneben) machten es
-     schlechter: Gehende an der Grenze kommen per Diffusion hinein und bleiben dann den Aufenthalt der
-     Bereiche (Median 2 min) – ein Durchgang wird ein Aufenthalt; wer herauskommt, landet auf schwach
-     gesehenen Kacheln und geht zurück (in der Simulation r 0,5 → 0,15 erst nach einer Stunde). Vor allem
-     senkt ein Aufenthalt r nur bei r < 1 (die Odds fallen mit seiner Überlebensfunktion); Einträge mit
-     r ≈ 1 hält er beliebig lange. Die Kacheln geben einem toten Winkel schon den Aufenthalt des Raums
-     (Gehen, Anhalten, Stehen 3.1–3.2): kein Gewinn, der Code fiel weg.
-  3. *Ablauf nur, wo kein Sensor prüft* (`p_S(x)`, 5.5): In Sicht endet nichts mehr (Arbeitszimmer
-     6.10. 21:36 richtig, zwei im Bett bleiben zwei); die Vorratsecke und alles, was nur ein toter
-     Winkel, ein Bereich ohne Sensor oder das Draußen hält, wird nach Minuten vergessen wie bis 0.22.
-     Draußen musste es mitgelten: Mit Vergessen nach einem Tag (3.4) kamen Bekannte, die gegangen waren,
-     mit 1/(4 h) zurück (Flur 9:49 2 s an) und kosteten Rechenzeit (+77 % am Abend).
-  Im Haus erwartet je Stunde gegen die Telefone (`person.*` home/not_home, Geofence mit Verzug;
-  nachgespielt wie die App 6.10. 19:28 – 8.10. 06:00 mit den App-Starts und Konfigurationen, Mittel je
-  Stunde): im Mittel 1,00 → 0,98 daneben, keine Anhäufung (höchstens 2,23 um 17 Uhr bei zwei Telefonen,
-  1,39 um 11 Uhr bei einem, wie 0.22.0); 22 Uhr 1,33 → 1,86 (zwei). Nachts 0 statt 2 in beiden: 6./7.
-  schliefen beide im Schlafzimmer ohne Sensor (config5: Ablauf wie bisher); 7./8. verliert der Filter
-  beide um 00:25 an eine Echoquelle des Schlafzimmers (9), in Sicht, also nicht durch den Ablauf.
-  Rechenzeit (vollste Stunde 7.10. 17:00–17:20, config10, ein Kern, je dreimal abwechselnd, Mediane):
-  51,3 → 52,7 s (+2,7 %); die Nachspiele oben gleich oder schneller. Bis 0.22 (5.5, Herleitung der 2 min, als das Abklingen überall galt):
-  *Die Skala, gemessen* (`supp.py` im Arbeitsordner, Aufnahmen
-  nachgespielt wie in der App): bekannte Aufenthalte in Sicht, 5,6 h (Schreibtisch 6.10. 19:31–20:50,
-  22:20–22:50; 7.10. 08:06–08:09, 09:50–10:56, 11:40–12:54; Esszimmer 7.10. 08:15–08:29). Stütze: eine
-  Messung des LD2450 (keine gehaltene) näher als 1 m am Platz oder eine Sekunde LD2410C, deren
-  Energien eine Person am Platz dem gelernten Hintergrund vorziehen. Lücken zwischen Stützen: höchstens
-  18,2 s, 99 % unter 0,3 s, 99,9 % unter 1,1 s (LD2450 allein bis 85 s, LD2410C allein bis 19,3 s). Ein
-  leerer Platz in Sicht wird schnell widerlegt: Das LD2410C spricht dort mit −48 bis −125 log je Minute
-  gegen eine Person (Schreibtisch −78, Esszimmer −125, Küchenstreifen −48, 7.10.); der LD2450 allein
-  mit κ in der untersten Stufe nur etwa −0,4 je Minute. Das Abklingen wirkt also fast nur, wo nichts
-  misst. Untergrenze: Eine Sitzende darf in ihrer längsten Lücke nicht unter die Lichtschwelle c = 2/3
-  fallen, `18,2 s / ln(3/2)` = 45 s. Durchgerechnet (report_eval, 12 Hypothesen; fälschlich an / aus,
-  Log-Evidenz; Küche in den drei Fenstern 7.10.):
-
-  | Form | τ | bis 6.10.: an / aus, Evidenz | 7.10.: an / aus, Evidenz, Küche |
-  |---|---|---|---|
-  | überall, Stufen | 30 min | 0 / 1,17, −1121919 | 0 / 0, −449585, 0,08 / 0,02 / 0,01 |
-  | überall, Stufen | 10 min | 0 / 1,67, −1121915 | 0 / 0, −450136, 0,18 / 0,02 / 0,01 |
-  | überall, Stufen | 5 min | 0 / 1,67, −1121928 | 0 / 0, −450146, 0,10 / 0,01 / 0,01 |
-  | überall, Stufen | 2 min | 0 / 1,68, −1122005 | 0 / 0, −449835, 0,03 / 0,01 / 0,01 |
-  | überall, Stufen | 45 s | 0 / 2,00, −1122043 | 0 / 0, −449827, 0,07 / 0,01 / 0,01 |
-  | **überall, Quadratur** | **2 min** | **0 / 1,68, −1121539** | **0 / 0, −449321, 0,04 / 0,01 / 0,00** |
-  | überall, Quadratur | 45 s / 5 / 30 min | 0 / 1,65–1,67, −1121498…−1121542 | 0,11 / 0,00 / 0,08 an |
-  | nur im beobachteten Bereich, hinter Türen vergessen | 45 s – 30 min | 0 / 2,00–2,59 | 0,18–0,21 an |
-  | nur im beobachteten Bereich, hinter Türen bekannt | 45 s / 2 min | 0 / 1,75 / 1,68 | 0,11 / 0,14 an |
-
-  Vergessen hinter Türen (Bernoulli → Poisson, die Masse bleibt) schadet: Die Intensität nimmt keine
-  Rücksicht darauf, dass genau einer dort war, und nachdem er herauskam, blieb das Bad mit 0,44
-  „besetzt“; neue Personen kamen leichter an Türen heraus (Flur 9:49 0,20 statt 0,05). Die einfachste
-  Form, die die Daten tragen: ein τ überall. 2 min ist die kürzeste ohne fälschlich an in beiden
-  Sätzen; eine Sitzende behält in ihrer längsten gemessenen Lücke r ≥ e^(−18,2/120) = 0,86. Was kürzer
-  als 30 min mehr „aus“ kostet, ist ein einziges 6-s-Fenster (Arbeitszimmer 21:36: die zweite Person an
-  ihrem Platz (−2,3; 8,6), deren Spuren dort der Filter für Geister hält, 9; an der Geisterkarte liegt
-  es nicht, mit der Prior-Rate überall ebenso, 10); mit der
-  Quadratur kostet es das auch bei 30 min. Mit 16 Hypothesen: bis 6.10. 0 / 1,68, −1121540; 7.10.
-  0,11 / 0 (Flur 9:49 0,10), −449289. Meldungen 7.10. früh (Start 06:50): Esszimmer 8:29 1,00, Arbeitszimmer
-  8:52 genau eine Person 1,00, Schreibtisch 8:07 1,00; leere Nacht (`phantom.py`) 0 min.
-- **Hintergrundaktivität: Lernen pausieren** (8.10., Leons Frage: „Kann man alle Zeiten, in denen der
-  Saugroboter aktiv war, automatisch aus den Trainingsdaten nehmen?“; `pause.py`). Der Saugroboter ist
-  nach 1.1 harmlos als Person, aber was die App dabei lernt, bleibt: Die LD2450 verfolgen ihn fast in
-  jedem Frame mit 0,05–0,3 m/s, Spuren von Minuten zählen als Person, kürzere als Geist. Nachgespielt mit
-  config10, ab nichts gelernt, einmal ohne und einmal mit Pause (Saugroboter unterwegs bis 2 min nach
-  dem Andocken, aus seinem Verlauf in Home Assistant):
-  - 7.10. 17:13–18:30 (unterwegs 17:40–17:57): 50,0 statt 32,2 Geistgeburten in der Karte (Schlafzimmer
-    11,1 statt 4,9, Wohnzimmer 3,6 statt 0,3); an Stellen auf seinem Weg die doppelte bis knapp dreifache
-    Prior-Rate. Zielkarte 233 statt 183 Gänge. LD2410C-Hintergrund je Sensor bis ±11 %.
-  - 8.10. 10:00–13:13 (unterwegs ab 11:30, sonst niemand unterwegs): 41,4 statt 1,0 Geistgeburten
-    (Esszimmer 15,3 aus 35 seiner Spuren, Wohnzimmer 9,1, Küche 6,3), an Zellen auf seinem Weg 1,9- bis
-    2,9-mal die Prior-Rate; 49 statt 0 Gänge in der Zielkarte, alle von ihm; Hintergrund Küche Ring 2
-    (bewegt) +55 %, Flur und Esszimmer Ring 5 +32 % / +28 %; Echorate kaum (0,23 statt 0,24 je h).
-
-  Mit 14 Tagen Vergessen und einem Lauf alle ein, zwei Tage würden das Geisterquellen entlang seines
-  Wegs. Deshalb ein Schalter, kein Wissen über den Saugroboter in der App (Leon: „dass die App quasi
-  einen Schalter hat, der ‚Lernen pausieren‘ oder ‚Hintergrundaktivität erwartet‘ heißt, und dass
-  dieser dann über Node-RED angesteuert wird“): Solange er an ist, lernen Geisterkarte (4.2),
-  LD2410C-Hintergrund und Echorate (4.3), Zielkarte (6) und Kalibrierdaten nichts; eine Spur, deren
-  Leben in eine Pause reicht, zählt nicht; laufende Gänge der Zielkarte werden verworfen. Das Verfolgen
-  ist dasselbe wie mit abgeschaltetem Lernen (Test bitgleich), der Saugroboter darf weiter Licht
-  einschalten. Die Nachlaufzeit nach dem Andocken gehört zur Automation. Der Schalter liegt *retained*
-  im Broker und hat keine Verfügbarkeit (auch schaltbar, während die App nicht läuft); die App hält ihn
-  in `pause.json`, Fehlermeldungen tragen die Pausen (das Nachspiel lernt bitgleich wie die App),
-  `tools/record.py` zeichnet ihn auf. Für die Tage davor schreibt `tools/vacuum_history.py` die Zeiten
-  aus dem Verlauf (privat), die Werkzeuge nehmen sie mit `--pauses` und bewerten Fenster in einer Pause
-  nicht. Wahrheitssätze 6.10. bis 7.10. früh: unverändert (0 / 1,00 von 41 / 15; 0 / 0 von 13 / 7; leere
-  Nacht 0 min), dort war er nicht unterwegs. Abend 7.10. (er lief 17:40–17:57, vor allen Fenstern):
-  fälschlich an 0 von 43, aus 0,01 → 0,06 von 11 (Bad 22:09 P 1,00 → 0,94, 4 % des Fensters; die zwei im
-  Schlafzimmer P(=1) 1,00 → 0,64 im selben Fenster): Was 17 Minuten Saugroboter mitgelernt hatten, kippt
-  vier Stunden später ein Fenster leicht, in beide Richtungen möglich; Evidenz −702 229 → −702 322.
-- **Filter oder LD2450 des Raums** (8.10., nach 0.24.0; Leon: „Lichter gehen aus, während wir in Räumen sitzen,
-  die der LD2450 klar sieht“; 6 „Belegt“, 9). Einfache Raumbelegungen gegen den Filter (`tools/baseline_eval.py`,
-  bewertet wie `report_eval` und als Licht mit 2 min Nachlauf wie in Node-RED, vier Wahrheiten ohne die Nacht):
-
-  | Licht in min | im leeren Raum | dunkel mit Person |
-  |---|---:|---:|
-  | Filter 0.24.0 (c = 2/3) | 4,3 | 25,6 |
-  | Filter, c = ½ | 4,8 | 25,3 |
-  | LD2450 des Raums allein (gemessen, 10 s) | 5,7 | 2,5 |
-  | Filter oder LD2450 des Raums (gemessen, 10 s) | 5,7 | 0,6 |
-  | … auch gehaltene Ziele | 10,9 | 0,2 |
-  | Filter oder jeder LD2450 (gemessen, 5 s) | 21,6 | 0,7 |
-  | Filter oder LD2410C-Energie ≥ 3× Hintergrund (10 s) | 93 | 0 |
-  | Raum-Latch bis zum Hinausgehen (höchstens 5 min) | 104 | 0,1 |
-
-  Die LD2410C-Flags waren in der leeren Nacht 74 % der Zeit an; ein Latch scheitert an Übergaben zwischen
-  Sensoren (Ausgänge nicht erkannt). Gewählt: Filter oder LD2450 des Raums, gemessen, 10 s. Bei gleichen
-  Kosten beider Fehler 6,3 statt 29,9 Fehlerminuten. Die Wahl „nur der Sensor des Raums“ fiel nach dem
-  Flur-Fehler vom 8.10. (die Person am Esstisch aus 6–7 m im Flur gemessen), eine strukturelle Wahl, keine
-  Abstimmung. In der App nachgespielt (`baseline_eval` Zeile `app`, `report_eval --published`): Licht im leeren Raum 6,3 min, dunkel mit Person 0,6 min (offline 5,7 / 0,6);
-  fälschlich an 1,65 von 113 Raum-Fenstern, fälschlich aus 2,49 von 39 (Filter allein 0,01 / 4,82, unverändert:
-  P(belegt) ist Sekunde für Sekunde dieselbe). Die leere Nacht 6./7.10.: 0 min. Die 0,6 min mehr Licht als
-  offline kommen aus der Haltezeit: Die App hält genau 10 s, `baseline_eval` auf seinem 1-s-Raster 9–10 s.
-  98,5–99,2 % der besetzten Sekunden sind gleich, die übrigen um eine Sekunde verschoben, in beide
-  Richtungen; eine Sekunde am Anfang eines leeren Fensters zählt mit dem Nachlauf bis zu 2 min. Rechenzeit:
-  13 µs je Frame mit drei Zielen, bei sieben Sensoren mit 10 Hz unter 0,1 % eines Kerns.
-- **Durch die Wand ins Arbeitszimmer** (8.10. 21:35, live 0.25.0; Leon: der Bad-LD2450 meldete kurz ein
-  Ziel hinter der Wand zum Arbeitszimmer). `binary_sensor.presence_arbeitszimmer_occupancy` ging mit
-  `quelle: filter` an, das Licht auch, kurze Wiederholungen bis 21:36:48. Die Person saß im Bad bei
-  y ≈ 4,4; ihre Spur sprang in 0,6 s an die Wand (y 5,30, 1,5 cm vor ihr) und zurück, später bis 0,37 m
-  dahinter. Nicht der Wandtest von 0.20.0 war die Ursache (das Ziel um 21:35:00 lag noch im Bad), sondern
-  das Kalman-Update: Mit der Geschwindigkeit des Sprungs und den Versätzen der Spur lag das Mittel danach
-  bei y 5,6, und für Ausgaben zählt die Masse auf der Seite des Mittels (5.2). Nachgespielt mit der
-  Live-Konfiguration ab 21:20 genau die Sekunden der App (21:35:00, 21:35:27, 21:36:09–12, 21:36:46–47).
-  Jetzt wird die Position nach jeder Messung auf die Sicht des messenden Sensors beschnitten (4.1):
-  Arbeitszimmer 21:30–21:40 nie besetzt, P höchstens 0,07 (21:38, jemand ging aus dem Bad in den Flur).
-  Zuerst geprüft und verworfen: die Person auf die Seite des gemessenen Ziels zu spiegeln (bzw. für
-  Ziele jenseits der Wand des nächsten Punkts in Sicht) und die Regel „LD2450 des Raums“ mit diesem Punkt
-  zu zählen. Diese Regel ließ das Licht im Arbeitszimmer 7.10. 22:19–22:26 brennen (zwei im Schlafzimmer,
-  der Arbeitszimmer-LD2450 sah Echos knapp hinter der Wand zum Bad: fälschlich an 0,19 → 1,96 von 43); die
-  Spiegelung zur Seite des Ziels ist strenger als das Modell (dort muss die Person nur in Sicht sein, das
-  Ziel liegt bis zu 0,3 m neben ihr) und kostete den Filter 6.10. aus 1,00 → 2,93 von 15 (Esszimmer 21:03
-  P 0,73 → 0,53), die leere Nacht 0 → 1,4 min (Wohnzimmer 19:21). Mit dem Schnitt auf die Sicht (`report_eval --published` und
-  `baseline_eval`, vier Wahrheiten, Zeile `app`): fälschlich an 1,65 von 108, aus 2,52 → 2,54 von 39 (ein
-  Wohnzimmer-Fenster 8.10. P 0,42 → 0,32); Licht im leeren Raum 6,3 min, dunkel mit Person 0,6 min wie
-  0.25.0; Filter allein aus 4,82 → 4,39 (6.10. 1,00 → 0,57, 7.10. abends 0,05 → 0,01); leere Nacht 0 min.
-  Log-Evidenz 6.10. +191, 7.10. früh +401, 7.10. abends +415, 8.10. +3 435.
-- **Meldungen 8.10. abends: Licht aus mit Personen im Raum** (App 0.24.0; Leon: „Sowas darf nicht
-  passieren.“). Gemeldet 19:10:14 Bad, 19:10:21 Wohnzimmer (beide ohne Text) und 17:35:00 Küche („Zwei
-  Personen saßen im Esszimmer“). Wahrheit aus LD2450, LD2410C, Telefonen (Bermuda) und Lichtverlauf
-  (privat): im Bad eine Person 18:46:40–19:15 (sitzend an der Westwand bei (−5,0…−5,3; 4,3) bis 19:05:45,
-  dann stehend bei (−4,0…−4,3; 4,4–5,1)); auf dem Sofa im Wohnzimmer mindestens eine 18:48–19:15 (Fernsehen);
-  19:04:15–19:10:30 eine weitere am Esstisch (1,8; 3,7), vorher etwa 15 min auf dem Balkon (*falsch*, korrigiert
-  10.10.: auf dem Balkon war niemand, die „Person am Esstisch“ war ein Geist; 10 „0.27“); 17:21–17:43 zwei
-  sitzend im Esszimmer bei (0,8; 4,8) und (2,7; 4,8), die Küche leer. Nachgespielt wie die App (Starts ab
-  7.10. 17:13, 10:07:38 ohne Wissen; Wahrheit `truth_0810e` im Arbeitsordner).
-  *Was der LD2450 meldete* (`sensortracks`, wie der Filter seine Spuren sieht): Bad 18:46:30–19:11 zehn
-  Spuren am Sitz, meist gehalten (z. B. 731 gemessene gegen 2160 gehaltene Frames), Lücken ohne gemessene
-  Spur bis 140 s (18:50:38), 122 s (18:59:21), 117 s, 90 s; ab 19:06:07 eine frische Spur im Stehen, 2358
-  gemessene Frames in 229 s. Sofa: zwölf Spuren, Lücken bis 238 s (18:59:04), 147 s, 117 s, 102 s. Das
-  LD2410C ruhig die ganze Zeit 6–20× dem Hintergrund (Bad Ring 2–3 20–100, Wohnzimmer Ring 3–4 30–100,
-  Hintergrund ≈ 5). Der Filter (0.24.0) im Nachspiel: Bad 0,02, Sofa 19:04–19:10 0,02.
-  *Ursache 1, ein Fehler* (4.3): Jede Komponente einer Person mit Spur zählte als im Blick jedes LD2410C,
-  mit null Energie, und bekam dort `P(keine Echoquelle)`, ihr Teil „durch eine Tür“ (5.2) außerhalb 1. Je
-  Block und Sensor mit einer wahrscheinlichen Echoquelle wuchs dieser Teil um das 1/P-fache, bei allen
-  Personen mit Spur im Haus zugleich (die gleichen Faktoren −2,8 / −3,9 / −5,3 / −9,1 bei Personen in Bad,
-  Flur und Schlafzimmer). Die Person im Bad ging 18:47:44–18:48:00 von 10⁻²⁸ auf 1 „außer Haus“, ihre
-  weiteren Spuren wurden Geister (P 1,00), ihr Eintrag lief draußen in 2 min ab; die auf dem Sofa folgte
-  18:48:19. Live dasselbe Bild (Bad aus ab 19:07:31, das Arbeitszimmer 19:07:29–39 kurz an).
-  *Ursache 2* (5.1): Begann eine Spur, wo der Filter niemanden kannte, fiel ihre Alternative „Person“ unter
-  die Schwelle des Abschneidens; danach sagten alle Hypothesen „Geist“, die Lebensdauer der Geister (39 s)
-  kürzte sich heraus, und die Spur blieb ein Geist. Nachgewiesen im Schlafzimmer 8.10. 00:28:58: Der
-  Schlafende wurde jenseits der Westwand gemessen (−5,5; 0,0), seine Spur endete, das LD2410C widerlegte
-  ihn ohne Spur in 5 s (g = 1, 9), und jede neue Spur am Bett war bis 06:14 ein Geist.
-  *Korrekturen:* LD2410C wiegt nur Komponenten in seinem Blick (4.3); keine laufende Spur verliert eine
-  Alternative ganz (5.1). Nachgespielt (report_eval, 12 Hypothesen; fälschlich an / aus; Log-Evidenz des
-  8.10.), „verloren in Sicht“ = Raumminuten mit P ≤ 2/3, während der LD2450 des Raums in den letzten 10 s
-  dort ein gemessenes Ziel hatte, „an ohne Stütze“ = Raumminuten mit P > 2/3 ohne ein solches Ziel seit
-  10 min und mit dem LD2410C auf Hintergrund-Niveau, beide über 26 h (7.10. 17:13 – 8.10. 19:11):
-
-  | | 8.10. abends (16 / 6) | bis 6.10. (41 / 15) | 7.10. früh (13 / 7) | 7.10. Abend (43 / 11) | leere Nacht | verloren in Sicht / an ohne Stütze |
-  |---|---|---|---|---|---|---|
-  | 0.24.0 / 0.25.0 (Filter) | 0,01 / 3,77; −3 821 913 | 0 / 1,00 | 0 / 0 | 0 / 0,06 | 0 min | 350,6 / 1,4 min |
-  | nur Blick des LD2410C | 0,01 / 2,30; −3 821 018 | 0 / 1,00 | 0,39 / 0 | 0 / 0,09 | | 332,4 / 2,1 min |
-  | **beide** | **0,01 / 2,53; −3 814 284** | **0 / 1,00** | **0,39 / 0** | **0 / 0,02** | **0 min** | **139,8 / 2,0 min** |
-  | beide und die Amplitude mit der Person (9) | 0,01 / 2,19; −3 811 163 | 0 / 2,00 | 0,50 / 0 | 0 / 0,00 | | |
-
-  Verloren in Sicht je Raum (0.24.0 → beide): Schlafzimmer 257 → 62 min, Bad 23 → 12 min, die übrigen
-  fast gleich (Flur 19, Esszimmer 22 → 19, Wohnzimmer 12 → 11, Küche 10 → 9, Arbeitszimmer 7 min: meist
-  Übergänge zwischen Räumen und Lücken unter 2 min). Das Schlafzimmer
-  kommt nach dem Ende einer Spur jetzt in etwa 2 min zurück (00:29:30 0,00 → 00:31:30 0,99) statt nach
-  Stunden. Das Mehr an „7.10. früh“ ist ein Fenster von 28 s im Flur (09:48:50–09:49:18), 5 s, nachdem Leon
-  durch den Flur ging: P 0,94 → 0,08 in 20 s, das Licht brennt dort mit dem Nachlauf ohnehin. In den
-  Fenstern des 8.10.: Bad 0,02 → 0,70 (Rest: 9, Punkt 1), Wohnzimmer bis 19:04 0,91 / 0,71, danach weiter
-  0,03 (9, Punkt 2), Esszimmer (der vermeintliche Gast am Tisch, ein Geist) 0,39. Die Küche 17:35 war kein
-  Fehler der Belegung (dort
-  0,00 im ganzen Fenster), sondern *wird betreten*/*Ziel* für 0,1 s (17:34:02,86–02,97): eine Sitzende 0,8 m
-  vor der Küchentür, deren Spur mit 0,13 / 0,14 m/s zitterte; im Nachspiel `p_enter` 0,026 (Schwelle 0,048)
-  und *Ziel* 0,31 (Schwelle 0,5), live knapp darüber. Das entscheiden die Kosten (`approach_cost` 0,05,
-  `target_threshold` 0,5; 6), nicht das Modell. Mit dem veröffentlichten *besetzt* (0.25.0, Filter oder
-  LD2450 des Raums, `report_eval --published`): 8.10. abends 0,03 / 2,48 → 0,04 / 1,75; über alle vier
-  Wahrheiten fälschlich an 1,65 → 1,69 von 113, fälschlich aus 2,49 → 1,77 von 39 (bis 6.10. 1,07 / 0,
-  7.10. früh 0,39 / 0 mit dem Flur-Fenster oben, 7.10. Abend 0,19 / 0,02). Was die Regel
-  nicht abdeckt, sind die Lücken ohne gemessene Spur (9).
-  *Zusammen mit 0.25.1* (Schnitt auf die Sicht, 4.1; dieselben Läufe, `report_eval` 12 Hypothesen, fälschlich
-  an / aus; Filter allein und veröffentlicht):
-
-  | | bis 6.10. | 7.10. früh | 7.10. Abend | 8.10. abends | Summe Filter | Summe veröffentlicht |
-  |---|---|---|---|---|---|---|
-  | 0.25.1 | 0 / 0,50; 1,07 / 0 | 0 / 0; 0,36 / 0 | 0 / 0,01; 0,19 / 0,01 | 0,01 / 3,80; 0,03 / 2,50 | 0,01 / 4,31 | 1,65 / 2,51 |
-  | 0.25.1 + beide | 0 / 0,50; 1,07 / 0 | 0,39 / 0; 0,39 / 0 | 0,45 / 0,01; 0,64 / 0,01 | 0,01 / 2,29; 0,03 / 1,72 | 0,85 / 2,80 | 2,13 / 1,73 |
-
-  Log-Evidenz gegen 0.25.1: 6.10. −25, 7.10. früh +1 711, 7.10. Abend +20, 8.10. +5 670. `baseline_eval` (Zeile `app`):
-  Licht im leeren Raum 6,3 → 8,8 min, dunkel mit Person 0,6 → 0,4 min (Filter allein 4,3 / 26,3 → 7,3 /
-  5,0). Verloren in Sicht (26 h) 0.25.1 297,4 → 129,6 min (0.25.0 350,6, beide ohne 0.25.1 139,8), an ohne
-  Stütze 1,2 → 1,5 min; leere Nacht 0 min; 8.10. 21:30–21:40 das Arbeitszimmer nie besetzt (P höchstens 0,07
-  wie 0.25.1); Rechenzeit der vollsten Stunde gleich (60,3 / 59,8 s). Das Mehr an „Licht im leeren Raum“
-  ist ganz ein Fenster, 7.10. 22:22:00–22:24:30, Esszimmer (beide im Schlafzimmer): Eine Spur des
-  Esszimmer-LD2450 an der Ostwand neben der Balkontür (3,6; 4,2), 22:19:55–22:23:40, wird mit P bis 0,92
-  eine Person, die vom Balkon kam. Ihre Alternative „Person“ hält erst der zweite Punkt oben am Leben (in
-  0.25.1 fällt sie bei der Geburt weg); ohne 0.25.1 erreicht sie 22:20:07 auch 0,53, ist aber, als die Spur
-  22:20:27 wieder misst, schon zu 0,95 durch die Balkontür hinaus und wird Geist, mit 0.25.1 erst zu 0,59
-  und bleibt. Nicht der Schnitt in diesen Minuten entscheidet das (ohne ihn 22:19–22:21 dasselbe), sondern
-  der Zustand von 22:12: Mit den Personen von 22:12 ohne 0.25.1 gibt es den Geist auch mit 0.25.1 nicht,
-  mit denen mit 0.25.1 auch ohne 0.25.1; gelernte Karten tauschen ändert nichts, ebenso 1–2 cm an den
-  Personen. Es sind die Unbekannten (PPP; nur sie getauscht, kommt der Geist): Als 21:59–22:00 zwei durch
-  Esszimmer und Küche gingen (mit 0.25.1 hielten die Hypothesen dabei noch eine unwahrscheinliche dritte
-  Person, r 0,04), wuchsen sie mit 0.25.1 im beobachteten Teil von 0,003 auf 0,04 erwartete Personen, ohne
-  nicht, und liefen danach auf den Balkon (22:02 0,019 statt 0,008; 22:12 dort 0,0128 statt 0,0080, im
-  Esszimmer 7,4·10⁻⁶ statt 1,2·10⁻⁶). Ein Fall an der Schwelle aus der Vorgeschichte, keine Wechselwirkung
-  der beiden Korrekturen im selben Augenblick.
-- **Kandidat 0.26** (9.10.; von 0.25.1 mit den zwei Korrekturen der Meldungen 8.10. abends, ab0ed71 und
-  fbd6c73, „combine-026“). Maß (Leon): Lichtminuten aus dem *veröffentlichten* „besetzt“ (Filter oder LD2450
-  des Raums, 0.25.0) mit 2 min Nachlauf, über die vier Wahrheiten bis 6.10., 7.10. früh, 7.10. Abend, 8.10.
-  abends; „Licht im leeren Raum“ und „dunkel mit Person“ zählen gleich. Dazu die leere Nacht 6./7.10. (muss 0
-  bleiben), die Minuten „verloren, während der eigene LD2450 misst“ (P ≤ 2/3 und gemessenes Ziel des eigenen
-  LD2450 in den letzten 10 s, 7.10. 17:13 – 8.10. 19:10, aus dem Nachspiel des 8.10.) und die Rechenzeit.
-  Schwelle für eine Veröffentlichung: Summe unter 6,9 min, keine der beiden Fehlerarten deutlich schlechter,
-  leere Nacht 0. `tools/baseline_eval.py` (Zeile `app` und `F`), `tools/report_eval.py --json` (beide
-  Bewertungen in einem Nachspiel; 7.10. Abend und 8.10. in einem, die Starts des 7.10. sind dieselben).
-  *Nachtrag 10.10.:* Gemessen auf der Wahrheit des 8.10. mit einem Gast, der 19:04 vom Balkon an den Esstisch
-  kam. Die war falsch (niemand auf dem Balkon, am Esstisch ein Geist); der Gewinn von (a) kam aus diesem
-  Fenster, und 0.27 nimmt (a) zurück (10 „0.27“).
-
-  | | Licht leer / dunkel / Summe (veröffentlicht) | Filter allein | report_eval Filter an / aus | veröffentlicht an / aus | verloren 26 h | CPU 8.10. |
-  |---|---|---|---|---|---|---|
-  | 0.25.1 | 6,3 / 0,6 / 6,9 | 4,3 / 26,3 | 0,01 / 4,31 | 1,65 / 2,51 | 310 | |
-  | combine-026 | 8,8 / 0,4 / 9,2 | 7,3 / 5,0 | 0,85 / 2,80 | 2,13 / 1,73 | 133 | |
-  | + geschlossene Bereiche laufen nicht ab (a) | **8,8 / 0,1 / 8,9** | 7,3 / 0,1 | 0,87 / 1,09 | 2,15 / 1,02 | 130 | 1504 s |
-  | + Geburt an neuen Spuren β = 10⁻⁶ /m²/s (b) | 12,3 / 0,1 / 12,4 | 11,1 / 0,1 | 2,76 / 1,04 | 4,01 / 0,99 | 108 | 1458 s |
-  | + (a) und (b) | 12,3 / 0,1 / 12,4 | 11,1 / 0,1 | 2,73 / 1,11 | 4,01 / 1,05 | 110 | 1956 s |
-  | + g je Aufenthalt auf den Kacheln (g) | 17,1 / 0,4 / 17,5 | 15,6 / 5,0 | 2,30 / 2,54 | 3,64 / 1,00 | 76 | 1396 s |
-  | + (a) und (g) | 24,6 / 0,4 / 25,0 | 23,1 / 4,9 | 3,56 / 2,02 | 4,87 / 1,00 | 73 | 1607 s |
-  | + (a), Balkon-Tor (c), nur 7.10. Abend und 8.10. | 7,9 / 0,1 (wie (a)) | 6,8 / 0,1 | | | 130 | 1491 s |
-
-  Leere Nacht überall 0 min. Verloren aus dem Nachspiel des 8.10. mit `baseline_eval` (Ziel des eigenen LD2450
-  wie dort gezählt; die Sonde `p_lost` gab für 0.25.1 / combine-026 297 / 130). CPU: das Nachspiel des 8.10.
-  (26 h), je drei gleichzeitig (±20 %); auf der vollsten Stunde (7.10. 17:00–17:20, ein Kern) combine-026 / (a) 61,4 / 60,5 s.
-  *Absturz* (vor allem anderen): `Tracker._end` nahm die Karte aus den Odds von P(Geist) mit
-  `exp(log(1 − p) − log p + map_odds)`; seit keine laufende Spur eine Alternative verliert, kann p ~10⁻³⁰⁰
-  sein, und das lief über (`OverflowError`, im Nachspiel der Ablation). Jetzt in der Form, die nicht
-  überläuft (`_odds_shifted`); `Hidden.weigh` ebenso. Gleiche Zahlen, wo die alte Form endlich war.
-  *(a) Geschlossene Bereiche laufen nicht ab* (5.5; in 0.27 zurückgenommen): 8.10. Sofa und Esstisch (der
-  vermeintliche Gast vom Balkon, ein Geist) dunkel 0,3 /
-  0,1 → 0 / 0,1 min, Filter allein dunkel 5,0 → 0,1 min, report_eval „aus“ halbiert; „Licht im leeren Raum“
-  gleich. Im Haus erwartet gegen die Telefone (Mittel je Stunde, 7.10. 17:13 – 8.10. 19:10, nachgespielt wie die
-  App): im Mittel 0,46 → 0,53 daneben. Der Unterschied liegt auf dem Balkon: 8.10. 7–9 Uhr 0,78 / 0,49 / 0,32
-  erwartete Personen bei null Telefonen (vorher 0,01), Einträge der Nacht dort, die nur noch so schnell
-  verblassen, wie Aufenthalte enden (3.3); 8.10. 19 Uhr 1,53 → 2,25 bei zwei Telefonen (einen Gast gab es
-  nicht, 10 „0.27“). Licht hat
-  das nicht (Zahlen hinter Türen dienen nur dem Herauskommen). Das Esszimmer 7.10. 22:22 bleibt (P > 2/3 113
-  → 176 s).
-  *(b) Geburt an neuen Spuren* (die Dichte neuer Ziele im MHT, Reid 1979, als „eine Person, die der Filter
-  verloren hat“): auf 7.10. Abend und 8.10. wie in der Ablation dunkel gleich gut wie (a), aber 7.10.
-  22:20:45–22:24:30 eine zweite Person im Arbeitszimmer zu 100 % (+3,5 min); bis 6.10. und 7.10. früh gleich.
-  Mit (a) zusammen wie (b) allein. Nicht übernommen.
-  *(g) Amplitude je Aufenthalt auf den Kacheln* (statt g = 1 für Personen ohne Spur, 4.3, 9): das Gitter der
-  Personen mit Spur, je Kachel als Verteilung bedingt auf „steht dort“, neu bei jedem neuen Aufenthalt und mit κ,
-  von einer Spur auf die Kacheln mitgenommen, gewogen nur, wo eine Kachel mehr als 10⁻⁴ Personen hält (sonst am
-  Mittel). Rechenzeit +9 % (vollste Stunde 59,9 → 65,2 s; ohne die Schwelle +25 %). Im Bad 8.10. hält es die
-  Person ganz (Filter allein 328 s aus → 0 s), verloren in Sicht 133 → 76 min (Schlafzimmer 61 → 7, Bad 8 →
-  5). Aber im Schlafzimmer 7.10. 17:34–21:42 (Leon allein im Arbeitszimmer) war fast durchgehend jemand ohne
-  Spur (P 0,7–0,8; 18:32–18:41 10,8 min Licht im leeren Raum; bis 6.10. Filter allein aus 0,5 → 1,0): Eine
-  Person mit kleinem g erklärt die beständige Energie dort so gut wie eine Echoquelle, und die Lebensdauer
-  (Echoquelle 20 s) spricht dann für die Person. Nicht übernommen (9, Punkt 1).
-  *Das Esszimmer 7.10. 22:22* (der Rückschritt von combine-026, 9 Punkt 3): Weder (a) noch (b) ändert es. Die
-  Sensoren sehen dort etwas an und hinter der Balkontür (LD2410C ruhend 30–67 bei Hintergrund ~7 von 22:19
-  bis 22:25; LD2450 22:19:50–22:21:50 an der Wand neben der Tür, 22:22–22:25 auf dem Balkon bei (4,7; 2,2),
-  durch die Türöffnung). Nachgespielt ab dem Zustand von 22:12 (Hypothesen-Ledger): Die Alternative „Person“
-  der Spur an der Tür beginnt bei Odds −3 gegen „Geist“ (ihre Herkunft ist der Balkon, 0,013 erwartete
-  Unbekannte), schwankt um 0, und als die Spur 22:20:50 endet, wird sie eine bekannte Person ohne Spur an der
-  Tür (r 0,47), die das LD2410C auf 0,9 hebt. *Ist die Intensität auf dem Balkon prinzipientreu?* Geburten gibt
-  es dort keine (Neuankömmlinge nur an Wegen hinein, 3.4); die 0,013 sind ein Drittel der 1 erwarteten Person
-  beim Start ohne Wissen um 17:13 (auf die Bereiche verteilt, ein laufender Aufenthalt zu zufälliger Zeit
-  gesehen, schwerer Ausläufer) und zurückgegebene Bernoullis, die dorthin gingen. Das folgt aus dem Modell.
-  *(c) Balkon-Tor*, geprüft: Ein Ziel in einem geschlossenen Raum ohne Sensor gilt nur noch als Messfehler einer
-  Person in Sicht an seiner Tür (bisher wurde nur verworfen, was tiefer als `wall_margin` 0,4 m darin lag;
-  (4,7; 2,2) liegt 0,2 m neben dem Wohnzimmer, hinter einer Wand). Das verwirft 7.10. abends 1803 Frames des
-  Esszimmer-LD2450 (22:08–22:09, 22:16, 22:22–22:25), 8.10. 1191 (18:50–18:52, 19:02; damals für den Gast auf
-  dem Balkon gehalten, ein Geist wie am 7.10.),
-  6.10. 264. Auf 7.10. Abend und 8.10. ändert es nichts (7,9 / 0,1 min wie (a); im Esszimmer P > 2/3 181 s):
-  Spur an der Tür und LD2410C bleiben. Nicht übernommen (1.5).
-  Wie empfindlich der Fall ist: Dieselbe Kette mit (g) allein 9 s P > 2/3, mit (a) und (g) 265 s. Ein Fall an
-  der Schwelle aus der Vorgeschichte (wie combine-026 gefunden).
-  **Ergebnis** (auf der falschen Wahrheit): (a) ist die beste Kombination (8,8 / 0,1 / 8,9 min; dunkel besser
-  als 0.25.1, 0,6 → 0,1), erfüllt die Schwelle aber nicht: 2,5 min des „Licht im leeren Raum“ sind das eine
-  Fenster im Esszimmer 7.10. 22:22 (ohne es 6,4 min). Verloren in Sicht 310 → 130 min, leere Nacht 0,
-  Rechenzeit gleich.
+  *Herleitung der 2 min* (`unseen_life` = 120 s, live). Gemessen bis 0.22 auf 5,6 h bekannter Aufenthalte in
+  Sicht (Aufnahmen 6./7.10.; Daten gelöscht). Stütze = eine LD2450-Messung näher als 1 m am Platz oder eine
+  Sekunde LD2410C, die eine Person dem Hintergrund vorzieht. Lücken zwischen Stützen: höchstens 18,2 s, 99 % unter
+  0,3 s. Ein leerer Platz in Sicht wird schnell widerlegt: Das LD2410C spricht mit −48 bis −125 log je Minute
+  gegen eine Person, der LD2450 allein nur mit etwa −0,4. Der Ablauf wirkt also fast nur, wo nichts misst.
+  Untergrenze: Eine Sitzende darf in ihrer längsten Lücke nicht unter die Lichtschwelle 2/3 fallen,
+  `18,2 s / ln(3/2)` = 45 s. Durchgerechnet für τ von 45 s bis 30 min auf zwei Wahrheitssätzen: Die Unterschiede
+  lagen in wenigen Fenstern; 2 min war die kürzeste ohne „fälschlich an“ in beiden. Eine Sitzende behält damit in
+  ihrer längsten gemessenen Lücke r ≥ e^(−18,2/120) = 0,86. Die Messung trägt also nur die Untergrenze 45 s; die
+  2 min sind auf einer gelöschten Wahrheit gewählt. Hinter Türen in die Intensität vergessen (Bernoulli →
+  Poisson) war schlechter: Die Intensität vergisst, dass genau einer dort war (das Bad blieb 0,44 „besetzt“, neue
+  Personen kamen leichter heraus).
+  Seit 0.60 läuft außerdem jeder Eintrag ohne Spur überall mit `record_life` = 1 Tag ab (unten, „0.60“).
+- **Hintergrundaktivität: Lernen pausieren** (8.10.; Leon fragte, ob man die Zeiten, in denen der Saugroboter
+  aktiv war, automatisch aus den Trainingsdaten löschen kann). Nachgespielt 7./8.10. (Daten gelöscht): 17–90 min
+  Saugroboter verschoben LD2410C-Hintergründe um bis zu +55 % (Küche Ring 2) und füllten die damaligen Geister-
+  und Zielkarten entlang seines Wegs. Deshalb ein Schalter, den Node-RED setzt (Leons Vorschlag, 8.10.), und kein
+  Wissen über das Gerät in der App. Solange er an ist, lernen LD2410C-Hintergrund, Zielkarte und Kalibrierdaten
+  nichts (`learn/`, `calibration.py`). Das Verfolgen bleibt gleich, der Saugroboter darf weiter Licht schalten.
+  Die Nachlaufzeit nach dem Andocken gehört zur Automation.
+- **Filter oder LD2450 des Raums** (8.10.; live als `seen_hold` = 10 s bis 0.54, entfernt 30.10., unten „Eine
+  Zuordnung“). Der Filter verlor damals Sitzende, die der LD2450 des Raums noch maß; der gemessene LD2450 als
+  zweite Stütze überbrückte das. Was dabei gemessen wurde (vier Wahrheiten 6.–8.10.; Daten gelöscht): Die
+  LD2410C-Flags taugen nicht als Stütze (in der leeren Nacht 74 % der Zeit an). Ein Raum-Latch bis zum Hinausgehen
+  scheitert an Übergaben zwischen Sensoren. Nur der Sensor des Raums zählt, nicht jeder, der den Ort sieht (ein
+  Flur-Sensor maß die Person am Esstisch aus 6–7 m).
+- **Durch die Wand ins Arbeitszimmer** (8.10. 21:35, live 0.25.0; der Bad-LD2450 meldete kurz ein Ziel hinter
+  der Wand). Nicht der Wandtest war die Ursache, sondern das Kalman-Update: Mit der Geschwindigkeit eines Sprungs
+  lag das Mittel danach 0,3 m hinter der Wand, und für Ausgaben zählt die Seite des Mittels. Seitdem wird die
+  Position nach jeder Messung auf die Sicht des messenden Sensors beschnitten (4.1, `filter/mixture.rs`).
+  Geprüft und schlechter (je ein bis zwei Fenster; Daten gelöscht): die Person auf die Seite des Ziels spiegeln
+  (strenger als das Modell, das ein Ziel bis 0,3 m neben der Person erlaubt) und eine Raumregel mit diesem Punkt
+  (Echos knapp hinter einer Wand machten Licht). Der Schnitt hat eine Kehrseite: Bekommt eine Person die Spur
+  eines Sensors hinter der Wand, zieht er sie in dessen Raum (Bad 31.10., unten „Nacht 8./9.11.“).
+- **Meldungen 8.10. abends: Licht aus mit Personen im Raum** (App 0.24.0; Leon: „Sowas darf nicht passieren.“).
+  Bad und Sofa wurden dunkel, während dort still gesessen wurde. Der LD2450 meldete die Sitzenden mit Lücken bis
+  140 s (Bad) und 238 s (Sofa). Nachgespielt (Daten gelöscht), zwei Ursachen:
+  *Ursache 1:* Jede Komponente einer Person mit Spur zählte im Blick jedes LD2410C, mit null Energie, und bekam
+  dort `P(keine Echoquelle)`. Je Block mit einer wahrscheinlichen Echoquelle wuchs so ihr Teil „durch eine Tür
+  hinaus“, bei allen Personen im Haus zugleich; die Person im Bad war in 16 s „außer Haus“. Seitdem wiegt ein
+  LD2410C nur Komponenten in seinem Blick (4.3).
+  *Ursache 2:* Begann eine Spur, wo der Filter niemanden kannte, fiel ihre Alternative „Person“ unter die Schwelle
+  des Abschneidens. Danach sagten alle Hypothesen „Geist“, und die Spur blieb einer (Schlafzimmer 8.10.: bis zum
+  Morgen jede neue Spur am Bett ein Geist). Seitdem verliert keine laufende Spur eine Alternative ganz (5.1).
+- **Kandidat 0.26** (9.10.). Varianten nach den Meldungen 8.10., bewertet auf einer Wahrheit des 8.10. mit einem
+  Gast vom Balkon. Diese Wahrheit war falsch (unten „0.27“). Der Gewinn der übernommenen Regel „geschlossene
+  Bereiche laufen nicht ab“ kam ganz aus diesem Fenster; 0.27 nahm sie zurück. Die übrigen Varianten (Geburt an
+  neuen Spuren, Amplitude je Aufenthalt auf den Kacheln, Balkon-Tor) sind damit unbewertet. Eine Beobachtung
+  unabhängig davon (Schlafzimmer 7.10. abends): Eine Person mit kleiner Amplitude erklärt beständige Energie so gut
+  wie eine Echoquelle, und ihre längere Lebensdauer spricht dann für die Person.
 - **Sitzende im Bad und auf dem Sofa** (9.10.; Leon: „Das Modell sollte nicht darauf optimiert werden, jemand
   Schlafenden zu erkennen. Schlafende Personen wollen eh das Licht aus haben. Es ist viel wichtiger, dass Leute im
-  Badezimmer oder auf dem Sofa im Wohnzimmer nicht verloren werden.“; anschließend an „Schläft der Hintergrund
-  mit?“). Maß wie „Kandidat 0.26“ mit dem berichtigten Bad-Fenster (8.10. ab 18:48:00), alle Wahrheiten ohne
-  Ausnahme (auch 7.10. abends das neue Schlafzimmer), dazu verloren in Sicht über alle Nachspiele mit Wahrheit
-  (6.10. 19:28 – 7.10. 06:15, 7.10. 07:44–12:55, 7.10. 17:13 – 8.10. 19:10) und je Raum „frei“ in den belegten
-  Fenstern (Entscheidung ohne Nachlauf).
-  *Das Problem mit 0.26.1* (der Filter ist der von 0.26.0): Bad veröffentlicht „frei“ mit Person 350 s (Filter
-  allein 391 s; alles 8.10. 18:50–19:05 bis auf 5 s am 7.10. 22:15), Wohnzimmer 228 s (8.10. 19:00–19:06),
-  Esszimmer 5 s (Filter allein 17 s); Licht dunkel 0 / 0 / 0,08 min (die längste Lücke, 112 s, überbrückt der
-  Nachlauf von 2 min noch). Verloren in Sicht: Bad 9,1, Wohnzimmer 12,5, Esszimmer 27,5 min (ohne das Fenster des
-  Saugroboters 8,6 / 9,2 / 22,1; Schlafzimmer 60,7). Nach Zustand (Sonde „Geister selten“, in den drei Räumen
-  47,7 min): Spur verließ den Raum 14,5 (vor allem die Grenze Wohn-/Esszimmer), Spur gilt als Geist 11,4 und 3,7
-  junge (bei ihrer Geburt fast alle Person, P(Geist) im Median 0,016: sie wurden es später), Spur endete als
-  Person und 6 s später liegt von der Person ohne Spur nichts mehr im Raum 10,1, Masse im Nachbarraum 5,3, Spur
-  endete als Geist 2,5; davon 8,7 min, während der Saugroboter fuhr. Die Minuten im Bad 18:50–19:05 zählt die
-  Sonde kaum (ohne gemessenes Ziel in den letzten 10 s): Dort widerlegte das LD2410C die Sitzende, sobald ihre
-  Spur endete, weil Personen ohne Spur g = 1 hatten (9 Punkt 1).
-  *g der Sitzenden* (4.3): Bad an der Westwand 0,35 (ohne LD2450-Ziel 0,27), Sofa 0,58 (0,46), „Esstisch“ 0,42
-  (8.10. 19:04–19:10: der Geist am Tisch, keine Person; 10 „0.27“);
-  je Platz Streuung von log g 0,3–0,6 wie Gamma(6, 6), zwischen den Plätzen Mediane 0,3–2,9.
-  *Kandidaten* (je eine Änderung gegen 0.26.1, sonst gleich; „frei“ = veröffentlicht frei mit Person in den
-  belegten Fenstern, Minuten, Bad / Wohnzimmer / Esszimmer; auf der alten Wahrheit mit dem Gast am Esstisch
-  19:04–19:10, die korrigierten Zahlen in „0.27“):
-
-  | | Licht leer / dunkel (veröffentlicht) | Filter allein | leere Nacht | report_eval Filter an / aus | veröffentlicht an / aus | „frei“ Bad / Wohn / Ess | verloren 26 h |
-  |---|---|---|---|---|---|---|---|
-  | 0.26.1 | 4,1 / 0,1 | 3,0 / 0,1 | 0 | 0,86 / 1,09 | 2,12 / 1,02 | 5,8 / 3,8 / 0,1 | 130 |
-  | (g) voller Prior auf den Kacheln | 31,8 / 0,4 | 30,7 / 4,9 | 0 | 4,27 / 2,57 | 5,56 / 1,04 | 0 / 4,9 / 1,1 | 73 |
-  | (g) + Hintergrund-Prior der Sensoren (e) | 8,0 / 0,4 | 6,9 / 4,1 | 0 | 2,05 / 2,02 | 3,30 / 1,04 | 0 / 4,9 / 1,1 | 92 |
-  | (t) gemessene Amplitude weitertragen | 4,1 / 0,4 | 3,0 / 4,9 | 0 | 0,98 / 2,01 | 2,34 / 0,98 | 0 / 4,8 / 1,1 | 95 |
-  | (t) + (e) | 8,6 / 0,4 | 7,5 / 4,1 | 0 | 2,12 / 1,96 | 3,37 / 0,98 | 0 / 4,8 / 1,1 | 96 |
-  | (t) + Ablauf nach Prüfbarkeit (p) | 9,4 / 0,4 | 8,3 / 4,9 | 0 | 2,60 / 2,02 | 3,89 / 0,98 | 0 / 4,8 / 1,1 | 97 |
-  | Vergessen 1 h allein | 4,1 / 0,1 | 3,0 / 0,1 | 0 | 0,84 / 1,03 | 2,12 / 1,00 | 5,7 / 4,1 / 0,1 | 114 |
-  | (t) + Vergessen 1 h | 4,1 / 0,4 | 3,0 / 4,9 | 0 | 1,07 / 2,40 | 2,36 / 0,94 | 0 / 4,7 / 1,1 | 97 |
-  | **(t) + Vergessen 0,7 h (gemessen)** | **4,1 / 0,4** | 3,0 / 4,9 | **0** | 1,11 / 1,73 | 2,36 / 0,94 | **0 / 4,7 / 1,1** | 96 |
-
-  Rechenzeit der vollsten Stunde (7.10. 17:00–17:20, ein Kern, Median aus 4): 0.26.1 60,2 s, Kandidat 65,4 s
-  (+9 %); (g) in der ersten Fassung, jede Kachel Stufe für Stufe, +14 % und im Nachspiel bis zum Doppelten.
-  *(g) Voller Prior* (wie „Kandidat 0.26“ (g), neu gebaut: die bedingte Verteilung von g je κ und Kachel, nicht
-  als Mittelfeld): hält das Bad, erfindet aber, wo nichts widerspricht. 7.10. abends wieder das Schlafzimmer
-  (24,6 min Licht im leeren Raum), und 8.10. 06:55–07:14 jemand im Flur der leeren Wohnung (nach 06:53 keine Ziele
-  mehr, alle Energien beim Leer-Pegel; die Telefone melden 07:15): Die bekannte Person, die zur Tür ging, wurde dort eine
-  Stehende mit g 0,21 und κ 0,03, für die der LD2450 blind ist und die das LD2410C nicht widerlegt, weil sein
-  Hintergrund im bewegten Ring 4 beim Nachtwert stand (gelernt 1,9, gemessen morgens 5,1; 4.3) – der Überschuss
-  dort sprach sogar für sie (log-Verhältnis +0,2 bis +0,5 je Gewichtung, obwohl die ruhigen Ringe 3,5-mal mehr
-  erwarteten, als kam). Der Hintergrund-Prior nach der Streuung zwischen den Sensoren (empirischer Bayes:
-  log-Streuung bewegt 0,13, ruhig 0,32 → Gewicht 96 s / 62 s statt 600 s) beseitigt das Schlafzimmer, erfindet
-  aber 7.10. abends 3,9 min in der Küche: Fünf Minuten Lernen reichen, dass eine Person mit kleinem g den
-  Rest erklärt. Nicht übernommen (beides).
-  *(t) Gemessene Amplitude weitertragen* (4.3, 5.4): Nur was eine Spur gemessen hat, bleibt nach ihrem Ende; was
-  ohne Messung beginnt, hat g = 1 wie bisher. Kein Licht im leeren Raum mehr dazu, das Bad ganz gehalten, das Sofa
-  18:49–19:04 (veröffentlicht frei 164 → 5 s). Die Person im Flur 06:55 blieb (12 min): Ihre Amplitude war auf
-  dem kurzen Weg zur Tür gemessen, und der Hintergrund war der Fehler.
-  *(p) Ablauf nach Prüfbarkeit* (5.5 verallgemeinert: Die Existenz läuft ab, soweit LD2450 und LD2410C eine
-  Stehende mit diesem κ und g in 2 min ungeprüft ließen, e^(−κ a T) · e^(−T KL), Chernoff-Stein): ändert die Person
-  im Flur nicht (das LD2410C „prüfte“ sie, nur mit dem falschen Hintergrund) und lässt 7.10. abends 5,3 min in der
-  Küche. Nicht übernommen.
-  *Vergessen des Hintergrunds* (4.3): 1 h und 0,7 h (gemessen) beseitigen die Person im Flur (Flur ohne eigenen
-  LD2450 besetzt 20,4 → 7,8 min, wie 0.26.1 8,3); allein ändert es fast nichts (verloren 130 → 114, Licht gleich).
-  *Was schlechter wird: 8.10. 19:04–19:10* (Wohnzimmer veröffentlicht frei 64 → 279 s, Licht dunkel 0 → 0,32
-  min; Esszimmer 5 → 66 s). Nachgespielt (Sonde ab 18:40): Ab 18:40 lag eine bekannte Person ohne Spur auf
-  dem Balkon (damals für den Gast gehalten; dort war niemand, der Eintrag kam aus Geistern an der Balkontür und
-  hielt sich durch die Balkon-Regel, 10 „0.27“); um 18:44 bekam die neue Spur im Bad (die zweite Person, seit
-  18:37:50 zu Hause) diesen Eintrag, weil eine neue Person nur aus der Intensität kommt (im Blick 0,002) und er
-  der einzige bekannte ohne Spur war. 19:04:20 bekommt dann die Spur des Geists am Esstisch die Person auf dem
-  Sofa (h 0,87), und die nächste Spur
-  auf dem Sofa (19:05:10) beginnt als Geist. Mit 0.26.1 war die Person im Bad zu der Zeit schon fast widerlegt
-  (r 0,3–0,6), und die Spur auf dem Sofa nahm *ihren* Eintrag: richtig im Ergebnis, falsch im Grund. Jetzt hält
-  der Filter die Sitzende im Bad, und der Fehler von 18:44 zeigt sich. Derselbe Fall an der Schwelle wie in
-  „Kandidat 0.26“; nicht abgestimmt.
-  report_eval je Meldung (veröffentlicht, Anteil falsch): Bad 8.10. 0,25 → 0, Wohnzimmer 18:49 / 19:02 0,13 / 0,45 →
-  0 / 0, Wohnzimmer 19:04 0,18 → 0,76, Esszimmer 19:04 0,01 → 0,17; Esszimmer 7.10. 22:22 (leer) 0,51 → 0,75 (der
-  Fall an der Balkontür, 9 Punkt 3); bis 6.10. Bad (ohne Sensor) 21:28 0,93 → 0,50, 22:18 0,14 → 0,29; 7.10. 08:52
-  Schlafzimmer (damals ohne Sensor) 0 → 0,65.
-  Verloren in Sicht je Raum (alle drei Nachspiele): Bad 9,1 → 8,0, Wohnzimmer 12,5 → 12,5, Esszimmer 27,5 → 29,8,
-  Schlafzimmer 60,7 → 27,2 (die Schlafenden; kein Ziel, aber kein Licht im leeren Schlafzimmer). Nach Zustand in
-  den drei Räumen 47,7 → 48,8 min, die Anteile fast gleich (Spur verließ den Raum 14,1, Geist 13,1 und 3,8, Person
-  ohne Spur weg 10,1): Die kurzen Verluste, während der eigene LD2450 noch misst, sind keine Frage der Amplitude.
-  *Ergebnis:* Der Kandidat hält Sitzende im Bad und auf dem Sofa, solange nichts anderes schiefgeht, ohne Licht
-  im leeren Raum (4,1 min wie 0.26.1, leere Nacht 0, Schlafzimmer 7.10. abends 0), Rechenzeit +9 %. Die
-  Schwelle „dunkel mit Person in Bad und Wohn-/Esszimmer niedriger“ erfüllt er zusammen (veröffentlicht frei
-  9,7 → 5,8 min), je Raum nicht: Wohn- und Esszimmer verlieren im Fenster 19:04 (oben). Gelernt: Eine
-  Amplitude, die keine Messung stützt, macht das LD2410C stumm gegen jeden Fehler seines Hintergrunds; und der
-  Hintergrund wandert schneller, als 6 h Vergessen ihm folgen.
-- **0.27: korrigierte Wahrheit 8.10.** (10.10.; Leon hat den Abend aus Sensoren und Telefonen neu
-  rekonstruiert.) Die Wahrheit seit „Meldungen 8.10. abends“ hatte einen Gast, der 19:04 nach etwa 15 min vom
-  Balkon an den Esstisch zurückkam. Richtig ist: Ein Gast war nur am Nachmittag da (durch die Wohnungstür
-  17:18:40, mit der ersten Person am Esstisch 17:21–17:43, gegangen etwa 17:43:40). Die zweite Person war bis
-  18:36 fort. Drei waren nie gleichzeitig da, und **auf dem Balkon war niemand**. Der Abend:
-  - 18:37:50 kommt die zweite Person heim. Die „zwei Spuren im Flur“ sind sie und die erste, die 18:38:30 den
-    Schreibtisch verließ.
-  - 18:39–18:43 sind beide im Wohnzimmer.
-  - 18:43:50 geht die erste ins Bad, die zweite ins Schlafzimmer.
-  - 18:46:20–40 tauschen sie an der Badtür: Die erste geht aufs Sofa, die zweite sitzt im Bad von 18:46:40 bis
-    19:05:45, danach steht sie.
-  - Die erste bleibt auf dem Sofa bis nach 19:15.
-
-  Die Geister:
-  - Das Ziel auf der Balkonseite (4,6–5,0; 2,0–2,3) ist ein wiederkehrender Geist des Esszimmer-LD2450: 8.10.
-    18:50–18:52 und 19:02–19:03, 7.10. 22:08, 22:16 und 22:22–22:25. Es liegt so weit vom Sensor wie die Person
-    auf dem Sofa: ein Spiegel- oder Winkelgeist.
-  - Die „Person am Esstisch“ (1,8; 3,7) 19:04:10–19:10:39 war keine. Eine frische LD2450-Spur erschien ohne Weg
-    dorthin, und die ruhigen Ringe 2–4 des Esszimmer-LD2410C stiegen von etwa 10 auf 42 / 100 / 76. Ursache
-    unbekannt (9, „Seit der korrigierten Wahrheit“).
-
-  Die Wahrheit zählt das Esszimmer 19:02–19:10 jetzt als leer. Die Regel aus 0.26.0, dass Einträge in
-  geschlossenen Bereichen nicht ablaufen (5.5), war mit dem Gast vom Balkon begründet, und ihr gemessener Nutzen
-  („Kandidat 0.26“ (a)) kam aus genau diesem falschen Fenster; die g 0,42 „am Esstisch“ (4.3) sind an dem Geist
-  gemessen. Bewertet auf den vier Wahrheiten (bis 6.10., 7.10. früh, 7.10. Abend, 8.10.) ohne Ausnahme, Licht
-  aus dem veröffentlichten *besetzt* mit 2 min Nachlauf, Minuten („leer“ = Licht im leeren Raum, „dunkel“ =
-  dunkel mit Person, ohne die leere Nacht); „frei“ = veröffentlicht frei mit Person in Bad / Wohnzimmer /
-  Esszimmer; 22:22 = Licht im leeren Esszimmer 7.10. 22:22–22:24:30; verloren in Sicht über die Nachspiele bis
-  6.10., 7.10. früh und 7.10. 17:13 – 8.10. 19:10 (ohne den Saugroboter 8.10. 11:30–12:58); Rechenzeit der
-  vollsten Stunde (Aufnahme 7.10. 17 Uhr, ein Kern, Median):
-
-  | | veröffentlicht leer / dunkel | Filter allein leer / dunkel | leere Nacht | report_eval Filter an / aus | veröffentlicht an / aus | „frei“ Bad / Wohn / Ess | 22:22 | verloren | CPU |
-  |---|---|---|---|---|---|---|---|---|---|
-  | 0.25.1 | 7,6 / 0,5 | 4,3 / 24,5 | 0 | 0,37 / 3,70 | 2,44 / 2,36 | 9,5 / 11,1 / 0 | 0 | 395 | |
-  | 0.26.1 | 10,1 / 0,0 | 9,0 / 0,0 | 0 | 1,81 / 1,04 | 3,10 / 1,01 | 5,8 / 3,8 / 0 | 2,5 | 172 | 269 s |
-  | 0.26.1 ohne Balkon-Regel | 10,1 / 0,3 | 7,4 / 3,3 | 0 | 1,25 / 2,21 | 2,92 / 1,57 | 5,6 / 7,4 / 0 | 2,5 | 175 | |
-  | Sitzende (mit Balkon-Regel) | 10,1 / 0,3 | 7,4 / 3,2 | 0 | 1,50 / 1,12 | 3,19 / 0,76 | 0 / 4,65 / 0 | 2,5 | 136 | +8 % |
-  | **0.27.0** = Sitzende ohne Balkon-Regel | **7,6 / 0,3** | **4,9 / 3,2** | 0 | 0,85 / 1,88 | 2,54 / 0,76 | **0 / 4,65 / 0** | **0** | 136 | **+1,4 %** |
-
-  - Der Boden von 6,0 min Licht im leeren Esszimmer (8,55 min mit der Regel) ist der Geist am Tisch, gesehen
-    vom LD2450 des Raums, über die Ausgaberegel „Filter oder eigener LD2450“ (6).
-  - Im Schlafzimmer brannte in keiner Version Licht im leeren Raum.
-  - Was bleibt, ist 8.10. 19:04–19:10: Der Geist am Tisch nimmt den Eintrag der Person auf dem Sofa,
-    Wohnzimmer dunkel 0 → 0,3 min. 0.26.1 hatte es nur zufällig richtig: Ein Eintrag auf dem Balkon, hinter
-    dem niemand stand, war als Ersatz übrig.
-  - Die Geisterkarte war am 8.10. um 10:07 durch die neue Kalibrierung des Arbeitszimmers zurückgesetzt und
-    wusste um 18:20 nichts von den Geistern an der Balkontür. Dass jede Lageänderung die ganze Karte
-    zurücksetzte, war offen (9); behoben, ohne Wirkung auf diese Fenster (unten, „Gelerntes bleibt bei neuer
-    Kalibrierung“).
-  - Leons Vorgaben: Beide Fehler zählen gleich; wache Personen, die im Bad oder auf dem Sofa sitzen, dürfen
-    nicht verloren gehen; Schlafende sind kein Ziel; nicht auf Fehlerfälle optimieren. Darum ist nichts auf das
-    Fenster 19:04 abgestimmt.
-
-  *Ergebnis:* 0.27.0 = Sitzende (die Kacheln tragen die gemessene Amplitude weiter, Hintergrund 0,7 h) ohne
-  die Balkon-Regel. Gegen 0.26.1: Licht im leeren Raum 10,1 → 7,6 min (das Fenster an der Balkontür 7.10.
-  22:22, 2,5 → 0 min), dunkel mit Person 0 → 0,3 min (Summe 10,1 → 7,9), Bad „frei“ mit Person 5,8 → 0 min,
-  `report_eval` veröffentlicht an / aus 3,10 / 1,01 → 2,54 / 0,76, verloren in Sicht 172 → 136 min, leere Nacht 0,
-  Rechenzeit +1,4 % (269 → 273 s; die Sitzenden mit der Regel +8 %). Gegen 0.25.1 gleich viel Licht im
-  leeren Raum, dunkel 0,5 → 0,3 min. Gelernt: Eine Regel, deren ganzer Nutzen aus einem Fenster kommt, hängt
-  an der Wahrheit dieses Fensters.
-- **Gelerntes bleibt bei neuer Kalibrierung** (11./12.10., nach 0.27.0; 9 Punkt 3). Bis 0.27 lag die
-  Geisterkarte im Hausrahmen und begann ganz neu, sobald sich die Lage irgendeines Sensors um mehr als 5 cm, 2°
-  oder 2 % Maßstab änderte; der LD2410C-Hintergrund des Sensors begann bei jeder Änderung von Ort, Richtung oder
-  Höhe neu. Die Zielkarte (Räume und Türen) und die Kalibrierdaten (Rohwerte im Sensorrahmen) blieben schon.
-  Jetzt liegt jeder Teil der Geisterkarte im Rahmen seines Sensors (4.2), der Hintergrund bleibt (4.3); neu
-  beginnt nur der Teil eines anders montierten Sensors (> 0,5 m, > 30°).
-  - *Prüfung:* durchgehendes Nachspiel aller Aufnahmen (6.10. 18:00 – 10.10. 18:00, Lernpausen für Saugroboter,
-    Schalter und Geräte, `seen_hold` 0) mit der echten Kalibrierung des Arbeitszimmers mitten im Lauf: bis 8.10.
-    10:07:38 324,39° / 1,049, danach 321,57° / 1,0918 (−2,8°, +4,1 %; `Tracker.reconfigure` wie die App). Mit
-    0.27.0 verwirft der Wechsel 285 gezählte Geister aus 34,8 h Beobachtung aller sieben Sensoren und den
-    Hintergrund des Arbeitszimmers; neu bleibt beides (am Ende 616 statt 376 Geister in der Karte).
-  - *Wahrheit (52 Fenster):* zurückgesetzt 0,48 / 3,18 = 3,67 min, behalten 0,48 / 3,28 = 3,77 min; leere Nacht
-    und leeres Haus beide 0. Der einzige Unterschied sind 6 s im Fenster 8.10. 19:04 (Sofa, Wohnzimmer dunkel);
-    behalten ist dort genau wie 0.27.0 ohne Wechsel. Die Fenster 18:20–19:10, für die 9 Punkt 3 die
-    zurückgesetzte Karte verdächtigte, ändern sich sonst nicht: Was dort fehlt, ist nicht die Karte.
-  - *Ganze Aufnahme:* behalten gegen zurückgesetzt Licht 65,1 min mehr, 4,5 min weniger. Davon 62,5 min im
-    Schlafzimmer 10.10. 12:05–13:07, als beide Telefone im Ess-/Wohnzimmer waren: Eine Belegung mit
-    P = 0,667 genau an der Schwelle (`light_cost` 2) beginnt in allen vier Läufen um diese Zeit (0.27.0 12:18,
-    neu ohne Wechsel 12:16, zurückgesetzt 13:07, behalten 12:05) und hält bis 14:35. Das ist ein Fehler von
-    0.27.0 an der Schwelle, nicht der Karte; offen. Sonst nur Sekunden bis 2 min (Arbeitszimmer 7.10. 17:40 vor dem
-    Wechsel, 2 min mit dem Saugroboter; Wohnzimmer 10.10. 14:49 1 min dunkel, als die zweite Person hereinkam).
-  - *Ohne Wechsel* (gegen 0.27.0, nur der Rahmen der Karte ist anders): Wahrheit gleich (0,48 / 3,28), ganze
-    Aufnahme 6,3 min mehr und 9,6 min weniger Licht; nach den Telefonen besser im Wohnzimmer 7.10. 17:14 und
-    17:34 (3,4 min Licht ohne jemanden), schlechter im Esszimmer 10.10. 11:42 (5,4 min, eine Person an der
-    offenen Trennlinie zum Wohnzimmer) und im Schlafzimmer 7.10. 22:06 (2,6 min vor dem Hineingehen).
-  - *Rechenzeit* (ganzes Nachspiel, ein Kern, Rechner unter Last): 0.27.0 8234 s, neu ohne Wechsel 7955 s
-    (−3,4 %); mit Wechsel zurückgesetzt 7973 s, behalten 8332 s (+4,5 %: eine leere Karte rechnet sich
-    schneller).
-  - *Umrechnung* einer Karte von 0.27 (Ende des Nachspiels): die Rate je 0,1-m-Zelle im Blick jedes Sensors
-    im Median 0–7 % anders, in 95 % der Zellen bis 34 %, Korrelation 0,79–0,89 (Zellen eines Rasters auf ein
-    gedrehtes verteilt; einmalig).
-  - *Grenze:* Die Wahrheit hat nach dem Wechsel nur die Fenster des 8.10. Ob ein anders montierter Sensor die
-    Geister der anderen ändert (gegenseitige Störung), ist nicht gemessen.
-- **Blick des LD2410C je Raum** (12.10. früh; 4.3 „Blick in einen anderen Raum“). Statt eines
-  Faktors für alle Öffnungen je Paar Sensor ← Raum gemessen (`tools/ld2410/footprint.py`, Bezeichnungen vom
-  LD2450 des Raums der Person, nie vom Filter). Gewinn des eigenen Raums (Bezug): Schlafzimmer 0,36, Bad 1,08,
-  Arbeitszimmer 0,64, Flur 0,90, Wohnzimmer 1,75, Esszimmer 0,50, Küche 0,89. Blick (Rohwert → geschrumpft,
-  Minuten Aufenthalte): Flur ← Arbeitszimmer −0,01 → 0,31 (10,9), Flur ← Küche 0,05 → 0,62 (3,2), Esszimmer ←
-  Küche 0,44 → 0,51 (12,8), Esszimmer ← Wohnzimmer 0,51 → 0,56 (105), Wohnzimmer ← Esszimmer 0,71 → 0,72 (52),
-  Flur ← Esszimmer 1,38 → 0,95 (35), Arbeitszimmer ← Bad 0,24 → 0,80 (2,0), Schlafzimmer ← Flur 0,34 → 0,87
-  (0,6), der Rest ≈ 1 oder ohne Daten (alle Paare ins Schlafzimmer und ins Bad: 1). Ohne je einen Tag gelernt
-  (Stabilität): Esszimmer ← Wohnzimmer 0,53–0,65, Wohnzimmer ← Esszimmer 0,63–0,79, Esszimmer ← Küche
-  0,53–0,65, Flur ← Arbeitszimmer 0,30–0,47 stabil; Flur ← Esszimmer nicht (0,51–1,00, der 7.10. allein 2,1
-  gegen 0,26 an den anderen Tagen).
-  *Nachgespielt* (Grundlinie 0.27.0, `seen_hold` = 0, Lernpausen der Geräte): Wahrheit 0,48 / 3,30 = 3,78 min
-  (Grundlinie 0,48 / 3,28 = 3,77; das Sofa 8.10. 19:06 bleibt, es hängt nicht am Blick), leere Nacht und leeres
-  Haus 0. Über die ganze Aufnahme (`tools/proxy_seated.py`, Licht neu / Licht weg): mit wahrscheinlicher Person
-  +6,4 min (die Sitzende im Arbeitszimmer 6.10. 20:52 2,8, Wohnzimmer 3,5) / −3,9 (Schlafzimmer 2,4, Wohnzimmer
-  1,2); ohne wahrscheinliche Person +28,0 / −5,6, davon Schlafzimmer 10.10. 11:55 23 min (derselbe Tag, an dem
-  der gemeinsame Faktor 0,61 das leere Schlafzimmer erhellte), Küche +0,3. Rechenzeit 6398 s (Grundlinie 8234 s
-  unter anderer Last, der Faktor 0,61 6500 s): kein messbarer Unterschied. Eine Ablation (der Blick nur im
-  Wägen, die Beobachtbarkeit der Kacheln geometrisch) gibt auf der Wahrheit dasselbe.
-  *Ergebnis auf 0.27:* nicht übernommen. Der gemessene Blick ändert auf der Wahrheit nichts, hält die eine Sitzende im
-  Arbeitszimmer, aber kostet 23 min Licht im leeren Schlafzimmer, obwohl kein Paar ins Schlafzimmer verändert ist
-  (Schlafzimmer ← Flur 0,87 ist das einzige mit dem Schlafzimmer-Sensor; zu prüfen, ob es das ist).
-  *Auf 0.29 neu bewertet* (14.10., derselbe Code auf 0.29 mit dem Anker; `fast_eval` über die ganze Aufnahme in
-  zwei Stufen, Checkpoints von 0.28; Gewicht nach Leon: 1 min dunkel mit Person = 5 min Licht im leeren Raum):
-  Wahrheit 0,48 / 3,28 = 3,77 wie 0.29 (gewichtet 16,9 = 16,9), leere Nacht und leeres Haus 0. Über die ganze
-  Aufnahme (`proxy_seated.py`, beide Richtungen): mit wahrscheinlicher Person 7,6 min Licht neu / 3,2 weg (netto
-  +4,4, gewichtet +22), ohne wahrscheinliche Person 6,4 neu / 7,9 weg, unklar 0,7 / 5,6; das Licht weicht in
-  51,5 von 5784 min von 0.29 ab. Die 23 min im leeren Schlafzimmer am 10.10. treten mit dem Anker nicht mehr auf.
-  *Ergebnis:* übernommen in 0.30.0. Den Fall der Meldung 13.10. 21:46 (die zweite Person im Bad verloren: eine
-  Echoquelle nimmt ihre Energie) löst der Blick nicht: Es gibt kein gemessenes Paar „Bad ← Flur“.
-  *Entfernt* 30.10. (4.3 „Blick in einen anderen Raum“).
-- **Kaltstart: die Unbekannten liefen davon** (30.10., Liste Punkt 10; 4.3 „Verrechnung“). Ohne Gelerntes und ohne
-  Personenstand 10.10. 10:00: Wohnzimmer bis 18 erwartete Personen, 8.10. 19:00 bis 43. Kein Gerät (der Drucker lief
-  im Arbeitszimmer, Dobby erst ab 10:40) und nicht der Hintergrund: ein bis zwei Personen in 2,7 m gaben ruhig
-  Ring 3–5 gekappt 100, bewegt Ring 3–4 30–45, also mehr als ihr Profil. Die Rechnung war der Fehler: Die
-  Unbekannten galten als „höchstens eine im Blick“, ihr Faktor war aber `L̄ (1 + Λ) / (1 + Λ L̄)`, auf die Intensität
-  angewandt. Für Λ ≪ 1 ist das der Bernoulli-Schritt, darüber heißt es `Λ' ≤ 1 + Λ`: bis zu eine Person mehr je
-  Block, und weil sich die Unbekannten dabei selbst nicht sehen (die Energie erklärte immer nur eine Person), ohne
-  Halt: Test mit den Energien von drei Personen, nach 30 Blöcken 29 im Blick. Schwache Gegenbelege wirkten dagegen
-  kaum (L̄ = 0,9 bei Λ = 10: −0,1). Dasselbe lief auch im warmen Betrieb, nur unsichtbar: Stand `base_0280` 8.10. 21:10
-  Λ = 34 im Blick des Wohnzimmers, Echoquellen dabei aus (P 0,999). Jetzt `1 − M + ∫ m L` wie für eine Person,
-  M' ≤ 1 (4.3), für kleines M dieselbe Zahl bis auf M². Das ist keine Grenze der Personenzahl: Spuren und bekannte
-  Personen ohne Spur sind unbegrenzt; nur belegt Energie allein keine zweite Person je Blick. Erwogen, nicht
-  gerechnet: die Überlagerung mit der eigenen mittleren Masse (Mahler 2009; Nannuru, Coates & Mahler 2013); sie hielte
-  die Masse dort, wo sie die Energie erklärt, im Wohnzimmer also bei mehreren Unbekannten, denn eine Person gibt dort
-  mehr als ihr Profil. Ergebnis, Kaltstart höchste Personenzahl im Haus vorher → nachher, je 2–3 h: 10.10. 10:00
-  21,9 → 5,5; 8.10. 19:00 44,6 → 3,7; 10.10. 12:00 4,8 → 4,7 (Schlafzimmer 3,6 → 1,0, im leeren Raum: 84 → 16 min
-  über 3,5); leeres Haus 8.10. 08:00 1,3 → 0,7 (Licht im leeren Schlafzimmer ~30 min → keins); 6.10. 22:00, 7.10. 03:00,
-  7.10. 07:00, 9.10. 18:00 gleich (3,5 / 0,7 / 3,2 / 2,9). Was bleibt, sind LD2450-Spuren, die ohne Geisterkarte
-  Personen sind. `fast_eval` gegen `rust0530_s2`: Wahrheit 0,48 / 3,28 gleich, leere Nacht und leeres Haus 0,
-  Proxy-Fenster gleich (Küche 10.10. 43,0 → 33,9), Licht anders 22,3 min in 96,4 h, nur in Richtung dunkler.
-  **Preis:** Indizien (`proxy_seated`) 5,8 min „Person wahrscheinlich“ dunkler (Wohnzimmer 8.10. 21:31 255 s,
-  10.10. 14:44 60 s, Bad 8.10. 22:10 27 s), 4,4 min „keine Person“ weniger Licht; dazu 6,2 min Küche 10.10. 12:47
-  ohne LD2450-Ziel an der Kippstelle (Liste Punkt 4). 21:31 nachgespielt: Der Sitzer blieb, weil Λ = 12–34 alle
-  Echoquellen unterdrückte und jede neue Spur zur Person machte. Ohne das geht die Echoquelle wieder an (P(aus) bis
-  0,001), nimmt die Energie der zweiten Person (9 Punkt 1, „Echoquelle nimmt ihre Energie“), und ihre Spur gilt
-  290 s als Geist. Behoben im nächsten Eintrag.
-- **Echoquellen als Alternative** (30.10., Liste Punkte 1, 3, 10, 11; 4.3 „Verrechnung“). Die Ablation zeigte: Ohne
-  Echoquellen 93 min mehr Licht in leeren Räumen, aber 38 min Sitzende im Ess-/Wohnzimmer gewonnen. Nachgespielt
-  (9.10. 17:53, 8.10. 19:04 und 21:29): Zwei sitzen, der Filter führt eine Person, die zweite ist nur Energie. Geht die
-  eine, steht eine Quelle am Platz der Gebliebenen 4–9 min lang auf „an“ (P(an) 0,9–1,0, Vorhersage 0,9), bei
-  20 s Lebensdauer: Im Zustand der Quellen konkurriert nur „aus“ mit ihr, und die Normierung hält sie oben. Eine Person
-  ohne Spur bekam im Blick aber `P(keine Quelle) · ℓ`, also etwa 0,01 je Sekunde, die Unbekannten ebenso; niemand konnte
-  die Energie übernehmen, solange die Quelle sie hielt. Der Faktor ist die Unabhängigkeit von Person und Quelle, in jedem
-  Block neu angewandt; bei Ziel gegen Clutter steht die Alternative nur im Nenner (B_GarciaFernandez2018 Gl. 45). Die
-  Korrektur von 0.27 (die Quelle für die Person auf ihrem Prior) erfand Personen, weil zwei Fehler zusammenkamen:
-  `Z < 1` bläht die Unbekannten auf, wenn eine Quelle als an gilt und nichts erklärt, und die Intensität hatte keinen Halt
-  (voriger Eintrag). Beides ist nun zu: `Z ≥ 1` und `M' ≤ 1`.
-  *Gemessen* gegen den Kaltstart-Stand (`ov_coldstart_s2`, Wahrheit 0,48 / 3,28), Wahrheit Licht leer / dunkel,
-  Indizien (`proxy_seated`) Person / unklar / keine Person in Minuten „neu an / neu aus“, *netto* wie in
-  `dev/ABLATION_2026-10-30.md` (dunkel 5×, negativ: besser), CPU gegen 0.53:
-
-  | Form (2 Stufen) | Wahrheit | Person | unklar | keine Person | netto | CPU |
-  |---|---|---|---|---|---|---|
-  | Quelle gegen alle wie vorher, ohne `P(keine Quelle)` | 5,37 / 0 | 36,1 / 0,6 | 55,0 / 0,6 | 29,7 / 3,9 | −151,7 | +92 % |
-  | **dazu ohne die Unbekannten (übernommen)** | 5,35 / 0 | 34,6 / 0,7 | 56,8 / 0,6 | 28,1 / 3,4 | −145,0 | +22 % |
-  | nur gegen Personen mit Spur | 5,32 / 0 | 27,6 / 1,2 | 52,3 / 0,5 | 15,7 / 4,3 | −120,6 | +10 % |
-
-  Die Unbekannten nicht mitzuzählen ist der Sinn der Alternative und spart die Hypothesen, die sie sonst halten (die
-  Zeile darüber führt fast dasselbe Licht mit doppelter Rechenzeit). Die bekannten ohne Spur herauszunehmen ist
-  konsequenter, kostet aber 7,5 min Sitzende (× 5) für 13 min Licht ohne Person. Gegen 0.53 (`rust0530_s2`): Wahrheit gleich,
-  Person 28,9 / 7,0 (6,2 davon die Küche 10.10. 12:47 aus dem vorigen Eintrag), unklar 56,8 / 0,6, keine Person 27,2 / 7,0,
-  netto −89,6; leere Nacht und leeres Haus 0; Licht anders 166 min in 96,4 h. Die Wahrheit gewichtet 5,35 statt 16,9: das Sofa
-  8.10. 19:06 (3,28 dunkel) ist weg, neu 7.10. 22:22 Esszimmer 2,52 und Arbeitszimmer 2,35 (Balkontür, 9 Punkt 3; dort
-  hielt die Quelle Energie, die eine Person ebenso erklärt). Simulation: Eine Sitzende, die beim Start schon da ist, ist nach
-  5 min eine Person (bis 0.54 die ganze Stunde niemand, und Sensor b in 5 m lernte sie zum 3,6-Fachen als Hintergrund).
-  *Geprüft, nicht übernommen* (1 Stufe, jeweils gegen die Form „nur mit Spur“ gerechnet, Stufe 1 dort 5,38 / 0, Person 33,8 /
-  0,9, unklar 50,9 / 0,5, keine Person 20,1 / 4,6, netto −148,8):
-  - *Ohne `Z ≥ 1`* (der exakte Pfad): 5,65 / 0, Person 47,0 / 1,9, aber unklar 201,9, keine Person 49,3; Esszimmer 167 min
-    unklar, davon lange Strecken 3–7 Uhr ohne Energie. Das Ende einer Quelle zählte als Beleg für jemanden.
-  - *Bernoulli-Nenner für die Unbekannten*, `M L / ((1 − M) Z + M L)` statt am Faktor (auf der Form der ersten Zeile): 5,63 / 0,
-    Person 37,8 / 0,6, unklar 82,2 (Schlafzimmer +23), keine Person 28,3 / 3,8. Kein Gewinn, mehr Code.
-  - *Quelle an die Person gebunden*, `ρ + ν · P(jemand im Blick)` (J_Park2020 Gl. 16), ν = 1/(10 min) / 1/(17 min) /
-    1/(2,8 h): Wahrheit je 3,00 / 0 (das Arbeitszimmer 22:22 fällt weg), Person 25,4 / 27,1 / 27,3, unklar 32,8 / 33,7 /
-    45,9, keine Person 13,1 / 10,8 / 12,2, netto −103,8 / −116,0 / −122,6, Rechenzeit wie 0.53. Ganz ohne Quellen im leeren
-    Blick (`ρ` ≈ 0, ν = 1/(10 min)) dasselbe: 3,00 / 0, leere Nacht und leeres Haus 0, netto −103,8. Die Quellen, die
-    wirklich etwas halten, hängen also an Personen; das Lernen von ρ trägt hier fast nichts (Kandidat zum Entfernen,
-    betrifft Format und Oberfläche). ν ist aber nicht messbar: Die Zahl begonnener Quellen folgt dem Prior (3,6 / 2,3 /
-    0,5 je Stunde bei den drei ν, bei niemandem im Blick 0,1), Fixpunkt um 0,7 je Stunde. Kostet Sitzende, ein neuer
-    Parameter ohne Messung: nicht übernommen, Entscheidung Leon.
-  - *Schweif je Sensor fest* (die Faktoren aus 4.3: Esszimmer 0,6, Küche 3,5, Flur 2, Arbeitszimmer 1,15): 5,33 / 0, Person
-    33,6 / 1,6, unklar 36,5, keine Person 18,6 / 4,8, netto −146,3. Mit den besten festen Werten kaum Gewinn (15 min unklar
-    weniger, im Esszimmer); das Lernen braucht er nicht.
-  - *Gewinn je Sensor fest* (Wohnzimmer 2,9, Küche 3,3, Esszimmer 1,1): 5,43 / 0, Person 39,1 / 41,4, netto +1,5. Im
-    Wohnzimmer 40,8 min dunkler mit Person: Wer einen Sensor lauter macht, lässt die Person, die dort wenig abgibt, woanders
-    hin (wie 7.10.). `c_s` online zu lernen lohnt nicht.
-- **Eine Zuordnung, Nachlauf entfernt** (30.10.; Leon: „In der Webansicht bleibt die Anzahl der Personen in einem Raum
-  gleich, obwohl eine Person den Raum verlässt“, „Die Nachlaufzeit wird ja schon in Node-RED geregelt“, „Ich will,
-  dass das Licht dem folgt, was angezeigt wird“, „Die Wahrscheinlichkeit hängt an der getrackten Person“). Bis 0.54
-  hielt `seen_hold` = 10 s einen Raum, dessen eigener LD2450 jemanden maß, besetzt und seine Zahl auf 1; die Zahl kam
-  aus der Randverteilung des Raums, das Licht aus P(belegt) > c, die Punkte aus der wahrscheinlichsten Hypothese. Jetzt
-  eine Zuordnung (6). `fast_eval` zwei Stufen über 96,4 h; alle `fast_eval`-Läufe bis hier liefen mit
-  `seen_hold` = 0, live lief 10. Dunkel mit Person zählt 5×, Schaltvorgänge: *besetzt* an / davon kürzer als 5 s / Licht
-  an bei 2 min Nachlauf.
-
-  | Lauf | Wahrheit an, leer / aus, besetzt | gewichtet | leere Nacht / leeres Haus | Schalten |
-  |---|---|---|---|---|
-  | `seen_hold` 10 (bis 0.54 live) | 5,33 / 0,28 | 6,75 | 0 / 5,38 | 1606 / 218 / 551 |
-  | `seen_hold` 0 (Grundlinie aller Messungen) | 0,48 / 3,28 | 16,90 | 0 / 0 | 2173 / 1193 / 552 |
-  | Zuordnung, `occupied_off` 0,2 | 0,48 / 3,28 | 16,90 | 0 / 0 | 1795 / 866 / 548 |
-  | **Zuordnung, `occupied_off` 1/3** | **0,48 / 3,28** | **16,90** | **0 / 0** | **1846 / 884 / 548** |
-  | Zuordnung, `occupied_off` 0,5 | 0,48 / 3,28 | 16,90 | 0 / 0 | 2179 / 1012 / 550 |
-
-  *Die Zuordnung gegen `seen_hold` 0:* Das Licht weicht in 26,8 von 5784 min ab, die Wahrheit nicht. Indizien
-  (`tools/proxy_seated.py` aus d63245c): nur neu an: Person 1,0, unklar 3,7, niemand 2,7 min; nur alt an: Person 9,0,
-  unklar 0,1, niemand 3,0, davon 6,2 eine Strecke Küche 10.10. 12:47 ohne gemessenes Ziel (Handy im Esszimmer) und
-  zusammen 2,7 in Strecken mit gemessenem Ziel. 2 h Aufnahme im Takt der App (0,1 s), reine Zählung der Personen der
-  Anzeige gegen die Regel: Wechsel 266 → 225, kürzer als 1 s 56 → 33; die Sicherheit über die Hypothesen nimmt die
-  Schaltvorgänge bei Hypothesen 0,51 / 0,46 weg. Eine bekannte Person zählte in diesen 2 h 131-mal zeitweise nicht
-  (Median 0,4 s, 417 s zusammen; mit Spur längste 41 s, auf Kacheln längste 56 s). Eine Person an der Tür zu 50/50
-  macht den neuen Raum nicht an, bis sie 2/3 erreicht, und der alte geht aus, sobald ihr Punkt ihn verlässt; für den
-  neuen Raum sorgen *wird betreten* und *Ziel*. Ihr Ort wechselte mit Spur 287-, auf Kacheln 125-mal.
-  *`occupied_off`:* 0,5 hysteresiert kaum (so viele Wechsel wie die Grundlinie), 0,2 bringt gegen 1/3 fast nichts.
-  *Gegen `seen_hold` 10, also das, was live geschieht:* Das Licht weicht in 311 min ab. Nur noch `seen_hold` 10 an wäre:
-  Person 36,3 min (Wohnzimmer 17,7, Esszimmer 8,4), unklar 109,0 (Schlafzimmer 60,6), niemand 82,0 (Küche 22,3,
-  Flur 22,8). Die Wahrheit sagt 5,33 → 0,48 Licht im leeren Raum, 5,38 → 0 im leeren Haus, 0,28 → 3,28 dunkel
-  mit Person (Sofa 8.10. 19:06, 3,0 min im Wohnzimmer); gewichtet schlechter (6,75 → 16,90), das ist der Preis des
-  Nachlaufs, den Node-RED nicht ersetzt, wenn der Filter jemanden verliert, den der eigene LD2450 noch misst (9).
-  Die Zählung selbst ändert daran nichts: Die Filter-Spuren, P(belegt), *wird betreten* und *Ziel* sind in den drei
-  Stunden unverändert.
-- **Alles zusammen: 0.55.0** (30.10.; Liste Punkte 1–3, 10–14). `ld_view` weg, Geisterkarte weg, Echoquellen als
-  Alternative mit `M' ≤ 1`, eine Zuordnung ohne `seen_hold`. Die Frage dabei: Die Echoquellen holten ihr Ergebnis mit der
-  alten Regel (P je Raum > 2/3, mit den Unbekannten); die neue fragt nur nach Personen der Anzeige. Eine Sitzende, die das
-  Modell nur als Energie führt, bliebe dunkel. Gemessen tut sie das nicht: Derselbe Filter, zweite Stufe noch einmal
-  mit der alten Regel (`ov_all_oldrule`): Wahrheit 5,12 / 0 statt 4,35 / 0, leere Nacht und leeres Haus 0, Licht anders
-  20,9 min in 96,4 h (unter dem Rauschboden von 34–56), nur die alte an: Person 2,1 (Wohnzimmer 10.10. 14:55 87 s, 9.10.
-  16:54 17 s), unklar 4,2, keine Person 0,9 min; nur die neue an: 0,8 / 2,7 / 4,4. Wer sitzt, hatte eine Spur und ist
-  eine bekannte Person ohne Spur; die trägt jetzt die Energie (`ℓ(Person)` im Blick, 4.3), die vorher die Quelle hielt.
-  Reine Masse der Unbekannten ohne je eine Spur kommt nur im Kaltstart vor; auch dort wird die Sitzende der Simulation
-  mit dem ersten Ziel eine Person. Am Modell ist deshalb nichts ergänzt.
-
-  `fast_eval` zwei Stufen, 96,4 h, je mit und ohne 2 min Nachlauf wie Node-RED (`occupied` nachträglich: aus erst nach
-  120 s, ein neues An hebt es auf):
-
-  | Lauf | Wahrheit an, leer / aus, besetzt | gewichtet | leeres Haus | mit 2 min Nachlauf | leeres Haus |
-  |---|---|---|---|---|---|
-  | `seen_hold` 10 (0.54, live) | 5,33 / 0,28 | 6,75 | 5,38 | 75,75 / 0,00 | 7,70 |
-  | 0.53 (`seen_hold` 0) | 0,48 / 3,28 | 16,90 | 0 | 63,98 / 1,28 | 0 |
-  | nur Zuordnung | 0,48 / 3,28 | 16,90 | 0 | 64,18 / 1,28 | 0 |
-  | nur Echoquellen | 5,35 / 0 | 5,35 | 0 | 67,13 / 0,00 | 0 |
-  | **0.55.0** | **4,35 / 0** | **4,35** | **0** | **66,05 / 0,00** | **0** |
-
-  Leere Nacht überall 0. Indizien (`proxy_seated`) Person / unklar / keine Person, „neu an“ gegen „neu aus“, *netto* wie oben:
-
-  | gegen | Licht anders | neu an | neu aus | netto |
-  |---|---|---|---|---|
-  | live | 295,9 | 4,3 / 34,6 / 27,0 | 17,5 / 65,4 / 81,8 | +11,0 |
-  | live, beide mit 2 min | 300,0 | 2,8 / 26,3 / 32,5 | 12,9 / 59,3 / 86,9 | −3,9 |
-  | 0.53 | 212,8 | 30,4 / 79,6 / 33,4 | 9,9 / 3,6 / 9,6 | −78,6 |
-  | nur Echoquellen | 90,0 | 5,8 / 32,6 / 9,7 | 7,3 / 11,6 / 7,2 | +10,0 |
-
-  Die Wahrheit bleibt 0 dunkel mit Person (das Sofa 8.10. 19:06 hält das Modell jetzt selbst, nicht mehr `seen_hold`),
-  Licht in leeren Räumen bleibt 7.10. 22:22 (Balkontür, Esszimmer 1,80, Arbeitszimmer 2,07). Gegen live fehlen ohne
-  Nachlauf 17,5 min „Person“ dunkel (Küche 6,2, die Strecke 10.10. 12:47 ohne gemessenes Ziel; Arbeitszimmer 4,4, Wohnzimmer
-  3,3, Esszimmer 2,7), mit 2 min 12,9 bei 54 min weniger Licht ohne Person. Kaltstart (`trace` alle 5 s, höchste erwartete
-  Personenzahl im Haus): 10.10. 10:00 21,9 → 6,1, 8.10. 19:00 44,6 → 5,5, 8.10. 08:00 (leeres Haus) 1,3 → 0,8; was bleibt,
-  sind LD2450-Spuren, die im Kaltstart Personen sind; im Mittel liegt 10.10. 10:00 höher (3,3 → 3,9, über 3,5: 31 → 93
-  min). CPU gegen 0.54.4 (`presence-replay prof`, eine Stunde): 10.10. 12 Uhr 2,73 → 2,66 % eines Kerns, 8.10. 19 Uhr 0,94
-  → 1,16 %. Gespeichertes bleibt: `tracker.json` mit `seen_hold` und `ld_view` startet, gleicher Geometrieschlüssel,
-  Hintergrund und Zielkarte gleich übernommen.
-- **Personen nur mit Bewegungsmuster** (4.11.; Meldungen 31.10.–4.11.; Leon: Personen dürfen in der Wohnung entstehen und
-  verschwinden, aber nur, wenn das Bewegungsmuster es begründet, damit sich Fehler nicht endlos fortführen). Gemessen auf
-  den App-Aufnahmen (`dev/personenzahl/evalp.py`): 3.11. 08:30–15:45 nur die zweite Person zu Hause (ohne Dobby 11:25–14:00),
-  4.11. 11:30–17:25 nur Leon, zwei Nächte (beide im Schlafzimmer angenommen), die Meldungsfenster.
-  | | 3.11. zu viel / 2 Räume (min) | 4.11. zu viel / 2 Räume | Nacht Schlafzimmer (Ziel 2) | Bad „eine bleibt“ falsch |
-  |---|---|---|---|---|
-  | 0.57 | 90 / 65 | 88 / 39 | 1,00 / 0,99 | 5 s |
-  | + breiter Versatz (4.1) | 87 / 5 | 83 / 40 | gleich | 0 s |
-  | + Geister an Gehenden (4.2) = 0.58.0 | 89 / 6 | 81 / 38 | gleich | 0 s |
-  Verworfen: Erkennbarkeit κ strenger (α 2/4: Bad 3.11. mit Waschmaschine 110 → 158 min belegt), Echoquellen 10/60 min
-  (Esszimmer und Bad-„zwei“ weg, aber die Frau im Bad verloren, 0,97 → 0,20), Topf der Unbekannten kleiner beim Start
-  (`start_unknown` 0,01) oder schneller vergessen (10 min): 3.11. jeweils schlechter (zu viel 118 / 132). Der Rest von
-  0.58.0 sind die Waschmaschine (3.11. 14–15:30, Ring 2 ruhig ≈ 55, kein LD2450-Ziel), das ruhende Ziel am Esstisch,
-  solange jemand an der Arbeitsplatte hinter dem Esszimmer-Sensor steht, und die zweite Schlafende: Sie verliert nachts ihre
-  Existenz durch das LD2410C und das Nicht-Erfassen (ohne das Schlafzimmer-LD2410C hält sie Minuten länger), nicht durch
-  den Ablauf (`unseen_life` = ∞ ändert nichts).
-- **0.59: Licht nach Node-RED, leeres Haus, mehrere Starts** (4.11. abends; Leon: Licht aus, während jemand im Raum ist,
-  ist schlimmer als Licht im leeren Raum; im leeren Haus darf nirgends Licht sein). `dev/personenzahl/evalp.py` simuliert
-  das Präsenzlicht (an bei belegt, aus nach 120 s ohne) und spielt jedes Fenster von 2–6 Startzeiten nach: Die Kennzahlen
-  hängen chaotisch von der Vorgeschichte der Hypothesen ab (3.11. „Licht zu viel“ 0.58 zwischen 172 und 285 Raumminuten
-  je Start; die Zahlen der Tabelle oben aus einem Start waren deshalb irreführend). Leere Fenster (stundenlang kein
-  LD2450-Ziel; von Leon zu bestätigen): 31.10. 12:40–14:30, 1.11. 13:00–19:15, 2.11. 13:15–16:10 und 19:30–22:15.
-  | Mittel über die Starts | 0.57 | 0.58 | 0.59 |
-  |---|---|---|---|
-  | leeres Haus, Licht (Raumminuten) | 0 | 0 | 0 (16 Starts) |
-  | 3.11. Licht zu viel | 180 [121–242] | 224 [172–285] | 201 [201–202] |
-  | 4.11. Licht zu viel / Personen zu viel | 105 / 76 | 110 / 83 | 102 / 48 |
-  | 4.11. dunkel mit ruhender LD2450-Spur (min) | 3,7 | 0,1 | 1,5 (das Spiegelbild am Esstisch beim Kochen) |
-  | Bad „eine bleibt“ falsch / „plötzlich zwei“ P(≥ 2) | 5 s / 0,97 | 0 s / 0,95 | 0 s / 0,36 |
-  „Licht zu viel“ enthält die gewollten 2 min Nachlauf bei jedem Raumwechsel. Verworfen: κ Gamma(2), κ neu gezogen alle
-  3 min (beide im Rauschen), eine einzige Lebensdauer von 600 s (gut, aber nicht gemessen), 0,07 × 36 min (Licht im
-  leeren Haus). Der Rest am 3.11. ist das Bad: Aus Dobbys Spuren (13:18–13:53) wird eine Person, die die Energie der
-  Waschmaschine bis 15:55 hält. Die zweite Schlafende: Ihr r fällt nachts durch die Existenzaktualisierung (alle
-  Hypothesen hatten sie mit r = 1); weder breitere Amplituden (Gamma(1)) noch κ Gamma(0,3) ohne Neuziehen halten sie.
-- **0.60: Kein Eintrag gewiss, Quellen so beweglich wie Personen, κ gemessen** (5.11.; Leon: 0.59 sei schlechter als main).
-  Die leeren Fenster aus 0.59 mit den Telefonen bestätigt, dazu vier weitere Ein-Personen-Zeiten (2.–4.11.). Mittel über
-  2–6 Starts je Fenster,
-  Summe über die fünf Ein-Personen-Fenster (Licht zu viel in Raumminuten mit den 2 min Nachlauf je Raumwechsel; dunkel mit
-  ruhender LD2450-Spur in min; Personen zu viel in Personenminuten):
-  | | leeres Haus | Licht zu viel | dunkel mit Sitzer | Personen zu viel | Bad „eine bleibt“ / „zwei“ |
-  |---|---|---|---|---|---|
-  | 0.57 (main) | 0 | 590 | 5,6 | 441 | 5 s / 0,97 |
-  | 0.59 | 0 | 523 | 3,9 | 326 | 0 s / 0,36 |
-  | + `record_life` | 0 | 466 | 3,9 | 247 | 0 s / 0,36 |
-  | + Quellen 0,25 m, 8 Stärken | 0 | 464 | 3,1 | 224 | 0 s / 0,37 |
-  | + κ α = 3 (0.60) | 0 | 464 | 3,1 | 167 | 0 s / 0,31 |
-  Verworfen: Quellen 0,1 m / 12 Stärken (leeres Haus 12 min, doppelte Rechenzeit), dazu lange Quellen 0,07 × 36 min (Bad 3.11.
-  111 → 7 min, aber die Sitzende im Bad 31.10. 19:22 107 s dunkel und das leere Haus 4 h hell: lange Quellen nehmen Sitzenden ihre
-  Energie), nur 12 Stärken (Bad 19:22 14 s dunkel), κ allein (Summe 519). Gleich weit vom Sensor wie die Person
-  (Mehrweg erster Ordnung, F_Liu2025 Abschn. 2.2): nur der Spiegel am Esstisch (0,14 m), sonst kein Muster (Median 0,68 m
-  gegen 0,80 m mit 15 min Versatz); kein eigener Baustein. Offen: das Spiegelbild am Esstisch beim Kochen (4.11.,
-  31 min), die Badperson 3.11. 14:00–14:40 (Dobby + Waschmaschine), Einträge an der Wohnungstür nach dem Aufbruch
-  (1.11. 12:55: draußen läuft ein Eintrag in 2 min ab, an der halb gesehenen Türkachel langsamer; was bleibt, steht
-  innen an der Tür), die zweite Schlafende.
-- **Störquellen** (5.11. nachmittags, Zweig `stoerquelle`, 4.5; Meldung 5.11. 13:51 „Licht im leeren Wohnzimmer“).
-  Gemessen auf den App-Spuren der leeren Fenster (Skalen in 4.5). Bewertung `dev/personenzahl/evalp.py`, Mittel über die
-  Starts, gegen 0.60 (`mittelk3` auf den alten Fenstern, `d060` auf denen vom 5.11.):
-  | | 0.60 | Störquellen |
-  |---|---|---|
-  | leeres Haus 5.11. (`leer0511` / `leer0511b`, Raumminuten Licht) | 159 / 23,6 | 41 / 0 |
-  | Meldung 5.11. 13:51 (s falsch) | 756 | 0 |
-  | leeres Haus, alte Fenster (16 Starts) | 0 | 38,9 (ein Start 1.11. 12:00: 234 min Flur) |
-  | Licht zu viel / dunkel mit Sitzer / Personen zu viel (fünf Ein-Personen-Fenster) | 464 / 3,1 / 167 | 460 / 3,8 / 163 |
-  | Nacht 1./2.11.: Schlafzimmer dunkel (min) | 0,5 | 0,8 |
-  | Spiegel am Esstisch, Meldungen 4.11. 11:33 / 17:25 (s falsch) | 515 / 182 | 515 / 213 |
-  | Rechenzeit (dieselben Fenster) | 8 921 CPU-s | 11 444 CPU-s (1,28×) |
-  Der Luftentfeuchter wird eine Störquelle: Jede neue Spur dort hängt sich an sie (`known_clutter` 0,99), die Person
-  verliert, weil der Wohnzimmer-LD2450 sie sähe. Was bleibt (10:20–11:00), ist eine Person auf einer Spur am selben Ort,
-  die innerhalb von 3 min gegen die Störquelle gewinnt, ohne LD2410C noch deutlicher; warum, ist nicht geklärt (der Ort
-  wandert gemessen nur 0,06 m, Haltezeiten sind ein Kandidat). Die mehr „dunkel mit Sitzer“ sind fast alle das Spiegelbild am Esstisch, das jetzt eine
-  Störquelle ist, während die eine Person woanders war (2.11. 16:27–16:33 im Arbeitszimmer, 4.11. 11:52–11:58 in der
-  Küche; geprüft an den Spuren der anderen Sensoren): dort ist dunkel richtig. Echt dunkel mit Person mehr: 3.11. 10:04
-  Wohnzimmer 7–9 s in zwei von drei Starts, die Nacht 1./2.11. 0,3 min. Das leere Haus 1.11. (Start 12:00) ist der
-  bekannte Eintrag an der Wohnungstür nach dem Aufbruch (r ≈ 0,65 stundenlang, ohne Störquelle; unter 0.60 in allen 6
-  Starts aus); er hängt chaotisch an der Vorgeschichte. **Nicht besser nach Leons Maßstab, nicht freigegeben.**
-  Was die Tests zeigen (pytest, drei schlagen fehl): (1) Zwei, die nebeneinander liegen und die beide LD2450 als ein
-  Ziel sehen (`test_two_lying_together_stay_two_for_long`): Nach 15 min nimmt eine Störquelle von Sensor b dessen
-  Spuren, die zweite Person verliert ihre Existenz. Eine Person plus Störquelle erklärt zwei Sensoren mit eigenem Versatz
-  an fast derselben Stelle billiger als zwei Personen, die sich gegenseitig nur teilweise verdecken (4.1, Auflösung):
-  Die Störquelle hat ihren Ort frei, verdeckt die zweite Person für ihren Sensor, und ihre Erfassung (0,115 /s) ist
-  schneller als die einer Stehenden (0,034 κ /s), also gewinnt sie bei jeder Spur nach kurzer Lücke. (2) Beim Start ohne
-  Wissen (`test_somebody_at_the_wall_…`, eine Sitzende, die nur ein Sensor sieht, ohne LD2410C): Eine Störquelle, die
-  beim Start schon eine Spur hat, ist so wahrscheinlich (`clutter_birth` × `clutter_life` × Anteil mit Spur ≈ 4·10⁻³ je m²)
-  wie eine unbekannte Person dort (`start_unknown` = 1 über die Wohnung, angenommen); P(belegt) 0,98 → 0,02. Das ist der
-  Fall „dunkel mit Person“, vor dem die Aufgabe warnte.
-  Verworfen auf dem Weg (Schnellprüfung `leer0511`, `leer0511b`, Meldungen): die Sicht des Sensors in der Erfassung und
-  beim Wiederfinden der Störquelle wie bei einer Person (die Stelle des Luftentfeuchters sieht der Esszimmer-Sensor nur
-  zu 0,5; dort, wo ein gemessenes Ziel bis 0,4 m hinter einer Wand liegt, ist die Sicht 0 und die Störquelle konnte nie
-  wiedergefunden werden: `leer0511` 132 bzw. 48 Raumminuten statt 41); das Wiederfinden mit 1 wie beim Geist statt mit
-  dem Kern um die gehaltene Stelle (72). Offen: dieselbe Spur kehrt nach langen Haltezeiten zur Person zurück; ein Störquellen-Ort, der zwei
-  Personen trennt; das Speichern der Störquellen über einen Neustart.
-  **Zweiter Durchgang** (5.11. abends; Leon: die Zahl der Schlafenden nachts ist egal, solange die Bleibende morgens wieder
-  eine Person ist; Kaltstart einer Sitzenden ist das Hauptproblem). Drei Änderungen, alle in 4.5: Der Ort einer Störquelle
-  zittert wie der einer Stehenden (0,02 m/√s) und wird auf die Sicht ihres Sensors beschnitten; `clutter_life` 1,9 h
-  (Little: gemessene Belegung je Geburt) statt 5,3 h. Der Kaltstart (`test_somebody_at_the_wall_…`, ohne LD2410C) bleibt
-  damit beim Verhältnis der Anfangsdichten, P(belegt) 0,72 statt 0,02, das Licht ist an; die Schwelle des Tests ist von
-  0,9 auf 0,6 gesenkt. Ursache war nicht die Anfangsdichte, sondern die Lage: Ein fester Ort sagt eine ruhende Spur
-  besser voraus als eine Person, deren Ort zittert (mit `still_noise` 10⁻⁶ für die Person blieb P(belegt) bei 0,73),
-  bei jeder ruhenden Spur, auch einer echten Sitzenden. Der Test der zwei Liegenden prüft jetzt Leons Anforderung
-  (`test_when_one_of_two_lying_together_gets_up_the_other_is_still_there`, beide Reihenfolgen: P(belegt) > 0,9 nach dem
-  Hinausgehen). Volle Bewertung (Lauf `stoer-full2`, score = Licht zu viel + 5 × dunkel mit Sitzer):
-  | Fenster | 0.60 | Störquellen |
-  |---|---|---|
-  | leer0511 / leer0511b (Licht) | 159,2 / 23,6 | **0 / 0** |
-  | leer0111 (Licht, schlechtester Start) | 0 (0) | 39,3 (236, Start 12:00) |
-  | leer3110, leer0211a, leer0211b | 0 | 0 |
-  | ein0211a / ein0211b / ein0311 / ein0311b / ein0411 (score) | 60,0 / 79,1 / 147,4 / 21,2 / 171,6 | 60,0 / 78,5 / 147,1 / 21,2 / 170,2 |
-  | morgen0211 / 0311 / 0411 / 0511 (score) | 46,4 / 82,7 / 270,7 / 91,3 | 46,4 / 87,3 / 263,3 / 91,3 |
-  | Nacht 1./2.11. / 2./3.11. Schlafzimmer dunkel (min) | 0,5 / 3,3 | 0,8 / 3,2 |
-  | Meldung 5.11. 13:51 / Spiegel 4.11. 11:33, 17:25 (s falsch) | 756 / 515, 182 | 0 / 515, 213 |
-  Summe score 970,5 → 965,3. Rechenzeit, gepaart unter gleicher Last gegen `clutter_birth` = 0 (ein0411, ein0311,
-  nacht0102, leer0111): 8 070 → 9 421 CPU-s, 1,17×. Das Mehr an „dunkel mit Sitzer“ in ein0411 (07:30) ist das Spiegelbild am Esstisch (die Person
-  war in der Küche, richtig dunkel); morgen0311 / morgen0511 ist das Schlafzimmer 06:55–07:03 bzw. 06:51–06:54 leer, beides
-  während der Nachtruhe. Das Wohnzimmer 5.11. 10:20–11:00 und 3.11. 10:04 sind weg. **Nicht freigegeben:** leer0111 Start
-  12:00 hält 236 min Licht im Flur. Unter 0.60 ist dieser Start 0; ausgelöst wird es beim Aufbruch: Eine Störquelle nimmt
-  um 12:52 die Spur einer an der Wohnungstür Stehenden (Gewicht 0,3), danach bleibt ein Eintrag bei (−0,6 | 6,0) mit r
-  0,5–0,7 sechs Stunden, ohne eine einzige Spur; was r wieder hebt, kann nur das LD2410C des Flurs sein (dessen Energien in der Stunde
-  gewöhnlich sind; der offene Punkt „Einträge an der Wohnungstür nach dem Aufbruch“ aus 0.60).
-  **Dritter Durchgang** (5.11. abends, nur leer0111 Start 12:00). Zerlegt je Minute (logit r des Eintrags bei
-  (−0,6 | 6,0), vorübergehend instrumentiert): keine neue LD2450-Spur −0,1 bis −0,25, Ablauf (2 min, halb gesehene
-  Türkachel) −0,6 bis −1,1, LD2410C Flur +0,5 bis +1,6 je Minute; im Gleichgewicht r ≈ 0,65. Keine Breitband-Energie
-  (ab 12:53 Flur bewegt 4,5–5,4, ruhig 3,4–4,0, Wohn- und Arbeitszimmer ebenso ruhig wie den ganzen Nachmittag); der
-  Hintergrund, mit dem dieses Fenster startet (gelernt am 3.11.), liegt im Flur ruhig Ring 4–6 bei 1,4–2,1, gemessen
-  sind 3,5 (Hintergrund und Anker von 31.10. und 4.11.: 3,1–3,3). Der Eintrag erklärte den Rest, und weil sein Anteil im
-  E-Schritt zählte, lernte der Hintergrund ihn nie (Fixpunkt `e = b + r·S`, 4.3). Ohne Störquellen (`clutter_birth` = 0)
-  gleich bis 12:52, dann geht die Person bei diesem Start hinaus (Eintrag draußen, r 0,57 → 0,13 in 2 min) statt an der
-  Tür zu bleiben: In den Hypothesen mit 0,3 Gewicht nahm eine Störquelle ihre letzte Flurspur. Zwei Versuche an der
-  Wurzel (4.3), beide verworfen: (a) Der Hintergrund lernt immer ohne die Personen ohne Spur (`stoer-full3`): leeres
-  Haus 0,3 (schlechtester Start 1,7), aber die Schlafenden wurden Hintergrund (Nacht 1./2.11. Schlafzimmer 56,6 min
-  dunkel statt 0,5, morgen0511 dunkel mit Sitzer 16,5 statt 6,0; score 985,7). (b) Dasselbe erst nach 600 s ohne
-  LD2450-Ziel im Gehäuse (`ld_anchor_quiet`, wie der Anker; `stoer-full4`):
-  | Fenster | 0.60 | Störquellen |
-  |---|---|---|
-  | leer0511 / leer0511b | 159,2 / 23,6 | 0 / 0 |
-  | leer0111 (schlechtester Start) | 0 (0) | 0,8 (4,7, Start 12:00, 13:00–13:04) |
-  | übrige Leer-Fenster | 0 | 0 |
-  | ein0211a / 0211b / 0311 / 0311b / 0411 (score) | 60,0 / 79,1 / 147,4 / 21,2 / 171,6 | 60,0 / 78,7 / 136,7 / 21,2 / 170,2 |
-  | morgen0211 / 0311 / 0411 / 0511 (score) | 46,4 / 82,7 / 270,7 / 91,3 | 46,4 / 87,2 / 263,3 / 91,3 |
-  | Nächte, Schlafzimmer dunkel (min) | 0,5 / 3,3 | 0,8 / 3,2 |
-  | Meldung 5.11. 13:51 / Spiegel 11:33, 17:25 (s falsch) | 756 / 515, 182 | 0 / 515, 213 |
-  Summe score 970,5 → 955,0, aber leer0111 Start 12:00 noch 4,7 Raumminuten Licht (bis 600 s nach der letzten Flurspur
-  lernt der Hintergrund noch mit dem Eintrag), und zwei Tests der Lernschleifen schlagen fehl
-  (`test_a_sitter_for_an_hour_is_not_learned_as_background`: Ring 2–3 von Sensor a 11 statt 4,5;
-  `test_a_sitter_the_model_starts_with_is_found_and_not_learned`: P(belegt) bis 0,51): Eine Sitzende, die der LD2450 nur
-  alle 15 min sieht, wird Hintergrund – genau der offene Punkt aus „Lernschleifen“ (aus den Energien allein ist eine
-  Person, die sich nicht bewegt, von einem anderen Hintergrund nicht zu trennen). Gemessene echte Lücken sind kürzer
-  (höchstens 240 s, 4.1), aber dunkel mit Person wiegt schwerer; nicht übernommen. Der Branch bleibt beim zweiten
-  Durchgang (leer0111 Start 12:00: 236 min). Ein Befund für die Bewertung: Die Leer-Fenster vom 1.11. starten mit dem
-  Hintergrund vom 3.11., dessen Flurwerte halb so hoch sind wie am 1.11. gemessen.
-- **0.61: Woher „Licht zu viel“ und „Personen zu viel“ kommen** (5.11. abends, Branch `lichtzuviel`). Bezug 0.60 auf allen
-  Fenstern mit allen Starts (Lauf `lzv-base`; Maßstab Licht zu viel der Ein-Personen-Fenster + 5 × dunkel mit Sitzer der
-  Ein-Personen- und Morgenfenster: 600). Zerlegt je Sekunde gegen das ideale Licht (`lichtideal.py`: Raum der eigenen
-  Sensorspur ≥ 10 s, 2 min Nachlauf), je Ein-Personen-Fenster ein Start, Raumminuten Licht ohne ideales Licht nach der
-  Person, die den Raum zuletzt belegte (`zerleg.py` im Scratchpad):
-  | Ursache | Raummin |
-  |---|---|
-  | eine Person, nur Durchgang oder Raumwahl (meist echt: das Ideal kennt keine Durchgänge unter 10 s) | 98 |
-  | zweite Person mit junger Spur (< 60 s), geboren als „gehört einer Person mit Spur“ (gehaltene Spur des LD2450 am Ausgang des alten Raums, ein Geist oder ein Halten eines zweiten Sensors am selben Fleck) oder als wiederbelebter Rest-Eintrag | 93 |
-  | zweite Person ohne Spur: Bad 3.11. (Dobby + Waschmaschine) 61, Küche 4.11. 12:10 (Energie nach dem Kochen, Eintrag in der Vorratsecke, Sicht 0,1) 12, Rest 21 | 94 |
-  | zweite Person mit alter Spur: Spiegelbild am Esstisch beim Kochen, Fenster offen 4.11. 11:18 | 39 |
-  Nach Dauer: 51 Belegungen einer zweiten Person unter 10 s kosten mit ihrem Nachlauf 57 Raumminuten, 27 von 10–60 s 61.
-  „Personen zu viel“ sind vor allem kleine r-Reste ohne Licht (2.11. morgens) und die Badperson. Die Morgen: Die zweite
-  Schlafende ist schon abends verloren (2.11. 22:49 r 1,0 → 0,07 in 2 min); wer liegen bleibt, ist nach dem Aufstehen des
-  anderen minutenlang ein Geist. Gemessen 2./3.11. 01–06 Uhr: der Schlafzimmer-LD2450 meldet das zweite Ziel nur in
-  Schüben, Lücken dazwischen Median 869 s / 60 s, 90 % 53 / 40 min, 168 / 114 min der 300 in Lücken über 4 min; mit κ ≥ 0,105
-  (unterste Stufe des Gitters, α = 3) und q ≈ 0,6 neben dem Partner erwartet das Modell eine Erfassung etwa alle 8 min.
-  Verworfen: `kappa_switch` 1/3600 s statt 1/600 s (Maßstab 600 → 584, nicht gemessen, morgens 24,2 → 20,8, tags 3,1 →
-  4,0 min dunkel); lange Echoquellen 0,07 × 36 min (gemessen mit 60-s-Lücken, 4.3) zusammen mit 0.61: Maßstab 589 → 527,
-  3.11. 136 → 86, Personen zu viel 145 → 79, Bad 31.10. 19:22 weiter 0 s (in 0.60 107 s dunkel), aber das leere Haus 1.11.
-  bei einem von sechs Starts (11:00) 4,7 min Licht im Flur: ein Eintrag an der Wohnungstür (Sicht 0,4–0,56) nach dem
-  Aufbruch, gehalten von Breitband-Energie der bewegten Ringe (10–20 statt 3–5, in Flur, Wohn- und Arbeitszimmer zugleich,
-  12:53–13:05), bis die Stille von 10 min ihn freigibt. Offen.
-- **0.61 = Störquellen + Hintergrund ohne Personen ohne Spur nach 10 min Stille** (5.11. abends, beide Zweige
-  zusammengeführt). Die Bewertung startet jedes Fenster jetzt mit dem Gelernten, das zu den Sensoren seiner Aufnahme gehört:
-  1.–3.11. morgens liefen vor der Kalibrierung vom 3.11. (Wohn- und Arbeitszimmer Richtung und Maßstab), `learned_0311` hat
-  danach gelernt, im Flur halb so hohe ruhige Werte wie am 1.11. gemessen; das trug den Eintrag an der Wohnungstür
-  (leer0111 Start 12:00). Mit `learned_3110` für diese Fenster, Lauf `k061` gegen `b060` (0.60, gleiche Bewertung): leeres
-  Haus in allen 22 Starts 0 (0.60: 5.11. 183 Raumminuten), Maßstab 974 → 956, Personen zu viel 290 → 275, Meldung 5.11.
-  13:51 756 → 0 s falsch; schlechter das Spiegelbild am Esstisch 4.11. 17:25 (182 → 213 s). Preis der 10-min-Regel: Wer
-  länger als 10 min ohne LD2450-Ziel still ist, wird nach etwa 0,7 h Hintergrund; gemessen bei Wachen höchstens 240 s,
-  bei Schlafenden länger (Licht dort nachts gesperrt, morgens findet der LD2450 sie wieder).
-- **0.62: Zwei als ein Ziel** (Meldung 6.11. 19:54: zu zweit im Bad, Leon geht hinaus, die zweite Person bleibt, das
-  Licht geht aus). Nachgespielt aus den Aufnahmen ab 18:30 unter 0.61: Um 19:27:36 zwei Personen im Bad, ab 19:28:46
-  meldet der Bad-LD2450 nur ein Ziel, die zweite Person wird zur Person ohne Spur neben Leon (Dichte bei (−2,97 | 3,09),
-  Gehanteil unter 1 %: sie folgt ihm nicht und wandert nicht). Ihr r fällt von 0,997 (19:28:51) auf 0,02 (19:30:30),
-  Δlogit r = −10,3, zerlegt je Schritt über die Bernoulli-Aktualisierungen der Hypothese mit dem Gewicht ≈ 1: **Nicht-
-  Wiederfinden der gehaltenen Spur Leons −6,0**, LD2410C −2,8, keine neue Spur −1,7, Ablauf (`expire`) −0,5, Zusammenlegen
-  +0,6. Erst als r klein war, wanderte ihre Restmasse relativ nach außer Haus (Bad → Flur → Wohnungstür; außer Haus prüft
-  nichts, 19:30:10 0,68 der Dichte) und lief dort ab; mit r < 0,01 ging sie an die unbekannten Personen zurück. Von da an
-  22 min eine Person im Haus. Ihre frische Spur ab 19:51:58 bei (−3,95 | 4,25) war in allen Hypothesen ein Geist (eine
-  Person dort hätte nur aus der Intensität der unbekannten kommen können, log −13 bis −18 gegen den Geist), bis um 19:54:26
-  die Lebensdauer des Geistes (39 s) und das LD2410C umschlugen. Ursache: Nicht-Wiederfinden zählte gegen jede Person
-  nahe der gehaltenen Stelle, als könne der Sensor die Unaufgelöste getrennt wiederfinden; sie und der Eigentümer sind
-  aber eine Quelle mit höchstens einem Ziel (A_Beard2015 Gl. 16–17). Seit 0.62 mit dem Anteil, den der Sensor auflöst
-  (4.1). Danach: P(Bad ≥ 2) 19:28:40–19:51:58 im Mittel 0,996, 19:52:20–19:54:55 P(belegt) ≥ 0,99 (0 s falsch).
-  `unseen_life` ∞, `clutter_birth` 0 und `res_*` 1,2/1,8 m änderten unter 0.61 wenig: nicht der Ablauf, das Wiederfinden war es.
-  Bewertung `res062` gegen `k061`: leeres Haus in allen Starts 0; Licht zu viel 821 → 809 Raumminuten, dunkel mit Sitzer
-  27,1 → 29,9 min, Leons Maßstab 956,5 → 958,5 (+2,0; davon ein0411 +2,0 min = 10: das Spiegelbild am Esstisch 4.11.
-  11:36–11:39, die Person war in der Küche, dunkel ist dort richtig; morgen0411 +1,9, morgen0511 −1,1); Personen zu viel
-  275 → 407 Personenminuten (Unaufgelöste neben einer Person bleiben, auch wenn es keine sind: ein0411 60 → 170); Meldung
-  5.11. 13:51 weiter 0 s falsch, 4.11. 17:25 213 → 182 s, 31.10. 19:43 „plötzlich zwei“ P(≥ 2) 0,29 → 0,98 (ein Eintrag aus
-  dem Start ohne Wissen neben Leon); Rechenzeit 0,87×. Die Meldung 6.11. selbst bleibt in der Bewertung 122 s falsch, unter
-  0.61 ebenso: Ihre Daten beginnen 19:39:55 ohne gespeicherten Zustand, das Nachspiel weiß nichts von der zweiten Person
-  (sie war da seit 19:27 verdeckt), und eine Person entsteht nicht im Raum (Vorgabe 1.3). Offen: ein schnelleres
-  Wiederannehmen nach einem Verlust, ohne Personen im Raum entstehen zu lassen.
+  Badezimmer oder auf dem Sofa im Wohnzimmer nicht verloren werden.“). Bewertet auf den Wahrheiten 6.–8.10. (Daten
+  gelöscht; das Fenster 8.10. 19:04 noch mit dem falschen Gast). Gemessene Amplitude Sitzender (4.3): Bad 0,35,
+  Sofa 0,58; je Platz Streuung von log g 0,3–0,6, zwischen den Plätzen Mediane 0,3–2,9. Was sich zeigte:
+  - Personen ohne Spur hatten g = 1. Das LD2410C widerlegte eine stille Sitzende, sobald ihre Spur endete.
+    *Gemessene Amplitude weitertragen* (nur was eine Spur gemessen hat, bleibt nach ihrem Ende; ohne Messung g = 1)
+    hielt Bad und Sofa ohne zusätzliches Licht im leeren Raum. In 0.27 übernommen, heute in `filter/ld_weigh.rs`.
+  - *Voller Amplituden-Prior auf den Kacheln* (jede Person ohne Spur darf leise sein) hielt das Bad, erfand aber,
+    wo nichts widerspricht: 24,6 min Licht im leeren Schlafzimmer, jemand im Flur der leeren Wohnung. Eine
+    Amplitude, die keine Messung stützt, macht das LD2410C stumm gegen jeden Fehler seines Hintergrunds.
+  - Der Hintergrund wandert schneller, als 6 h Vergessen ihm folgen (Flur morgens: gelernt 1,9, gemessen 5,1).
+    0,7 h (gemessen) beseitigte die Person im Flur; `ld_forget` ist heute 0,7 h.
+  - Ablauf nach Prüfbarkeit (Chernoff-Stein) und ein Hintergrund-Prior aus der Streuung zwischen den Sensoren
+    änderten den Flur nicht bzw. erfanden Personen in der Küche (je ein Fenster; nicht belastbar).
+- **0.27: korrigierte Wahrheit 8.10.** (10.10.; Leon hat den Abend aus Sensoren und Telefonen neu rekonstruiert.)
+  Auf dem Balkon war niemand. Die „Person am Esstisch“ 19:04–19:10 war ein Geist des Esszimmer-LD2450 (frische
+  Spur ohne Weg dorthin, ruhige Ringe des LD2410C von etwa 10 auf 42–100; Ursache unbekannt). Das Ziel auf der
+  Balkonseite (4,6–5,0 | 2,0–2,3) ist ein wiederkehrender Spiegel- oder Winkelgeist, so weit vom Sensor wie das
+  Sofa. 0.27 = gemessene Amplitude weitertragen, Hintergrund 0,7 h, ohne die Balkon-Regel aus 0.26. Lehren: Eine
+  Regel, deren ganzer Nutzen aus einem Fenster kommt, hängt an der Wahrheit dieses Fensters. Und 0.26.1 hielt das
+  Sofa 19:04 nur zufällig: Ein falscher Eintrag auf dem Balkon war als Ersatz übrig (richtig im Ergebnis, falsch
+  im Grund).
+- **Gelerntes bleibt bei neuer Kalibrierung** (11./12.10.). Damals behielt die App Geisterkarte und Hintergrund bei
+  kleinen Lageänderungen; auf der Wahrheit (Daten gelöscht) änderte das nichts. Überholt: Die Geisterkarte ist seit
+  30.10. weg, und seit 29.10. verwirft jede Sensor- oder Geometrieänderung alle Kalibrier- und gelernten Daten
+  (Leon, 29.10.).
+- **Blick des LD2410C je Raum** (12.–14.10.; live 0.30.0 bis 30.10.). Ein gemessener Faktor je Paar Sensor ← Raum
+  statt eines gemeinsamen. Manche Paare waren über Tage stabil (Esszimmer ← Wohnzimmer 0,53–0,65), andere nicht
+  (Flur ← Esszimmer 0,51–1,00, ein Tag allein 2,1). Auf der Wahrheit änderte er nichts. Entfernt 30.10. (4.3 „Blick
+  in einen anderen Raum“; Daten gelöscht).
+- **Kaltstart: die Unbekannten liefen davon** (30.10.; 4.3 „Verrechnung“). Ohne Gelerntes und ohne Personenstand
+  stiegen die erwarteten Personen im Wohnzimmer bis 18 (10.10. 10:00), am 8.10. 19:00 bis 43. Ursache war die
+  Rechnung, nicht ein Gerät und nicht der Hintergrund. Die Unbekannten galten als „höchstens eine im Blick“, ihr
+  Faktor `L̄ (1 + Λ) / (1 + Λ L̄)` wurde aber auf die Intensität angewandt. Für Λ ≪ 1 ist das der Bernoulli-Schritt;
+  darüber erlaubt er `Λ' ≤ 1 + Λ`, also bis zu eine Person mehr je Block. Weil die Energie immer nur eine Person
+  erklärte, gab es keinen Halt (Test mit den Energien von drei Personen: nach 30 Blöcken 29 im Blick). Schwache
+  Gegenbelege wirkten kaum (L̄ = 0,9 bei Λ = 10: −0,1). Im warmen Betrieb lief dasselbe unsichtbar (8.10. 21:10
+  Λ = 34 im Blick des Wohnzimmers, Echoquellen dabei aus). Seitdem `1 − M + ∫ m L` wie für eine Person, `M' ≤ 1`
+  (4.3; im Code „at most one of them in view“, `filter/ld_weigh.rs`); für kleines M dieselbe Zahl bis auf M². Das
+  begrenzt nicht die Personenzahl: Spuren und bekannte Personen ohne Spur sind unbegrenzt. Nur belegt Energie
+  allein keine zweite Person je Blick. Erwogen, nicht gerechnet: die Überlagerung mit der eigenen mittleren Masse
+  (Mahler 2009; Nannuru, Coates & Mahler 2013). Kaltstart, höchste Personenzahl im Haus vorher → nachher: 21,9 →
+  5,5 und 44,6 → 3,7 (je 2–3 h Aufnahme; Daten gelöscht). Preis: Ohne die aufgeblähte Intensität ging die
+  Echoquelle wieder an und nahm einer zweiten Sitzenden die Energie (nächster Eintrag).
+- **Echoquellen als Alternative** (30.10.; 4.3 „Verrechnung“). Zwei sitzen, der Filter führt eine Person, die
+  zweite ist nur Energie. Geht die eine, stand eine Echoquelle 4–9 min lang am Platz der Gebliebenen auf „an“, bei
+  20 s Lebensdauer: Im Zustand der Quellen konkurrierte nur „aus“ mit ihr, und die Normierung hielt sie oben. Eine
+  Person ohne Spur bekam im Blick `P(keine Quelle) · ℓ`, etwa 0,01 je Sekunde; niemand konnte die Energie
+  übernehmen. Der Faktor war die Unabhängigkeit von Person und Quelle, in jedem Block neu angewandt. Bei Ziel gegen
+  Clutter steht die Alternative nur im Nenner (B_GarciaFernandez2018 Gl. 45). Seitdem sind Echoquelle und Person
+  Alternativen, gerechnet gegen die bekannten Personen ohne die Unbekannten (`filter/ld_weigh.rs`).
+  Dazu `Z ≥ 1`: Eine Quelle, die nichts erklärt, ist kein Beleg für eine Person (im Code `ze.max(0.0)`). Ohne das
+  zählte das Ende einer Quelle als Beleg für jemanden (Esszimmer 167 min unklar, lange Strecken nachts ohne
+  Energie). Die Korrektur von 0.27 erfand Personen, weil `Z < 1` die Unbekannten aufblähte und die Intensität
+  keinen Halt hatte; beides ist mit `Z ≥ 1` und `M' ≤ 1` zu.
+  Weitere Formen, gemessen mit `fast_eval` über 96,4 h gegen Indizien (`proxy_seated`, keine Wahrheit), meist nur
+  eine Stufe, also nicht belastbar (Daten gelöscht):
+  - Gegen alle Personen samt Unbekannten: fast dasselbe Licht, doppelte Rechenzeit. Nur gegen Personen mit Spur:
+    7,5 min mehr Sitzende dunkel für 13 min weniger Licht ohne Person (zwei Stufen).
+  - Bernoulli-Nenner für die Unbekannten: kein Gewinn, mehr Code.
+  - Quelle an die Person gebunden (`ρ + ν · P(jemand im Blick)`, J_Park2020 Gl. 16): auf der Wahrheit 3,00 statt
+    5,38 min Licht im leeren Raum, auf den Indizien netto schlechter (mehr Sitzende dunkel). Die Zahl begonnener
+    Quellen folgte dem Prior von ν; ν war so nicht messbar. Nicht übernommen. Befund: Die Quellen, die wirklich
+    etwas halten, hingen an Personen.
+  - Schweif oder Gewinn je Sensor fest: kaum Gewinn bzw. im Wohnzimmer 40,8 min mehr dunkel mit Person. Wer einen
+    Sensor lauter macht, schickt die leise Person woanders hin.
+- **Eine Zuordnung, Nachlauf entfernt** (30.10.; Leon: die Anzahl der Personen bleibt in der Webansicht gleich,
+  obwohl eine Person den Raum verlässt; „Die Nachlaufzeit wird ja schon in Node-RED geregelt“, „Ich will, dass das
+  Licht dem folgt, was angezeigt wird“, „Die Wahrscheinlichkeit hängt an der getrackten Person“). Bis 0.54 kamen
+  Zahl, Licht und Punkte aus drei Quellen (Randverteilung, P(belegt) > c, wahrscheinlichste Hypothese), und
+  `seen_hold` hielt einen Raum besetzt, solange sein LD2450 jemanden maß. Jetzt eine Zuordnung (6) mit
+  `occupied_off` = 1/3; 0,5 hysteresierte kaum, 0,2 brachte gegen 1/3 fast nichts. Ohne `seen_hold` war auf der
+  Wahrheit das Sofa 8.10. 19:06 3,3 min dunkel: Der Nachlauf in Node-RED ersetzt ihn nicht, wenn der Filter
+  jemanden verliert, den der eigene LD2450 noch misst. Mit den Echoquellen als Alternative (0.55) hielt das Modell
+  das Sofa selbst. Eine Sitzende, die das Modell nur als Energie führt, wird mit der Zuordnung nicht dunkel: Wer
+  sitzt, hatte eine Spur und ist eine bekannte Person ohne Spur, und die trägt die Energie. Reine Masse der
+  Unbekannten ohne je eine Spur gibt es nur im Kaltstart (`fast_eval` zwei Stufen, 96,4 h; Daten gelöscht).
+- **Personen nur mit Bewegungsmuster** (4.11.; Leon, 4.11.: Personen dürfen in der Wohnung entstehen und
+  verschwinden, aber nur, wenn das Bewegungsmuster es begründet, damit sich Fehler nicht endlos fortführen). Erste
+  Messung auf In-App-Aufnahmen (`dev/personenzahl/evalp.py`), je Fenster ein Start, also nicht belastbar (die
+  Zahlen hängen stark vom Start ab, nächster Eintrag). In 0.58 übernommen: breiter Versatz (4.1) und Geister an
+  Gehenden (4.2): Bad „eine bleibt“ 5 → 0 s falsch, am 3.11. Personen in zwei Räumen 65 → 6 min. Mit diesem einen
+  Start schlechter: κ strenger, Echoquellen 10/60 min, `start_unknown` 0,01, schneller vergessen. Befund: Die
+  zweite Schlafende verliert nachts ihre Existenz durch das LD2410C und das Nicht-Erfassen, nicht durch den Ablauf
+  (`unseen_life` = ∞ ändert nichts).
+- **0.59: Licht nach Node-RED, leeres Haus, mehrere Starts** (4.11. abends; Leon, 4.11.: Licht aus, während
+  jemand im Raum ist, ist schlimmer als Licht im leeren Raum; im leeren Haus darf nirgends Licht sein). Seitdem
+  simuliert `evalp.py` das Präsenzlicht (an bei belegt, aus nach 120 s ohne) und spielt jedes Fenster von mehreren
+  Startzeiten nach. Grundbefund: Die Kennzahlen hängen chaotisch von der Vorgeschichte der Hypothesen ab (3.11.
+  „Licht zu viel“ unter 0.58 je Start zwischen 172 und 285 Raumminuten). Ein Unterschied aus einem Start sagt
+  wenig. Leere Fenster (stundenlang kein LD2450-Ziel, am 5.11. mit den Telefonen bestätigt): 31.10., 1.11., 2.11.
+  Mit 2–6 Starts im Rauschen oder schlechter (nicht belastbar): κ Gamma(2), κ neu gezogen alle 3 min, eine einzige
+  Lebensdauer von 600 s (gut, aber nicht gemessen), lange Echoquellen 0,07 × 36 min (Licht im leeren Haus).
+  Befund: Aus Dobbys Spuren wurde eine Person, die danach die Energie der Waschmaschine hielt (Bad 3.11.).
+- **0.60: Kein Eintrag gewiss, Quellen so beweglich wie Personen, κ gemessen** (5.11.; Leon: 0.59 sei schlechter
+  als main). Mittel über 2–6 Starts je Fenster, fünf Ein-Personen-Fenster. `record_life` (jeder Eintrag ohne Spur
+  läuft überall mit 1 Tag ab; ein Eintrag ist nie gewiss, D_MusickiEvans2005): Personen zu viel 326 → 247
+  Personenminuten, Licht zu viel 523 → 466 Raumminuten. Echoquellen 0,25 m und 8 Stärken: etwas besser. κ α = 3
+  (gemessen): Personen zu viel 224 → 167. Leeres Haus überall 0. Geprüft und schlechter: Quellen 0,1 m / 12 Stärken
+  (12 min Licht im leeren Haus, doppelte Rechenzeit); lange Quellen 0,07 × 36 min (Bad 3.11. besser, aber die
+  Sitzende im Bad 31.10. 19:22 107 s dunkel und 4 h Licht im leeren Haus: lange Quellen nehmen Sitzenden ihre
+  Energie). Mehrweg erster Ordnung (Ziel so weit vom Sensor wie die Person, F_Liu2025 Abschn. 2.2): Nur der Spiegel
+  am Esstisch passt (0,14 m), sonst kein Muster; kein eigener Baustein.
+- **Störquellen** (5.11., Meldung 5.11. 13:51 „Licht im leeren Wohnzimmer“: der Luftentfeuchter; 4.5). Gemessen
+  auf App-Spuren leerer Fenster, bewertet mit `evalp.py` über alle Starts. Der Luftentfeuchter wird eine
+  Störquelle, jede neue Spur dort hängt sich an sie: Meldung 756 → 0 s falsch, leeres Haus 5.11. 159 / 24 → 0
+  Raumminuten. Was die Entwicklung zeigte:
+  - *Fester Ort gegen zitternde Person:* Ein fester Ort sagt eine ruhende Spur besser voraus als eine Person,
+    deren Ort zittert, bei jeder ruhenden Spur, auch bei einer echten Sitzenden (Test: Kaltstart einer Sitzenden,
+    die nur ein Sensor sieht, P(belegt) 0,98 → 0,02). Seitdem zittert der Ort einer Störquelle wie der einer
+    Stehenden (`still_noise`, `filter/clutter.rs`) und wird auf die Sicht ihres Sensors beschnitten (Test 0,72);
+    `clutter_life` = 1,9 h nach Little (gemessene Belegung je Geburt) statt 5,3 h.
+  - *Zwei, die nebeneinander liegen* und die beide LD2450 als ein Ziel sehen: Eine Person plus Störquelle erklärt
+    zwei Sensoren mit eigenem Versatz an fast derselben Stelle billiger als zwei Personen; die Erfassung der
+    Störquelle (0,115 /s) ist schneller als die einer Stehenden (0,034 κ /s). Leon fragte am 5.11., ob die andere
+    Person dann zuverlässig wieder von einer Störquelle zu einer Person wird, und sagte, die Zahl der Schlafenden
+    nachts sei egal, solange die Bleibende morgens wieder eine Person ist. Das prüft
+    `test_when_one_of_two_lying_together_gets_up_the_other_is_still_there` (P(belegt) > 0,9 nach dem Hinausgehen).
+  - *Eintrag an der Wohnungstür nach dem Aufbruch* (leeres Haus 1.11., ein Start von sechs, 236 min Licht im
+    Flur). Der Eintrag erklärte den Rest der Flur-Energie, und weil sein Anteil im E-Schritt zählte, lernte der
+    Hintergrund ihn nie (Fixpunkt `e = b + r·S`, 4.3). Im Gleichgewicht r ≈ 0,65 (LD2410C +0,5 bis +1,6 je Minute,
+    Ablauf −0,6 bis −1,1). Getragen hat ihn auch der Startzustand: Der Hintergrund vom 3.11. lag im Flur halb so
+    hoch wie am 1.11. gemessen. Seitdem startet die Bewertung jedes Fenster mit dem Gelernten seiner Sensorlage.
+  - *An der Wurzel* (4.3): (a) Der Hintergrund lernt immer ohne die Personen ohne Spur: Die Schlafenden wurden
+    Hintergrund (Nacht 1./2.11. 56,6 statt 0,5 min dunkel); schlechter. (b) Dasselbe erst nach 600 s ohne
+    LD2450-Ziel im Gehäuse (`ld_anchor_quiet`). (b) galt zuerst als nicht übernommen, weil zwei Tests der
+    Lernschleifen fehlschlugen (eine Sitzende, die der LD2450 nur alle 15 min sieht, wird Hintergrund). Mit den
+    Störquellen zusammen ist (b) dann 0.61 geworden und steht so im Code (`ld2410/background.rs`). Bewertung `k061`
+    gegen 0.60, 22 Starts: leeres Haus überall 0, Maßstab (Licht zu viel + 5 × dunkel mit Sitzer) 974 → 956,
+    schlechter nur das Spiegelbild am Esstisch 4.11. 17:25 (182 → 213 s). Die Tests sehen die Sitzende heute so
+    selten wie bei Wachen gemessen (alle 240 s). Preis: Wer länger als 10 min ohne LD2450-Ziel still ist, wird
+    nach etwa 0,7 h Hintergrund; bei Schlafenden kommt das vor. Es ist eine Schwelle, die das Lernen umschaltet
+    (vgl. 1).
+- **0.61: Woher „Licht zu viel“ und „Personen zu viel“ kommen** (5.11. abends; je Ein-Personen-Fenster ein Start,
+  gegen ein ideales Licht aus der eigenen Sensorspur ≥ 10 s mit 2 min Nachlauf). Von 324 Raumminuten ohne ideales
+  Licht sind 98 echtes Licht bei Durchgängen (das Ideal kennt keine unter 10 s). Der Rest gehört zu einer zweiten
+  Person: mit junger Spur (< 60 s; geboren aus einer gehaltenen LD2450-Spur am Ausgang des alten Raums, einem Geist
+  oder dem Halten eines zweiten Sensors am selben Fleck), ohne Spur (vor allem Bad 3.11., Dobby und Waschmaschine)
+  oder mit alter Spur (Spiegelbild am Esstisch). 51 Belegungen einer zweiten Person unter 10 s kosten mit ihrem
+  Nachlauf 57 Raumminuten. Gemessen 2./3.11. 01–06 Uhr: Der Schlafzimmer-LD2450 meldet eine zweite Schlafende nur
+  in Schüben (Lücken im Median 869 s bzw. 60 s, 90 %-Quantil 53 bzw. 40 min). Das Modell erwartet mit der
+  untersten κ-Stufe (0,105) und q ≈ 0,6 neben dem Partner eine Erfassung etwa alle 8 min; darum ist die zweite
+  Schlafende abends schon verloren (2.11. 22:49 r 1,0 → 0,07 in 2 min). `kappa_switch` 1/3600 s statt 1/600 s:
+  morgens etwas weniger, tags mehr dunkel; ein Lauf, kein gemessener Wert, nicht übernommen (live 1/600 s).
+- **0.62: Zwei als ein Ziel** (Meldung 6.11. 19:54: zu zweit im Bad, Leon geht hinaus, die zweite Person bleibt,
+  das Licht geht aus). Nachgespielt unter 0.61: Ab 19:28:46 meldet der Bad-LD2450 nur ein Ziel, die zweite Person
+  wird eine Person ohne Spur neben Leon. Ihr r fällt in 100 s von 0,997 auf 0,02, Δlogit −10,3, zerlegt:
+  **Nicht-Wiederfinden der gehaltenen Spur Leons −6,0**, LD2410C −2,8, keine neue Spur −1,7, Ablauf −0,5,
+  Zusammenlegen +0,6. Erst danach wanderte ihre Restmasse nach außer Haus. Ihre frische Spur 19:51:58 war in allen
+  Hypothesen ein Geist, weil eine Person dort nur aus der Intensität der Unbekannten kommen konnte (log −13 bis −18
+  gegen den Geist). Ursache: Nicht-Wiederfinden zählte gegen jede Person nahe der gehaltenen Stelle, als könne der
+  Sensor die Unaufgelöste getrennt wiederfinden. Sie und der Eigentümer sind aber eine Quelle mit höchstens einem
+  Ziel (A_Beard2015 Gl. 16–17). Seit 0.62 zählt nur der Anteil, den der Sensor auflöst (4.1). Danach P(Bad ≥ 2)
+  im Mittel 0,996. `unseen_life` ∞, `clutter_birth` 0 und andere Auflösungen änderten unter 0.61 wenig: Nicht der
+  Ablauf, das Wiederfinden war es (eine Meldung). Bewertung `res062` gegen `k061`, alle Starts: leeres Haus 0,
+  Maßstab 956,5 → 958,5 (im Rauschen), Personen zu viel 275 → 407 Personenminuten (Unaufgelöste neben einer Person
+  bleiben, auch wenn es keine sind), Rechenzeit 0,87×. Offen: schnelleres Wiederannehmen nach einem Verlust, ohne
+  dass Personen ohne begründendes Bewegungsmuster entstehen.
 - **Nacht 8./9.11.: Zwei auf dem Sofa, einer geht, Licht aus** (Meldung 8.11. 22:27: „Wir saßen zu zweit auf dem
-  Sofa. Ich gehe, das Licht geht aus.“). Nachgespielt aus den Aufnahmen (App-Aufzeichnung 31.10.–8.11.) mit dem Gelernten
-  der Meldung. Unter 0.62 in allen 10 Starts (18:00–21:15) Wohnzimmer dunkel ab 22:25:30 (Leon geht 22:23:15, 120 s Nachlauf).
-  Drei Wege, auf denen die zweite Person verschwindet, jeder für sich genug:
-  - *A, zwei Ruhende als ein Ziel:* Ab 21:47:18 meldet der Wohnzimmer-LD2450 die beiden (0,45–0,9 m auseinander) 36 min als
-    ein Ziel. Das Modell erwartete neben einem Ziel eine Auflösung von 0,6/0,9 m (Svensson-Form), also bei 0,6 m etwa die
-    Hälfte der Erfassungen; jede Minute ohne eigene Spur sprach gegen sie, P(zwei) auf dem Sofa im Mittel 0,06.
-    Gemessen (8.11.): zwei Ruhende nah beieinander (Sofa 8.11., Bett in 7 Nächten) geben in 1–4 % der Frames zwei Ziele;
-    Maximum-Likelihood der Wiedererfassung einer verlorenen Zweiten (13 Episoden, 1–30 min): Skala R ≈ 1,5–2,0 m
-    (0,6 m: −30 log). Unabhängig davon: ein ruhendes Ziel, das bleibt, wird gemeldet zu 0,4 % (Gehende < 0,6 m daneben),
-    13 % (0,6–1 m), 37 % (1–2 m), sonst 89 % – dieselbe Form mit R ≈ 1,75 m. Der LD2450 trennt Ruhende nicht über
-    Doppler von Gehenden; er meldet die Gehende und lässt das ruhende Ziel fallen.
-  - *B, die Bleibende geht mit:* Steht Leon auf, sprang der Gehanteil der verdeckten Sitzenden in 2 s von 0,3 % auf 38 %:
-    Die Bewegt-Energie des LD2410C nahe am Sensor (Ring 2 = 100, Ring 3 = 81) lag beim Gehenden ×3 über dem Profil
-    (gemessen 6.10.), ein zweiter Gehender erklärte sie besser. Ohne LD2410C ab 22:22 blieb sie sitzen. Neu gemessen
-    (Frames mit genau einem gehenden Ziel im Gehäuse, 7.–8.11., 41 883 Frames; und Zeiten mit einer Person zu Hause,
-    24 665): A 178 / 166, n 1,80 / 1,71, δ 0,52 / 0,55 m, σ 0,67 / 0,69 m, τ 0,48, ℓ 1,50 / 1,43 m; Log-Likelihood
-    +1,3 je Frame, in keinem Sensor schlechter. In 2–4 m gibt ein Gehender 1,6–2× mehr als das alte Profil.
-    Zusätzlich hielt die Maskierung neben dem zusammengelegten Ziel auch das *Gehen* der Verdeckten verborgen: Sie konnte
-    ungesehen aufstehen und sich setzen, und jeder Zyklus erneuerte ihren Aufenthalt (11 % der Masse in der Art mit
-    50 s mittlerer Dauer nach 35 min Sitzen, Aufstehrate 3,8·10⁻³ statt 2,9·10⁻⁴ /s).
-  - *C, die Spur eines fernen Sensors:* Der Esszimmer-Sensor sieht das Sofa in 6–7,5 m und meldet die zweite Person
-    1,5 m zu weit an der Südwand (3,1 | −1,5) (Mehrweg), 20 min lang. Bekommt sie diese Spur, steht sie dort, wo der
-    Wohnzimmer-Sensor niemanden sieht; nach 1–2 min ist Streichen (ihr Rest r ≈ 0,98 aus dem Zusammenlegen) billiger als
-    Umziehen (Aufstehen nach langem Sitzen, ~8 nats). In den meisten fehlgeschlagenen Starts der Kandidaten war es C.
-  **0.63** (Auflösung je Betriebsart, 4.1; Profil der Gehenden, 4.3). Bewertung (`evalp.py`, mehrere Starts je Fenster,
-  `sofa10` = 10 Starts 18:00–21:15 des Abends 8.11., Wohnzimmer muss 21:47:30–22:27 belegt sein): Sofa dunkel in 1 von 10
-  Starts (0.62: 10 von 10; der Start 21:00 scheitert an C); Bad 6.11. in 3 von 3 Starts gehalten wie 0.62; Bad 31.10.
-  (`bad3110`) in 3 von 3 Starts 1,1 min dunkel wie 0.62 (dort springt die Bleibende um 19:19:30 über eine Spur des
-  Arbeitszimmer-Sensors 4,5 m durch die Wand ins Arbeitszimmer: der breite Versatz, 4.1, und danach der Schnitt auf die
-  Sicht des Sensors; offen, 9). Leeres Haus unverändert (alte Fenster 0, 7.11. 33,8 → 32,6 Raumminuten, ein Ziel 0,3 m vor
-  dem Wohnzimmer-Sensor, offen); Ein-Personen-Tage (3.11., 4.11., 8.11.) Licht zu viel 314 → 323 Raumminuten, dunkel mit
-  Sitzer 3,8 → 1,4 min, Personen zu viel 238 → 172; zwei Personen 7.11. dunkel mit Sitzer 0,6 → 1,3 min. Einzeln: die
-  Auflösung allein (Lauf `resM`) ändert über alle Fenster wenig und hält das Sofa in keinem Start; erst mit dem Profil der
-  Gehenden trägt sie. `record_life` ∞ dazu (`K2`): Sofa 3 von 10 dunkel, sonst gleich, nicht übernommen. Rechenzeit gegen
-  0.62: eine Person 0,96×, leeres Haus 0,99×, der Sofa-Abend 1,2× (zwei Personen statt einer).
-  Verworfen (Abende mit 3 Starts, chaotisch: dieselbe Fassung gelingt in einem Start und scheitert im nächsten):
-  `record_life` ∞ allein; Amplitude der Gehenden je Block (Gamma(2), 5 Stufen); dieselbe fest über einen Gang (Swerling
-  III, mit dem Neuziehen von κ); breiter Versatz auch für die erste Spur einer bekannten Person ohne Spur; Doppler-Trennung
-  (gemessen widerlegt, s. o.). Mit 0.63 auf `sofa10`, `bad3110`, `bad0611` (Sofa dunkel in x von 10 Starts / Bad 31.10. in
-  y von 3): 0.63 1/10 / 3/3; dazu das Profil *ruhig, geht* neu (312 / 1,46 / 1,72 / 2,70 / 0,92 / 1,49) 2/10 / 2/3; alle drei
-  übrigen Profile neu (stehend höher: A 756 statt 574) 9/10 / 3/3, eine Sitzende, die wenig gibt, widerspricht dann sich
-  selbst; die Chance des Beginns einer Spur auf einer Person mit Spur vor dem Schnitt auf die Sicht ihres Sensors (gegen D)
-  10/10 / Bad 1,1 / 0 / 0,4 min (ein Start ganz gehalten). Keine davon übernommen.
+  Sofa. Ich gehe, das Licht geht aus.“). Nachgespielt aus den App-Aufnahmen; unter 0.62 in allen 10 Starts
+  (18:00–21:15) das Wohnzimmer ab 22:25:30 dunkel. Drei Wege, jeder für sich genug:
+  - *A, zwei Ruhende als ein Ziel:* Ab 21:47 meldet der Wohnzimmer-LD2450 die beiden (0,45–0,9 m auseinander)
+    36 min als ein Ziel. Das Modell erwartete neben einem Ziel eine Auflösung von 0,6/0,9 m; jede Minute ohne eigene
+    Spur sprach gegen die Zweite. Gemessen 8.11.: Zwei Ruhende nah beieinander (Sofa, Bett in 7 Nächten) geben in
+    1–4 % der Frames zwei Ziele. Maximum-Likelihood der Wiedererfassung einer verlorenen Zweiten (13 Episoden,
+    1–30 min): R ≈ 1,5–2,0 m. Unabhängig davon wird ein ruhendes Ziel neben einem Gehenden gemeldet zu 0,4 %
+    (< 0,6 m), 13 % (0,6–1 m), 37 % (1–2 m), sonst 89 %: dieselbe Form mit R ≈ 1,75 m. **Der LD2450 trennt Ruhende
+    nicht über Doppler von Gehenden; er meldet die Gehende und lässt das ruhende Ziel fallen.** Heute
+    `resolution` ruhig 1,4 / 2,1 m (Entfernung / quer), gehend 0,6 / 0,9 m (`params.rs`).
+  - *B, die Bleibende geht mit:* Steht Leon auf, sprang der Gehanteil der verdeckten Sitzenden in 2 s von 0,3 % auf
+    38 %. Die Bewegt-Energie des LD2410C nahe am Sensor lag beim Gehenden ×3 über dem alten Profil (gemessen 6.10.),
+    ein zweiter Gehender erklärte sie besser. Neu gemessen (Frames mit genau einem gehenden Ziel im Gehäuse,
+    7.–8.11., 41 883 Frames; Zeiten mit einer Person zu Hause, 24 665): A 178 / 166, n 1,80 / 1,71, δ 0,52 /
+    0,55 m, σ 0,67 / 0,69 m, τ 0,48, ℓ 1,50 / 1,43 m; Log-Likelihood +1,3 je Frame, in keinem Sensor schlechter. In
+    2–4 m gibt ein Gehender 1,6–2× mehr als das alte Profil. Dazu verbarg die Maskierung neben dem zusammengelegten
+    Ziel auch das *Gehen* der Verdeckten: Sie konnte ungesehen aufstehen und sich setzen, und jeder Zyklus erneuerte
+    ihren Aufenthalt.
+  - *C, die Spur eines fernen Sensors:* Der Esszimmer-Sensor sieht das Sofa in 6–7,5 m und meldet die Zweite 1,5 m
+    zu weit an der Südwand (Mehrweg), 20 min lang. Bekommt sie diese Spur, steht sie, wo der Wohnzimmer-Sensor
+    niemanden sieht; nach 1–2 min ist Streichen billiger als Umziehen.
+
+  **0.63** = Auflösung je Betriebsart (4.1) und Profil der Gehenden (4.3; heute `ld_moving` gehend in
+  `params.rs`). Bewertung `evalp.py`, `sofa10` = 10 Starts 18:00–21:15: Sofa dunkel in 1 von 10 Starts (0.62: 10
+  von 10; der eine scheitert an C). Bad 6.11. in 3 von 3 Starts gehalten; Bad 31.10. in 3 von 3 Starts 1,1 min
+  dunkel wie 0.62 (Sprung durch die Wand, oben „Durch die Wand“; offen, 9). Ein-Personen-Tage: Licht zu viel
+  314 → 323, dunkel mit Sitzer 3,8 → 1,4 min, Personen zu viel 238 → 172. Die Auflösung allein hält das Sofa in
+  keinem Start; erst mit dem Profil der Gehenden trägt sie. Mit 10 Starts (Sofa) und 3 (Bad 31.10.) gemessen und
+  schlechter: `record_life` ∞ dazu (3/10 dunkel); das Profil *ruhig, geht* neu (2/10); alle drei übrigen Profile
+  neu (9/10: eine Sitzende, die wenig gibt, widerspricht sich dann selbst); die Chance des Beginns einer Spur auf
+  einer Person mit Spur vor dem Schnitt auf die Sicht (10/10). Nur mit 3 Starts, nicht belastbar (chaotisch:
+  dieselbe Fassung gelingt in einem Start und scheitert im nächsten): Amplitude der Gehenden je Block (Gamma(2)),
+  dieselbe fest über einen Gang (Swerling III), breiter Versatz auch für die erste Spur einer bekannten Person ohne
+  Spur. Doppler-Trennung: gemessen widerlegt (A).
 - **Ohne Prüfung entfernt** (0.7/0.8): LD2410C (in der 0.6.7-Ablation nützlich, in 0.6.12/0.6.13
   verbessert; in 0.9 wieder drin, 4.3), Körperabstand zweier
   Personen, Ziele und Wege um Wände, Nachbilder.
-- **In 0.6.x getestet und verworfen:** gelernte P_D-Karte, Verhaltenskarten je Ort, harte
+- **In 0.6.x getestet und verworfen** (Daten gelöscht): gelernte P_D-Karte, Verhaltenskarten je Ort, harte
   Störzonen, ein fester Versatz je Sensor (mehr Doppelzählungen; jetzt als Versatz je Spur gelöst).
-- **Lernen nur aus unabhängiger Evidenz**; aus den eigenen Urteilen lernt das Modell seine Fehler
-  (Verhaltenslernen in 0.6.0 deshalb aus).
+- **Lernen aus dem eigenen Urteil** lernt die eigenen Fehler mit (Verhaltenslernen in 0.6.0 deshalb aus). Ganz
+  vermeiden lässt es sich nicht: Der LD2410C-Hintergrund lernt mit μ aus den Personen, wie der Filter sie sieht
+  (`ld2410/background.rs`). So lernt er, wen der Filter verliert, und behält, was ein falscher Eintrag erklärt
+  (oben „Störquellen“, 10 „Lernschleifen“). Die Gegenmittel im Code sind die Stille vor dem Lernen
+  (`ld_anchor_quiet`) und die Lernpausen.
 - **Eine einzelne Prozentzahl verdeckt Fehler** (in 0.6.4 versteckte sie einen ganz falschen
   Küchenschritt). **Gute Werte in der Simulation** sagten wenig: 0.5.0 war dort gut und in der Praxis
   schlecht.
