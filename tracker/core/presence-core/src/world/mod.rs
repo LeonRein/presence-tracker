@@ -195,9 +195,10 @@ impl World {
             labels: &labels,
             walls: &walls,
             tiles: &tiles,
+            rooms: &rooms,
         };
         let (mut sights, ld): (Vec<Sight>, Vec<LdSight>) =
-            config.sensors.iter().map(|s| build::sensor(&built, s)).unzip();
+            config.sensors.iter().enumerate().map(|(si, s)| build::sensor(&built, si, s)).unzip();
         for s in &mut sights {
             s.set_rates(&rates, &tiles);
         }

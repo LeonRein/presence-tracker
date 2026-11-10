@@ -99,6 +99,9 @@ pub struct Params {
     /// m: frame jitter of a track's position
     #[serde(deserialize_with = "real")]
     pub white: f64,
+    /// degrees of freedom of a standing person's track position (Student's t, MODEL.md 4.1; inf: Gaussian)
+    #[serde(deserialize_with = "real")]
+    pub still_dof: f64,
     /// s: a track's positions are used this often
     #[serde(deserialize_with = "real")]
     pub pos_every: f64,
@@ -148,6 +151,10 @@ pub struct Params {
     pub ld_moving: [Profile; 2],
     pub ld_still: [Profile; 2],
     pub ld_beam: [f64; 2],
+    /// what a person outside the sensor's own room (through a door, over a divider) gives its LD2410C, relative
+    /// to the geometric sight (MODEL.md 4.3)
+    #[serde(deserialize_with = "real")]
+    pub ld_other_room: f64,
     pub ld_shape: [f64; 2],
     pub ld_tau: [f64; 2],
     pub ld_gain: [f64; 2],
@@ -259,6 +266,7 @@ impl Default for Params {
             offset_wide: [0.2, 2.0],
             tau: 3.5,
             white: 0.05,
+            still_dof: 2.0,
             pos_every: 0.25,
             find_clutter: 0.05,
             track_life: [60.0, 30.0],
@@ -287,6 +295,7 @@ impl Default for Params {
                 Profile::new([949.0, 2.19, 0.58, 1.44, 1.00, 1.25]),
             ],
             ld_beam: [50.0, 70.0],
+            ld_other_room: 0.0,
             ld_shape: [2.5, 2.0],
             ld_tau: [4.0, 13.0],
             ld_gain: [16.0, 50.0],
@@ -386,6 +395,7 @@ impl Params {
             ),
             ("tau", positive(self.tau)),
             ("white", positive(self.white)),
+            ("still_dof", self.still_dof > 0.0), // inf: the Gaussian
             ("pos_every", positive(self.pos_every)),
             ("find_clutter", at_least_0(self.find_clutter)),
             ("track_life", self.track_life.iter().all(|&t| time(t))),
@@ -452,6 +462,7 @@ impl Params {
                 up_to(self.ld_echo_amps.len(), 1, 16) && self.ld_echo_amps.iter().all(|&a| positive(a)),
             ),
             ("ld_tile_mass", at_least_0(self.ld_tile_mass)),
+            ("ld_other_room", (0.0..=1.0).contains(&self.ld_other_room)),
             ("ld_background", self.ld_background.iter().all(|&b| positive(b))),
             ("ld_prior_time", positive(self.ld_prior_time)),
             ("ld_forget", positive(self.ld_forget)),

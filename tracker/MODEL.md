@@ -268,6 +268,23 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 57 % der Versatzvarianz bleibt, 43 % wandert (gemessen). Gesamtstreuung entlang 0,15 m + 2 %, quer
 0,10 m + 5 % der Entfernung; im Filter je Achse ihr Mittel. c und o sind Teil des Kalman-Zustands
 (E_BrysonHenrikson1967). Verwendet wird höchstens alle 0,25 s eine Position.
+**Ruhende streuen mit schweren Ausläufern** (seit 0.64, `still_dof` = 2): In der stehenden Komponente ist die Vorhersage
+der Spur je Achse eine Student-t-Verteilung mit 2 Freiheitsgraden, Skala die Varianz des Kalman-Filters; nach dem Update
+wächst die Kovarianz mit `(ν + e²/s) / (ν + 1)` (Student-t-Filter, Roth, Özkan & Gustafsson 2013; Särkkä & Svensson 2023
+Abschn. 5.2: Gauß mit gamma-verteilter Skala). Eine Spur, die springt, zieht so ihren Versatz mit, statt die Person ins
+Gehen zu zwingen. Gehende bleiben gaußsch; ein Geist (seine Quelle steht wie eine Person) bekommt dasselbe. Gemessen 10.11.
+(`dev/personenzahl/sitz/streu*.py`; App-Aufnahmen 31.10.–8.11. und Meldung 10.11.; Abschnitte ≥ 60 s mit genau einem
+Ziel der Geschwindigkeit 0, eingefrorene Frames verworfen, bis 1 s Bewegung überbrückt; 2 385 Abschnitte, 116 h;
+Abweichung vom Median des Abschnitts im Sensorsystem): robuste Streuung radial 0,05–0,11 m, quer 0,06–0,18 m;
+Standardabweichung 0,12–0,22 / 0,14–0,32 m; 8–12 % der Frames weiter als 3 robuste Streuungen (Gauß 0,27 %), je
+Abschnitt mit seiner eigenen Streuung normiert noch 4 % bzw. 1,4 % über 5 (Gauß 6·10⁻⁷): Die Ausläufer sind Sprünge in
+den Abschnitten, nicht Unterschiede zwischen ihnen. Student-t (Maximum-Likelihood je Entfernung 0,5–6,5 m) ν 1,5–2, Skala
+radial 0,04–0,10 m, quer 0,05–0,18 m, +0,1 bis +0,5 nats je Position (0,25 s) gegen die Gauß-Verteilung; keine deutliche
+Abhängigkeit von Entfernung oder Winkel. Sprünge quer über 0,5 m in 4 s: 2 / 9 / 6 % der ruhenden Zeit in 0,5–2,5 /
+2,5–4,5 / 4,5–6,5 m. Autokorrelation quer 0,83 / 0,68 / 0,49 / 0,28 / 0,12 nach 1 / 2 / 4 / 8 / 16 s (OU mit τ ≈ 5,5 s;
+im Modell 3,5 s, nicht geändert). Bis 0.63 gaußsch: Rutschte das Ziel einer Sitzenden 3,7 m vor dem Sensor in Sekunden
+1–1,5 m quer und zurück (Meldung 10.11. 10:18), ging sie im Modell (Gehanteil 0,96), und das LD2410C sprach jedes Mal
+gegen eine Gehende.
 **Breiter Versatz einer neuen Spur** (seit 0.58.0, `offset_wide`): Beginnt eine Spur auf einer Person, die schon eine
 Spur hat, oder wird eine gehaltene Spur auf einer solchen anderen Person wiedergefunden, sitzt sie mit 0,8 auf dem
 engen Versatz oben und mit 0,2 auf einem breiten, σ = 2,0 m je Achse auf c
@@ -404,7 +421,20 @@ Das Modell, je Sensor:
   LD2450 im selben Gehäuse ohne Wand dazwischen sehen könnte, über ihren Versatz gemittelt wie in 4.1. Ruhig zählt
   das Verzögerte: M ist, was die Personen zuletzt hineingaben (geglättet mit 2 s), w_m sein Anteil im Block; bewegt
   w_m = 0. Auch die Echoquellen (unten) geben ruhig nur (1 − w_m) ihres Profils; in M gehen nur die Personen ein.
-- **Blick in einen anderen Raum:** Die Sicht durch eine Türöffnung oder über den Raumteiler ist die geometrische.
+- **Blick in einen anderen Raum:** Das LD2410C wiegt nur Personen in seinem eigenen Raum (seit 0.64, `ld_other_room` = 0):
+  Die Sicht einer Stelle in einem anderen Raum als dem eigenen des Sensors (durch eine Tür, über einen Raumteiler, in einen
+  Bereich ohne Sensor) ist 0 statt geometrisch, vor dem Mitteln über den Versatz (4.1), also mit weichem Übergang an der
+  Tür. Gemessen 10.11. (`dev/personenzahl/sitz/ldsee*.py`, App-Aufnahmen 31.10.–8.11.): Frames eines LD2410C mit genau
+  einer ruhenden Person in seinem Blick (die Ziele aller Sensoren dort innerhalb 1 m, Geschwindigkeit 0); Überschuss der
+  ruhigen Ringe 2–8 über den Hintergrund derselben Stunde (Frames ohne jedes Ziel in seinem Blick) gegen das Profil (g = 1),
+  ab 3 m (darunter kappt 100): eigener Raum 0,74 (782 min; 3–4 / 4–5 / 5–6 m 0,73 / 0,90 / 1,14), fremder Raum −0,05
+  (1 383 min). Je Paar weit gestreut: Flur ← Esszimmer 0,66 (158 min), Esszimmer ← Flur 1,4, Arbeitszimmer ← Flur 3,0,
+  Bad ← Flur 0,31, Schlafzimmer ← Flur −0,03, Flur ← Arbeitszimmer 0,21 (14 min; die Schreibtischecke 5,5–6,5 m durch die
+  Türkante: 0 bei einer Erwartung von 20–45), Esszimmer ← Wohnzimmer (Sofa über den Raumteiler, 5–7 m) −0,7 (566 min).
+  Ohne das Sofa wäre fremd/eigen 0,7. Was ein Sensor im Nachbarraum sieht, hängt an Möbeln, Türblättern und Haltung, die
+  das Modell nicht kennt; jeder beobachtete Raum hat seinen eigenen Sensor. Bis 0.63 geometrisch: Eine Sitzende am
+  Schreibtisch sollte dem Flur-LD2410C in 5,3 m durch die Türkante 8–12 je ruhigem Ring 6–7 geben, er sah den Hintergrund,
+  und „Spur = Geist, Person verborgen bei (−2,6 | 6,1)“ gewann um 6–22 nats (Meldung 10.11.).
   Was dem LD2410C nicht mehr als `FLOOR` gibt, ist außerhalb seines Blicks und wird nicht gewogen (Faktor 1, neutral)
   statt „mit null Energie gesehen“. Wände sind undurchsichtig: Gemessen lässt eine Innenwand (alle gemauert) etwa 4 %
   durch, und ein Wert je Wand erklärte die Raumpaare nicht besser. Einen gemessenen Faktor je Paar „Sensor ← Raum“
