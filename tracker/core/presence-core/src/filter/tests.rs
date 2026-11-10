@@ -410,9 +410,18 @@ fn a_ghost_is_likelier_where_somebody_is_who_can_make_it() {
         let (mut f, _) = filter(&world, known);
         f.set_flushed(1.0);
         let before = f.hyps()[0].logw;
-        let track = NewTrack { seg: SegId(7), z: [2.0, 2.0], var: 0.04 };
-        let children = f.branch_all(&world, &frame(1.0, &[SegId(7)]), &[track]).expect("finite");
-        let (ghost, _) = *children[0].iter().find(|c| c.1 == Category::Ghost).expect("a ghost's child");
+        let track = NewTrack {
+            seg: SegId(7),
+            z: [2.0, 2.0],
+            var: 0.04,
+        };
+        let children = f
+            .branch_all(&world, &frame(1.0, &[SegId(7)]), &[track])
+            .expect("finite");
+        let (ghost, _) = *children[0]
+            .iter()
+            .find(|c| c.1 == Category::Ghost)
+            .expect("a ghost's child");
         ghost - before
     };
     assert!((ghost_child(0.0, 1) - ghost_child(0.0, 0)).abs() < 1e-12);
@@ -442,6 +451,7 @@ fn a_track_whose_ghost_alternative_is_all_but_gone_ends() {
         born: 1.0,
         lost: None,
         moving: false,
+        run: None,
     };
     f.tracks_mut().begin(seg, info);
     let objects = f.objects_mut();
@@ -564,4 +574,111 @@ fn tracks_again_and_again_at_one_spot_that_only_one_sensor_makes_are_a_stoerquel
         .sum();
     assert!(people < 0.1, "known people {people}");
     assert!(stoer > 0.9, "a Störquelle there {stoer}");
+}
+
+/// A person walking with a track of sensor 0 and a track of sensor 1 begun beside them, judged a ghost's; both
+/// measured every 0.1 s for `secs` s at `speed` (radial, m/s), the second `apart` m beside the first. Returns the
+/// filter, when the second was due to be given to the person (None: never) and the children of that branch.
+fn ghost_beside_a_walker(speed: f64, apart: f64, secs: f64) -> (Filter, Option<f64>, Vec<(f64, Category)>) {
+    let world = testing::flat();
+    let (mut f, _) = filter(&world, 1);
+    let mut t = 1.0;
+    f.set_flushed(t);
+    let (a, b) = (SegId(1), SegId(2));
+    let at = |t: f64| [1.0 + speed * (t - 1.0), 2.0];
+    let z = |t: f64| [at(t)[0], at(t)[1] + apart];
+    // the first is the known person's, the second a ghost's: the other children dropped
+    let keep = |f: &mut Filter, says: &dyn Fn(&Hyp) -> bool| {
+        let hy = f.hyps().iter().find(|h| says(h)).expect("that child").clone();
+        f.set_hyps(vec![Hyp { logw: 0.0, ..hy }]);
+    };
+    let person = |h: &Hyp| matches!(h.owner_of(a), Some(Owner::Person(_)));
+    f.branch_all(
+        &world,
+        &frame(t, &[a]),
+        &[NewTrack {
+            seg: a,
+            z: at(t),
+            var: 0.04,
+        }],
+    )
+    .expect("finite");
+    keep(&mut f, &person);
+    t += 0.1;
+    f.flush(&world, &watching(t), t);
+    f.measured(&world, &watching(t), a, at(t), speed, t);
+    let skip = [b];
+    let second = Frame {
+        si: 1,
+        ..frame(t, &skip)
+    };
+    f.branch_all(
+        &world,
+        &second,
+        &[NewTrack {
+            seg: b,
+            z: z(t),
+            var: 0.04,
+        }],
+    )
+    .expect("finite");
+    keep(&mut f, &|h: &Hyp| person(h) && h.is_ghost(b));
+    f.check().expect("a person and a ghost");
+    while t < 1.0 + secs {
+        t += 0.1;
+        f.flush(&world, &watching(t), t);
+        f.measured(&world, &watching(t), a, at(t), speed, t);
+        if f.fusion_due(&world, b, z(t), speed, t) {
+            let frame = Frame { si: 1, ..frame(t, &[]) };
+            let found = NewTrack {
+                seg: b,
+                z: z(t),
+                var: 0.0,
+            };
+            let cats = f.fuse(&world, &frame, found, speed).expect("finite");
+            f.normalize(0.0).expect("finite");
+            f.check().expect("after the run");
+            return (f, Some(t), cats);
+        }
+        f.measured(&world, &watching(t), b, z(t), speed, t);
+        f.normalize(0.0).expect("finite");
+    }
+    (f, None, Vec::new())
+}
+
+#[test]
+fn a_ghost_track_running_with_a_walker_becomes_theirs_with_the_measured_share() {
+    // MODEL.md 5.1, `fusion`: walking together within the radius for the time, the track judged a ghost's is
+    // the person's too, with the share of such runs; its measurement then weighs both alternatives
+    let p = crate::params::Params::default();
+    let time = p.fusion[2];
+    let (f, due, cats) = ghost_beside_a_walker(1.0, 0.3, 3.0);
+    let due = due.expect("a run of two walking tracks");
+    // the run begins at the first measurement of the second beside the first (t = 1.2)
+    assert!(
+        due >= 1.2 + time - 1e-9 && due < 1.2 + time + 0.1 + 1e-9,
+        "due at {due}"
+    );
+    let what: Vec<Category> = cats.iter().map(|&(_, c)| c).collect();
+    assert_eq!(what, [Category::RefindGhost, Category::Tracked]);
+    let (person, b) = (SegId(1), SegId(2));
+    let theirs: f64 = f
+        .hyp_weights()
+        .iter()
+        .zip(f.hyps())
+        .filter(|(_, h)| h.owner_of(b) == h.owner_of(person))
+        .map(|(w, _)| w)
+        .sum();
+    assert!(theirs > 0.0 && theirs < 1.0, "both alternatives: {theirs}");
+    assert!(
+        f.tracks().get(b).and_then(|i| i.run).is_some_and(|r| r.fused),
+        "once per run"
+    );
+}
+
+#[test]
+fn still_people_and_tracks_apart_are_never_fused() {
+    // the sofa: two still targets side by side are never given to each other; nor walkers 1.5 m apart
+    assert_eq!(ghost_beside_a_walker(0.0, 0.3, 5.0).1, None);
+    assert_eq!(ghost_beside_a_walker(1.0, 1.5, 3.0).1, None);
 }

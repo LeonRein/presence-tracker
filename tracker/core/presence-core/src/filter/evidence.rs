@@ -133,7 +133,15 @@ impl Filter {
 
     /// The sensor lost a track and holds it where it was (MODEL.md 4.1).
     pub fn lost(&mut self, seg: SegId, kind: LostKind, z: Point, t: f64) {
-        self.tracks.update(seg, |i| i.lost = Some(Lost { kind, t, z, u: 0.0 }));
+        self.tracks.update(seg, |i| {
+            i.lost = Some(Lost {
+                kind,
+                t,
+                z,
+                u: 0.0,
+                seen: t,
+            })
+        });
     }
 
     /// A lost track, still held: not found again on anybody near where it is held, nor on the ghost
@@ -183,7 +191,10 @@ impl Filter {
                 hy.logw += (p.find_clutter + ghost) * lr;
             }
         }
-        self.tracks.update(seg, |i| i.lost.as_mut().expect("lost").z = z);
+        self.tracks.update(seg, |i| {
+            let l = i.lost.as_mut().expect("lost");
+            (l.z, l.seen) = (z, t);
+        });
     }
 
     /// The sensor dropped the track. For a person this follows from not finding it
@@ -427,6 +438,7 @@ mod tests {
             kind: LostKind::Coast,
             t: 10.0,
             z: [1.0, 1.0],
+            seen: 10.0,
             u: 0.0,
         };
         let info = TrackInfo {
@@ -440,6 +452,7 @@ mod tests {
             born: 5.0,
             lost: Some(lost),
             moving: false,
+            run: None,
         };
         let got = ghost_end(&p, &info, lost.t + u).expect("held");
         let s = |tau: f64| no_find(&p, lost.kind, tau);

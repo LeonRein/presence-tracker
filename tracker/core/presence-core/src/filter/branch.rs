@@ -16,11 +16,12 @@ use crate::filter::hyp::{Ghost, GroupId, Hyp, Owner};
 use crate::filter::mixture::{Mixture, MixtureId, NewTrack, SegId, from_tiles, ghost_source};
 use crate::filter::objects::{Objects, ReleaseCache};
 use crate::filter::step::TileRates;
-use crate::filter::tracks::{Lost, TrackInfo, Tracks};
+use crate::filter::tracks::{Lost, MOVING, RUN_GAP, Run, TrackInfo, Tracks};
 use crate::filter::{Filter, GroupIds, NotFinite};
+use crate::geometry::Point;
 use crate::ld2450::rates::TrackSpot;
 use crate::params::{FRAME, STILL, WALK};
-use crate::vmath::{logaddexp, logsumexp};
+use crate::vmath::{logaddexp, logsumexp, py_hypot};
 use crate::world::World;
 
 /// What a child of a branch says the track is (for the shell's listeners).
@@ -93,6 +94,9 @@ enum Chance<'a> {
         lr_nf: f64,
         ghost_life: Vec<f64>,
     },
+    /// measured, running with a walking person while judged a ghost's (MODEL.md 5.1, `fusion`): the ghost's
+    /// life since it was last measured per kind
+    Fuse { ghost_life: Vec<f64> },
 }
 
 /// The objects made while branching on one track, once per object they are made from
@@ -236,10 +240,127 @@ impl Filter {
                     born: t,
                     lost: None,
                     moving: false,
+                    run: None,
                 };
                 self.tracks.begin(seg, info);
             }
         }
+        self.take(children.hyps, &world.params)?;
+        Ok(cats)
+    }
+}
+
+/// Whose track `with` is in a hypothesis, if the track seg may be theirs too (MODEL.md 5.1, `fusion`): seg is a
+/// ghost's or a Störquelle's there, `with` a person's who has no other measuring track of seg's sensor.
+pub(crate) fn runs_with(tracks: &Tracks, hy: &Hyp, seg: SegId, with: SegId) -> Option<GroupId> {
+    if !matches!(hy.owner_of(seg), Some(Owner::Ghost | Owner::Clutter(_))) {
+        return None;
+    }
+    let Some(Owner::Person(gid)) = hy.owner_of(with) else {
+        return None;
+    };
+    let si = tracks.get(seg)?.si;
+    let measured_here = hy.tracks.iter().any(|(&s, &o)| {
+        o == Owner::Person(gid) && s != seg && tracks.measuring(s) && tracks.get(s).is_some_and(|i| i.si == si)
+    });
+    (!measured_here).then_some(gid)
+}
+
+/// The walking track of another sensor that a measurement z at t of track seg runs with: where its sensor has it
+/// now (measured, or coasted while lost: the LD2450's own prediction; not older than RUN_GAP), within the radius
+/// of z; the nearest of those a person's in the hypothesis that says seg is a ghost's (runs_with).
+fn walking_beside(world: &World, tracks: &Tracks, hy: &Hyp, seg: SegId, z: Point, t: f64) -> Option<SegId> {
+    let radius = world.params.fusion[1];
+    let si = tracks.get(seg)?.si;
+    let mut best: Option<(f64, SegId)> = None;
+    for (&other, info) in tracks.iter() {
+        if info.si == si {
+            continue;
+        }
+        let (at, x, walking) = info.sensor_at();
+        let d = py_hypot(x[0] - z[0], x[1] - z[1]);
+        if walking
+            && t - at <= RUN_GAP
+            && d <= radius
+            && best.is_none_or(|(b, _)| d < b)
+            && runs_with(tracks, hy, seg, other).is_some()
+        {
+            best = Some((d, other));
+        }
+    }
+    best.map(|(_, s)| s)
+}
+
+impl Filter {
+    /// Measured track seg (at z, t, radial speed): is it due to be given to the person whose track it runs with?
+    /// Kept per track: how long it runs with a walking person's track of another sensor in the strongest
+    /// hypothesis, which says it is a ghost's (a gate, as in track-to-track association; the weights of the
+    /// alternatives are exact, Filter::fuse).
+    pub fn fusion_due(&mut self, world: &World, seg: SegId, z: Point, speed: f64, t: f64) -> bool {
+        let [share, _, time] = world.params.fusion;
+        let Some(top) = self.hyps.iter().max_by(|a, b| a.logw.total_cmp(&b.logw)) else {
+            return false;
+        };
+        if share <= 0.0 {
+            return false;
+        }
+        let near = walking_beside(world, &self.tracks, top, seg, z, t);
+        let moving = speed.abs() >= MOVING;
+        self.tracks.update(seg, |i| i.run = Run::next(i.run, near, moving, t));
+        self.tracks.get(seg).and_then(|i| i.run).is_some_and(|r| r.due(time))
+    }
+
+    /// A measured track that runs with a walking person while judged a ghost's (or a Störquelle's) is the
+    /// person's after all with the share `fusion` of such runs (MODEL.md 5.1): every hypothesis that says it is
+    /// a ghost's and has such a person branches - the ghost's (measured as usual) and the person's (from now
+    /// on; what the track measured before stays with the source it had). Track-to-track association of
+    /// multi-sensor trackers (E_Aeberhard2017 3.3), here once per run, not every cycle: the sensor resumed a
+    /// held track on the person further away than the kernel of finding again (4.1) sees. Hypotheses that say
+    /// it is a person's measure it as usual. Returns the children's weights and what each says.
+    pub fn fuse(
+        &mut self,
+        world: &World,
+        frame: &Frame,
+        found: NewTrack,
+        speed: f64,
+    ) -> Result<Vec<(f64, Category)>, NotFinite> {
+        let seg = found.seg;
+        let info = *self.tracks.get(seg).expect("a live track");
+        let ghost_life = world
+            .params
+            .ghost_types
+            .iter()
+            .map(|&[_, life]| -(frame.t - info.ghost_t()) / life)
+            .collect();
+        let Filter {
+            hyps,
+            objects,
+            tracks,
+            next_group,
+            ..
+        } = self;
+        let mut b = Branching {
+            world,
+            frame,
+            track: NewTrack { var: info.var, ..found },
+            chance: Chance::Fuse { ghost_life },
+            tracks,
+            objects,
+            next_group,
+            made: Made::default(),
+        };
+        let mut children = Children::default();
+        for hy in hyps.iter() {
+            b.fuse_children(hy, &mut children);
+        }
+        let cats: Vec<(f64, Category)> = children.hyps.iter().map(|c| c.logw).zip(children.cats).collect();
+        let t = frame.t;
+        self.tracks.update(seg, |i| {
+            (i.t, i.zt, i.gt, i.z, i.moving) = (t, t, Some(t), found.z, speed.abs() >= MOVING);
+            if let Some(r) = i.run.as_mut() {
+                r.fused = true;
+            }
+        });
         self.take(children.hyps, &world.params)?;
         Ok(cats)
     }
@@ -366,6 +487,7 @@ impl Branching<'_> {
                 }
                 pf
             }
+            Chance::Fuse { .. } => unreachable!("a run branches in fuse_children"),
             Chance::New { near, .. } => {
                 let mut lam = ghost_rates;
                 // ghosts people make near themselves (MODEL.md 4.2): nu x sum_i r_i N(z; x_i, sigma^2), shared out
@@ -443,6 +565,58 @@ impl Branching<'_> {
             ch.people.insert(gid, new);
             ch.tracks.insert(seg, Owner::Person(gid));
             out.push(ch, Category::New);
+        }
+    }
+
+    /// The children of one hypothesis at a run (Filter::fuse): the track stays whose it is, measured as usual;
+    /// if a ghost's or a Störquelle's that runs with a walking person, theirs too, with the share `fusion`.
+    fn fuse_children(&mut self, hy: &Hyp, out: &mut Children) {
+        let (world, seg, z, t) = (self.world, self.track.seg, self.track.z, self.frame.t);
+        let share = world.params.fusion[0];
+        let cur = hy.owner_of(seg);
+        let with = self
+            .tracks
+            .get(seg)
+            .and_then(|i| i.run)
+            .and_then(|r| runs_with(self.tracks, hy, seg, r.with));
+        let stay = if with.is_some() { (1.0 - share).ln() } else { 0.0 };
+        match cur {
+            Some(Owner::Ghost) => {
+                let Chance::Fuse { ghost_life } = &self.chance else {
+                    unreachable!("a run")
+                };
+                let ghost = hy.ghosts.get(&seg).expect("a ghost track's life");
+                let life: Vec<f64> = ghost.life.iter().zip(ghost_life).map(|(a, g)| a + g).collect();
+                let lived = logsumexp(&life) - logsumexp(&ghost.life);
+                let (source, l) = self.found_source(ghost.source);
+                let mut ch = hy.child(hy.logw + stay + lived + l);
+                ch.ghosts.insert(seg, Ghost { life, source });
+                out.push(ch, Category::RefindGhost);
+            }
+            Some(Owner::Clutter(c)) => {
+                let mut ch = hy.child(hy.logw + stay);
+                ch.logw += ch.clutter.get_mut(&c).expect("its Störquelle").update(z, t, world);
+                out.push(ch, Category::Owner);
+            }
+            Some(Owner::Person(gid)) => {
+                let m = *hy.people.get(&gid).expect("a person with tracks");
+                if let Some((new, l)) = self.attach(Obj::Mixture(m)) {
+                    let mut ch = hy.child(hy.logw + l);
+                    ch.people.insert(gid, new);
+                    out.push(ch, Category::Owner);
+                }
+            }
+            None => panic!("every hypothesis says whose a live track is"),
+        }
+        let Some(gid) = with else {
+            return;
+        };
+        let m = *hy.people.get(&gid).expect("a person with tracks");
+        if let Some((new, l)) = self.attach(Obj::Mixture(m)) {
+            let mut ch = self.released(hy.child(hy.logw + share.ln() + l), cur);
+            ch.people.insert(gid, new);
+            ch.tracks.insert(seg, Owner::Person(gid));
+            out.push(ch, Category::Tracked);
         }
     }
 
@@ -622,6 +796,7 @@ impl Branching<'_> {
                 let f = match &self.chance {
                     Chance::New { start, .. } => *start,
                     Chance::Again { near, .. } => TileFactors::same(near),
+                    Chance::Fuse { .. } => unreachable!("a run gives the track to a person with tracks"),
                 };
                 from_tiles(world, &mut objects.densities, d, f, track)
                     .filter(|&(_, l)| l > f64::NEG_INFINITY)
@@ -641,6 +816,7 @@ impl Branching<'_> {
         let (world, frame) = (self.world, self.frame);
         match &self.chance {
             Chance::Again { lost, .. } => near_mixture(world, frame.si, mix, lost.z, false).map(f64::ln),
+            Chance::Fuse { .. } => [0.0, 0.0],
             Chance::New { skip, spots, .. } => {
                 let p = &world.params;
                 let (lw, ls) = (p.track_life[WALK], p.track_life[STILL]);

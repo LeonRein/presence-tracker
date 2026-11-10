@@ -157,6 +157,9 @@ impl Default for Clock {
     }
 }
 
+/// A measured track due to be given to the person it runs with (MODEL.md 5.1, `fusion`): where, its radial speed.
+type Fused = (SegId, Point, f64);
+
 /// A sensor silent for more than LOST s whose tracks the filter still has: they
 /// end for lost data at its last frame + LOST.
 #[derive(Debug, Clone, PartialEq)]
@@ -595,7 +598,7 @@ impl Tracker {
                 events.push(Event::Watch { si, delta });
             }
         }
-        let refound = self.track_events(si);
+        let (refound, fused) = self.track_events(si);
         let frame = &mut self.sensors[si].frame;
         let (ended, data_lost) = (std::mem::take(&mut frame.events.ended), frame.events.data_lost);
         let ends = ended
@@ -611,8 +614,32 @@ impl Tracker {
         if censored {
             self.filter.censor(&self.world, si);
         }
+        self.fuse(si, t, delta, &fused)?;
         self.branch(si, t, delta, &refound, events)?;
         self.filter.normalize(0.0)
+    }
+
+    /// Measured tracks that ran with a walking person while judged ghosts' branch every hypothesis
+    /// (MODEL.md 5.1, `fusion`); all at t first.
+    fn fuse(&mut self, si: usize, t: f64, delta: f64, fused: &[Fused]) -> Result<(), NotFinite> {
+        if fused.is_empty() {
+            return Ok(());
+        }
+        self.flush_to(t, true)?;
+        let frame = Frame {
+            si,
+            t,
+            last: if delta <= 0.0 { FRAME } else { delta.min(FRAME) },
+            censored: delta <= 0.0,
+            skip: &[],
+        };
+        for &(seg, z, speed) in fused {
+            if self.filter.tracks().get(seg).is_some() {
+                self.filter
+                    .fuse(&self.world, &frame, NewTrack { seg, z, var: 0.0 }, speed)?;
+            }
+        }
+        Ok(())
     }
 
     /// Whether the last frame of sensor si concerns everybody: a track was born or ended, or one the
@@ -631,7 +658,7 @@ impl Tracker {
     /// Step 2: a measured track updates its owners; one that was lost and is measured again is found
     /// again, returned to be branched on. Tracks the filter does not know (begun before a start, or of
     /// a sensor that changed) say nothing. The events are taken out.
-    fn track_events(&mut self, si: usize) -> Vec<(SegId, Point)> {
+    fn track_events(&mut self, si: usize) -> (Vec<(SegId, Point)>, Vec<Fused>) {
         let frame = &mut self.sensors[si].frame;
         let (t, events) = (frame.t, &mut frame.events);
         let (measured, lost, held) = (
@@ -640,12 +667,17 @@ impl Tracker {
             std::mem::take(&mut events.held),
         );
         let at = |det: usize| self.sensors[si].frame.detections[det].pos;
-        let mut refound = Vec::new();
+        let (mut refound, mut fused) = (Vec::new(), Vec::new());
         for m in measured {
             match self.filter.tracks().get(m.seg).map(|i| i.lost.is_some()) {
                 Some(false) => {
                     let speed = self.sensors[si].frame.detections[m.det].speed;
-                    self.filter.measured(&self.world, &self.sensors, m.seg, at(m.det), speed, t)
+                    if self.filter.fusion_due(&self.world, m.seg, at(m.det), speed, t) {
+                        fused.push((m.seg, at(m.det), speed));
+                    } else {
+                        self.filter
+                            .measured(&self.world, &self.sensors, m.seg, at(m.det), speed, t)
+                    }
                 }
                 Some(true) => refound.push((m.seg, at(m.det))),
                 None => {}
@@ -661,7 +693,7 @@ impl Tracker {
                 self.filter.held(&self.world, si, h.seg, at(h.det), t);
             }
         }
-        refound
+        (refound, fused)
     }
 
     /// Step 4: the tracks born in this frame and the lost ones found again branch every hypothesis; a

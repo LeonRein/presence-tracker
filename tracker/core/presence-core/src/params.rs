@@ -118,6 +118,10 @@ pub struct Params {
     /// 4.2 ghosts that a person makes near themselves: [per s, sensor and person in its sight, m the kernel's sigma],
     /// shared out over the kinds as `ghost_types`
     pub ghost_near: [f64; 2],
+    /// 5.1 a track judged a ghost (or a Störquelle's) that runs with a walking person who has tracks of other
+    /// sensors is theirs after all: [share of such runs that are the person's, m within which, s how long];
+    /// share 0: never
+    pub fusion: [f64; 3],
     /// 4.5 Störquellen: born per m^2 and s in an LD2450's view, their mean life (s), the rate (1/s) at which its
     /// sensor starts a track on one and how long such a track lasts (s), measured in the empty house
     #[serde(deserialize_with = "real")]
@@ -272,6 +276,7 @@ impl Default for Params {
             ghost_types: vec![[0.4 * 5.4e-7, 3.0], [0.6 * 5.4e-7, 39.0]],
             walker_ghosts: 0.0057,
             ghost_near: [5e-4, 0.5],
+            fusion: [0.9, 0.75, 0.75],
             clutter_birth: 2.2e-7,
             clutter_life: 1.9 * 3600.0,
             clutter_acquire: [0.115, 420.0],
@@ -384,6 +389,10 @@ impl Params {
             (
                 "ghost_near",
                 at_least_0(self.ghost_near[0]) && positive(self.ghost_near[1]),
+            ),
+            (
+                "fusion",
+                (0.0..1.0).contains(&self.fusion[0]) && positive(self.fusion[1]) && at_least_0(self.fusion[2]),
             ),
             ("clutter_birth", at_least_0(self.clutter_birth)),
             ("clutter_life", time(self.clutter_life)),

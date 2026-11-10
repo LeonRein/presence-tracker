@@ -692,6 +692,18 @@ Frame jedes Sensors alles vorgerückt: etwa 23-mal je Sekunde, ein Hauptteil der
   nicht); eine bekannte Person ohne Spur (mit ihrem r, 5.5); eine unbekannte
   (5.5). Eine wiedergefundene: ihr Eigentümer (Person, Geist oder Störquelle); eine andere Person nahe der Stelle
   (mit Spur, bekannt ohne Spur oder unbekannt); Geist/Reflexion (`filter/branch.rs`).
+- **Spur-zu-Spur** (Zweig `tuer-fusion`, 11.11., `fusion` = [0,9, 0,75 m, 0,75 s]): Eine gemessene Spur, die die
+  stärkste Hypothese für die eines Geists (oder einer Störquelle) hält, und die mit der Spur einer gehenden Person eines
+  anderen Sensors zusammenläuft, verzweigt einmal je Lauf: beide gehen (radial ≥ 0,3 m/s; die andere gemessen oder vom
+  LD2450 weitergeführt, „coast“, seine eigene Vorhersage), Abstand ≤ 0,75 m, ohne Unterbrechung ≥ 0,75 s (Lücken bis
+  0,5 s). Dann in jeder Hypothese, in der sie Geist/Störquelle ist und die andere Spur einer Person ohne messende Spur
+  dieses Sensors gehört: mit 0,1 bleibt sie, wem sie gehört (ihre Messung wie sonst), mit 0,9 gehört sie ab jetzt dieser
+  Person (Kalman-Update mit ihrem Versatz wie eine neue Spur auf ihr, 4.1); was sie vorher maß, bleibt bei der Quelle.
+  Hypothesen ohne solche Person messen sie wie sonst. Die Form ist die Spur-zu-Spur-Zuordnung der Objekt-Fusion
+  (E_Aeberhard2017 Abschn. 3.3), hier an einem Ereignis statt in jedem Zyklus; der Lauf ist das Tor, die Gewichte danach
+  sind exakt. Wozu: Der LD2450 nimmt eine gehaltene Spur auch auf einer Person wieder auf, die noch 1,5–2 m entfernt ist
+  (4.1 Wiederfinden, Kern 0,7 m); dann bleibt sie die des Geists, und die Person ist nach dem Ende ihrer anderen Spur
+  „verloren“, obwohl ein Sensor sie misst (10, „Tür: Spur-zu-Spur“). Ruhende sind nie betroffen (beide müssen gehen).
 - **Erst zusammenlegen, dann abschneiden** (seit 8.10.): Die Kinder einer Verzweigung, die über die
   laufenden Spuren dasselbe sagen, werden zuerst eine Hypothese (5.6). Der Schlüssel sagt nicht,
   *welcher* Person eine Spur gehört: „sie gehört u₁“, „u₂“, „einer neuen Person“ desselben
@@ -1810,6 +1822,35 @@ damaligen Maße gewichteten die Fehler anders als heute (1). Die Versionsgeschic
 - **Eine einzelne Prozentzahl verdeckt Fehler** (in 0.6.4 versteckte sie einen ganz falschen
   Küchenschritt). **Gute Werte in der Simulation** sagten wenig: 0.5.0 war dort gut und in der Praxis
   schlecht.
+- **Tür: Spur-zu-Spur** (11.11., Zweig `tuer-fusion` auf `kandidat-064`, 5.1; Meldung 10.11. 10:16 „Wenn eine Person den
+  Raum wechselt, geht sie oft an der Grenze verloren …“, `20261110-101641-haus-inaccurate`). Nachgespielt (rprobe,
+  10:14:45–10:15:25): Der Flur-LD2450 misst sie bis 10:14:48,3 (y 4,92), danach führt er die Spur nur weiter (gleiche
+  Geschwindigkeit, „coast“; dazu hinter der Wand), sie endet 10:14:49,7. Die Arbeitszimmer-Spur 9 läuft ab 48,2 neben dieser
+  Spur (0,3–0,8 m). Die Mischung der Person blieb an der Wand hängen (Mittel bei 49,2 (−1,39 | 4,78), Spur 9 bei (−2,26 |
+  5,93); beide Sensoren setzen sie etwa 0,4 m westlich der Tür), ein Tor gegen die Mischung (erster Versuch) griff deshalb
+  nie; das Tor gegen die andere Spur greift bei 49,2. Die Hypothese „9 gehört einer Person“ gab es schon vorher (mit einer
+  zweiten, verdeckten Person, deren r verblasst), 1–5 nats hinter „9 Geist, sie verdeckt“; mehr Hypothesen ändern daran
+  nichts, die Daten danach entscheiden. Nach dem Lauf liegt die neue Hypothese bei −2,9 (0,9) bzw. −5,1 (0,5; Update mit
+  dem breiten Versatz, die Mischung 1,3 m daneben) und führt ab 10:14:50,3 (0,9; mit 0,5 ab 50,8) bis 10:15:20.
+  *Kennzahl* (Schritte zu 0,5 s ab 10:14:50 mit einem Arbeitszimmer-Ziel, in denen niemand „gesehen“ ist, von 65): ohne 62;
+  `fusion` [0,5, 0,75, 0,75] 9; [0,9, 0,75, 0,75] 6; [0,5, 0,5, 0,75] 8; [0,5, 0,75, 1,0] 25 (der Lauf ist zu kurz, bevor die
+  Flur-Spur endet). Die übrigen 5–7 Schritte ab 10:15:20 sind ein anderer Fall: Spur 9 wird gehalten und an der Ostwand
+  (−0,96 | 8,52) wiedergefunden, die Sitzende am Schreibtisch ist wieder „Geist + verdeckt“ (Meldung 10:18, oben).
+  *Skalen gemessen* (`dev/personenzahl/fusion_coast.py`, Aufnahmen; Spuren wie `versatz.py`, A nur gemessene Frames, B auch
+  weitergeführte; „sicher Person“ = gehend ≥ 10 s und ≥ 2 m Weg): Ein-Personen-Zeiten 19,8 h (2.–4.11., 8.11.), Zwei-Personen-Zeiten
+  21,9 h (31.10., 6.–8.11.). Läufe beider gehend ≤ 0,75 m ≥ 1 s: zwei sichere Spuren in Ein-Personen-Zeiten (dieselbe
+  Person) 67 von 362 Paaren; eine nicht sichere neben einer sicheren 32 von 666; in Zwei-Personen-Zeiten zwei sichere, die
+  über ihre Überlappung im Median > 1,5 m auseinander sind (zwei Personen) 5 von 391 (0,23 je Stunde), nahe 104. Mit
+  ≥ 0,75 s: zwei Personen 6 von 146 sicheren Paaren mit Lauf (4 %). Danach (> 2 m von jeder sicheren Spur, ≥ 3 Messungen):
+  nicht sichere Spuren nach einem Lauf ≥ 0,75 s in Ein-Personen-Zeiten 4 von 40 (10 %), sichere derselben Person 17 von 69
+  (25 %; das Maß hat selbst diesen Fehler). Daraus 0,9: höchstens 10 % der Läufe sind keine Spur der Person. Abstand und Zeit:
+  0,75 m: zwei Sensoren auf einer Gehenden im Median 0,64 m auseinander (4.1), in Zwei-Personen-Zeiten nahe Paare Quartile 0,40 / 0,59 / 0,90 m; 0,75 s die längste Zeit, die im
+  Türfall vor dem Ende der Flur-Spur bleibt.
+  *Einzelfenster* (dieselbe Fassung mit `fusion` [0, …] gegen an, je ein Start): sofa10 Start 3 und 9 Sofa nicht dunkel,
+  dunkel mit Sitzer 0,92 / 0,92 min wie ohne, Licht zu viel 12,97 / 13,0 wie ohne; bad3110 Start 2 MUSS dunkel 1,05 min wie
+  ohne (Sprung durch die Wand, 9); zwei0711 Start 2 Licht zu viel 155,1 → 155,9, Personen zu viel 246,5 → 245,6. Bewertung
+  `evalp` QUICK: unten. Verworfen: das Tor gegen die Mischung der Person (griff im Türfall nie, s. oben); nur gemessene
+  Frames der anderen Spur (im Türfall 0,1 s ≤ 0,5 m: der Flur-Sensor führt sie ab 48,3 nur weiter).
 - **Geister brauchen eine Quelle** (10.11., Zweig `geist-person`, 4.2; Meldung 10.11. 10:18 Arbeitszimmer: Die Sitzende am
   Schreibtisch hat 94 % der Zeit eine ruhende Spur des Arbeitszimmer-LD2450, die App zeigt sie nur 7 % gesehen, die beste
   Hypothese ist „Spur = Geist, Person verdeckt bei (−2,6 | 6,1)“). Form J_Park2020 Gl. 16: Geburtsrate eines Geists
