@@ -500,7 +500,7 @@ impl Branching<'_> {
             &mut objects.densities,
             self.track.seg,
             self.track.z,
-            &self.world.params,
+            self.world.params.white,
         );
         let hit = (objects.mixtures.insert(new), l);
         self.made.found_sources.push((ph, hit));
@@ -539,7 +539,7 @@ impl Branching<'_> {
                     if fresh {
                         new.add_track(track.seg, track.var, p.const_share, wide);
                     }
-                    let mut l = new.update(&mut self.objects.densities, track.seg, track.z, p);
+                    let mut l = new.update(&mut self.objects.densities, track.seg, track.z, p.white);
                     new.in_sight(world, origin);
                     if l > f64::NEG_INFINITY {
                         let dlog = self.start_chance(&mut new);

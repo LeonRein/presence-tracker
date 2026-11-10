@@ -99,9 +99,6 @@ pub struct Params {
     /// m: frame jitter of a track's position
     #[serde(deserialize_with = "real")]
     pub white: f64,
-    /// degrees of freedom of a standing person's track position (Student's t, MODEL.md 4.1; inf: Gaussian)
-    #[serde(deserialize_with = "real")]
-    pub still_dof: f64,
     /// s: a track's positions are used this often
     #[serde(deserialize_with = "real")]
     pub pos_every: f64,
@@ -266,7 +263,6 @@ impl Default for Params {
             offset_wide: [0.2, 2.0],
             tau: 3.5,
             white: 0.05,
-            still_dof: 2.0,
             pos_every: 0.25,
             find_clutter: 0.05,
             track_life: [60.0, 30.0],
@@ -395,7 +391,6 @@ impl Params {
             ),
             ("tau", positive(self.tau)),
             ("white", positive(self.white)),
-            ("still_dof", self.still_dof > 0.0), // inf: the Gaussian
             ("pos_every", positive(self.pos_every)),
             ("find_clutter", at_least_0(self.find_clutter)),
             ("track_life", self.track_life.iter().all(|&t| time(t))),

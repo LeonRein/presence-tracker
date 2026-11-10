@@ -268,27 +268,6 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 57 % der Versatzvarianz bleibt, 43 % wandert (gemessen). Gesamtstreuung entlang 0,15 m + 2 %, quer
 0,10 m + 5 % der Entfernung; im Filter je Achse ihr Mittel. c und o sind Teil des Kalman-Zustands
 (E_BrysonHenrikson1967). Verwendet wird höchstens alle 0,25 s eine Position.
-**Ruhende streuen mit schweren Ausläufern** (seit 0.64, `still_dof` = 2): In der stehenden Komponente ist die Vorhersage
-der Spur je Achse eine Student-t-Verteilung mit 2 Freiheitsgraden, Skala s die Varianz der Kalman-Vorhersage (Gauß mit
-gamma-verteilter Skala, Särkkä & Svensson 2023 Abschn. 5.2; Student-t-Filter, Roth, Özkan & Gustafsson 2013). Was der
-Sprung über die Gauß-Verteilung hinaus ist, nimmt der wandernde Versatz o: Vor dem Update bekommt o einen unabhängigen
-Sprung der Varianz `(g − 1)·s`, `g = max(1, (ν + e²/s) / (ν + 1))` die Skala des t-Posteriors, danach das gewöhnliche
-Kalman-Update. Die Person bleibt so stehen, wo sie ist, und muss nicht gehen. Erste Fassung (nicht übernommen): die
-ganze Kovarianz nach dem Update mal g wie bei Roth. Weil x, c und o stark korreliert sind, wuchs dabei s = Var(x + c + o)
-kaum, die einzelnen Varianzen aber ohne Grenze, bis ±∞ (−∞ nach 21 Sprüngen von 3 m im Test
-`a_standing_track_that_jumps_back_and_forth_for_long_stays_finite`; in `evalp` NaN der Hypothesengewichte, 10.11.). Gehende bleiben gaußsch; ein Geist (seine Quelle steht wie eine Person) bekommt dasselbe. Gemessen 10.11.
-(`dev/personenzahl/sitz/streu*.py`; App-Aufnahmen 31.10.–8.11. und Meldung 10.11.; Abschnitte ≥ 60 s mit genau einem
-Ziel der Geschwindigkeit 0, eingefrorene Frames verworfen, bis 1 s Bewegung überbrückt; 2 385 Abschnitte, 116 h;
-Abweichung vom Median des Abschnitts im Sensorsystem): robuste Streuung radial 0,05–0,11 m, quer 0,06–0,18 m;
-Standardabweichung 0,12–0,22 / 0,14–0,32 m; 8–12 % der Frames weiter als 3 robuste Streuungen (Gauß 0,27 %), je
-Abschnitt mit seiner eigenen Streuung normiert noch 4 % bzw. 1,4 % über 5 (Gauß 6·10⁻⁷): Die Ausläufer sind Sprünge in
-den Abschnitten, nicht Unterschiede zwischen ihnen. Student-t (Maximum-Likelihood je Entfernung 0,5–6,5 m) ν 1,5–2, Skala
-radial 0,04–0,10 m, quer 0,05–0,18 m, +0,1 bis +0,5 nats je Position (0,25 s) gegen die Gauß-Verteilung; keine deutliche
-Abhängigkeit von Entfernung oder Winkel. Sprünge quer über 0,5 m in 4 s: 2 / 9 / 6 % der ruhenden Zeit in 0,5–2,5 /
-2,5–4,5 / 4,5–6,5 m. Autokorrelation quer 0,83 / 0,68 / 0,49 / 0,28 / 0,12 nach 1 / 2 / 4 / 8 / 16 s (OU mit τ ≈ 5,5 s;
-im Modell 3,5 s, nicht geändert). Bis 0.63 gaußsch: Rutschte das Ziel einer Sitzenden 3,7 m vor dem Sensor in Sekunden
-1–1,5 m quer und zurück (Meldung 10.11. 10:18), ging sie im Modell (Gehanteil 0,96), und das LD2410C sprach jedes Mal
-gegen eine Gehende.
 **Breiter Versatz einer neuen Spur** (seit 0.58.0, `offset_wide`): Beginnt eine Spur auf einer Person, die schon eine
 Spur hat, oder wird eine gehaltene Spur auf einer solchen anderen Person wiedergefunden, sitzt sie mit 0,8 auf dem
 engen Versatz oben und mit 0,2 auf einem breiten, σ = 2,0 m je Achse auf c
@@ -1335,6 +1314,19 @@ sind am 31.10. gelöscht; die Zahlen lassen sich nicht nachrechnen. Viele beruhe
 Fenstern oder einem einzigen Start. „Schlechter“ heißt dann: auf diesen Daten, nicht allgemein. Die
 damaligen Maße gewichteten die Fehler anders als heute (1). Die Versionsgeschichte steht in
 `CHANGELOG.md` und in git, nicht hier.
+
+- **Student-t für die Spur einer Ruhenden** (10.11., Branch `sitz-messmodell`, nicht übernommen). Gemessen (App-Aufnahmen
+  31.10.–8.11., Abschnitte ≥ 60 s mit genau einem ruhenden Ziel, 116 h): Abweichungen vom Median mit schweren Ausläufern,
+  Student-t ν 1,5–2; nur in Zeiten mit einer Person zu Hause (18 h) ν ≈ 3 und weniger Sprünge über 0,5 m (0,3–3,8 %
+  statt 2–9 % der ruhenden Zeit): Ein Teil der „Ausläufer“ ist ein Ziel, das zwischen zwei nebeneinander Sitzenden springt.
+  Eingebaut als t-Vorhersage in der stehenden Komponente, der Überschuss als Sprung in den wandernden Versatz o (die erste
+  Fassung, die ganze Kovarianz mal g, lief bei korrelierten x, c, o bis ±∞/NaN). Das nahm genau diesen Beleg für eine
+  zweite, unaufgelöste Person: `evalp` (QUICK, ein Start je Fenster, Sofa/Bad alle Starts) mit `ld_other_room` 0: Sofa
+  8.11. dunkel in 10 von 10 Starts (0.63: 1), zwei Personen 7.11. dunkel mit Sitzer 0,7 → 23,4 min, Ein-Personen-Tage
+  dunkel mit Sitzer 23,8 → 55,2 min, Schlafzimmer nachts dunkel 1,3 → 10,3 min. Einzelne Starts (sofa10 Start 9 MUSS
+  dunkel / zwei0711 Start 0 dunkel mit Sitzer): ν 2 1,5 / 21,2 min, ν 10 0 / 5,8 min, ν ∞ 0 / 0,6 min. Den Sprung von o
+  auf 0,3–1 m zu begrenzen änderte am Sofa nichts. Die Meldung 10.11. (Arbeitszimmer) braucht es nicht: ohne t 54,6 % der
+  Schritte „gesehen“ (0.63: 7,8 %).
 
 - **Frames als unabhängige Messungen** machen überkonfident; Kovarianz aufblähen half in 0.6.x nicht.
   Daher die Spuren als Messgröße.

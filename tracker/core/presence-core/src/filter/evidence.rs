@@ -88,7 +88,7 @@ impl Filter {
             }
             let objects = &mut self.objects;
             let mix = objects.mixtures.get_mut(id);
-            let dl = mix.update(&mut objects.densities, seg, z, &world.params);
+            let dl = mix.update(&mut objects.densities, seg, z, world.params.white);
             mix.in_sight(world, origin);
             self.holders.book(&mut self.hyps, entry, dl);
         }
