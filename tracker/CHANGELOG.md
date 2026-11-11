@@ -10,7 +10,7 @@ neuen Schwellen: zwei Personen MUSS-Raum dunkel 1,5 → 0,4 min (Sofa 8.11. in 0
 Schlafzimmer-Sensor, MODEL.md 10 „0.64“), dunkel mit
 Sitzer 4,1 → 2,8; eine Person dunkel mit Sitzer 23,2 → 21,5, Licht zu viel 879 → 882 Raumminuten; leeres Haus 7.11.
 34,3 → 37,7 (alle anderen leeren Fenster 0). Arbeitszimmer-Meldung „gesehen“ 7,8 → 62,5 %. Rechenzeit Sofa-Abend +30 %.
-**Nicht live.**
+Live seit 11.11. (Leon 11.11.: „ok, mach das“). Das Sofa bleibt offen (MODEL.md 10 „0.64“).
 - **Geister brauchen eine Quelle** (MODEL.md 4.2, `ghost_near`): Grundrate 3 % der bisherigen (leeres Haus gemessen), dazu
   ein Kern von 0,5 m um jede Person der Hypothese (J_Park2020 Gl. 16). Meldungen Bad 31.10. 177 → 0 s falsch, Sofa 8.11.
   24 → 14 s.
