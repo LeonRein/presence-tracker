@@ -266,21 +266,20 @@ pub(crate) fn runs_with(tracks: &Tracks, hy: &Hyp, seg: SegId, with: SegId) -> O
     (!measured_here).then_some(gid)
 }
 
-/// The walking track of another sensor that a measurement z at t of track seg runs with: where its sensor has it
-/// now (measured, or coasted while lost: the LD2450's own prediction; not older than RUN_GAP), within the radius
-/// of z; the nearest of those a person's in the hypothesis that says seg is a ghost's (runs_with).
-fn walking_beside(world: &World, tracks: &Tracks, hy: &Hyp, seg: SegId, z: Point, t: f64) -> Option<SegId> {
+/// The track of another sensor that a measurement z at t of track seg takes over from: a walker that sensor lost
+/// and coasts (the LD2450's own prediction, not older than RUN_GAP), within the radius of z; the nearest of those
+/// a person's in the hypothesis that says seg is a ghost's (runs_with). While both sensors measure, their tracks'
+/// positions decide as everywhere (the alternative "a person's" of a track is never cut, 5.1).
+fn taking_over(world: &World, tracks: &Tracks, hy: &Hyp, seg: SegId, z: Point, t: f64) -> Option<SegId> {
     let radius = world.params.fusion[1];
     let si = tracks.get(seg)?.si;
     let mut best: Option<(f64, SegId)> = None;
     for (&other, info) in tracks.iter() {
-        if info.si == si {
+        let Some((at, x)) = info.coasted().filter(|_| info.si != si) else {
             continue;
-        }
-        let (at, x, walking) = info.sensor_at();
+        };
         let d = py_hypot(x[0] - z[0], x[1] - z[1]);
-        if walking
-            && t - at <= RUN_GAP
+        if t - at <= RUN_GAP
             && d <= radius
             && best.is_none_or(|(b, _)| d < b)
             && runs_with(tracks, hy, seg, other).is_some()
@@ -304,7 +303,7 @@ impl Filter {
         if share <= 0.0 {
             return false;
         }
-        let near = walking_beside(world, &self.tracks, top, seg, z, t);
+        let near = taking_over(world, &self.tracks, top, seg, z, t);
         let moving = speed.abs() >= MOVING;
         self.tracks.update(seg, |i| i.run = Run::next(i.run, near, moving, t));
         self.tracks.get(seg).and_then(|i| i.run).is_some_and(|r| r.due(time))

@@ -90,13 +90,12 @@ impl TrackInfo {
         self.gt.unwrap_or(self.born)
     }
 
-    /// Where its sensor has the target now and whether it walks: measured, coasted with its last speed while
-    /// lost (the LD2450's own prediction), or frozen (still); and when.
-    pub fn sensor_at(&self) -> (f64, Point, bool) {
-        match self.lost {
-            None => (self.t, self.z, self.moving),
-            Some(l) => (l.seen, l.z, self.moving && l.kind == LostKind::Coast),
-        }
+    /// A walking target its sensor lost and coasts with its last speed (the LD2450's own prediction): when and
+    /// where it has it now.
+    pub fn coasted(&self) -> Option<(f64, Point)> {
+        self.lost
+            .filter(|l| self.moving && l.kind == LostKind::Coast)
+            .map(|l| (l.seen, l.z))
     }
 
     /// Where the rates of new tracks see it: measured, or held where it was lost.

@@ -576,11 +576,18 @@ fn tracks_again_and_again_at_one_spot_that_only_one_sensor_makes_are_a_stoerquel
     assert!(stoer > 0.9, "a Störquelle there {stoer}");
 }
 
-/// A person walking with a track of sensor 0 and a track of sensor 1 begun beside them, judged a ghost's; both
-/// measured every 0.1 s for `secs` s at `speed` (radial, m/s), the second `apart` m beside the first. Returns the
-/// filter, when the second was due to be given to the person (None: never) and the children of that branch.
-fn ghost_beside_a_walker(speed: f64, apart: f64, secs: f64) -> (Filter, Option<f64>, Vec<(f64, Category)>) {
-    let world = testing::flat();
+/// A person walking with a track of sensor 0 and a track of sensor 1 begun beside them, judged a ghost's; every
+/// 0.1 s for `secs` s at `speed` (radial, m/s), the second measured `apart` m beside the first, the first measured
+/// too or (`coast`) lost by sensor 0 and coasted on. Returns the filter, when the second was due to be given to the
+/// person (None: never) and the children of that branch.
+fn ghost_beside_a_walker(
+    speed: f64,
+    apart: f64,
+    secs: f64,
+    coast: bool,
+) -> (Filter, Option<f64>, Vec<(f64, Category)>) {
+    let mut world = testing::flat();
+    world.params.fusion = [0.6, 0.75, 0.75]; // off by default
     let (mut f, _) = filter(&world, 1);
     let mut t = 1.0;
     f.set_flushed(t);
@@ -624,10 +631,17 @@ fn ghost_beside_a_walker(speed: f64, apart: f64, secs: f64) -> (Filter, Option<f
     .expect("finite");
     keep(&mut f, &|h: &Hyp| person(h) && h.is_ghost(b));
     f.check().expect("a person and a ghost");
+    if coast {
+        f.lost(a, LostKind::Coast, at(t), t);
+    }
     while t < 1.0 + secs {
         t += 0.1;
         f.flush(&world, &watching(t), t);
-        f.measured(&world, &watching(t), a, at(t), speed, t);
+        if coast {
+            f.held(&world, 0, a, at(t), t);
+        } else {
+            f.measured(&world, &watching(t), a, at(t), speed, t);
+        }
         if f.fusion_due(&world, b, z(t), speed, t) {
             let frame = Frame { si: 1, ..frame(t, &[]) };
             let found = NewTrack {
@@ -648,11 +662,11 @@ fn ghost_beside_a_walker(speed: f64, apart: f64, secs: f64) -> (Filter, Option<f
 
 #[test]
 fn a_ghost_track_running_with_a_walker_becomes_theirs_with_the_measured_share() {
-    // MODEL.md 5.1, `fusion`: walking together within the radius for the time, the track judged a ghost's is
-    // the person's too, with the share of such runs; its measurement then weighs both alternatives
-    let p = crate::params::Params::default();
-    let time = p.fusion[2];
-    let (f, due, cats) = ghost_beside_a_walker(1.0, 0.3, 3.0);
+    // MODEL.md 5.1, `fusion`: a walker's sensor lost them and coasts, the track of another sensor judged a ghost's
+    // runs with that within the radius for the time - it is the person's too, with the share of such runs; its
+    // measurement then weighs both alternatives
+    let time = 0.75;
+    let (f, due, cats) = ghost_beside_a_walker(1.0, 0.3, 3.0, true);
     let due = due.expect("a run of two walking tracks");
     // the run begins at the first measurement of the second beside the first (t = 1.2)
     assert!(
@@ -677,8 +691,10 @@ fn a_ghost_track_running_with_a_walker_becomes_theirs_with_the_measured_share() 
 }
 
 #[test]
-fn still_people_and_tracks_apart_are_never_fused() {
-    // the sofa: two still targets side by side are never given to each other; nor walkers 1.5 m apart
-    assert_eq!(ghost_beside_a_walker(0.0, 0.3, 5.0).1, None);
-    assert_eq!(ghost_beside_a_walker(1.0, 1.5, 3.0).1, None);
+fn still_people_tracks_apart_and_both_measured_are_never_fused() {
+    // the sofa: two still targets side by side are never given to each other; nor walkers 1.5 m apart; nor two
+    // tracks both measured (two people walking together: their positions decide)
+    assert_eq!(ghost_beside_a_walker(0.0, 0.3, 5.0, true).1, None);
+    assert_eq!(ghost_beside_a_walker(1.0, 1.5, 3.0, true).1, None);
+    assert_eq!(ghost_beside_a_walker(1.0, 0.3, 3.0, false).1, None);
 }
