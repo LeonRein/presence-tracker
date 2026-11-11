@@ -1,20 +1,24 @@
 # Changelog
 
-## 0.64.0 (Geister brauchen eine Quelle; das LD2410C sieht in Nachbarräume nur bis 1,5 m; Licht schon ab 1/6)
+## 0.64.0 (Geister brauchen eine Quelle; das LD2410C sieht in Nachbarräume nur bis 1,5 m; Übergabe an der Tür; Licht schon ab 1/6)
 
-Meldungen 10.11. 10:16 (Raumwechsel) und 10:18 („Es gibt ein ganz eindeutiges Tracking des LD2450 meiner Frau oben rechts im
+Meldungen 10.11. 10:16 (Raumwechsel) und 10:18 („Es gibt ein ganz eindeutiges Tracking des LD2450 [der zweiten Person] oben rechts im
 Arbeitszimmer. Allerdings springt die angezeigte Person oft nach unten.“). Ursache: Die Erklärung „Spur = Geist, die Person
 ist verdeckt woanders“ war frei und schluckte jede Fehlpassung, vor allem die Erwartung des Flur-LD2410C, der die Sitzende
 durch die Tür (4 mm neben der Türkante) sehen sollte. Bewertet mit dem Schnelllauf (MODEL.md 10 „0.64“) gegen 0.63 bei den
 neuen Schwellen: zwei Personen MUSS-Raum dunkel 1,5 → 0,4 min (Sofa 8.11. in 0 von 15 Starts dunkel, 0.63 2), dunkel mit
-Sitzer 4,1 → 2,8; eine Person dunkel mit Sitzer 23,2 → 21,4, Licht zu viel 879 → 901 Raumminuten; leeres Haus 7.11.
-34,3 → 37,7 (alle anderen leeren Fenster 0). Arbeitszimmer-Meldung „gesehen“ 7,8 → 57,9 %. Rechenzeit Sofa-Abend +30 %.
+Sitzer 4,1 → 2,8; eine Person dunkel mit Sitzer 23,2 → 21,5, Licht zu viel 879 → 882 Raumminuten; leeres Haus 7.11.
+34,3 → 37,7 (alle anderen leeren Fenster 0). Arbeitszimmer-Meldung „gesehen“ 7,8 → 62,5 %. Rechenzeit Sofa-Abend +30 %.
 **Nicht live.**
 - **Geister brauchen eine Quelle** (MODEL.md 4.2, `ghost_near`): Grundrate 3 % der bisherigen (leeres Haus gemessen), dazu
   ein Kern von 0,5 m um jede Person der Hypothese (J_Park2020 Gl. 16). Meldungen Bad 31.10. 177 → 0 s falsch, Sofa 8.11.
   24 → 14 s.
 - **LD2410C in Nachbarräumen nur bis 1,5 m hinter einer Öffnung** (MODEL.md 4.3, `ld_other_reach`; gemessen 31.10.–8.11.:
   bis 1,5 m Überschuss/Erwartung 0,6–1,0, weiter −0,7 bis 0). Der Plan ist nicht auf den mm genau (Leon 10.11.).
+- **Übergabe an der Tür** (MODEL.md 5.1, `fusion` [0,6, 0,75 m, 0,75 s]): Läuft eine Spur, die als Geist gilt, gehend
+  höchstens 0,75 m neben der weitergeführten Spur einer Gehenden eines anderen Sensors, gehört sie mit 0,6 dieser Person
+  (Spur-zu-Spur-Zuordnung, E_Aeberhard2017 Abschn. 3.3; gemessen 31.10.–8.11., 23 Übergaben in 41,7 h). Meldung 10.11.
+  10:14:47: verloren 59 → 9 von 65 Schritten. Schnelllauf mit ihr: Licht zu viel 901 → 882 Raumminuten, sonst gleich.
 - **light_cost 0,2, occupied_off 1/12** im Standard (Leon 10.11.: dunkel mit Person etwa 5× schlimmer). Gespeicherte
   Konfigurationen behalten ihren Wert; live erst nach dem Setzen in der Konfiguration.
 - Tests: „Geist im leeren Haus“ prüft jetzt, dass kein Raum belegt wird (die Alternative zum Geist ist eine Störquelle);

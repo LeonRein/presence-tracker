@@ -120,7 +120,7 @@ pub struct Params {
     pub ghost_near: [f64; 2],
     /// 5.1 a track judged a ghost (or a Störquelle's) that runs with a walking person's track another sensor lost
     /// and coasts is theirs after all (a handover): [share of such runs that are the person's, m within which, s how
-    /// long]; share 0: never (the default; measured and tried with [0.6, 0.75, 0.75], MODEL.md 10)
+    /// long]; share 0: never; since 0.64 [0.6, 0.75, 0.75] (measured, MODEL.md 10)
     pub fusion: [f64; 3],
     /// 4.5 Störquellen: born per m^2 and s in an LD2450's view, their mean life (s), the rate (1/s) at which its
     /// sensor starts a track on one and how long such a track lasts (s), measured in the empty house
@@ -279,7 +279,7 @@ impl Default for Params {
             ghost_types: vec![[0.4 * 5.4e-7, 3.0], [0.6 * 5.4e-7, 39.0]],
             walker_ghosts: 0.0057,
             ghost_near: [5e-4, 0.5],
-            fusion: [0.0, 0.75, 0.75],
+            fusion: [0.6, 0.75, 0.75],
             clutter_birth: 2.2e-7,
             clutter_life: 1.9 * 3600.0,
             clutter_acquire: [0.115, 420.0],
