@@ -18,6 +18,8 @@ pub struct Lost {
     pub t: f64,
     pub z: Point,
     pub u: f64,
+    /// time of the last frame that held it
+    pub seen: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -39,6 +41,44 @@ pub struct TrackInfo {
     pub lost: Option<Lost>,
     /// its target moved when last measured (radial speed at least MOVING, m/s)
     pub moving: bool,
+    /// while judged a ghost's, it runs with a walking person who has tracks (MODEL.md 5.1, `fusion`)
+    pub run: Option<Run>,
+}
+
+/// A track running with a walking person's track of another sensor: which, since when, when last, and whether it
+/// was already given to them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Run {
+    pub with: SegId,
+    pub since: f64,
+    pub last: f64,
+    pub fused: bool,
+}
+
+/// s: measurements this far apart still make one run
+pub const RUN_GAP: f64 = 0.5;
+
+impl Run {
+    /// The run after a measurement at t: near which track (None: none), the track moving or not. A run begins
+    /// only while the track moves; a gap, another track or a measurement away from it ends it.
+    pub fn next(run: Option<Run>, near: Option<SegId>, moving: bool, t: f64) -> Option<Run> {
+        let with = near?;
+        match run {
+            Some(r) if r.with == with && t - r.last <= RUN_GAP => Some(Run { last: t, ..r }),
+            _ if moving => Some(Run {
+                with,
+                since: t,
+                last: t,
+                fused: false,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Due to be given to the person: long enough and not given yet.
+    pub fn due(&self, time: f64) -> bool {
+        !self.fused && self.last - self.since >= time
+    }
 }
 
 /// m/s: a target this fast along the beam is a walker's (the LD2450 reports still people at 0-0.16 m/s)
@@ -48,6 +88,14 @@ impl TrackInfo {
     /// Up to when a ghost's life was counted.
     pub fn ghost_t(&self) -> f64 {
         self.gt.unwrap_or(self.born)
+    }
+
+    /// A walking target its sensor lost and coasts with its last speed (the LD2450's own prediction): when and
+    /// where it has it now.
+    pub fn coasted(&self) -> Option<(f64, Point)> {
+        self.lost
+            .filter(|l| self.moving && l.kind == LostKind::Coast)
+            .map(|l| (l.seen, l.z))
     }
 
     /// Where the rates of new tracks see it: measured, or held where it was lost.
