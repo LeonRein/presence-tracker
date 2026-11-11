@@ -1887,9 +1887,10 @@ damaligen Maße gewichteten die Fehler anders als heute (1). Die Versionsgeschic
   dunkel mit Sitzer 23,9 | 23,9 | 23,9 | 21,4 | 21,9 min (morgen0411 7,1 → 4,6 / 5,1); zwei dunkel mit Sitzer 3,6 | 3,5 |
   3,7 | 3,6 | 3,4; leeres Haus 34,6 überall; Meldungen gleich. Einzeln nachgespielte Starts (sofa10 2, 3, 5, 9, sofa0811 1,
   bad3110 2, zwei0711 2) geben teils andere Ausgänge als derselbe Start im vollen Lauf.
-  **Das Sofa ist zweigipflig:** In allen Läufen hat jeder dunkle sofa10-Start 16–18 Personenminuten zu viel (einer 0), jeder
-  helle 40–55, also eine dritte Person fast die ganze Stunde. Die Sitzende bleibt hell, solange eine Person zu viel im
-  Wohnzimmer steht; stimmt die Zahl, geht beim Aufstehen der anderen das Licht aus (0.63-Fall A/B, 10 „Nacht 8./9.11.“).
+  **Das Sofa ist zweigipflig:** In allen Läufen hat jeder dunkle sofa10-Start 16–18 Personenminuten „zu viel“ (einer 0),
+  jeder helle 40–55. *Berichtigt 11.11.:* `zuviel` in evalp.py rechnet gegen 1, auch in Fenstern mit zwei Personen; die
+  hellen Starts zählen in der Sofa-Stunde richtig 2, die dunklen 1 (die Zweite geht schon beim Hinsetzen 21:47 verloren,
+  siehe 10 „0.64“).
   Die Übergabe legt Spuren einer Person zusammen (in sofa10 Start 2 der ersten Fassung 21:45:30 und 21:46:17 die zweite
   Person, die mit der ersten zum Sofa geht: zwei gemessene Spuren, daher nur noch Übergaben); der Platzhalter tfpl zeigt,
   dass nicht jede Störung den Ausgang verschiebt, die Gewichte der Übergabe tun es. Feuert je Fenster selten (sofa10 Start 3
@@ -1933,6 +1934,15 @@ damaligen Maße gewichteten die Fehler anders als heute (1). Die Versionsgeschic
   Sitzer 4,1 → 2,8, MUSS-Raum dunkel 1,5 → 0,4 min (sofa10 0 von 10 statt 1, sofa0811 0 von 5 statt 1, bad3110 1 von 3
   statt 3); Meldung Arbeitszimmer 10.11. 10:18 „gesehen“ 7,8 → 57,9 %. Mit der Übergabe an der Tür (`fusion` 0,6, Lauf `acdq`):
   Licht zu viel 901 → 882, dunkel mit Sitzer 21,5, sonst gleich; Arbeitszimmer 62,5 %, Türgang 10:14:47 verloren 59 → 9 von 65. Rechenzeit (`cpu_s`, unter Last): leer0711 13,0 →
-  14,1 min, sofa10 76 → 99 min (+30 %). Offen: Die hellen Sofa-Starts zählen fast die ganze Stunde eine Person zu viel
-  (sofa10 Personen zu viel 72–83 Personenminuten je Start, 0.63 50–55, dunkle Starts 16–18): Das Sofa hält über eine
-  Phantomperson, nicht weil die zwei Ruhenden unter einem Ziel aufgelöst wären (Zweig `tuer-fusion`, 10 „Tür“).
+  14,1 min, sofa10 76 → 99 min (+30 %). *Sofa, geprüft 11.11.* (Einzel-Replays Start 21:15/21:00,
+  `evalp`-Verläufe aller Starts): In der Sofa-Stunde zählen helle Starts 2 (richtig), dunkle 1. Die Zweite geht beim
+  Hinsetzen 21:47:10–21:47:50 verloren: Das Wohnzimmer-LD2410C misst für zwei Sitzende nur das 1,1–1,8-Fache einer
+  (Ringe 3–5: 201–246 gegen 139–186), eine neu Sitzende ohne Spur bekommt aber die volle Amplitude g = 1 (9 „Sitzende ohne
+  gemessene Spur“); zwei sagen also viel mehr Energie voraus, und eine wird widerlegt. Im Kandidaten trifft das eine
+  überzählige Person: ein ruhendes Ziel 0,2–1,0 m vor dem Schlafzimmer-Sensor (8.11. 21:23–21:45, 6 282 Frames; nie
+  18–21 Uhr, nie im leeren Haus 7.11. 10–14 Uhr), das als Person mit Spur gilt (E bis 21:47 2,9–3,5). Das 0 von 15 des
+  Kandidaten auf dem Sofa ist deshalb **keine stabile Verbesserung**, es hängt an dieser Person. Offen: (a) eine Amplitude
+  für Aufenthalte, die ohne Spur neben jemandem beginnen (Prior statt g = 1, oder nicht additive Energie mehrerer im selben
+  Ring); (b) ruhende Ziele direkt vor dem Sensor als Störquelle (Höhe 1,5 m, Reflexion 1,0 m: dort sitzt niemand minutenlang;
+  dasselbe Ziel im Wohnzimmer leer 7.11. in 99,8 % der Frames, der Fall leer0711); nur zusammen, (b) allein nähme dem Sofa
+  die auffangende Person; (c) das zusammengelegte ruhende Paar als eigener Zustand mit eigener Amplitude.

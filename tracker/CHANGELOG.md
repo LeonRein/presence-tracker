@@ -6,7 +6,8 @@ Meldungen 10.11. 10:16 (Raumwechsel) und 10:18 („Es gibt ein ganz eindeutiges 
 Arbeitszimmer. Allerdings springt die angezeigte Person oft nach unten.“). Ursache: Die Erklärung „Spur = Geist, die Person
 ist verdeckt woanders“ war frei und schluckte jede Fehlpassung, vor allem die Erwartung des Flur-LD2410C, der die Sitzende
 durch die Tür (4 mm neben der Türkante) sehen sollte. Bewertet mit dem Schnelllauf (MODEL.md 10 „0.64“) gegen 0.63 bei den
-neuen Schwellen: zwei Personen MUSS-Raum dunkel 1,5 → 0,4 min (Sofa 8.11. in 0 von 15 Starts dunkel, 0.63 2), dunkel mit
+neuen Schwellen: zwei Personen MUSS-Raum dunkel 1,5 → 0,4 min (Sofa 8.11. in 0 von 15 Starts dunkel, 0.63 2; nicht stabil: hängt an einer überzähligen Person vor dem
+Schlafzimmer-Sensor, MODEL.md 10 „0.64“), dunkel mit
 Sitzer 4,1 → 2,8; eine Person dunkel mit Sitzer 23,2 → 21,5, Licht zu viel 879 → 882 Raumminuten; leeres Haus 7.11.
 34,3 → 37,7 (alle anderen leeren Fenster 0). Arbeitszimmer-Meldung „gesehen“ 7,8 → 62,5 %. Rechenzeit Sofa-Abend +30 %.
 **Nicht live.**
