@@ -1875,7 +1875,7 @@ damaligen Maße gewichteten die Fehler anders als heute (1). Die Versionsgeschic
   aus 1/12). Gegen 0.63 (`b063q` mit denselben Schwellen): leeres Haus 34,3 → 37,7 Raumminuten (nur leer0711; alle anderen
   0); Ein-Personen Licht zu viel 879 → 901 Raumminuten, dunkel mit Sitzer 23,2 → 21,4 min; zwei Personen dunkel mit
   Sitzer 4,1 → 2,8, MUSS-Raum dunkel 1,5 → 0,4 min (sofa10 0 von 10 statt 1, sofa0811 0 von 5 statt 1, bad3110 1 von 3
-  statt 3); Meldung Arbeitszimmer 10.11. 10:18 „gesehen“ 7,8 → 56,4 %. Rechenzeit (`cpu_s`, unter Last): leer0711 13,0 →
+  statt 3); Meldung Arbeitszimmer 10.11. 10:18 „gesehen“ 7,8 → 57,9 %. Rechenzeit (`cpu_s`, unter Last): leer0711 13,0 →
   14,1 min, sofa10 76 → 99 min (+30 %). Offen: Die hellen Sofa-Starts zählen fast die ganze Stunde eine Person zu viel
   (sofa10 Personen zu viel 72–83 Personenminuten je Start, 0.63 50–55, dunkle Starts 16–18): Das Sofa hält über eine
   Phantomperson, nicht weil die zwei Ruhenden unter einem Ziel aufgelöst wären (Zweig `tuer-fusion`, 10 „Tür“).
