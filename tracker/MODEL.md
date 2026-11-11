@@ -404,23 +404,25 @@ Das Modell, je Sensor:
   LD2450 im selben Gehäuse ohne Wand dazwischen sehen könnte, über ihren Versatz gemittelt wie in 4.1. Ruhig zählt
   das Verzögerte: M ist, was die Personen zuletzt hineingaben (geglättet mit 2 s), w_m sein Anteil im Block; bewegt
   w_m = 0. Auch die Echoquellen (unten) geben ruhig nur (1 − w_m) ihres Profils; in M gehen nur die Personen ein.
-- **Blick in einen anderen Raum:** Das LD2410C wiegt nur Personen in seinem eigenen Raum (seit 0.64, `ld_other_room` = 0):
-  Die Sicht einer Stelle in einem anderen Raum als dem eigenen des Sensors (durch eine Tür, über einen Raumteiler, in einen
-  Bereich ohne Sensor) ist 0 statt geometrisch, vor dem Mitteln über den Versatz (4.1), also mit weichem Übergang an der
-  Tür. Gemessen 10.11. (`dev/personenzahl/sitz/ldsee*.py`, App-Aufnahmen 31.10.–8.11.): Frames eines LD2410C mit genau
-  einer ruhenden Person in seinem Blick (die Ziele aller Sensoren dort innerhalb 1 m, Geschwindigkeit 0); Überschuss der
-  ruhigen Ringe 2–8 über den Hintergrund derselben Stunde (Frames ohne jedes Ziel in seinem Blick) gegen das Profil (g = 1),
-  ab 3 m (darunter kappt 100): eigener Raum 0,74 (782 min; 3–4 / 4–5 / 5–6 m 0,73 / 0,90 / 1,14), fremder Raum −0,05
-  (1 383 min). Je Paar weit gestreut: Flur ← Esszimmer 0,66 (158 min), Esszimmer ← Flur 1,4, Arbeitszimmer ← Flur 3,0,
-  Bad ← Flur 0,31, Schlafzimmer ← Flur −0,03, Flur ← Arbeitszimmer 0,21 (14 min; die Schreibtischecke 5,5–6,5 m durch die
-  Türkante: 0 bei einer Erwartung von 20–45), Esszimmer ← Wohnzimmer (Sofa über den Raumteiler, 5–7 m) −0,7 (566 min).
-  Ohne das Sofa wäre fremd/eigen 0,7. Was ein Sensor im Nachbarraum sieht, hängt an Möbeln, Türblättern und Haltung, die
-  das Modell nicht kennt; jeder beobachtete Raum hat seinen eigenen Sensor. Bis 0.63 geometrisch: Eine Sitzende am
-  Schreibtisch sollte dem Flur-LD2410C in 5,3 m durch die Türkante 8–12 je ruhigem Ring 6–7 geben, er sah den Hintergrund,
-  und „Spur = Geist, Person verborgen bei (−2,6 | 6,1)“ gewann um 6–22 nats (Meldung 10.11.).
-  Ein geometrischer Blick durch eine Tür hängt außerdem an ihrer Kante: Leon 10.11.: „dass ich die Türkanten auf den mm
-  genau in den Plan übertragen bekomme ist etwas utopisch.“ Mit 0 entscheidet die Kante für das LD2410C nichts mehr; die
-  Sicht des LD2450 bleibt über den Versatz gemittelt (4.1, σ 0,2–0,35 m, mehr als die Unsicherheit des Plans).
+- **Blick in einen anderen Raum:** Außerhalb seines eigenen Raums sieht das LD2410C eine Person nur bis 1,5 m hinter einer
+  Öffnung (seit 0.64, `ld_other_reach`): Die Sicht einer Stelle in einem anderen Raum ist dort die geometrische, weiter als
+  1,5 m von jeder Tür (ihrer Öffnung in der Wand) und jedem Raumteiler 0; das vor dem Mitteln über den Versatz (4.1), also
+  mit weichem Übergang. Gemessen 10.11. (`dev/personenzahl/sitz/ldsee*.py`, App-Aufnahmen 31.10.–8.11.): Frames eines
+  LD2410C mit genau einer ruhenden Person in seinem Blick (die Ziele aller Sensoren dort innerhalb 1 m, Geschwindigkeit 0);
+  Überschuss der ruhigen Ringe 2–8 über den Hintergrund derselben Stunde (Frames ohne jedes Ziel in seinem Blick) gegen das
+  Profil (g = 1). Eigener Raum ab 3 m: 0,74 (782 min). Fremder Raum ab 2 m nach Abstand zur nächsten Öffnung: 0–0,5 /
+  0,5–1 / 1–1,5 m 0,57 / 0,73 / 1,05 (234 / 168 / 246 min), 1,5–2 / 2–2,5 / 2,5–3 / 3–3,5 m −0,01 / −0,68 / −0,64 / −0,10
+  (159 / 475 / 26 / 86 min). Darunter das Sofa im Wohnzimmer aus Sicht des Esszimmers über den Raumteiler (5–7 m, −0,7,
+  566 min) und die Schreibtischecke des Arbeitszimmers aus dem Flur durch die Tür (5,5–6,5 m: 0 bei einer Erwartung von
+  20–45). Was hinter einer Öffnung weiter im Raum liegt, verdecken Möbel, Türblätter und Haltung, die das Modell nicht
+  kennt. Bis 0.63 geometrisch: Eine Sitzende am Schreibtisch sollte dem Flur-LD2410C in 5,3 m 8–12 je ruhigem Ring 6–7
+  geben, er sah den Hintergrund, und „Spur = Geist, Person verborgen bei (−2,6 | 6,1)“ gewann um 6–22 nats (Meldung
+  10.11.). Erste Fassung (10.11., verworfen): gar keine Sicht außerhalb des eigenen Raums. Sie nahm dem Flur-LD2410C auch
+  die Stelle gleich hinter der Arbeitszimmertür, die er gut sieht: Im leeren Haus 7.11. hielt sich dort ab 09:21 eine
+  Person mit der Spur eines Geists, an ihr sammelten sich 33 Personen ohne Spur mit r 0,01–0,12, und ein Takt kostete
+  das 50- bis 100-fache. Die Kante einer Tür entscheidet nichts: Leon 10.11.: „dass ich die Türkanten auf den mm genau in
+  den Plan übertragen bekomme ist etwas utopisch.“ Die Sicht ist über den Versatz gemittelt (σ 0,2–0,35 m, mehr als die
+  Unsicherheit des Plans), und die Grenze von 1,5 m liegt im Raum, nicht an der Kante.
   Was dem LD2410C nicht mehr als `FLOOR` gibt, ist außerhalb seines Blicks und wird nicht gewogen (Faktor 1, neutral)
   statt „mit null Energie gesehen“. Wände sind undurchsichtig: Gemessen lässt eine Innenwand (alle gemauert) etwa 4 %
   durch, und ein Wert je Wand erklärte die Raumpaare nicht besser. Einen gemessenen Faktor je Paar „Sensor ← Raum“
