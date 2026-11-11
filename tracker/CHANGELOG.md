@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.64.0 (Geister brauchen eine Quelle; das LD2410C sieht in Nachbarräume nur bis 1,5 m; Licht schon ab 1/6)
+
+Meldungen 10.11. 10:16 (Raumwechsel) und 10:18 („Es gibt ein ganz eindeutiges Tracking des LD2450 meiner Frau oben rechts im
+Arbeitszimmer. Allerdings springt die angezeigte Person oft nach unten.“). Ursache: Die Erklärung „Spur = Geist, die Person
+ist verdeckt woanders“ war frei und schluckte jede Fehlpassung, vor allem die Erwartung des Flur-LD2410C, der die Sitzende
+durch die Tür (4 mm neben der Türkante) sehen sollte. Bewertet mit dem Schnelllauf (MODEL.md 10 „0.64“) gegen 0.63 bei den
+neuen Schwellen: zwei Personen MUSS-Raum dunkel 1,5 → 0,4 min (Sofa 8.11. in 0 von 15 Starts dunkel, 0.63 2), dunkel mit
+Sitzer 4,1 → 2,8; eine Person dunkel mit Sitzer 23,2 → 21,4, Licht zu viel 879 → 901 Raumminuten; leeres Haus 7.11.
+34,3 → 37,7 (alle anderen leeren Fenster 0). Arbeitszimmer-Meldung „gesehen“ 7,8 → 56,4 %. Rechenzeit Sofa-Abend +30 %.
+**Nicht live.**
+- **Geister brauchen eine Quelle** (MODEL.md 4.2, `ghost_near`): Grundrate 3 % der bisherigen (leeres Haus gemessen), dazu
+  ein Kern von 0,5 m um jede Person der Hypothese (J_Park2020 Gl. 16). Meldungen Bad 31.10. 177 → 0 s falsch, Sofa 8.11.
+  24 → 14 s.
+- **LD2410C in Nachbarräumen nur bis 1,5 m hinter einer Öffnung** (MODEL.md 4.3, `ld_other_reach`; gemessen 31.10.–8.11.:
+  bis 1,5 m Überschuss/Erwartung 0,6–1,0, weiter −0,7 bis 0). Der Plan ist nicht auf den mm genau (Leon 10.11.).
+- **light_cost 0,2, occupied_off 1/12** im Standard (Leon 10.11.: dunkel mit Person etwa 5× schlimmer). Gespeicherte
+  Konfigurationen behalten ihren Wert; live erst nach dem Setzen in der Konfiguration.
+- Tests: „Geist im leeren Haus“ prüft jetzt, dass kein Raum belegt wird (die Alternative zum Geist ist eine Störquelle);
+  „Neustart ohne Wissen“ prüft, dass niemand ohne Beleg gehalten wird (≤ 10 s nach der letzten Spur).
+
 ## 0.63.0 (Zwei Ruhende als ein Ziel; wer neben einer Ruhenden aufsteht, nimmt sie nicht mit)
 
 Meldung 8.11. 22:27 „Wir saßen zu zweit auf dem Sofa. Ich gehe, das Licht geht aus.“ Nachgespielt aus den Aufnahmen

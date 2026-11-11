@@ -332,7 +332,7 @@ Eine Spur, die zu keiner Person gehört.
   `ν Σ r_i N(x; x_i, (0,4 m)²)` (J_Park2020 Gl. 16) und eine Rate je erwarteter Person im Blick oder im Haus waren auf
   den Aufnahmen 6.–14.10. (30.10.) nicht messbar besser als die feste Rate. Mit der niedrigen Rate des leeren Hauses
   für Blicke ohne Person wird ein Geist in einem leeren Raum zur Person (Esszimmer 7.10. 22:20: 6,3 min Licht leer).
-  Neu gemessen 10.11. mit 0.63 (10 „Geister brauchen eine Quelle“): im Code als `ghost_near` (Standard aus).
+  Neu gemessen 10.11. mit 0.63 (10 „Geister brauchen eine Quelle“): im Code als `ghost_near`, seit 0.64 an (ν 5·10⁻⁴ /s, σ 0,5 m; Grundrate 3 % der festen Rate).
 - **Offen:** Auf den Aufnahmen 6.–14.10. (30.10.) gewann die feste Rate keine Sitzenden zurück: Sitzende mit Spuren von
   Minuten blieben „Geist“ (9, „Ein Sitzplatz“); ohne Geister wären etwa 30 min weniger Sitzende verloren gewesen, dafür 85 min mehr
   Licht ohne Person.
@@ -997,10 +997,10 @@ Hypothesen, die über alle laufenden Spuren dasselbe sagen, werden eine (`merge_
     Raum wird ausgewertet.
   - *Regel* (`Occupied::update` in `outputs.rs`, Zustand bei den Ausgaben, nicht im Filter): Ein Raum geht an, wenn
     eine ihm zugeordnete Person `sure` ≥ c erreicht, c = K_an / (K_an + K_dunkel) = `light_cost` / (`light_cost` + 1)
-    (Bayes-Entscheidung; I_GneitingRaftery2007 S. 364–365, Satz 3, hier je Person; mit dem Default `light_cost` = 2
-    ist c = 2/3), und aus, wenn keine zugeordnete Person `occupied_off` erreicht (Default 1/3, höchstens c). Der
-    Default 2 stammt vom 6.10. und passt nicht zu 1 (dort wiegt dunkel mit Person etwa 5× Licht ohne Person); offen
-    in 9. Keine Nachlaufzeit: Das verzögerte Ausschalten bleibt in Home
+    (Bayes-Entscheidung; I_GneitingRaftery2007 S. 364–365, Satz 3, hier je Person; mit dem Default `light_cost` = 0,2
+    ist c = 1/6, seit 0.64 aus 1: dunkel mit Person wiegt etwa 5× Licht ohne Person), und aus, wenn keine zugeordnete
+    Person `occupied_off` erreicht (Default 1/12, höchstens c; bis 0.63 2 und 1/3). Offline auf den Läufen b063q/gq1q
+    nachgerechnet (`schwelle.py`): aus bei 1/12 oder 1/6 gleich, der Nachlauf von Präsenzlicht (120 s) überdeckt es. Keine Nachlaufzeit: Das verzögerte Ausschalten bleibt in Home
     Assistant (bzw. Node-RED). Die App schaltet keine Lichter, sie liefert je Raum *besetzt* und *Ziel* (unten).
     Die Regel ist zustandsarm und doppelt angewandt dieselbe; nach einem Neustart beginnt der Zustand leer und baut
     sich aus ihr auf. Bereiche ohne Sensor genauso, ein Bereich aus mehreren Räumen als ein Ort.
@@ -1276,9 +1276,8 @@ Näherungen, die man prüfen oder ersetzen kann:
 
 **Unstimmigkeiten zwischen Code und Absicht (Prüfung 10.11.)**, jeweils zu klären (Pfade unter
 `core/presence-core/src/`, sonst unter `tracker/`):
-- a) **Kosten der Lichtfehler.** `light_cost` ist im Standard 2 (`config/mod.rs:369`; Schwelle c / (c + 1) = 2/3,
-  `params.rs:506–562`, `derived.rs:56`): Licht ohne Person wiegt doppelt so schwer wie Dunkelheit mit Person.
-  Abschnitt 1 sagt seit 10.11. das Umgekehrte (etwa 5×). Eine Änderung braucht eine Messung.
+- a) **Kosten der Lichtfehler.** Seit 0.64 im Standard 0,2 (Schwelle 1/6, aus 1/12) nach 1 (Leon 10.11.: etwa 5×).
+  Gespeicherte Konfigurationen behalten ihren Wert: Live gilt 0,2 erst, wenn er in der Konfiguration gesetzt ist.
 - b) **Geister von Gehenden** (`walker_ghosts`, 4.2). Die Rate steht nur in der Geburtsdichte der Verzweigung
   (`filter/branch.rs:341–349`). Der Faktor „kein Geist von Gehenden entstanden“ fehlt in `Filter::watch`
   (`filter/evidence.rs:52–57`), der nur die übrigen Geisterarten und Störquellen zählt. Es zählen alle Personen mit
@@ -1867,4 +1866,16 @@ damaligen Maße gewichteten die Fehler anders als heute (1). Die Versionsgeschic
   jede ruhende LD2450-Spur ≥ 60 s, Geister am Ort eingeschlossen; morgen0411 06:5x ist das Esszimmer (der Spiegel am
   Esstisch, 9). Mit light_cost 0,2 (`gq1lc02`; ohne passenden Bezug gerechnet) 881 / 23,9 / 361, zwei 3,6 / 0,8.
   Rechenzeit (Prozess-CPU, dieselbe Meldung nacheinander): 1,09–1,10×; `cpu_s` der Fenster 1,12× (unter Last, unsicher).
-  Nicht übernommen (gemischt; Entscheidung bei Leon).
+  Nicht übernommen (gemischt; Entscheidung bei Leon). 11.11. nachts: Die zusätzlichen 2,9 min „dunkel mit Sitzer“ am 4.11.
+  liegen alle 07:00:30–07:03:39 im Esszimmer, ein ruhendes Ziel bei (2,03 | 4,2–4,4), die Stelle des Tischechos (9); 0.63
+  machte dort Licht, A nicht. Nachts nach einem Neustart ohne Wissen (8 Nächte 1.–8.11. ab 02:07, 30 min, `neustart.py`):
+  außer dem Schlafzimmer kein Licht, wie 0.63. Seit 0.64 an, zusammen mit `ld_other_reach` (4.3) und light_cost 0,2.
+- **0.64: Geister mit Quelle, LD2410C-Sicht in Nachbarräume bis 1,5 m, light_cost 0,2** (11.11. nachts, Schnelllauf
+  `QUICK=1`: je Fenster ein Start, Sofa 10 + 5 und Bad 31.10. alle 3 Starts; Schwellen offline mit `schwelle.py`, an 1/6,
+  aus 1/12). Gegen 0.63 (`b063q` mit denselben Schwellen): leeres Haus 34,3 → 37,7 Raumminuten (nur leer0711; alle anderen
+  0); Ein-Personen Licht zu viel 879 → 901 Raumminuten, dunkel mit Sitzer 23,2 → 21,4 min; zwei Personen dunkel mit
+  Sitzer 4,1 → 2,8, MUSS-Raum dunkel 1,5 → 0,4 min (sofa10 0 von 10 statt 1, sofa0811 0 von 5 statt 1, bad3110 1 von 3
+  statt 3); Meldung Arbeitszimmer 10.11. 10:18 „gesehen“ 7,8 → 56,4 %. Rechenzeit (`cpu_s`, unter Last): leer0711 13,0 →
+  14,1 min, sofa10 76 → 99 min (+30 %). Offen: Die hellen Sofa-Starts zählen fast die ganze Stunde eine Person zu viel
+  (sofa10 Personen zu viel 72–83 Personenminuten je Start, 0.63 50–55, dunkle Starts 16–18): Das Sofa hält über eine
+  Phantomperson, nicht weil die zwei Ruhenden unter einem Ziel aufgelöst wären (Zweig `tuer-fusion`, 10 „Tür“).
