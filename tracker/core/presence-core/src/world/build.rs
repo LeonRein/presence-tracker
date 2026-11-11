@@ -12,7 +12,7 @@ use crate::geometry::{Point, Walls};
 use crate::ld2410::profile::expected;
 use crate::ld2410::{CELLS, FLOOR, GATE};
 use crate::params::{Params, STILL, WALK};
-use crate::plan::{Place, Plan, RoomIdx};
+use crate::plan::{Place, Plan, RoomIdx, door_openings};
 use crate::vmath::py_hypot;
 
 /// The raster around the rooms (the outside rooms too): a cell beyond them on every side (World).
@@ -304,11 +304,15 @@ pub(super) struct Built<'a> {
 pub(super) fn sensor(b: &Built, si: usize, s: &SensorConfig) -> (Sight, LdSight) {
     let coarse = CoarseSight::new(s, b.plan);
     let (points, mut los) = point_sight(b, s, &coarse);
-    // a person outside its own room gives its LD2410C ld_other_room of the geometric sight (MODEL.md 4.3)
+    // outside its own room the LD2410C sees a person only near a door or divider (MODEL.md 4.3)
     if let Some(own) = b.plan.sensors[si].own_room {
-        for (l, r) in los.iter_mut().zip(b.rooms.cells()) {
-            if *r != Some(own) {
-                *l *= b.params.ld_other_room;
+        let openings = openings(b);
+        for ((l, r), c) in los.iter_mut().zip(b.rooms.cells()).zip(cells(&b.raster)) {
+            if *r != Some(own) && *l > 0.0 {
+                let d = openings.iter().fold(f64::INFINITY, |m, &[p, q]| m.min(seg_dist(c, p, q)));
+                if d > b.params.ld_other_reach {
+                    *l = 0.0;
+                }
             }
         }
     }
@@ -327,6 +331,30 @@ pub(super) fn sensor(b: &Built, si: usize, s: &SensorConfig) -> (Sight, LdSight)
     ld.tiles = ld_tiles(b, &ld);
     let observed = observed(b, &grid, &ld);
     (Sight::new(s.at(), s.sight_origin(), grid, observed), ld)
+}
+
+/// The openings between rooms: the doors (cut out of their walls) and the dividers.
+fn openings(b: &Built) -> Vec<[Point; 2]> {
+    let along = |[p, q]: [Point; 2], t: f64| {
+        let l = py_hypot(q[0] - p[0], q[1] - p[1]);
+        [p[0] + (q[0] - p[0]) * t / l, p[1] + (q[1] - p[1]) * t / l]
+    };
+    door_openings(b.config)
+        .into_iter()
+        .flatten()
+        .map(|o| {
+            let w = &b.config.walls[o.wall];
+            [along([w.a, w.b], o.t0), along([w.a, w.b], o.t1)]
+        })
+        .chain(b.plan.dividers.iter().copied())
+        .collect()
+}
+
+/// m: from p to the piece from a to b.
+fn seg_dist(p: Point, a: Point, b: Point) -> f64 {
+    let d = [b[0] - a[0], b[1] - a[1]];
+    let t = (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / (d[0] * d[0] + d[1] * d[1]).max(1e-12)).clamp(0.0, 1.0);
+    py_hypot(p[0] - a[0] - t * d[0], p[1] - a[1] - t * d[1])
 }
 
 /// The sight of the points of each cell in a place, 0..1 (Tracker._grid before it is spread), and where
