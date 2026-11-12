@@ -20,6 +20,7 @@ use crate::filter::hyp::Hyp;
 use crate::filter::mixture::Mixture;
 use crate::filter::objects::Objects;
 use crate::filter::{Filter, NotFinite};
+use crate::geometry::Point;
 use crate::ld2410::likelihood::{Prepared, Ratio, Scratch, Stats};
 use crate::ld2410::profile::expected;
 use crate::ld2410::sensor::LdSensor;
@@ -385,6 +386,64 @@ fn column_logsumexp(parts: &[Vec<f64>], i: usize) -> f64 {
     top + parts.iter().fold(0.0, |s, p| s + (p[i] - top).exp()).ln()
 }
 
+/// m: two people closer than this are one source to the LD2410C as much as not (the LD2450 resolves still people
+/// from each other from 1,4 m on, MODEL.md 4.1; two sitting 0,45–1,3 m apart gave the energy of one, 4.3)
+const TOGETHER: f64 = 1.5;
+
+/// Where a person is on average (None: nowhere in view): a mixture its modes' mean, a density its tiles' mean.
+fn mean_at(world: &World, objects: &Objects, obj: Obj) -> Option<(Point, f64)> {
+    match obj {
+        Obj::Mixture(m) => {
+            let mix = objects.mixtures().get(m);
+            let w = mix.weights();
+            let pos = mix.modes.each_ref().map(|g| g.pos());
+            Some(([0, 1].map(|ax| w[0] * pos[0][ax] + w[1] * pos[1][ax]), 1.0))
+        }
+        Obj::Density(d) => {
+            let densities = objects.densities();
+            let (shape, d) = (densities.shape(), densities.get(d));
+            let (mut m, mut x, mut y) = (0.0, 0.0, 0.0);
+            for (c, p) in world.tiles.centers.iter().enumerate() {
+                let w = d.walk[c] + d.still_at(&shape, c);
+                (m, x, y) = (m + w, x + w * p[0], y + w * p[1]);
+            }
+            (m > 0.0).then(|| ([x / m, y / m], d.r))
+        }
+    }
+}
+
+/// The share of person e that somebody else of the hypotheses holding it stands by (TOGETHER; a person with a track
+/// or one without with r of at least 0.5), mixed over them by post_w (MODEL.md 4.3, `ld_exist`): for two together
+/// the LD2410C reads what one puts in, it cannot count them.
+fn together(world: &World, filter: &Filter, e: usize, obj: Obj, post_w: &[f64]) -> f64 {
+    let (objects, holders) = (&filter.objects, &filter.holders);
+    let Some((at, _)) = mean_at(world, objects, obj) else {
+        return 0.0;
+    };
+    let k = std::f64::consts::LN_2 / (TOGETHER * TOGETHER);
+    let (mut num, mut den) = (0.0, 0.0);
+    for h in holders.holding(e) {
+        let hy = &filter.hyps[h];
+        let others = hy
+            .people
+            .values()
+            .map(|&m| Obj::Mixture(m))
+            .chain(hy.hidden.iter().map(|&d| Obj::Density(d)))
+            .filter(|&o| holders.entry(o) != e);
+        let by: f64 = others
+            .filter_map(|o| mean_at(world, objects, o))
+            .filter(|&(_, r)| r >= 0.5) // somebody of the display (5.5), not a weak record
+            .map(|(p, r)| {
+                let d2 = (p[0] - at[0]).powi(2) + (p[1] - at[1]).powi(2);
+                r * (-k * d2).exp()
+            })
+            .sum();
+        num += post_w[h] * by.min(1.0);
+        den += post_w[h];
+    }
+    if den > 0.0 { (num / den).clamp(0.0, 1.0) } else { 0.0 }
+}
+
 /// Object e given all the others, mixed over the hypotheses holding it (by post_w): its log factor
 /// per point, capped. None if no hypothesis holding it has weight.
 fn marginal(ctx: &mut LdContext, chains: &mut Chains, holders: &Holders, e: usize, post_w: &[f64]) -> Option<Vec<f64>> {
@@ -448,7 +507,15 @@ fn echo_factors(ctx: &mut LdContext, known: &[Cells], post_w: &[f64]) -> Vec<f64
 
 /// Multiplies a person (or the unknown ones) by exp(logf) at their points (elsewhere by 1); logf is
 /// capped, so the factors stay finite (_ld_apply).
-fn apply(objects: &mut Objects, world: &World, ld: &LdSight, obj: Obj, logf: &[f64], tiles: Option<&Standing>) {
+fn apply(
+    objects: &mut Objects,
+    world: &World,
+    ld: &LdSight,
+    obj: Obj,
+    logf: &[f64],
+    tiles: Option<&Standing>,
+    exist: f64,
+) {
     let idx = &ld.tiles.idx;
     match obj {
         Obj::Density(id) => {
@@ -458,6 +525,7 @@ fn apply(objects: &mut Objects, world: &World, ld: &LdSight, obj: Obj, logf: &[f
                 idx,
                 logf,
                 tiles.expect("a density's points"),
+                exist,
             );
         }
         Obj::Mixture(m) => {
@@ -465,7 +533,7 @@ fn apply(objects: &mut Objects, world: &World, ld: &LdSight, obj: Obj, logf: &[f
             let mix = objects.mixtures.get_mut(m);
             let d_away = match (mix.away, tiles) {
                 (Some(away), Some(standing)) => {
-                    apply_tiles(&mut objects.densities, away, idx, &logf[amps + 1..], standing)
+                    apply_tiles(&mut objects.densities, away, idx, &logf[amps + 1..], standing, exist)
                 }
                 _ => 0.0,
             };
@@ -478,18 +546,27 @@ fn apply(objects: &mut Objects, world: &World, ld: &LdSight, obj: Obj, logf: &[f
 /// A density's factors at the LD2410C's tiles (_ld_apply's tiles): walkers exp(logf); standing per
 /// level of the amplitude in the tiles weighed so (reweighing the levels: Swerling III, MODEL.md
 /// 4.3), at the mean amplitude in the others; nothing measured: one factor for the still mass.
+/// Whether the person exists the factors decide with the share `exist` of their log (`ld_exist`).
 /// Returns weigh_at's factor.
-fn apply_tiles(densities: &mut Densities, id: DensityId, idx: &[usize], g: &[f64], standing: &Standing) -> f64 {
+fn apply_tiles(
+    densities: &mut Densities,
+    id: DensityId,
+    idx: &[usize],
+    g: &[f64],
+    standing: &Standing,
+    exist: f64,
+) -> f64 {
     let n = idx.len();
     let big = match standing {
         Standing::Unmeasured => {
             let e: Vec<f64> = g.iter().map(|x| x.exp()).collect();
-            return densities.get_mut(id).weigh_at(
+            return densities.get_mut(id).weigh_at_exist(
                 idx,
                 TileFactors {
                     walk: &e[..n],
                     still: StillFactors::PerTile(&e[n..]),
                 },
+                exist,
             );
         }
         Standing::Measured { big } => big,
@@ -534,12 +611,13 @@ fn apply_tiles(densities: &mut Densities, id: DensityId, idx: &[usize], g: &[f64
             fs[k * n + j] = f;
         }
     }
-    densities.get_mut(id).weigh_at(
+    densities.get_mut(id).weigh_at_exist(
         idx,
         TileFactors {
             walk: &fw,
             still: StillFactors::PerLevel(&fs),
         },
+        exist,
     )
 }
 
@@ -685,6 +763,13 @@ impl Filter {
                 continue;
             }
             if let Some(f) = marginal(&mut ctx, &mut chains, &self.holders, e, &post_w) {
+                // whether it exists the energies tell only as far as nobody else stands by it
+                let p = &world.params;
+                let exist = if p.ld_alone >= 0.5 {
+                    p.ld_exist + (1.0 - p.ld_exist) * (1.0 - together(world, self, e, ctx.objs[e], &post_w))
+                } else {
+                    p.ld_exist
+                };
                 apply(
                     &mut self.objects,
                     world,
@@ -692,6 +777,7 @@ impl Filter {
                     ctx.objs[e],
                     &f,
                     ctx.points[e].tiles.as_ref(),
+                    exist,
                 );
             }
         }

@@ -1,6 +1,6 @@
 # Das Wahrscheinlichkeitsmodell des Presence Trackers
 
-Stand: Code 0.63.0 (geprüft gegen den Code am 10.11.2026).
+Stand: Code 0.65.0 (0.63.0 geprüft gegen den Code am 10.11.2026; seit 0.64 nur die geänderten Abschnitte).
 Beschreibt, was der Code rechnet; was fehlt oder nur genähert ist,
 steht in 9. Zahlen sind **gemessen** (auf Aufnahmen), **geschätzt** (EM auf Aufnahmen ohne Wahrheit)
 oder **angenommen**. Literaturkürzel wie im Literaturordner (`~/Documents/presence-tracker-literatur`).
@@ -21,7 +21,8 @@ werden, wenn etwas Besseres belegt ist. Neue Vorgaben nur mit Datum und Leons Wo
    werden, jemand schlafenden zu erkennen. Schlafende Personen wollen eh das Licht aus haben. Es ist viel
    wichtiger, dass leute im Badezimmer oder auf dem Sofa im Wohnzimmer nicht verloren werden.“ (9.10.)
    Ob nachts eine oder zwei Schlafende gezählt werden, ist egal, solange die Bleibende morgens wieder
-   erkannt wird (5.11.).
+   erkannt wird (5.11.). Zu zweit an einer Stelle, eine geht, die andere bleibt, das Licht geht aus: „Dieser
+   Fehler darf nicht mehr auftreten!“ (11.11.)
 4. **Keine feste Personenzahl.** „Die Annahme einer festen Personenzahl ist schlichtweg falsch und führt
    zu anderen schweren Fehlern. […] Eine neue Person darf nur entstehen, wenn es dafür harte Evidenz gibt.
    Wenn es erst 5 Sekunden dauert, bis eine Person als solche identifiziert wird, ist das nicht schlimm.
@@ -32,7 +33,9 @@ werden, wenn etwas Besseres belegt ist. Neue Vorgaben nur mit Datum und Leons Wo
    dass personen auch in der wonung verschwinden oder neu entstehen. Aber das sollte beides gut durch
    das bewegungsmuster begründet sein. […] Eben damit sich keine Fehler endlos fortführen können sondern
    korrigiert werden“ (4.11.). Keine harte Regel „nur durch Türen“. Fenster sind kein Eingang des
-   Modells (4.11.).
+   Modells (4.11.). „Personen können sich nicht in Luft auflösen.“ (8.11.) „Wenn ein ld2450 ein bewegtes ziel
+   reportet, welches sich mit üblicher geschwindigkeit ohne sprünge irgendwo hinbewegt, ist das ein ziemlich
+   sicheres zeichen, dass dort eine echte person geht, welche sich nicht in luft auflösen kann!“ (11.11.)
 6. **Keine Sonderregeln für Geräte.** „Das modell sollte gut genug sein, um eine Person von einem
    Luftentfeuchter zu unterscheiden!“ (5.11.) Ob der Saugroboter Licht einschaltet, ist egal (8.10.).
 7. **Nicht auf Fehlerfälle optimieren.** „Das Modell/der Filter sollte nicht auf solche Fehlerfälle
@@ -460,6 +463,23 @@ Das Modell, je Sensor:
   log g um 0,3–0,6 (Gamma(6, 6): 0,43), zwischen den Plätzen liegen die Mediane bei 0,3–2,9 (alle Stillen in
   Bad, Wohn- und Esszimmer, 881 Blöcke: Median 0,76, 10–90 % 0,24–2,4). Mit g = 1 widerlegte das LD2410C
   eine Sitzende im Bad in Sekunden, sobald ihre Spur endete (9 Punkt 1).
+- **Über die Existenz einer Person, neben der jemand steht, entscheiden die Energien nicht** (seit 0.65; `ld_exist` 0,
+  `ld_alone` 1, `together` in `filter/ld_weigh.rs`). Wo eine Person ohne Spur ist, wiegen die Energien wie oben ihren
+  Ort und die Hypothesen. Ihre Existenz r ändern sie nur mit dem Anteil `1 − Nähe`: Nähe = wie sehr eine andere Person
+  der Hypothese (mit Spur, oder ohne mit r ≥ 0,5: eine der Anzeige, 5.5) bei ihr steht, `min(1, Σ r·e^(−ln 2·d²/1,5²))`
+  über die Abstände d ihrer mittleren Orte (bei 1,5 m die Hälfte; ab 1,4 m löst der LD2450 Ruhende voneinander, 4.1), gemischt über die
+  Hypothesen, die sie halten. Zwei, die zusammen sitzen, sind dem LD2410C eine Quelle: Es kann sie nicht zählen und
+  entscheidet nicht, dass es die zweite nicht gibt. Steht niemand bei ihr, entscheidet es wie bisher (Bayes): Liest es
+  nur den Hintergrund, ist sie in Sekunden widerlegt (Test `one_alone_where_the_ld2410c_reads_nothing_is_refuted`),
+  ebenso eine zweite 3,5 m entfernt (`two_apart_the_ld2410c_decides_as_before`). Warum: Gemessen geben zwei Sitzende nicht
+  mehr Energie als eine (10, „Nacht 11./12.11.“: Sofa 8.11., Betten), eine Person je
+  Haltung streut um den Faktor 2–3; das Modell addiert Beträge. Mit der Summe sagte jede Minute, in der das LD2410C so
+  viel las wie von einer, dass es die zweite nicht gibt (Test `two_at_one_spot_stay_two_whatever_the_ld2410c_reads`: bis
+  0.64 r 0,99 → < 0,01 in 60 s, ohne jede Senke der Energie). Ein Abstand im Raum statt gleicher Entfernung zum Sensor:
+  Die erste Fassung deckte jede Person in derselben Entfernung, auch 3 m daneben im Nachbarraum, und hielt so eine
+  überzählige Person in der Küche neben der Sitzenden am Esstisch (2.11., 10 „Nacht 11./12.11.“). Nur Personen der
+  Anzeige: Schützten auch schwache Einträge (Reste von Geistern, r 0,01–0,3) einander, hielten sie sich gegenseitig, und
+  die Rechenzeit im leeren Haus stieg auf das Vierfache (10 „Nacht 11./12.11.“).
 - **Gemeinsamer Pegel u** je Block (1 s) und Art: 1/u ~ Gamma(k, k), Form k = 16 bewegt, 50 ruhig (`ld_gain`;
   gemessen, s. o.), gemischt mit 2 % Schüben, 1/u ~ Gamma(4) mit u um 2,5 (angenommen; nur nach oben: ein
   niedriger Pegel darf eine fehlende Person nicht entschuldigen). Konjugiert: für die nicht gekappten
@@ -903,7 +923,8 @@ Ankünfte und das Vergessen aus 3.4.
 - **Bekannte Personen ohne Spur sind Bernoullis** (Dichte der Art `Person` mit Existenz r, B_GarciaFernandez2018 Gl. 31;
   der Spurteil eines PMBM): Es gibt sie mit der Wahrscheinlichkeit r, dann mit ihrer Dichte. Was gegen
   sie spricht (keine neue Spur, kein Wiederfinden, die Energien, 4.1–4.3), wirkt als
-  `1 − r + r ∫ Dichte × Likelihood`: Dichte und r werden zusammen aktualisiert, ohne Regel. Eine neue
+  `1 − r + r ∫ Dichte × Likelihood`: Dichte und r werden zusammen aktualisiert, ohne Regel. Die Energien des
+  LD2410C nur, soweit niemand bei ihr steht (4.3, seit 0.65): ihr Ort voll, r mit `1 − r + r (∫ …)^w`, w = 1 − Nähe. Eine neue
   Spur auf ihr hat das Gewicht `r ∫ …` und macht sie gewiss (r = 1, eine Person mit Spur). r < 1
   entsteht beim Zusammenlegen (5.6): Sagt eine Hypothese „die Spur war ein Geist“, eine andere „sie
   war eine neue Person“, und endet die Spur, sind beide über alle laufenden Spuren gleich; zusammen
@@ -1217,6 +1238,11 @@ Oktober gemessen (7./8.10., vor 0.55–0.63, Daten gelöscht): Bad, Arbeitszimme
 „frei“ bei Spuren am Platz. Vermuteter Mechanismus: Die Spur wird bei ihrer Geburt in jeder überlebenden Hypothese ein
 Geist, und mit nur einer Hypothese normiert sich jede Evidenz gegen „Geist“ weg (5.1). Ob es heute noch vorkommt, ist
 neu zu messen. Solange es vorkommt, hängen *besetzt*, die Personenzahl und *Ziel* an den verlorenen Personen.
+
+**Zwei beieinander (seit 0.65, 4.3, 10 „Nacht 11./12.11.“):** Über die Existenz einer Person, neben der eine der Anzeige
+steht, entscheidet das LD2410C nicht mehr. Offen: Direkt nach dem Gehen der einen ist die Bleibende 10–30 s nicht belegt
+(0.64: 0–2 s; Präsenzlicht überbrückt es), und wo zwei lange beieinander sind (Bett, Sofa), rechnet der Filter das 2- bis
+4-Fache, weil überzählige Einträge neben einer Person bis zu ihrem Gehen bleiben.
 
 Offen beim LD2410C (4.3):
 - Durch Wände sieht er im Modell nicht (am 30.10. etwa 4 % gemessen, bewusst undurchsichtig gelassen), durch
@@ -1946,3 +1972,55 @@ damaligen Maße gewichteten die Fehler anders als heute (1). Die Versionsgeschic
   Ring); (b) ruhende Ziele direkt vor dem Sensor als Störquelle (Höhe 1,5 m, Reflexion 1,0 m: dort sitzt niemand minutenlang;
   dasselbe Ziel im Wohnzimmer leer 7.11. in 99,8 % der Frames, der Fall leer0711); nur zusammen, (b) allein nähme dem Sofa
   die auffangende Person; (c) das zusammengelegte ruhende Paar als eigener Zustand mit eigener Amplitude.
+- **Nacht 11./12.11.: Zwei an einer Stelle, eine geht, Licht aus – die Energie zählte die Zweite weg** (Meldung 11.11. 22:53
+  „Wo saßen zu zweit auf dem Sofa ist gehört. [Die zweite Person] bleibt da. Das Licht geht aus“, 0.64.0; Leon 11.11.: „Dieser Fehler
+  darf nicht mehr auftreten!“). *Was die Sensoren messen* (Rohdaten der Meldung): Der Wohnzimmer-LD2450 meldet die beiden auf
+  dem Sofa fast immer als EIN ruhendes Ziel, das zwischen ihren Plätzen springt (Sensor x ≈ −0,3 / +1,0 m); Leon geht 22:48:38
+  mit dieser Spur hinaus; 22:48:55 beginnt am Platz der Bleibenden eine neue ruhende Spur und läuft ≈ 90 s, das LD2410C liest
+  ruhig 30–100. Die App: Wohnzimmer 0,06–0,48, nie an; schon 22:38 zählte sie dort 1 statt 2. In allen vier Licht-aus-Meldungen
+  (31.10. Bad, 6.11. Bad, 8.11. Sofa, 11.11. Sofa) dasselbe: Die Sensoren sehen die Bleibende, der Filter hatte sie gestrichen.
+  *Zwei geben nicht mehr Energie als eine* (gemessen 11.11. vormittags, Zweig `sofa-energie`, nicht gemergt; Mittel je
+  Ring über dem leeren Hintergrund): Sofa 8.11. Wohnzimmer ruhig Ring 3 / 4 / 5: eine 21:04–21:38 78 / 87 / 66, zwei
+  21:50–22:20 61 / 76 / 45; Betten (zwei nachts gegen eine nach dem Aufstehen) Ring 3: 55 / 48 / 53 / 72 gegen 49 / 43 /
+  57 / 65 (2.–5.11.). Was eine Person je Haltung gibt, streut um den Faktor 2–3.
+  *Wo sie verloren geht:* Nachgespielt ab dem Modellstart der App (31.10. 11:35, ganzer Tag; die Starts später am Tag geben
+  andere Ausgänge, das Modell ist chaotisch): 18:58 zwei im Bad, die Zweite ohne Spur mit r ≈ 1; 19:10–19:11:50 fällt r auf
+  0,05, ohne dass jemand sich bewegt. Ein Protokoll jeder Änderung von r mit Ursache (Debug-Hook, nicht im Code geblieben):
+  LD2410C 17 / 40 nats Log-Odds in den beiden Minuten, Nicht-Wiederfinden und keine neue Spur zusammen < 1 nat. Die Energie
+  sank kurz (ruhig 100 → 0–80). Im Unit-Test (zwei an einer Kachel, das LD2410C liest, was eine hineingibt, keine Senke)
+  streicht 0.64 die Zweite in 60 s auf r < 10⁻⁹.
+  *Varianten* (Bewertung: `evalp` mit allen Starts der Fenster bad3110, bad0611, sofa10, sofa0811 und neu sofa1111 (18:00,
+  20:00, 21:00, 21:30), dazu 16 Ereignisse „zu zweit, eine geht, eine bleibt“, die ein Subagent in den Aufnahmen 31.10.–11.11.
+  fand und von Hand prüfte (10 tagsüber, 6 morgens im Schlafzimmer); Maß: Anteil der Sekunden im Pflichtzeitraum, in denen
+  der Raum belegt ist):
+  - 0.64: Bad 31.10. Start 18:30 0 % (3 min dunkel, wie gemeldet), sonst 99–100 %; Sofa 11.11. 98,9–99 % (kurze Lücken).
+  - Leistungssumme (`ld_sum` 2, Zweig `sofa-energie`): Bad 31.10. 27,7 %, Bad 6.11. 91–93 %. Im Unit-Test r 0,99 → 0,07 in
+    60 s. Dazu bildete sie den Erwartungswert von S^p: Eine unsichere Person (Masse m) gab √m statt m, die Unbekannten mit 5 %
+    also 22 % einer Person.
+  - Maximum statt Summe (`ld_max`): Bad 6.11. 90,9 % in 2 von 3 Starts. Dort strich der LD2450 die Zweite um 19:46 (34 nats in
+    einer Minute: Leon stand 1,5 m weiter, die Sitzende war damit „auflösbar“ und wurde nicht erfasst); das Maximum änderte
+    auch die Gewichte der Hypothesen.
+  - Maximum + ein Anteil vom LD2450 nie gesehener Ruhender (κ = 0, 20 %): Personen ohne Beleg wucherten (Dutzende Einträge mit
+    r 0,01–0,2 um 19:39), ab mehr als 6 ohne Spur paart das Zusammenlegen nicht mehr (5.6), und die echte Zweite verwischte.
+    Beide Halte gegen zu viele Personen (LD2410C und LD2450) zugleich wegzunehmen ist falsch.
+  - Energien ohne jeden Einfluss auf die Existenz (`ld_exist` 0 ohne `ld_alone`): alle 8 gemessenen Starts 100 %, aber
+    Rechenzeit Bad 31.10. ×3,7, und eine Person allein an einer Stelle ohne Energie widerlegt das LD2410C dann nicht mehr.
+  - Erste Fassung „nur wo niemand sonst die Energie erklärt“ (Deckung = Energie der übrigen in denselben Ringen): alle
+    Zwei-Personen-Starts gehalten, aber eine Person allein 2.11. 08:13–09:27 Licht zu viel 60 → 113 Raumminuten: Ab 08:21 saß
+    sie am Esstisch, das Küchen-LD2410C sendete nur „kein Wert“, und das Esszimmer-LD2410C sah einen Platz in der Küche in
+    derselben Entfernung wie den Esstisch: Die Deckung hielt dort eine überzählige Person. Das LD2410C hat keinen Winkel;
+    ob sich zwei verdecken, hängt am Abstand im Raum.
+  - Nähe statt Deckung, jede Person mit ihrem r: Küche wieder 61, aber Rechenzeit bis zum 10-Fachen (ein0811 9 → 149,
+    nacht0203 14 → 118 CPU-Minuten): Reste von Geistern (r 0,01–0,3) an derselben Stelle schützten sich gegenseitig.
+  - **Übernommen (0.65): Nähe, nur durch Personen der Anzeige** (4.3; mit Spur, oder ohne mit r ≥ 0,5). Pflichtraum mit
+    Präsenzlicht dunkel: 0.64 1 von 37 Starts (bad3110 Start 18:30 1,1 min), 0.65 0 von 28 (bad3110 3, bad0611 3, sofa0811
+    und sofa1111 je 3, 16 Ereignisstarts tagsüber; sofa10 nur mit der Fassung davor, 0 von 10). Schlafzimmer morgens (6
+    Ereignisse, je 2 Starts): 0.64 dunkel in 4, 0.65 in 5 von 12; 7.11. 07:08 Start 1 schlechter (belegt 97 → 25 %), 9.11.
+    06:40 Start 1 besser (2 → 7 %); 5.11. und 9.11. sehen beide Fassungen die Liegende kaum (8 % / 2–7 %). Unbelegt im Pflichtzeitraum 183 → 83 s;
+    die Lücken liegen direkt nach dem Gehen (Sofa 11.11. 22:48:45–55, Arbeitszimmer 11.11. 13:43:09–37), Präsenzlicht
+    überbrückt sie, 0.64 hatte dort 0–2 s. Tagesnachlauf Bad 31.10. ab dem Modellstart: Die Zweite bleibt (r 0,92–1),
+    das Bad ist nach 19:18 durchgehend belegt (0.64: dunkel 19:19:33–19:21:44). Leeres Haus, eine Person, Nächte: gleich
+    (leer0211b 0, ein0311 147, nacht0708 Schlafzimmer 0,98; mit der Fassung davor alle Fenster ±1–5 Raumminuten, leer0711
+    33,5 → 33,2). Rechenzeit (Prozess-CPU, unter Last): bad3110 1,5×, leer0211b 1,6×, ein0311 2,4×, nacht0708 4×.
+    Offen: die Lücke direkt nach dem Gehen (10–30 s statt 0–2 s) und die Rechenzeit, wo zwei lange beieinander sind
+    (Bett, Sofa).

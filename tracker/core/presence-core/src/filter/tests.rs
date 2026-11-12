@@ -698,3 +698,100 @@ fn still_people_tracks_apart_and_both_measured_are_never_fused() {
     assert_eq!(ghost_beside_a_walker(1.0, 1.5, 3.0, true).1, None);
     assert_eq!(ghost_beside_a_walker(1.0, 0.3, 3.0, false).1, None);
 }
+
+/// Two known people without tracks standing at the first tile the LD2410C sees and at its tile `j` (the second
+/// with existence 0.99) for `secs` s while the sensor reads what one person puts in at the first: the second one's
+/// existence after.
+fn second_of_two_after(world: &World, secs: usize, j: usize) -> f64 {
+    let (mut f, hidden) = filter(world, 2);
+    let tiles = &world.ld[0].tiles;
+    let row = tiles.still[0];
+    let s = shape(world);
+    let ids: Vec<DensityId> = hidden
+        .iter()
+        .zip([(1.0, tiles.idx[0]), (0.99, tiles.idx[j])])
+        .map(|(&h, (r, c))| {
+            let mut d = f.objects().densities().data(h);
+            d.still.fill(0.0);
+            for k in 0..s.levels {
+                d.still[s.still_row(0, k)][c] = 1.0 / s.levels as f64;
+            }
+            d.walk.fill(0.0);
+            d.r = r;
+            f.objects_mut().densities.insert(d)
+        })
+        .collect();
+    let mut hy = f.hyps()[0].clone();
+    hy.hidden = ids.clone();
+    f.set_hyps(vec![hy]);
+    let mut sensor = LdSensor::new(&world.params);
+    let b = [5.0; CELLS];
+    let e: [f64; CELLS] = std::array::from_fn(|c| (b[c] + row[c]).round().min(100.0));
+    for _ in 0..secs {
+        for _ in 0..11 {
+            sensor.stats.add(&e, 0.089, false);
+        }
+        f.ld_weigh(world, 0, &mut sensor, &b, 1.0 / 10800.0).expect("finite");
+    }
+    f.objects().densities().data(ids[1]).r
+}
+
+#[test]
+fn two_at_one_spot_stay_two_whatever_the_ld2410c_reads() {
+    // MODEL.md 4.3 (ld_exist, ld_alone): two sitting together, the LD2410C reading what one of them puts in (two give no
+    // more than one, measured 11.11.): the energies do not decide that the second one does not exist. With
+    // ld_exist 1 (until 0.64) the second was gone within a minute (Meldungen 31.10., 6.11., 8.11., 11.11.)
+    let mut world = testing::flat();
+    assert!(second_of_two_after(&world, 60, 0) > 0.98);
+    world.params.ld_exist = 1.0;
+    assert!(second_of_two_after(&world, 60, 0) < 0.01);
+}
+
+#[test]
+fn two_apart_the_ld2410c_decides_as_before() {
+    // MODEL.md 4.3: 3,5 m apart nobody stands by the second one, the energies decide her existence as Bayes (ld_exist 1)
+    let world = testing::flat();
+    let tiles = &world.ld[0].tiles;
+    let at = |j: usize| world.tiles.centers[tiles.idx[j]];
+    let j = (0..tiles.idx.len())
+        .find(|&j| {
+            let (a, b) = (at(0), at(j));
+            ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt() > 3.0
+        })
+        .expect("a tile 3 m away the sensor sees");
+    let mut bayes = testing::flat();
+    bayes.params.ld_exist = 1.0;
+    let (r, r1) = (second_of_two_after(&world, 60, j), second_of_two_after(&bayes, 60, j));
+    assert!(r < 0.99 && (r - r1).abs() < 0.02, "{r} {r1}");
+}
+
+#[test]
+fn one_alone_where_the_ld2410c_reads_nothing_is_refuted() {
+    // MODEL.md 4.3 (ld_exist, ld_alone): nobody else explains the energies where she is, so they decide whether
+    // she exists; the sensor reading only its background refutes her within seconds
+    let world = testing::flat();
+    let (mut f, hidden) = filter(&world, 1);
+    let tiles = &world.ld[0].tiles;
+    let c0 = tiles.idx[0];
+    let s = shape(&world);
+    let mut d = f.objects().densities().data(hidden[0]);
+    d.still.fill(0.0);
+    for k in 0..s.levels {
+        d.still[s.still_row(0, k)][c0] = 1.0 / s.levels as f64;
+    }
+    d.walk.fill(0.0);
+    d.r = 0.99;
+    let id = f.objects_mut().densities.insert(d);
+    let mut hy = f.hyps()[0].clone();
+    hy.hidden = vec![id];
+    f.set_hyps(vec![hy]);
+    let mut sensor = LdSensor::new(&world.params);
+    let b = [5.0; CELLS];
+    for _ in 0..10 {
+        for _ in 0..11 {
+            sensor.stats.add(&b, 0.089, false);
+        }
+        f.ld_weigh(&world, 0, &mut sensor, &b, 1.0 / 10800.0).expect("finite");
+    }
+    assert!(f.objects().densities().data(id).r < 0.01);
+}

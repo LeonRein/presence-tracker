@@ -184,6 +184,13 @@ pub struct Params {
     /// a tile holding less of a person standing is weighed at its mean amplitude
     #[serde(deserialize_with = "real")]
     pub ld_tile_mass: f64,
+    /// how far the LD2410C's energies decide whether a known person without a track exists (MODEL.md 4.3):
+    /// 0 they weigh only where she is and the hypotheses, 1 her existence as well (Bayes, until 0.64)
+    #[serde(deserialize_with = "real")]
+    pub ld_exist: f64,
+    /// 1: beyond ld_exist the energies decide it as far as nobody else stands by her (`together`, MODEL.md 4.3)
+    #[serde(deserialize_with = "real")]
+    pub ld_alone: f64,
     /// the background before anything is learned: moving gates 0, 1, the other moving gates, the still
     /// gates; its weight (s), forgotten with ld_forget s towards the sensor's own level, which is learned
     /// forgotten with ld_anchor_forget s from frames after ld_anchor_quiet s with nothing in sight (after
@@ -321,6 +328,8 @@ impl Default for Params {
             },
             ld_echo_amps: vec![0.2, 0.3168, 0.5017, 0.7946, 1.2585, 1.9932, 3.1569, 5.0],
             ld_tile_mass: 1e-4,
+            ld_exist: 0.0,
+            ld_alone: 1.0,
             ld_background: [13.0, 9.0, 4.5, 5.0],
             ld_prior_time: 600.0,
             ld_forget: 0.7 * 3600.0,
@@ -473,6 +482,8 @@ impl Params {
                 up_to(self.ld_echo_amps.len(), 1, 16) && self.ld_echo_amps.iter().all(|&a| positive(a)),
             ),
             ("ld_tile_mass", at_least_0(self.ld_tile_mass)),
+            ("ld_exist", (0.0..=1.0).contains(&self.ld_exist)),
+            ("ld_alone", self.ld_alone == 0.0 || self.ld_alone == 1.0),
             ("ld_other_reach", self.ld_other_reach >= 0.0),
             ("ld_background", self.ld_background.iter().all(|&b| positive(b))),
             ("ld_prior_time", positive(self.ld_prior_time)),

@@ -799,6 +799,22 @@ impl DensityMut<'_> {
         }
     }
 
+    /// weigh_at for a person whose existence the factors decide only with the share `w` of their log
+    /// (`ld_exist`): where she is takes them whole, r only exp(w q) of the mass that is left (as
+    /// weigh_at for w = 1); the unknown ones as weigh_at.
+    pub fn weigh_at_exist(&mut self, idx: &[usize], f: TileFactors, w: f64) -> f64 {
+        if self.shape.tiles == 0 {
+            return 0.0;
+        }
+        match self.kind {
+            Kind::Person => {
+                let q = self.weigh_masses(f, Some(idx), Kind::Person);
+                self.bernoulli(if q == f64::NEG_INFINITY { q } else { w * q })
+            }
+            Kind::Intensity => self.weigh_masses(f, Some(idx), Kind::Intensity),
+        }
+    }
+
     /// weigh as a person, whatever its kind (the part of a Gaussian gone through a door).
     pub fn weigh_person(&mut self, f: TileFactors) -> f64 {
         let q = self.weigh_masses(f, None, Kind::Person);
