@@ -1,6 +1,6 @@
 # Changelog
 
-## Entwurf (ohne Version): Echtzeit-Schutz - ein überlastetes Modell staut nicht mehr
+## 0.65.2 (Echtzeit-Schutz: ein überlastetes Modell staut nicht mehr; Modell unverändert wie 0.64.0)
 
 Am 17.11. (0.65.0) stauten sich die Frames bis 42 min, Home Assistant bekam so alte Zustände als aktuell, und der
 Neustart verwarf 80 386 wartende Frames. Das Modell bleibt dasselbe (0.64.0); geändert ist die App darum herum (DOCS.md
