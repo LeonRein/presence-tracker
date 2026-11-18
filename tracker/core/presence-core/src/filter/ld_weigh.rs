@@ -1000,7 +1000,10 @@ mod tests {
         let unknown = f.hyps()[0].unknown;
         let objects = f.objects_mut();
         let data = objects.densities.data(first);
-        let second = objects.densities.insert(DensityData { r: r[1], ..data.clone() });
+        let second = objects.densities.insert(DensityData {
+            r: r[1],
+            ..data.clone()
+        });
         let first = objects.densities.insert(DensityData { r: r[0], ..data });
         f.set_hyps(vec![Hyp::new(0.0, vec![first, second], unknown)]);
         (f, [first, second])

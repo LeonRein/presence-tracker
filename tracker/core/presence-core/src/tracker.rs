@@ -1347,9 +1347,16 @@ mod frame_tests {
         let pos = tr.filter().objects().mixtures().get(m).modes[crate::params::STILL].pos();
         let ld = &world.ld[0];
         let c = world.tiles.cell_near(pos).expect("a tile");
-        let j = ld.tiles.idx.iter().position(|&i| i == c).expect("in the LD2410C's view");
+        let j = ld
+            .tiles
+            .idx
+            .iter()
+            .position(|&i| i == c)
+            .expect("in the LD2410C's view");
         let cells: [f64; 16] = std::array::from_fn(|k| {
-            let b = [13.0, 9.0, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0][k];
+            let b = [
+                13.0, 9.0, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0,
+            ][k];
             (b + ld.tiles.still[j][k]).round().min(100.0)
         });
         let gates = frames::LdGates {
@@ -1382,11 +1389,20 @@ mod frame_tests {
             entries.push(most);
             densities.push(dens);
         }
-        assert!(started_tracks >= minutes * 14, "the second target's tracks: {started_tracks}");
+        assert!(
+            started_tracks >= minutes * 14,
+            "the second target's tracks: {started_tracks}"
+        );
         let early = entries[1..4].iter().max().copied().unwrap_or(0);
         let late = entries[minutes - 3..].iter().max().copied().unwrap_or(0);
-        assert!(late <= early.max(2) && late <= 4, "people without a track per minute {entries:?}");
-        let (de, dl) = (densities[1..4].iter().max().copied().unwrap_or(0), densities[minutes - 3..].iter().max().copied().unwrap_or(0));
+        assert!(
+            late <= early.max(2) && late <= 4,
+            "people without a track per minute {entries:?}"
+        );
+        let (de, dl) = (
+            densities[1..4].iter().max().copied().unwrap_or(0),
+            densities[minutes - 3..].iter().max().copied().unwrap_or(0),
+        );
         assert!(dl <= de + 2, "densities per minute {densities:?}");
     }
 
