@@ -391,8 +391,11 @@ fn found_again<'a>(world: &World, frame: &Frame, info: &TrackInfo) -> Chance<'a>
     let lr_nf = (no_find(p, lost.kind, u1) / no_find(p, lost.kind, u0).max(1e-300))
         .max(1e-300)
         .ln();
+    // the people without a track (and the unknown ones) only as far as the sensor resolves them from its held target,
+    // as for not finding it again (held): who is unresolved from it is one source with its owner, neither a finder
+    // nor one who did not find it (MODEL.md 4.1)
     let near = if world.tiles.n > 0 {
-        near_tiles(world, frame.si, lost.z, false)
+        near_tiles(world, frame.si, lost.z, true)
     } else {
         Vec::new()
     };
@@ -437,7 +440,9 @@ impl Branching<'_> {
                 let (n, shape) = (world.tiles.n, self.objects.densities.shape());
                 for &m in hy.people.values() {
                     let mix = self.objects.mixtures.get(m);
-                    let (w, k) = (mix.weights(), near_mixture(world, self.frame.si, mix, lost.z, false));
+                    // its owner fully, anybody else as far as resolved from the held target (as in held)
+                    let resolved = !mix.slots.contains_key(&seg);
+                    let (w, k) = (mix.weights(), near_mixture(world, self.frame.si, mix, lost.z, resolved));
                     e += (1.0 - mix.a) * (w[0] * k[0] + w[1] * k[1]);
                     if let Some(away) = mix.away.filter(|_| n > 0) {
                         e += mix.a * self.objects.densities.get(away).integrate(near, &shape);
@@ -814,7 +819,11 @@ impl Branching<'_> {
     fn start_chance(&self, mix: &mut Mixture) -> [f64; 2] {
         let (world, frame) = (self.world, self.frame);
         match &self.chance {
-            Chance::Again { lost, .. } => near_mixture(world, frame.si, mix, lost.z, false).map(f64::ln),
+            Chance::Again { lost, .. } => {
+                // its owner fully, anybody else as far as resolved from the held target (as for not finding it)
+                let resolved = !mix.slots.contains_key(&self.track.seg);
+                near_mixture(world, frame.si, mix, lost.z, resolved).map(f64::ln)
+            }
             Chance::Fuse { .. } => [0.0, 0.0],
             Chance::New { skip, spots, .. } => {
                 let p = &world.params;

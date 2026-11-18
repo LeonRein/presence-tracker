@@ -12,7 +12,9 @@
 //! people share their ratios); each object given the others (`marginal`), applied to it (`apply`,
 //! `&mut Objects`); the echo sources (`echo_factors`, then `&mut LdSensor`).
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::f64::consts::{LN_2, PI};
 
 use crate::filter::densities::{Densities, DensityId, Kind, StillFactors, TileFactors};
 use crate::filter::holders::{Holders, Obj};
@@ -20,6 +22,7 @@ use crate::filter::hyp::Hyp;
 use crate::filter::mixture::Mixture;
 use crate::filter::objects::Objects;
 use crate::filter::{Filter, NotFinite};
+use crate::geometry::Point;
 use crate::ld2410::likelihood::{Prepared, Ratio, Scratch, Stats};
 use crate::ld2410::profile::expected;
 use crate::ld2410::sensor::LdSensor;
@@ -29,6 +32,9 @@ use crate::vmath::{at_least, logsumexp, nan_max, pairwise_sum};
 use crate::world::{LdSight, World};
 
 type Cells = [f64; CELLS];
+
+/// Still mass at a place below this stands nobody in a group with those after it.
+const DEPOSIT: f64 = 1e-6;
 
 /// What the background (still learned in Python, phase 8) learns from a weighing (MODEL.md 4.3,
 /// docs/rust-core.md 2.0): per hypothesis the mean the people, the echo sources and the background
@@ -59,13 +65,29 @@ enum Standing {
 
 /// Where an LD2410C sees a person (or the unknown ones): the masses of the points and what each puts
 /// into its cells (scaled by the cells' share of now); how a density at its tiles is weighed (the
-/// object, or a person's part gone through a door; None: no density there).
+/// object, or a person's part gone through a door; None: no density there); per point the place it
+/// stands at (an index into `spots`; None: walking) and its amplitude g, for the group it may stand in
+/// (MODEL.md 4.3 "Gruppen").
 #[derive(Debug)]
 struct Points {
     mass: Vec<f64>,
     put: Vec<Cells>,
     tiles: Option<Standing>,
+    at: Vec<Option<(usize, f64)>>,
+    spots: Vec<Point>,
 }
+
+/// Still people at a place, for those after them (MODEL.md 4.3 "Gruppen"): the place (range and bearing from the
+/// sensor, `Group::polar`), their mass and mass x amplitude.
+#[derive(Debug, Clone, Copy)]
+struct Stand {
+    at: [f64; 2],
+    mass: f64,
+    gmass: f64,
+}
+
+/// Per spot of an object: the share of it with somebody before it at one place, and their mean amplitude.
+type With = Vec<(f64, f64)>;
 
 impl Points {
     fn none() -> Self {
@@ -73,6 +95,8 @@ impl Points {
             mass: Vec::new(),
             put: Vec::new(),
             tiles: None,
+            at: Vec::new(),
+            spots: Vec::new(),
         }
     }
 
@@ -80,10 +104,89 @@ impl Points {
         !self.mass.is_empty() && pairwise_sum(&self.mass) > 1e-12
     }
 
-    /// sum_i m_i S_i: what they put in.
-    fn put_in(&self) -> Cells {
+    /// The still mass per spot after weighing (`lr`, `norm`: the ratio of the points; None: before), where it is
+    /// above `DEPOSIT`: who stands there for those after it.
+    fn deposits(&self, lr: Option<(&[f64], f64)>, group: &Group) -> Vec<Stand> {
+        let mut per = vec![(0.0, 0.0); self.spots.len()];
+        for (k, (&m, at)) in self.mass.iter().zip(&self.at).enumerate() {
+            if let (Some((s, g)), true) = (at, m > 0.0) {
+                let w = match lr {
+                    Some((lr, norm)) => m * (lr[k] - norm).exp(),
+                    None => m,
+                };
+                per[*s].0 += w;
+                per[*s].1 += w * g;
+            }
+        }
+        self.spots
+            .iter()
+            .zip(per)
+            .filter(|&(_, (m, _))| m > DEPOSIT)
+            .map(|(&p, (mass, gmass))| Stand {
+                at: group.polar(p),
+                mass,
+                gmass,
+            })
+            .collect()
+    }
+
+    /// Per spot, who stands with it before it (`stand`), at one place as far as the housing's LD2450 does not
+    /// resolve it from them (still people, `resolution`; A_Svensson2012 eq. 18-20), at most one; None: nobody.
+    fn with_given(&self, stand: &[Stand], group: &Group) -> Option<With> {
+        if stand.is_empty() || group.m2 >= 2.0 || self.spots.is_empty() {
+            return None;
+        }
+        let mut any = false;
+        let with: With = self
+            .spots
+            .iter()
+            .map(|&p| {
+                let at = group.polar(p);
+                let (m, gm) = stand.iter().fold((0.0, 0.0), |(m, gm), st| {
+                    let c = group.together(at, st.at);
+                    (m + c * st.mass, gm + c * st.gmass)
+                });
+                if m > 1e-12 {
+                    any = true;
+                    (m.min(1.0), gm / m)
+                } else {
+                    (0.0, 1.0)
+                }
+            })
+            .collect();
+        any.then_some(with)
+    }
+
+    /// What each point puts in given who stands with it before (`with`): a group of n at one place gives
+    /// g m(n) S, m(n) = 1 + (n - 1)(m2 - 1), g the group's amplitude (MODEL.md 4.3 "Gruppen"). A standing point
+    /// puts in its own g S as far as nobody before stands with it, and (m2 - 1) g' S with the amplitude g' of
+    /// those who do.
+    fn put_with(&self, with: Option<&With>, group: &Group) -> Cow<'_, [Cells]> {
+        let Some(with) = with else {
+            return Cow::Borrowed(&self.put);
+        };
+        let more = group.m2 - 1.0;
+        Cow::Owned(
+            self.put
+                .iter()
+                .zip(&self.at)
+                .map(|(row, at)| match at {
+                    Some((s, g)) if with[*s].0 > 0.0 => {
+                        let (o, gb) = with[*s];
+                        let f = 1.0 - o + o * more * gb / g;
+                        row.map(|x| x * f)
+                    }
+                    _ => *row,
+                })
+                .collect(),
+        )
+    }
+
+    /// sum_i m_i S_i given who stands with them before: what they put in before these frames.
+    fn put_in(&self, with: Option<&With>, group: &Group) -> Cells {
+        let put = self.put_with(with, group);
         let mut out = [0.0; CELLS];
-        for (m, row) in self.mass.iter().zip(&self.put) {
+        for (m, row) in self.mass.iter().zip(put.iter()) {
             for (o, x) in out.iter_mut().zip(row) {
                 *o += m * x;
             }
@@ -130,14 +233,19 @@ fn tile_points(world: &World, ld: &LdSight, densities: &Densities, amp: &[f64], 
     let shape = densities.shape();
     let d = densities.get(id);
     let mut mass: Vec<f64> = tiles.idx.iter().map(|&c| share * d.walk[c]).collect();
+    let spots: Vec<Point> = tiles.idx.iter().map(|&c| world.tiles.centers[c]).collect();
+    let mut at: Vec<Option<(usize, f64)>> = vec![None; m];
     if d.amp.is_none() {
         // g = 1 everywhere: the walkers, then the still mass
         mass.extend(tiles.idx.iter().map(|&c| share * d.still_at(&shape, c)));
+        at.extend((0..m).map(|j| Some((j, 1.0))));
         let put = tiles.walk.iter().chain(&tiles.still).copied().collect();
         return Points {
             mass,
             put,
             tiles: Some(Standing::Unmeasured),
+            at,
+            spots,
         };
     }
     let a1 = shape.amps + 1;
@@ -151,6 +259,7 @@ fn tile_points(world: &World, ld: &LdSight, densities: &Densities, amp: &[f64], 
         for j in (0..m).filter(|&j| big[j]) {
             mass.push(share * still[a * m + j]);
             put.push(tiles.still[j].map(|x| g * x));
+            at.push(Some((j, g)));
         }
     }
     for j in (0..m).filter(|&j| !big[j]) {
@@ -159,11 +268,14 @@ fn tile_points(world: &World, ld: &LdSight, densities: &Densities, amp: &[f64], 
         let g = if ms[j] > 0.0 { num / ms[j] } else { 1.0 };
         mass.push(share * ms[j]);
         put.push(tiles.still[j].map(|x| g * x));
+        at.push(Some((j, g)));
     }
     Points {
         mass,
         put,
         tiles: Some(Standing::Measured { big }),
+        at,
+        spots,
     }
 }
 
@@ -183,14 +295,25 @@ fn mixture_points(world: &World, ld: &LdSight, densities: &Densities, amp: &[f64
     mass.push((1.0 - mix.a) * (w[WALK] * vw));
     let mut put: Vec<Cells> = world.shapes.amp.iter().map(|&g| row_s.map(|x| g * x)).collect();
     put.push(row_w);
+    let mut at: Vec<Option<(usize, f64)>> = world.shapes.amp.iter().map(|&g| Some((0, g))).collect();
+    at.push(None);
+    let mut spots = vec![mix.modes[STILL].pos()];
     let mut tiles = None;
     if let Some(away) = mix.away.filter(|_| mix.a > 0.0 && !ld.tiles.idx.is_empty()) {
         let part = tile_points(world, ld, densities, amp, away, mix.a);
         mass.extend(part.mass);
         put.extend(part.put);
+        at.extend(part.at.iter().map(|a| a.map(|(s, g)| (s + 1, g))));
+        spots.extend(part.spots);
         tiles = part.tiles;
     }
-    Points { mass, put, tiles }
+    Points {
+        mass,
+        put,
+        tiles,
+        at,
+        spots,
+    }
 }
 
 /// What a weighing reads: the frames' likelihood, the background with what the people put in before
@@ -206,6 +329,42 @@ struct LdContext<'a> {
     unknown: Vec<bool>,
     echo: Points,
     scratch: Scratch,
+    group: Group,
+}
+
+/// People standing together for an LD2410C (MODEL.md 4.3 "Gruppen"): what two at one place give in the profile of
+/// one, m(2) (`ld_group`), and where they are one place for it: unresolved by the LD2450 in its housing.
+struct Group {
+    m2: f64,
+    at: Point,
+    /// m: still people this far apart (range, cross) are resolved half of the time (`resolution`)
+    res: [f64; 2],
+}
+
+impl Group {
+    /// A place as the sensor sees it: range and bearing.
+    fn polar(&self, p: Point) -> [f64; 2] {
+        let (dx, dy) = (p[0] - self.at[0], p[1] - self.at[1]);
+        [dx.hypot(dy), dy.atan2(dx)]
+    }
+
+    /// The share of two places (`polar`) at one place: 1 - P_R (the form of `RateModel::mask`, the still people's
+    /// scale); 0 beyond three times the range's scale.
+    fn together(&self, p: [f64; 2], q: [f64; 2]) -> f64 {
+        let dr = (p[0] - q[0]) / self.res[0];
+        if dr.abs() > 3.0 {
+            return 0.0;
+        }
+        let mut a = p[1] - q[1];
+        if a > PI {
+            a -= 2.0 * PI;
+        } else if a <= -PI {
+            a += 2.0 * PI;
+        }
+        let dc = 0.5 * (p[0] + q[0]) * a / self.res[1];
+        let x = dr * dr + dc * dc;
+        if x > 25.0 { 0.0 } else { (-LN_2 * x).exp() }
+    }
 }
 
 impl LdContext<'_> {
@@ -213,11 +372,12 @@ impl LdContext<'_> {
         std::array::from_fn(|c| self.b0[c] + rest[c])
     }
 
-    /// Object e given that the others put in `rest`.
-    fn ratio(&mut self, e: usize, rest: &Cells) -> Ratio {
+    /// Object e given that the others put in `rest` and who stands with it before it (`with`).
+    fn ratio(&mut self, e: usize, rest: &Cells, with: Option<&With>) -> Ratio {
         let mu0 = self.mu0(rest);
         let pts = &self.points[e];
-        self.prep.ratio(&mut self.scratch, &pts.mass, &pts.put, &mu0)
+        let put = pts.put_with(with, &self.group);
+        self.prep.ratio(&mut self.scratch, &pts.mass, &put, &mu0)
     }
 
     /// The echo sources given that the people put in `rest`.
@@ -237,6 +397,12 @@ struct Node {
     ratio: Ratio,
     /// what it and those before put in
     after: Cells,
+    /// where it and those before stand, after weighing (their still mass by place)
+    stand: Vec<Stand>,
+    /// who stands with it before it
+    with: Option<With>,
+    /// what it puts in before these frames, given who stands with it before it
+    before: Cells,
 }
 
 /// The people of every hypothesis one after the other, as a tree of prefixes.
@@ -268,13 +434,22 @@ impl Chains {
                         continue;
                     }
                     let node = *children.entry((at, e)).or_insert_with(|| {
-                        let ratio = ctx.ratio(e, &sum);
+                        let stand: &[Stand] = at.map_or(&[], |n: usize| &nodes[n].stand);
+                        let pts = &ctx.points[e];
+                        let with = pts.with_given(stand, &ctx.group);
+                        let before = pts.put_in(with.as_ref(), &ctx.group);
+                        let mut stand = stand.to_vec();
+                        let ratio = ctx.ratio(e, &sum, with.as_ref());
                         let after = std::array::from_fn(|c| sum[c] + ratio.post[c]);
+                        stand.extend(ctx.points[e].deposits(Some((&ratio.lr, ratio.norm)), &ctx.group));
                         nodes.push(Node {
                             parent: at,
                             entry: e,
                             ratio,
                             after,
+                            stand,
+                            with,
+                            before,
                         });
                         nodes.len() - 1
                     });
@@ -325,7 +500,7 @@ impl Chains {
     /// Per hypothesis what the known people put in: those with tracks, those without as they were
     /// before these frames. A source is what they do not explain; the unknown ones are its
     /// alternative and not counted (MODEL.md 4.3).
-    fn known(&self, ctx: &LdContext, hyps: &[Hyp], holders: &Holders) -> Vec<Cells> {
+    fn known(&self, ctx: &LdContext, hyps: &[Hyp]) -> Vec<Cells> {
         hyps.iter()
             .zip(&self.paths)
             .map(|(hy, path)| {
@@ -337,9 +512,13 @@ impl Chains {
                         }
                     }
                 }
-                for e in hy.hidden.iter().map(|&d| holders.entry(Obj::Density(d))) {
-                    if ctx.seen[e] {
-                        for (x, y) in known.iter_mut().zip(&ctx.points[e].put_in()) {
+                for node in path.iter().map(|&n| &self.nodes[n]) {
+                    let hidden = match ctx.objs[node.entry] {
+                        Obj::Density(d) => hy.hidden.contains(&d),
+                        Obj::Mixture(_) => false,
+                    };
+                    if hidden {
+                        for (x, y) in known.iter_mut().zip(&node.before) {
                             *x += y;
                         }
                     }
@@ -367,7 +546,7 @@ impl Chains {
         if !self.rest.contains_key(&(leaf, e)) {
             let (total, own) = (&self.nodes[leaf].after, &self.nodes[node].ratio.post);
             let rest: Cells = std::array::from_fn(|c| total[c] - own[c]);
-            let ratio = ctx.ratio(e, &rest);
+            let ratio = ctx.ratio(e, &rest, self.nodes[node].with.as_ref());
             let ze = ctx.echo_ratio(&rest).norm;
             self.rest.insert((leaf, e), (ratio, ze));
         }
@@ -553,31 +732,27 @@ fn objects_of(hy: &Hyp) -> impl Iterator<Item = Obj> + '_ {
 }
 
 /// What the background learns: per hypothesis the mean the people as the filter saw them before
-/// these frames and the background put in, the same of the people with tracks alone, and P(nobody in
-/// view) mixed over the hypotheses.
-fn before(ctx: &LdContext, hyps: &[Hyp], holders: &Holders, prior_w: &[f64]) -> (Vec<Cells>, Vec<Cells>, f64) {
+/// these frames and the background put in (each given who stands with it before it, as in its chain), the same
+/// of the people with tracks alone, and P(nobody in view) mixed over the hypotheses.
+fn before(ctx: &LdContext, chains: &Chains, prior_w: &[f64]) -> (Vec<Cells>, Vec<Cells>, f64) {
     let mut nobody = 0.0;
-    let (mus, tracked) = hyps
+    let (mus, tracked) = chains
+        .paths
         .iter()
         .zip(prior_w)
-        .map(|(hy, w)| {
+        .map(|(path, w)| {
             let (mut mu, mut tracked, mut none) = (ctx.b0, ctx.b0, 1.0);
-            for obj in objects_of(hy) {
-                let e = holders.entry(obj);
-                if !ctx.seen[e] {
-                    continue;
-                }
-                let pts = &ctx.points[e];
-                let put = pts.put_in();
-                for (x, y) in mu.iter_mut().zip(&put) {
+            for node in path.iter().map(|&n| &chains.nodes[n]) {
+                let put = &node.before;
+                for (x, y) in mu.iter_mut().zip(put) {
                     *x += y;
                 }
-                if matches!(obj, Obj::Mixture(_)) {
-                    for (x, y) in tracked.iter_mut().zip(&put) {
+                if matches!(ctx.objs[node.entry], Obj::Mixture(_)) {
+                    for (x, y) in tracked.iter_mut().zip(put) {
                         *x += y;
                     }
                 }
-                none *= (1.0 - pairwise_sum(&pts.mass)).max(0.0);
+                none *= (1.0 - pairwise_sum(&ctx.points[node.entry].mass)).max(0.0);
             }
             nobody += w * none;
             (mu, tracked)
@@ -654,12 +829,17 @@ impl Filter {
                 ..Points::none()
             },
             scratch: Scratch::default(),
+            group: Group {
+                m2: p.ld_group,
+                at: ld.at,
+                res: p.resolution[STILL],
+            },
         };
-        let (mus, tracked, nobody) = before(&ctx, &self.hyps, &self.holders, &prior_w);
         // per hypothesis the people one after the other, the echo sources last
         let mut chains = Chains::build(&mut ctx, &self.hyps, &self.holders);
+        let (mus, tracked, nobody) = before(&ctx, &chains, &prior_w);
         let logf = chains.logf(&mut ctx);
-        let known = chains.known(&ctx, &self.hyps, &self.holders);
+        let known = chains.known(&ctx, &self.hyps);
         let base = ctx.prep.loglik(&st, &b0);
         for (hy, l) in self.hyps.iter_mut().zip(&logf) {
             hy.logw += base + l;
@@ -810,6 +990,95 @@ mod tests {
         }
         let there = f.objects().densities().get(unknown).total();
         assert!(there > 0.5 && there <= 1.0 + 0.01 + 1e-12, "{there}"); // in view, and the 0.01 out of the house
+    }
+
+    /// Two people standing in the test world's tile c with existence r (each a density of its own, in this order),
+    /// in one hypothesis; the unknown ones nearly nobody.
+    fn two_at(world: &World, c: usize, r: [f64; 2]) -> (Filter, [DensityId; 2]) {
+        let mut f = filter_with(world, c);
+        let first = f.hyps()[0].hidden[0];
+        let unknown = f.hyps()[0].unknown;
+        let objects = f.objects_mut();
+        let data = objects.densities.data(first);
+        let second = objects.densities.insert(DensityData { r: r[1], ..data.clone() });
+        let first = objects.densities.insert(DensityData { r: r[0], ..data });
+        f.set_hyps(vec![Hyp::new(0.0, vec![first, second], unknown)]);
+        (f, [first, second])
+    }
+
+    /// `seconds` of frames (one weighing per 12 frames) with the energies e; the echo sources explain nothing.
+    fn weigh_for(world: &World, f: &mut Filter, e: &Cells, seconds: usize) {
+        let mut sensor = LdSensor::new(&world.params);
+        for _ in 0..seconds {
+            for _ in 0..12 {
+                sensor.stats.add(e, 0.089, false);
+            }
+            f.ld_weigh(world, 0, &mut sensor, &B, 1e-30).expect("finite");
+        }
+    }
+
+    #[test]
+    fn two_at_one_place_reading_the_energy_of_one_keep_the_second() {
+        // MODEL.md 4.3 "Gruppen": two at one place give hardly more than one (m(2) 1.0-1.15, sofa 11.11.). The
+        // energies of one person cannot refute an unresolved second beside the first; as two adding up (m(2) = 2,
+        // up to 0.65) they did within a minute
+        let mut world = testing::flat();
+        world.params.ld_echo_amps = vec![1e-9];
+        let ld = &world.ld[0];
+        let j = ld.tiles.idx.len() / 2;
+        let c = ld.tiles.idx[j];
+        let one: Cells = std::array::from_fn(|k| (B[k] + ld.tiles.still[j][k]).round().min(100.0));
+        let second = |m2: f64| {
+            let mut world = testing::flat();
+            world.params.ld_echo_amps = vec![1e-9];
+            world.params.ld_group = m2;
+            let (mut f, [_, second]) = two_at(&world, c, [0.999, 0.9]);
+            weigh_for(&world, &mut f, &one, 60);
+            f.objects().densities().get(second).r
+        };
+        let (group, added) = (second(world.params.ld_group), second(2.0));
+        assert!(group > 0.8, "the second {group}");
+        assert!(added < 0.3, "the second if two added up {added}");
+        // and the first is not pushed out instead
+        let (mut f, [first, _]) = two_at(&world, c, [0.9, 0.9]);
+        weigh_for(&world, &mut f, &one, 60);
+        assert!(f.objects().densities().get(first).r > 0.95);
+    }
+
+    #[test]
+    fn one_alone_reading_nothing_is_refuted_and_two_do_not_shield_each_other() {
+        // nobody beside her: the background's energies refute her as before; two at one place reading nothing go
+        // together (the first by the full profile, the second by what is left of the first, MODEL.md 4.3 "Gruppen")
+        let mut world = testing::flat();
+        world.params.ld_echo_amps = vec![1e-9];
+        let ld = &world.ld[0];
+        let j = ld.tiles.idx.len() / 2;
+        let c = ld.tiles.idx[j];
+        let nothing: Cells = std::array::from_fn(|k| B[k].round());
+        let mut f = filter_with(&world, c);
+        let alone = f.hyps()[0].hidden[0];
+        *f.objects_mut().densities.get_mut(alone).r = 0.9;
+        let unknown = f.hyps()[0].unknown;
+        f.set_hyps(vec![Hyp::new(0.0, vec![alone], unknown)]);
+        weigh_for(&world, &mut f, &nothing, 20);
+        let r_alone = f.objects().densities().get(alone).r;
+        assert!(r_alone < 0.05, "alone {r_alone}");
+        // the same as if people added up: nobody stands with her
+        let mut added = testing::flat();
+        added.params.ld_echo_amps = vec![1e-9];
+        added.params.ld_group = 2.0;
+        let mut g = filter_with(&added, c);
+        let a = g.hyps()[0].hidden[0];
+        *g.objects_mut().densities.get_mut(a).r = 0.9;
+        g.set_hyps(vec![Hyp::new(0.0, vec![a], unknown)]);
+        weigh_for(&added, &mut g, &nothing, 20);
+        assert!((g.objects().densities().get(a).r - r_alone).abs() < 1e-9 * r_alone.max(1e-300));
+        let (mut f, both) = two_at(&world, c, [0.9, 0.9]);
+        weigh_for(&world, &mut f, &nothing, 40);
+        for d in both {
+            let r = f.objects().densities().get(d).r;
+            assert!(r < 0.05, "together {r}");
+        }
     }
 
     /// An LD2410C with an echo source on, whichever: as if frames had called for one.

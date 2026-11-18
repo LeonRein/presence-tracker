@@ -213,7 +213,11 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   0,48 /s), das LD2410C erwartete 26–40 statt 0 (gerechnet 7.10. im Python-Kern, Grundriss von damals).
 - `q(x)`: Auflösung neben einem gemessenen Ziel,
   `1 − exp(−ln 2 ((Δr/R_r)² + (Δquer/R_q)²))` (Form A_Svensson2012 Gl. 18–20); neben einem
-  gehaltenen Ziel stattdessen `1 − exp(−d²/(2·0,7²))` (dort würde es wiedergefunden). **Je Betriebsart** (seit 0.63,
+  gehaltenen Ziel dieselbe Auflösung (die gehaltene Stelle als ruhendes Ziel) mal `1 − k(x)` mit dem Findekern
+  `k(x) = exp(−d²/(2·0,7²))`: Vom aufgelösten Anteil fände der Sensor nahe der Stelle das gehaltene Ziel wieder statt
+  einer neuen Spur, der unaufgelöste Anteil ist mit dem gehaltenen Ziel eine Quelle und beginnt nichts Eigenes
+  (Gruppen, unten). Bis Kandidat `nacht/gruppe` dort nur `1 − k(x)`, ohne die Auflösung: Eine Unaufgelöste in 0,9 m zahlte
+  während jedes Haltens 0,56 statt 0,25 / 0,12 der Erfassungsrate (Bayes-Prüfung 18.11.). **Je Betriebsart** (seit 0.63,
   `resolution`): eine Stehende neben jedem Ziel R = 1,4 / 2,1 m, eine Gehende neben dem Ziel einer Gehenden 0,6 / 0,9 m,
   neben einem ruhenden Ziel gar nicht (q = 1; ruhend ist ein Ziel, dessen gemessene Geschwindigkeit entlang des Strahls
   unter 0,3 m/s liegt, und eine neue Spur bis zu ihrer ersten Messung). Gemessen 8.11.: Zwei Ruhende nah beieinander (Sofa 8.11. 36 min, Bett in 7 Nächten zu je 4 h)
@@ -289,18 +293,34 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
   4 s gehalten, Log-Evidenz 0,012 neben der sofortigen Meldung, Nicht-Wiederfinden −2,38 gegen ln S(u) = −2,44).
 - Wiedergefunden wird auf dem Eigentümer, auf einer anderen Person nahe der gehaltenen Stelle
   (Gauß-Kern 0,7 m × Sicht, `k(x)`), auf dem Geist, der sie war, auf der Störquelle, die sie war (4.5), oder auf
-  einer Reflexion dort (wie 0,05 Personen). Nicht-Wiederfinden spricht gegen alle diese, ohne Frist; gegen eine andere
-  Person aber nur, soweit der Sensor sie vom gehaltenen Ziel auflöst (seit 0.62): mit dem Faktor
-  `S(u)^(k(x)·(1 − P_u(x, z)))`, `P_u` die Form der Auflösung von oben (A_Svensson2012 Gl. 18–20, `resolved_from` in
-  `filter/evidence.rs`). Das gehaltene Ziel gilt dabei als ruhend: Seit 0.63 gilt für Personen ohne Spur und für die
+  einer Reflexion dort (wie 0,05 Personen). Nicht-Wiederfinden spricht gegen alle diese, ohne Frist; Wiederfinden auf
+  einer von ihnen spricht für sie. Für eine andere Person als den Eigentümer zählen **beide nur, soweit der Sensor sie vom
+  gehaltenen Ziel auflöst**: Nicht-Wiederfinden mit dem Faktor `S(u)^(k(x)·P_R(x, z))`, Wiederfinden auf ihr mit
+  `k(x)·P_R(x, z)` unter den Findern, mit derselben Summe der Finder in beiden Fällen (`P_R` die Form der Auflösung von
+  oben, A_Svensson2012 Gl. 18–20, `resolved_from` in `filter/evidence.rs`; ebenso die unbekannten Personen). Das
+  Nicht-Wiederfinden seit 0.62, das Wiederfinden seit Kandidat `nacht/gruppe`: Bis dahin fand jede Person in der Nähe
+  das Ziel mit dem vollen Kern, und jedes Wiederfinden hob über das Kind „die Spur ist ihre“ und das Zusammenlegen das r
+  einer Unaufgelösten um etwa den Faktor 1 + k(d), ohne Gegengewicht (von r 0,01 bis 0,5 in 7–8 Wiederfinden; das
+  Wuchern 17.11., 0.65). Das gehaltene Ziel gilt dabei als ruhend: Seit 0.63 gilt für Personen ohne Spur und für die
   Komponente *steht* der anderen die Auflösung der Stehenden, 1,4 / 2,1 m; für die Komponente *geht* einer anderen
-  Person mit Spur zählt das Nicht-Wiederfinden voll (q neben einem ruhenden Ziel ist 1 für Gehende, oben). Wer
+  Person mit Spur zählen beide voll (q neben einem ruhenden Ziel ist 1 für Gehende, oben). Wer
   mit dem Eigentümer in einer Auflösungszelle steht, ist mit ihm eine Quelle, die höchstens ein Ziel gibt
-  (A_Beard2015 Gl. 16–17: je Gruppe einer Partition höchstens eine Messung; Mahlers Punkt-Cluster); sein Ausbleiben
-  ist das Ausbleiben dieses einen Ziels und zählt schon beim Eigentümer. Bis 0.61 zählte es für jede Person in der
+  (A_Beard2015 Gl. 16–18: je Gruppe einer Partition höchstens eine Messung; Mahlers Punkt-Cluster); sein Ausbleiben
+  ist das Ausbleiben dieses einen Ziels und zählt schon beim Eigentümer, sein Wiederfinden ebenso. Bis 0.61 zählte es für jede Person in der
   Nähe noch einmal, als könne der Sensor sie getrennt wiederfinden: Die zweite Person neben Leon im Bad verlor in
   100 s Δlogit r = −6,0 allein dadurch (6.11. 19:28, 10 „0.62: Zwei als ein Ziel“).
 - Fallenlassen der Spur: keine eigene Information (für Geister: Lebensdauer, 4.2).
+
+**Gruppen: Personen, die der Sensor nicht trennt** (Kandidat `nacht/gruppe`, 18.11.; A_Beard2015 Gl. 16–18, A_Svensson2012
+Gl. 18–20). Zwei Ruhende nahe beieinander sind für den LD2450 eine Quelle mit höchstens einem Ziel. Alle fünf Ereignisse des
+LD2450 gehen deshalb von derselben Auflösung aus, der Form `P_R(x, z)` der Ruhenden (1,4 / 2,1 m) gegenüber jedem Ziel z,
+gemessen oder gehalten: neue Spur und keine neue Spur mit der Rate mal `P_R` (neben einem gehaltenen Ziel mal `P_R (1 − k)`),
+Wiederfinden und Nicht-Wiederfinden für eine andere Person als den Eigentümer mit `k P_R`. Der aufgelöste Anteil zählt in
+jedem Ereignis und in seinem Ausbleiben, der unaufgelöste `1 − P_R` in keinem: Er ist Teil der Quelle des Ziels, weder
+Finder noch Nicht-Finder, weder Erfasster noch Nicht-Erfasster. Über die Zahl an einer Stelle sagt der LD2450 so nur etwas,
+wenn er dort doch zwei Ziele meldet (neue Spur neben einem gemessenen Ziel, gemessen 1–4 % der Frames) oder wenn sich die
+Gruppe trennt (eine geht, die Spur bleibt oder endet), beides in beide Richtungen. Wie das LD2410C eine Gruppe sieht: 4.3
+„Gruppen“.
 
 **Position:** `z = x + c + o + w`. Versatz c konstant je Spur, o wandert (OU, τ = 3,5 s), w = 5 cm.
 57 % der Versatzvarianz bleibt, 43 % wandert (gemessen). Gesamtstreuung entlang 0,15 m + 2 %, quer
@@ -575,7 +595,23 @@ Das Modell, je Sensor:
   Mittel) wird dann mit `ℓ(e | Rest + S(x)) / ℓ(e | Rest)` gewichtet, der Rest = alle anderen, gemischt
   über die Hypothesen, die sie halten (Marginale wie bei JIPDA; was andere erklären, sagt über diese
   Person nichts). Eine zweite Person am selben Ort bekommt so nur, was die erste nicht erklärt;
-  gekappte Werte (100) sprechen dabei nur für mehr Energie, nie dagegen (geprüft 7.10., 10). **Die unbekannten Personen: höchstens eine von ihnen im
+  gekappte Werte (100) sprechen dabei nur für mehr Energie, nie dagegen (geprüft 7.10., 10).
+  **Gruppen** (Kandidat `nacht/gruppe`, `ld_group` = m(2) = 1,1): Eine Gruppe von n Ruhenden an einer Stelle gibt
+  `g · m(n) · S`, `m(n) = 1 + (n − 1)(m(2) − 1)`, nicht n-mal das Profil einer Person. Gemessen 11.11. auf dem Sofa (zwei
+  Sitzende 0,45–0,9 m auseinander, Verhältnis der Ringe zwei / eine 0,78–1,37, m(2) ≈ 1,0–1,15; sofa10 Ringe 3–5 das
+  1,1–1,8-Fache). „An einer Stelle“ heißt: so weit der LD2450 im selben Gehäuse sie nicht trennt (`P_R` der Ruhenden aus
+  seiner Lage, 4.1 „Gruppen“), dieselbe Partition für beide Sensoren. In der Kette der Personen (oben) gibt eine stehende
+  Kachel bzw. Komponente deshalb `[(1 − o) g + o (m(2) − 1) g'] S` statt `g S`: o = min(1, Σ der Masse der Personen vor
+  ihr mal `1 − P_R`) der Anteil, mit dem schon jemand an ihrer Stelle steht, g' dessen Amplitude (die Amplitude der
+  Gruppe; die eigene ist in der Gruppe nicht messbar). Die Masse vor ihr ist die nach deren Wägung (Kettenregel wie die
+  Energie). Folgen: Neben einer gemessenen Person widerlegt eine Energie, die zu einer passt, eine Unaufgelöste kaum
+  (Test: r 0,9 → 0,89 in 60 s; mit m(2) = 2, wie bis 0.65, 0,05); allein, ohne jemanden vor ihr, widerlegt sie das
+  Hintergrundrauschen wie bisher (0,9 → 0,03 in 20 s, gleich bitgenau wie mit m(2) = 2); zwei Unaufgelöste ohne
+  Energie schützen sich nicht gegenseitig, denn die zweite sieht die erste erst nach deren Wägung (beide < 0,002 in
+  40 s). Das ersetzt die Regel von 0.65 (`together`, `ld_exist` mit der Anzeigeschwelle r ≥ 0,5) durch ein Messmodell
+  ohne Schwelle; die Zahl einer Gruppe bewegt das LD2410C nur schwach, in beide Richtungen (mehr als eine Person:
+  etwas dafür; weniger als eine: etwas dagegen). Was die Personen danach hineingeben, wofür der Hintergrund lernt und
+  was eine Echoquelle erklären muss, rechnet mit derselben Gruppe. **Die unbekannten Personen: höchstens eine von ihnen im
   Blick**, gerechnet wie eine Person ohne Spur (ein Bernoulli mit r = ihrer Masse M im Blick; `M' = M L̄ /
   (1 − M + M L̄)` ≤ 1, wobei L̄ das mittlere Verhältnis über diese Masse ist, per Momentenabgleich zurück in
   die Intensität); wer hinter einer Tür oder außer Haus ist, gibt nichts hinein. Das ist, was Energie allein
@@ -953,8 +989,10 @@ Ankünfte und das Vergessen aus 3.4.
   8.10.). Wo ein Sensor eine bekannte Person ohne Spur sähe, entscheiden die
   Messungen (`1 − r + r ∫ Dichte × Likelihood`, oben); dort endet sonst nur `record_life` (unten): Eine
   Sitzende in Sicht bleibt, solange keine Messung gegen sie spricht, wie lang ihre Lücke auch ist, und
-  zwei, die der LD2450 als ein Ziel sieht, bleiben zwei (weder Erfassung noch Wiederfinden zählen gegen die
-  Unaufgelöste, 4.1; bis 0.61 tat es das Wiederfinden). Wo kein Sensor hinsieht – ein toter Winkel
+  zwei, die der LD2450 als ein Ziel sieht, bleiben zwei, soweit keine Messung über die Zahl an der Stelle spricht
+  (weder Erfassung noch Wiederfinden zählen für oder gegen die Unaufgelöste, 4.1 „Gruppen“; das LD2410C sieht die
+  Gruppe mit m(n), 4.3; bis 0.61 zählte das Nicht-Wiederfinden gegen sie, von 0.62 bis Kandidat `nacht/gruppe` das
+  Wiederfinden für sie). Wo kein Sensor hinsieht – ein toter Winkel
   eines Raums, ein Bereich ohne Sensor, außer Haus –, kann keine Messung einen Eintrag widerlegen; dort
   hielte ihn nur die Aufenthaltsdauer, mit ihren schweren Ausläufern (3.1: 2 % der Aufenthalte dauern
   über eine Stunde; 3.3) über Stunden. Bei r < 1 kostet ein Ort ohne Sicht, was sein Aufenthalt sagt

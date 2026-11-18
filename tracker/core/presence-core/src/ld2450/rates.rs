@@ -63,8 +63,10 @@ impl RateModel {
     /// The share left at a point given the sensor's live tracks, for somebody walking or still (mode): next to a
     /// target it measures, somebody is merged into it (resolution, Svensson 2012); a still person beside any target
     /// with the still people's scale, a walker beside a walker's with the walkers' and beside a still target not at
-    /// all (the LD2450 reports the walker and drops the still one, measured 8.11., MODEL.md 4.1); near where it holds
-    /// a lost target it finds that one again.
+    /// all (the LD2450 reports the walker and drops the still one, measured 8.11., MODEL.md 4.1). Where it holds a lost
+    /// target, it is that target's place for the resolution as a still one (who is lost is mostly still): who is
+    /// unresolved from it is one source with it and starts nothing of its own, and of the resolved share, near the spot
+    /// it finds the held one again instead (the kernel of finding it again; MODEL.md 4.1 "Gruppen").
     pub(crate) fn mask(&self, sight: &Sight, p: Point, tracks: &[TrackSpot], mode: usize) -> f64 {
         self.masks(sight, p, tracks)[mode]
     }
@@ -81,27 +83,27 @@ impl RateModel {
         let mut mask = [1.0; 2];
         for spot in tracks {
             if spot.held {
+                // found again instead (held spots are still ones: walkers are resolved from them fully)
                 let (ex, ey) = (p[0] - spot.at[0], p[1] - spot.at[1]);
                 let m = 1.0 - (-0.5 * (ex * ex + ey * ey) / sq(self.find_radius)).exp();
                 mask = mask.map(|x| x * m);
-            } else {
-                let (zx, zy) = (spot.at[0] - sx, spot.at[1] - sy);
-                let (rz, tz) = (py_hypot(zx, zy), zy.atan2(zx));
-                let dr = r - rz;
-                let mut a = th - tz; // in (-2 pi, 2 pi): to (-pi, pi]
-                if a > PI {
-                    a -= 2.0 * PI;
-                } else if a <= -PI {
-                    a += 2.0 * PI;
+            }
+            let (zx, zy) = (spot.at[0] - sx, spot.at[1] - sy);
+            let (rz, tz) = (py_hypot(zx, zy), zy.atan2(zx));
+            let dr = r - rz;
+            let mut a = th - tz; // in (-2 pi, 2 pi): to (-pi, pi]
+            if a > PI {
+                a -= 2.0 * PI;
+            } else if a <= -PI {
+                a += 2.0 * PI;
+            }
+            let dc = 0.5 * (r + rz) * a;
+            for mode in [STILL, WALK] {
+                if mode == WALK && !spot.moving {
+                    continue;
                 }
-                let dc = 0.5 * (r + rz) * a;
-                for mode in [STILL, WALK] {
-                    if mode == WALK && !spot.moving {
-                        continue;
-                    }
-                    let res = self.res[mode];
-                    mask[mode] *= 1.0 - (-LN_2 * (sq(dr / res[0]) + sq(dc / res[1]))).exp();
-                }
+                let res = self.res[mode];
+                mask[mode] *= 1.0 - (-LN_2 * (sq(dr / res[0]) + sq(dc / res[1]))).exp();
             }
         }
         mask

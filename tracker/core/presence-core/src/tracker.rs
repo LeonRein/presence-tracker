@@ -1325,6 +1325,72 @@ mod frame_tests {
     }
 
     #[test]
+    fn a_flickering_target_beside_a_person_makes_no_growing_entries() {
+        // a sitting person's target, its LD2410C reading her energy, and beside her (0.4 m) a second target the
+        // sensor starts for a second every 4 s, for 10 minutes: the second's tracks start and end (each a branch
+        // over "a ghost / somebody beside her / somebody new"), but what is left of them does not pile up -
+        // neither found again nor not found again counts for or against who is unresolved from her, and the
+        // energies of one person tell little about a second there (MODEL.md 4.1, 4.3 "Gruppen")
+        let mut tr = started();
+        let at = (0.0, 2500.0);
+        let mut x = 0.0;
+        let mut t = 1.0;
+        for _ in 0..(5.0 / FRAME) as usize {
+            x = if x == 0.0 { 10.0 } else { 0.0 };
+            tr.frame("wohn", t, &one(at.0 + x, at.1)).expect("a frame");
+            t += FRAME;
+        }
+        // her energy: the background and her profile where she sits
+        let world = tr.world();
+        let hy = &tr.filter().hyps()[0];
+        let m = *hy.people.values().next().expect("she has the track");
+        let pos = tr.filter().objects().mixtures().get(m).modes[crate::params::STILL].pos();
+        let ld = &world.ld[0];
+        let c = world.tiles.cell_near(pos).expect("a tile");
+        let j = ld.tiles.idx.iter().position(|&i| i == c).expect("in the LD2410C's view");
+        let cells: [f64; 16] = std::array::from_fn(|k| {
+            let b = [13.0, 9.0, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0][k];
+            (b + ld.tiles.still[j][k]).round().min(100.0)
+        });
+        let gates = frames::LdGates {
+            moving: std::array::from_fn(|k| cells[k]),
+            still: std::array::from_fn(|k| if k < 2 { 0.0 } else { cells[7 + k] }),
+        };
+        let (mut entries, mut densities, mut started_tracks) = (Vec::new(), Vec::new(), 0);
+        let minutes = 10;
+        let per_minute = (60.0 / FRAME) as usize;
+        for _ in 0..minutes {
+            let (mut most, mut dens) = (0, 0);
+            for k in 0..per_minute {
+                x = if x == 0.0 { 10.0 } else { 0.0 };
+                let beside = (k % (4.0 / FRAME) as usize) < (1.0 / FRAME) as usize;
+                let mut frame = if beside {
+                    targets(&[(at.0 + x, at.1), (at.0 + 400.0 + x, at.1)])
+                } else {
+                    one(at.0 + x, at.1)
+                };
+                frame.ld2410 = Some(Ld2410 {
+                    gates: Some(gates.clone()),
+                    ..Ld2410::default()
+                });
+                let events = tr.frame("wohn", t, &frame).expect("a frame");
+                started_tracks += branches(&events).iter().filter(|(_, h)| *h == Branched::Born).count();
+                t += FRAME;
+                most = most.max(tr.filter().hyps().iter().map(|h| h.hidden.len()).max().unwrap_or(0));
+                dens = dens.max(tr.filter().objects().densities().len());
+            }
+            entries.push(most);
+            densities.push(dens);
+        }
+        assert!(started_tracks >= minutes * 14, "the second target's tracks: {started_tracks}");
+        let early = entries[1..4].iter().max().copied().unwrap_or(0);
+        let late = entries[minutes - 3..].iter().max().copied().unwrap_or(0);
+        assert!(late <= early.max(2) && late <= 4, "people without a track per minute {entries:?}");
+        let (de, dl) = (densities[1..4].iter().max().copied().unwrap_or(0), densities[minutes - 3..].iter().max().copied().unwrap_or(0));
+        assert!(dl <= de + 2, "densities per minute {densities:?}");
+    }
+
+    #[test]
     fn a_time_that_is_no_number_is_refused_and_changes_nothing() {
         // an endless step was cut into usize::MAX parts: out of memory
         let mut tr = started();
