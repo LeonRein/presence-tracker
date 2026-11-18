@@ -1377,7 +1377,7 @@ mod frame_tests {
                     one(at.0 + x, at.1)
                 };
                 frame.ld2410 = Some(Ld2410 {
-                    gates: Some(gates.clone()),
+                    gates: Some(gates),
                     ..Ld2410::default()
                 });
                 let events = tr.frame("wohn", t, &frame).expect("a frame");

@@ -28,7 +28,7 @@ use crate::ld2410::profile::expected;
 use crate::ld2410::sensor::LdSensor;
 use crate::ld2410::{CELLS, FLOOR, LOG_CAP, cell_values};
 use crate::params::{STILL, WALK};
-use crate::vmath::{at_least, logsumexp, nan_max, pairwise_sum};
+use crate::vmath::{at_least, logsumexp, nan_max, pairwise_sum, py_hypot};
 use crate::world::{LdSight, World};
 
 type Cells = [f64; CELLS];
@@ -345,7 +345,7 @@ impl Group {
     /// A place as the sensor sees it: range and bearing.
     fn polar(&self, p: Point) -> [f64; 2] {
         let (dx, dy) = (p[0] - self.at[0], p[1] - self.at[1]);
-        [dx.hypot(dy), dy.atan2(dx)]
+        [py_hypot(dx, dy), dy.atan2(dx)]
     }
 
     /// The share of two places (`polar`) at one place: 1 - P_R (the form of `RateModel::mask`, the still people's
