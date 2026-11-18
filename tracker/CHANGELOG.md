@@ -1,28 +1,16 @@
 # Changelog
 
-## 0.65.0 (Zwei an einer Stelle bleiben zwei: über die Existenz einer Person, neben der jemand steht, entscheidet das LD2410C nicht)
+## 0.65.1 (Rücknahme von 0.65.0: wieder der Stand von 0.64.0)
 
-Meldungen 31.10. 19:22 (Bad), 6.11. 19:54 (Bad), 8.11. 22:27 (Sofa) und 11.11. 22:53 (Sofa): zu zweit an einer Stelle, eine geht,
-die andere bleibt, das Licht geht aus. In allen vier messen die Sensoren die Bleibende weiter (LD2450 ruhendes Ziel an ihrem
-Platz, LD2410C Ruheenergie bis 100); der Filter hatte sie schon vorher gestrichen. Ursache (Bad 31.10., Tagesnachlauf ab dem
-Modellstart, Protokoll jeder Änderung von r): Das LD2410C-Modell addiert die Energie der Personen; zwei Sitzende geben aber
-nicht mehr als eine (gemessen 11.11.). Jede Minute, in der es so viel las wie von einer, sprach mit 17–40 nats gegen die
-zweite; der LD2450 trug unter 1 nat bei. Im Unit-Test streicht 0.64 die zweite in 60 s, auch ohne jede Senke der Energie.
-- **Existenz nur, wo niemand daneben steht** (MODEL.md 4.3, `ld_exist` 0, `ld_alone` 1): Die Energien wiegen Ort und
-  Hypothesen wie bisher; die Existenz einer Person ohne Spur ändern sie nur mit dem Anteil, mit dem keine andere Person
-  bei ihr steht (Kern mit der Hälfte bei 1,5 m). Allein an ihrer Stelle wird eine Person ohne Energie weiter in Sekunden
-  widerlegt, ebenso eine zweite 3,5 m entfernt.
-- Bewertung (`evalp`, alle Starts; neu das Fenster Sofa 11.11. und 16 Ereignisse „zu zweit, eine geht, eine bleibt“ aus den
-  Aufnahmen 31.10.–11.11., MODEL.md 10 „Nacht 11./12.11.“): Pflichtraum mit Präsenzlicht (120 s) dunkel 0.64 in 1 von 37
-  Starts (Bad 31.10., 1,1 min; im Tagesnachlauf ab dem Modellstart der App wie gemeldet), 0.65 in 0 von 28 gemessenen.
-  Schlafzimmer morgens (eine steht auf, die andere bleibt liegen; Schlafende sind kein Ziel, MODEL.md 1): 0.64 in 4, 0.65
-  in 5 von 12 Starts dunkel (beide verlieren die Liegende, wo die Sensoren sie kaum sehen).
-  Unbelegte Sekunden im Pflichtzeitraum 183 → 83, längste Lücke 177 → 28 s (direkt nach dem Gehen, vom Nachlauf
-  überbrückt; 0.64 hatte dort 0–2 s). Leeres Haus, eine Person, Nächte wie 0.64 (gemessene Fenster gleich bis auf ±1
-  Raumminute). Rechenzeit in mehreren Fenstern das 2- bis 4-Fache (zwei beieinander werden nicht mehr gestrichen;
-  live 0.64: 3 % CPU). Live seit 12.11. (Leon 12.11.: „Ja, freigeben“).
-- Verworfen (MODEL.md 10 „Nacht 11./12.11.“): Leistungssumme (`ld_sum` 2), Maximum, Energien ganz ohne Einfluss auf die
-  Existenz, ein Anteil vom LD2450 nie gesehener Ruhender (κ = 0).
+0.65.0 ist zurückgenommen, das Modell ist wieder genau das von 0.64.0. Unter 0.65.0 sammelten sich an Stellen, an denen ein
+LD2450 ein ruhendes Ziel immer wieder verliert und wiederfindet, Dutzende kleine Einträge „vielleicht sitzt dort noch
+jemand“ an (17.11.: 20-30 Einträge am Wohnzimmer/Esszimmer-Raumteiler, bis 6 erwartete Personen im Raum). Die Rechenzeit
+wuchs mit ihnen, Inge lief mit einem vollen Kern, und die Frames stauten sich bis 42 min (Licht kam entsprechend spät).
+Ursache: Seit 0.62 zählt das Wiederfinden einer gehaltenen Spur für eine Person, die der Sensor nicht vom gehaltenen
+Ziel trennt, das Nicht-Wiederfinden aber nicht gegen sie; 0.65 nahm dazu dem LD2410C die Gegenkraft neben angezeigten
+Personen. Geprüft auf dem neuen Prüfstand (53 Fenster): 0.64 hält in allen Echtzeit, 0.65.0 fällt in 13 durch. Die
+Ursache wird in einer nächsten Version behoben, ohne die zweite Person zu verlieren (die einfache Rücknahme der
+Asymmetrie verliert sie fast dreimal so oft).
 
 ## 0.64.0 (Geister brauchen eine Quelle; das LD2410C sieht in Nachbarräume nur bis 1,5 m; Übergabe an der Tür; Licht schon ab 1/6)
 
