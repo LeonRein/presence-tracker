@@ -24,6 +24,11 @@ esphome:
       # radar is still booting and does not answer. Ask again later.
       - delay: 3s
       - button.press: ld2410_query_params
+      # The same for the LD2450: setup() restarts it and reads version, MAC,
+      # tracking mode and zones 1.5 s later, too early after power-on (version
+      # 0.00.00000000 on Esszimmer, Schlafzimmer and Arbeitszimmer, 18.11.).
+      # Read again without a restart.
+      - lambda: id(ld2450_radar).read_all_info();
       - delay: 2s
       # No hold time in the radar: it reports what it sees right now, the
       # tracker app decides how long presence lasts. Stored in the radar,
