@@ -5,6 +5,7 @@
 //!
 //!   presence-replay trace CONFIG RECORDING SECONDS OUT [EVERY]
 //!   presence-replay prof CONFIG RECORDING SECONDS
+//!   presence-replay bench JOB.json   (the test bench, bench.rs; tools/pruefstand.py)
 //!
 //! CONFIG is the app's tracker.json; the model the core's defaults.
 //! trace writes every EVERY s (1) of frame time the line trace.py writes through the Python shell, byte for
@@ -13,6 +14,9 @@
 //! difference is what the shell costs). Its clock is the wall's (std has no CPU clock): run it on a core
 //! of its own (taskset).
 
+#![recursion_limit = "256"]
+
+mod bench;
 mod pyjson;
 
 use std::collections::HashMap;
@@ -30,7 +34,7 @@ use serde_json::Value;
 
 use pyjson::{Dict, Fields, PyJson};
 
-const USAGE: &str = "usage: presence-replay trace CONFIG RECORDING SECONDS OUT [EVERY]\n       presence-replay prof CONFIG RECORDING SECONDS";
+const USAGE: &str = "usage: presence-replay trace CONFIG RECORDING SECONDS OUT [EVERY]\n       presence-replay prof CONFIG RECORDING SECONDS\n       presence-replay bench JOB.json";
 
 /// s of frame time between the steps (the app's tick)
 const TICK: f64 = 0.1;
@@ -42,6 +46,7 @@ fn main() -> ExitCode {
         ["trace", config, recording, seconds, out] => trace(config, recording, seconds, out, "1"),
         ["trace", config, recording, seconds, out, every] => trace(config, recording, seconds, out, every),
         ["prof", config, recording, seconds] => prof(config, recording, seconds),
+        ["bench", job] => bench::bench(job),
         _ => Err(USAGE.to_string()),
     };
     match done {

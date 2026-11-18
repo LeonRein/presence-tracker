@@ -590,6 +590,8 @@ dependencies = [
 name = "presence-replay"
 version = "0.1.0"
 dependencies = [
+ "flate2",
+ "libc",
  "presence-core",
  "serde_json",
 ]
