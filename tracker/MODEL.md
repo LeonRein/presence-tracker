@@ -1276,7 +1276,35 @@ gelöschten Aufnahmen vom 6./7.10., etwa die Zahl der Arten des Aufenthalts (3.1
 Zahlen aus den Aufnahmen 6.–14.10. und den Wahrheitstabellen sind mit diesen am 31.10. gelöscht. Wo sie unten
 stehen, sind sie alte Messungen: neu messen, an Meldungen und Aufnahmen der App.
 
-**Offen mit der Messlücke (4.1): Die zweite Person hing am einseitigen Wiederfinden** (Prüfstand 18.11., Bad 31.10.).
+**Offen nach dem Gruppen-Messmodell (4.1, 4.3 „Gruppen“; Kandidat `nacht/gruppe`, Prüfstand 18.11.): Die Zweite ist
+nicht mehr einseitig gehalten, aber auch nicht robust.** Volltest gegen 0.64 / Entprellen: leeres Haus 38,4 / 2,2 → 2,2
+Raumminuten, nachts 0,1, höchstens 6 statt 35 / 9 Personen ohne Spur, 143 statt 481 / 212 Dichten, CPU 516 ms je
+Datenminute (0.64 656, Entprellen 513), Echtzeit wie 0.64; aber Pflichtraum dunkel 27,8 min (7,1 / 13,5), längste Lücke
+832 s, Licht zu viel bei einer Person 939 Raumminuten (901 / 944). Das Tor ist nicht bestanden. Verloren wird die Zweite
+in neun Ereignissen, die alle schon auf der Kippe standen (25 Pflichtfenster, dunkle Minuten je Variante: Entprellen 13,5;
+Gruppe 27,8; nur LD2410C additiv, m(2) = 2: 18,3; m(2) = 1,4: 13,1; mit dem einseitigen Wiederfinden: 13,4; ein anderer
+Takt, 0,12 statt 0,1 s, ändert nichts). Jede Variante trifft eine andere Teilmenge derselben Ereignisse (Bad 31.10.,
+Arbeitszimmer 11.11. 14:19, Schlafzimmer 5./7./9.11. morgens, Wohnzimmer 5.11. 20:00 und 11.11. 20:19, Meldungen Bad);
+eine einzelne Summe misst hier vor allem, welche kippen. Nachverfolgt (`PT_DUMP`, Bad 31.10., Arbeitszimmer 11.11.,
+Wohnzimmer 11.11., Schlafzimmer 7.11.):
+- Die Zweite steht als Person ohne Spur dort, wo ihre letzte Spur endete, oft 1–1,6 m neben der Ersten, also für beide
+  Sensoren aufgelöst. Dort sieht das LD2410C ihres Raums keine Energie und widerlegt sie in 10–60 s (Bad 31.10. 19:15:37,
+  Arbeitszimmer 11.11. 14:17:00: r 0,99 → 0,15 in 15 s). Ihre Dichte kann nicht „woanders im Raum“ sein: Ruhende
+  wandern nicht, und die Stelle der Gruppe kennt sie nicht. Das fehlende Stück des Entwurfs ist der Punkt-Cluster (Ort der
+  Gruppe, Zahl je Zelle), nicht ein Term der Evidenz.
+- Danach nimmt eine fremde Spur die Erste mit dem breiten Versatz durch die Wand mit (Bad 31.10. 19:19:35 ins
+  Arbeitszimmer, Schlafzimmer 7.11. 07:12 ins Bad; oben „Offen nach 0.63“).
+- Zwei Spuren zweier Sensoren auf dem Sofa werden zu einer Person, sobald das LD2410C nicht mehr zählt (Wohnzimmer 11.11.
+  20:14: Entprellen zwei Personen mit Spur, Gruppe eine mit beiden Spuren).
+- Schlafzimmer 7.11.: Alle Versionen führen ab 22:09 nur eine Schlafende; 0.64 findet die Zweite um 07:09 über eine neue
+  Spur, deren „neue Person“ aus der Intensität am Bett kam, die das einseitige Wiederfinden nachts nährte.
+- Licht zu viel 2.11. a (61 → 113 Raumminuten mit dem Entprellen): eine Person ohne Spur in der Küche (3,0–4,1 | 7,5–7,7),
+  08:23–09:28 mit r 0,3–0,9, gehalten von den Energien des Küchen-LD2410C (r steigt und fällt mit ihnen); entstanden 08:19,
+  als die Hypothesen beim Gang durch die Küche anders verzweigten als in 0.64 (dort keine zweite Person). Das Entprellen
+  ist der Anlass, nicht die Ursache: Mit der Gruppe 105.
+
+**Offen mit der Messlücke (4.1): Die zweite Person hing am einseitigen Wiederfinden** (Prüfstand 18.11., Bad 31.10.;
+das Gruppen-Messmodell ist der Kandidat `nacht/gruppe`, Stand oben).
 Ohne die kurzen Haltephasen verzweigt der Filter im Schnelltest 2 644- statt 16 256-mal beim Wiederfinden (−84 %), höchstens 6
 statt 15 Personen ohne Spur, 25 % weniger Rechenzeit; leeres Haus, Nacht und Echtzeit wie 0.64. Im Volltest (53 Fenster)
 Licht im leeren Haus 38,4 → 2,2 Raumminuten (das ruhende Nahziel vor dem Wohnzimmer-Sensor, 7.11.), höchstens 9 statt 35
@@ -1421,6 +1449,14 @@ Fenstern oder einem einzigen Start. „Schlechter“ heißt dann: auf diesen Dat
 damaligen Maße gewichteten die Fehler anders als heute (1). Die Versionsgeschichte steht in
 `CHANGELOG.md` und in git, nicht hier.
 
+- **Gruppen-Messmodell** (18.11., Branch `nacht/gruppe` auf `nacht/entprellen`, nicht freigegeben; 4.1, 4.3 „Gruppen“).
+  Wiederfinden für Unaufgelöste wie das Nicht-Wiederfinden nur mit k·P_R, Halte-Maske P_R (1 − k), LD2410C mit g·m(n),
+  m(2) = 1,1, statt der Asymmetrie von 0.62 und der Schwelle von 0.65. Prüfstand gegen 0.64 / Entprellen: Schnelltest
+  Pflichtraum dunkel 1,6 min (0 / 1,0), Licht zu viel bei einer Person 40,3 (39,4 / 39,5), sonst gleich oder besser;
+  Volltest Pflichtraum dunkel 27,8 min (7,1 / 13,5), Licht zu viel 939 (901 / 944), leeres Haus 2,2, höchstens 6 Personen
+  ohne Spur, CPU wie Entprellen. Tor nicht bestanden; die Gründe in 9 („Offen nach dem Gruppen-Messmodell“). Der frühere
+  Versuch, nur die Halte-Maske zu ändern, änderte nichts; im Gruppenmodell allein (alte Maske) 25,4 statt 27,8 min auf
+  den 25 Pflichtfenstern.
 - **Student-t für die Spur einer Ruhenden** (10.11., Branch `sitz-messmodell`, nicht übernommen). Gemessen (App-Aufnahmen
   31.10.–8.11., Abschnitte ≥ 60 s mit genau einem ruhenden Ziel, 116 h): Abweichungen vom Median mit schweren Ausläufern,
   Student-t ν 1,5–2; nur in Zeiten mit einer Person zu Hause (18 h) ν ≈ 3 und weniger Sprünge über 0,5 m (0,3–3,8 %
