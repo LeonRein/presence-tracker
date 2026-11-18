@@ -25,10 +25,15 @@ class Clock:
 
     def __init__(self):
         self.newest = -math.inf  # the time of the newest frame
-        self.heard = -math.inf  # when it came (wall clock)
+        self.heard = -math.inf  # when the newest frame came (wall clock)
 
     def frame(self, t: float, recv: float):
-        self.newest, self.heard = max(self.newest, t), recv
+        self.newest, self.heard = max(self.newest, t), max(self.heard, recv)
+
+    def arrived(self, recv: float):
+        """A frame came (recv: when), not yet processed (the model's thread, realtime.py): the frames have not
+        stopped, the model waits for them."""
+        self.heard = max(self.heard, recv)
 
     def __call__(self) -> float:
         now = time.time()
@@ -59,8 +64,11 @@ class ReplayClock(Clock):
         return min(t0 + (time.monotonic() - m0) * self.speed, self.due)
 
 
-async def mqtt_source(settings: dict, prefix: str, on_message, on_client, publish: bool = True):
-    """Subscribe to the sensor frames. Calls on_client(client or None) on (dis)connect. publish: the
+async def mqtt_source(settings: dict, prefix: str, on_message, on_client, publish: bool = True, on_lost=None):
+    """Subscribe to the sensor frames: on_message(topic, payload, recv, queued) with when each message came
+    (realtime.StampedQueue: when aiomqtt queued it, Unix and monotonic time; until Echtzeit the time it was
+    handled, which a backlog put off). Calls on_client(client or None) on (dis)connect, on_lost(n) when frames
+    were dropped because aiomqtt's queue was full. publish: the
     app publishes the entities' availability - then the last will says "offline" when the connection
     dies, and a stop says it before the clean goodbye (which drops the will, MQTT 3.1.2.5). One that
     publishes nothing (--no-publish, a development run against the live broker) has no will: the
@@ -69,6 +77,14 @@ async def mqtt_source(settings: dict, prefix: str, on_message, on_client, publis
     import aiomqtt
 
     from .ha import AVAILABILITY
+    from .realtime import StampedQueue
+
+    queues = []  # the connection's queue (aiomqtt makes it)
+
+    class Queue(StampedQueue):
+        def __init__(self, maxsize: int = 0):
+            super().__init__(maxsize)
+            queues.append(self)
 
     while True:
         try:
@@ -77,6 +93,7 @@ async def mqtt_source(settings: dict, prefix: str, on_message, on_client, publis
                 username=settings.get("username") or None, password=settings.get("password") or None,
                 identifier=f"presence-tracker-{int(time.time())}",
                 will=aiomqtt.Will(AVAILABILITY, "offline", retain=True) if publish else None,
+                queue_type=Queue,
             ) as client:
                 log.info("connected to MQTT %s:%s", settings["host"], settings.get("port", 1883))
                 await client.subscribe(f"{prefix}/+/frame")
@@ -84,10 +101,18 @@ async def mqtt_source(settings: dict, prefix: str, on_message, on_client, publis
                 await on_client(client)
                 try:
                     async for msg in client.messages:
+                        if isinstance(msg, tuple):  # (recv, queued, message): StampedQueue
+                            recv, queued, msg = msg
+                        else:
+                            recv, queued = time.time(), time.monotonic()
                         try:
-                            on_message(str(msg.topic), msg.payload, time.time())
+                            on_message(str(msg.topic), msg.payload, recv, queued)
                         except Exception:  # noqa: BLE001 - one message must not end the connection
                             log.exception("MQTT message on %s not handled", msg.topic)
+                        if queues and queues[-1].lost and on_lost is not None:
+                            lost, queues[-1].lost = queues[-1].lost, 0
+                            log.warning("MQTT: %d frames dropped, the app's queue was full", lost)
+                            on_lost(lost)
                 except asyncio.CancelledError:
                     # the app stops: "offline" while the connection is still there (until 0.28 the app
                     # said it after the goodbye, in vain, and Home Assistant kept "online" and the states)

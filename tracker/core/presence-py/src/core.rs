@@ -457,6 +457,13 @@ impl Core {
     fn watched(&self) -> Vec<bool> {
         self.tracker.watched()
     }
+
+    /// The filter's size, for the app's diagnostics (DOCS.md "Echtzeit"; what its computing time grows with):
+    /// the number of hypotheses and the most known people without a track in one of them.
+    fn census(&self) -> (usize, usize) {
+        let hyps = self.tracker.filter().hyps();
+        (hyps.len(), hyps.iter().map(|h| h.hidden.len()).max().unwrap_or(0))
+    }
     // ---------------------------------------------------------------- for the tests and tools (feature "testing")
 
     /// log evidence of everything seen so far, and the part of it that is mass of hypotheses dropped.

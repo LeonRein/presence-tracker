@@ -48,6 +48,8 @@ def main():
     parser.add_argument("--ha-url", default=os.environ.get("HA_URL"))
     parser.add_argument("--ha-token", default=os.environ.get("HA_TOKEN"))
     parser.add_argument("--log-level", default=None)
+    parser.add_argument("--offline-backlog", type=float, default=None,
+                        help="s of backlog after which every entity is unavailable (0: never; the app's option)")
     args = parser.parse_args()
 
     options = {}
@@ -75,7 +77,9 @@ def main():
     app = App(args.data, prefix=options.get("topic_prefix", "presence"),
               publish=not args.no_publish and not args.replay,
               replay=args.replay, speed=args.speed, mqtt=mqtt, ha_url=ha_url, ha_token=ha_token,
-              ingress=bool(supervisor_token))
+              ingress=bool(supervisor_token),
+              offline_backlog=args.offline_backlog if args.offline_backlog is not None
+              else float(options.get("offline_backlog") or 0))
     try:
         asyncio.run(app.run(args.host, args.port))
     except KeyboardInterrupt:

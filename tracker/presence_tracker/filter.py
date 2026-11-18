@@ -328,6 +328,16 @@ class Tracker:
 
     # ------------------------------------------------------------- reading the filter
 
+    def census(self) -> dict:
+        """The filter's size for the app's diagnostics: "hypotheses", "untracked" (the most known people
+        without a track in one hypothesis: what the core's computing time grows with); {} with a core that
+        does not say (an older build)."""
+        census = getattr(self.core.core, "census", None)
+        if census is None:
+            return {}
+        hyps, untracked = _core(census)
+        return {"hypotheses": hyps, "untracked": untracked}
+
     def tiles(self) -> dict:
         """The tiles (MODEL.md 5.3) for drawing where unseen people may be: "id" (their fingerprint: a
         saved state fits only tiles of the same), the side of a square, per tile the lower left corner

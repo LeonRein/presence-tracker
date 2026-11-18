@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import collections
+import contextlib
 import faulthandler
 import gzip
 import json
@@ -21,13 +22,14 @@ import presence_core
 from aiohttp import web
 
 from . import __version__, code_hash, ha
-from . import calibration, pause
+from . import calibration, pause, realtime
 from .calibration import Calibrator
 from . import model
 from .model import Config
 from .filter import Tracker
 from .pause import Pauses
 from .recording import Recorder
+from .realtime import FRAME, PAUSE, Item, ModelThread
 from .sources import Clock, ReplayClock, mqtt_source, replay_source
 from .frames import Frame, SensorClock
 from .util import Throttled, atomic_write, decoded
@@ -48,6 +50,11 @@ SEND_TIMEOUT = 5.0  # s a browser may take for one live message; a slower one is
 DOWN_AFTER = 3  # model failures without RETRY s of running between: the model is down
 RESET_HOLD = 300.0  # s of each sensor's frames the LD2410C background does not learn from after a reset
 RETRY = 60.0  # s: while down, the model is rebuilt and tried again this often (a rebuild is seconds of CPU)
+LIVE_EVERY = 0.12  # s between two messages of the live view
+DIAGNOSE_EVERY = 10.0  # s between two publishes of the diagnostics (ha.DIAGNOSTICS)
+BEHIND = 5.0  # s of backlog that are logged (throttled): the model can't keep up
+STOP_WAIT = 20.0  # s the stop waits for the model's thread to end its frame (then what it learned is not saved)
+PENDING = 2000  # publishes handed to the MQTT client and not yet confirmed (PUBACK); more: dropped, sent again
 # what was collected and learned under a geometry (the sensors' places, the plan: presence_core.geometry_key), each
 # file with its key: the calibration's measurements, the LD2410C background, the destination map
 COLLECTED = ("calibration.npz", "ld2410.json", "destinations.json")
@@ -86,8 +93,22 @@ class LiveClient:
 class App:
     def __init__(self, data_dir: pathlib.Path, prefix: str = "presence", publish: bool = True,
                  replay: list | None = None, speed: float = 1.0, mqtt: dict | None = None,
-                 ha_url: str | None = None, ha_token: str | None = None, ingress: bool = False):
+                 ha_url: str | None = None, ha_token: str | None = None, ingress: bool = False,
+                 offline_backlog: float = 0.0):
         self.data_dir = data_dir
+        # Echtzeit (realtime.py): live, the model runs in its own thread from run() on (None: in the loop, as a
+        # replay and the tests); its load and backlog. offline_backlog (the app's option, 0: off): with a backlog
+        # of more than this many s every entity is unavailable until it is back below half of it
+        self.worker: ModelThread | None = None
+        self.loop = None  # the event loop (run)
+        self.load = realtime.Load()
+        self.offline_backlog = float(offline_backlog or 0.0)
+        self.behind = False  # the backlog is above offline_backlog (the entities are unavailable)
+        self.census = {}  # the model's size as of its last tick (Tracker.census)
+        self.diagnostics = {}  # what the diagnostics said last (ha.DIAGNOSTICS)
+        self._pending: set = set()  # publishes not yet confirmed (_publish)
+        self._last_live = -math.inf  # when the last live view message was made (monotonic)
+        self._dumped = None  # the model thread's busy start whose stack went to the log
         self.ingress = ingress
         self.images = data_dir / "images"
         self.images.mkdir(parents=True, exist_ok=True)
@@ -130,7 +151,6 @@ class App:
                 log.warning("pause.json unreadable (%r): learning not paused", e)
         self.recorder = Recorder(data_dir, self._config_line(), lambda: self.pauses.on, active=not replay)
         self._reset_tracker()
-        self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
 
     def _model_failed(self, where: str, count: bool = True, people: dict | None = None):
         """An error in the model must not stop the app: 0.9.3 died on one LD2410C frame (7.10.,
@@ -245,18 +265,24 @@ class App:
 
     # ------------------------------------------------------------------ input
 
-    def on_message(self, topic: str, payload: bytes, recv: float):
-        """One MQTT message. Never raises: whatever comes in must not stop the app (Node-RED keeps a
-        light's last state while it is gone)."""
+    def on_message(self, topic: str, payload: bytes, recv: float, queued: float | None = None):
+        """One MQTT message, received at recv (Unix time: when aiomqtt queued it, realtime.StampedQueue; queued:
+        then on time.monotonic, for the backlog). Never raises: whatever comes in must not stop the app
+        (Node-RED keeps a light's last state while it is gone). With the model's thread (live) its frames and
+        the switch go to it; else (a replay, the tests) the model takes them here, at once."""
         try:
-            self._on_message(topic, payload, recv)
+            self._on_message(topic, payload, recv, queued)
         except Exception:  # noqa: BLE001 - logged; the next message is handled as always
             self.throttled(("message", topic), logging.ERROR, "message on %s not handled", topic, exc_info=True)
 
-    def _on_message(self, topic: str, payload: bytes, recv: float):
+    def _on_message(self, topic: str, payload: bytes, recv: float, queued: float | None = None):
+        worker = self.worker
         if topic in pause.TOPICS:  # Lernen pausieren (live: the command; in a replayed recording both)
             self.recorder.add(recv, topic, payload)
-            self._on_pause(payload, recv)
+            if worker is not None:  # in order with the frames, at its arrival (realtime.py)
+                worker.put(Item(PAUSE, payload, recv, queued))
+            else:
+                self._on_pause(payload, recv)
             return
         if self.discovery.retained(topic, payload):  # our own entities as the broker keeps them
             return
@@ -280,7 +306,17 @@ class App:
             return
         if kind != "frame":
             return
+        if worker is not None:
+            self.clock.arrived(recv)  # frames come: the model's time waits for them (sources.Clock)
+            worker.put(Item(FRAME, frame, recv, queued, sensor=sensor_id))
+            return
         start = time.process_time()
+        self._frame(sensor_id, frame, recv)
+        self.load.processed(0.0, True)
+        self.load.cpu += time.process_time() - start
+
+    def _frame(self, sensor_id: str, frame: Frame, recv: float):
+        """A frame of a sensor, received at recv, into the model (its thread, or in the loop)."""
         t = self.clocks[sensor_id](recv, frame, self.tracker.now)
         if self.replay and t < self.last_frame_t - 10:
             log.info("replay restarted, resetting tracker")
@@ -301,8 +337,43 @@ class App:
             except Exception:  # noqa: BLE001 - see _model_failed
                 self._model_failed(f"frame of {sensor_id}")
         self.last_frame_t = t
-        self.stats["frames"] += 1
-        self.stats["cpu"] += time.process_time() - start
+
+    # ------------------------------------------------------------ the model's thread (realtime.py)
+
+    def _process(self, item: Item, backlog: float):
+        """A message in the model's thread (backlog: s it waited since it came)."""
+        if item.kind == FRAME:
+            self._frame(item.sensor, item.payload, item.recv)
+        elif item.kind == PAUSE:
+            self._on_pause(item.payload, item.recv)
+
+    def _data_lost(self, dropped: int):
+        """Frames were dropped (realtime.Inbox: the model could not keep up): to the core, all sensors lost data
+        (realtime.py: their next frames are a start, the time between says nothing)."""
+        self.tracker.reset_tracks()
+        self.throttled("compacted", logging.WARNING,
+                       "the model is %.1f s behind: %d waiting frames dropped, the newest of each sensor kept; "
+                       "the model takes it as lost data", self.worker.backlog() if self.worker else 0.0, dropped)
+
+    def _frames_lost(self, n: int):
+        """n frames lost before they reached the model's queue (aiomqtt's queue full: the loop hung)."""
+        if self.worker is not None:
+            self.worker.inbox.mark_lost(n)
+        else:
+            self.tracker.reset_tracks()
+
+    def _thread_tick(self):
+        """Every realtime.TICK s in the model's thread: the model goes on to the clock (_model_tick)."""
+        return self._model_tick()
+
+    async def in_model(self, fn, *args):
+        """fn(*args) where the model is (its thread: between two of its messages, the loop goes on meanwhile;
+        else here). Everything that reads or changes the model, the calibration data or what is shown goes
+        through this: the core must never be used by two threads at once."""
+        worker = self.worker
+        if worker is None or not worker.alive:
+            return fn(*args)
+        return await worker.call(fn, *args)
 
     def _on_pause(self, payload: bytes, t: float):
         """The switch "Lernen pausieren" (pause.py) set to ON or OFF at time t (its receive time: the
@@ -347,19 +418,49 @@ class App:
             # states of a run that ended without its last will, and Home Assistant would show them as now
             await self._set_available(False)
             self.discovery.published.clear()
-            await self.discovery.sync(self.tracker.plan["home"], self.tracker.heard.watched())
+            await self.discovery.sync(*await self.in_model(self._zones))
             # what the broker retains of earlier runs: entities no longer wanted are removed (ha.py)
             try:
                 await client.subscribe(ha.DISCOVERY)
             except Exception as e:  # noqa: BLE001 - a lost connection is handled by the source loop
                 log.debug("subscribe failed: %s", e)
 
+    def _zones(self) -> tuple:
+        """The model's zones of the home and the rooms with an own sensor in use (ha.Discovery.sync)."""
+        return self.tracker.plan["home"], self.tracker.heard.watched()
+
     async def _publish(self, topic: str, payload: str, retain: bool = False) -> bool:
+        """Hands a message to the MQTT client without waiting for the broker's confirmation (PUBACK): until
+        Echtzeit the loop waited for every retained one (QoS 1), up to 10 s each, and the model, the web UI
+        and every other state waited with it. Retained ones (states, availability, discovery) stay QoS 1: the
+        broker keeps what Home Assistant reads after its restart, and the client sends it again until the
+        broker has it. Handed over in order (eager: paho has it when this returns). False if not handed over
+        (no connection, or more than PENDING not confirmed: the broker hangs); the caller sends it again."""
         if self.client is None or not self.publish_enabled:
             return False
+        if len(self._pending) >= PENDING:
+            self.throttled("pending", logging.WARNING, "MQTT: %d messages not confirmed by the broker, %s dropped",
+                           len(self._pending), topic)
+            return False
         try:
-            await self.client.publish(topic, payload, qos=1 if retain else 0, retain=retain)
+            task = asyncio.Task(self.client.publish(topic, payload, qos=1 if retain else 0, retain=retain),
+                                loop=asyncio.get_running_loop(), eager_start=True)
         except Exception as e:  # noqa: BLE001 - a lost connection is handled by the source loop
+            log.debug("publish failed: %s", e)
+            return False
+        if task.done():
+            return self._published(task)
+        self._pending.add(task)
+        task.add_done_callback(self._published)
+        return True
+
+    def _published(self, task) -> bool:
+        """A publish ended (confirmed, or failed: logged; a lost connection is handled by the source loop)."""
+        self._pending.discard(task)
+        if task.cancelled():
+            return False
+        e = task.exception()
+        if e is not None:
             log.debug("publish failed: %s", e)
             return False
         return True
@@ -374,7 +475,11 @@ class App:
     # ------------------------------------------------------------ main loops
 
     async def housekeeping(self):
-        last_push = 0.0
+        """Every 0.1 s in the loop: the recording, the switch, the availability; the model's outputs to Home
+        Assistant and the live view (from its thread, or the model moved on here: a replay, the tests); every
+        DIAGNOSE_EVERY s the diagnostics."""
+        last = None  # the model thread's outputs last published
+        next_diagnosis = time.monotonic()
         while True:
             # watchdog: if nothing comes back here for BLOCKED_DUMP s, the stack of every thread goes
             # to the log - where the app hangs (each call replaces the previous timer)
@@ -382,32 +487,119 @@ class App:
             await asyncio.sleep(0.1)
             self.recorder.tick()
             await self._send_pause()
-            if self.down:
+            self._watch_backlog()
+            if self.down or self.behind:
                 await self._set_available(False)
-            if self.tracker.start is None or time.monotonic() < self.paused_until:
-                continue
-            start = time.process_time()
-            if not self.tick(self.clock()):
-                continue
-            self._model_ran()
-            if (not self.replay and time.monotonic() - self.last_model_save > 600
-                    and (self._saving is None or self._saving.done())):
-                self.last_model_save = time.monotonic()
-                self._saving = asyncio.create_task(self._save_in_background())
-            self.stats["cpu"] += time.process_time() - start
+            if self.worker is None:
+                start = time.process_time()
+                out = self._model_tick()
+                self.load.cpu += time.process_time() - start
+            else:
+                out = self.worker.outputs
+                out, last = (None, last) if out is last else (out, out)
+            if out is not None:
+                await self._outputs(out)
+            if time.monotonic() >= next_diagnosis:
+                next_diagnosis = time.monotonic() + DIAGNOSE_EVERY
+                await self._diagnose()
+
+    def _model_tick(self) -> dict | None:
+        """Where the model is (its thread every realtime.TICK s, or the housekeeping): it goes on to the
+        clock (tick); its outputs for the loop: the zones' states at the model's time, its size, the live view's
+        part of the model if a browser watches (at most every LIVE_EVERY s). Every 10 min what was learned is
+        taken (copies) and written in a thread. None if the model does not run (not started, down, failed)."""
+        if self.tracker.start is None or time.monotonic() < self.paused_until:
+            return None
+        if not self.tick(self.clock()):
+            return None
+        self._model_ran()
+        out = {"states": self.zone_states, "t": self.tracker.now, "census": self.tracker.census()}
+        if (not self.replay and time.monotonic() - self.last_model_save > 600
+                and (self._saving is None or self._saving.done())):
+            self.last_model_save = time.monotonic()
+            self._save_soon(self._learned_files())
+        now = time.monotonic()
+        if self.ws_clients and now - self._last_live >= LIVE_EVERY:
+            self._last_live = now
             try:
-                await self.discovery.states(self.zone_states, t=self.tracker.now)
-                if not self.down:
-                    await self._set_available(True)  # after the first fresh states of this connection
-            except Exception:  # noqa: BLE001 - the loop must go on (it is all of the app's output)
-                self.throttled("states", logging.ERROR, "states not published", exc_info=True)
-            now = time.monotonic()
-            if self.ws_clients and now - last_push >= 0.12:
-                last_push = now
-                try:
-                    self._broadcast(self.live_message())
-                except Exception:  # noqa: BLE001 - the live view must not stop the outputs
-                    self.throttled("live", logging.ERROR, "live view not sent", exc_info=True)
+                out["live"] = self._live_model()
+            except Exception:  # noqa: BLE001 - the live view must not stop the outputs
+                self.throttled("live", logging.ERROR, "live view not made", exc_info=True)
+        return out
+
+    def _save_soon(self, files: list):
+        """What was learned, taken in the model's place, written in a thread (from the loop)."""
+        def start():
+            self._saving = asyncio.ensure_future(self._save_in_background(files))
+        if self.worker is not None and self.loop is not None:
+            with contextlib.suppress(RuntimeError):  # the loop closed (the app stops: it saves at the end)
+                self.loop.call_soon_threadsafe(start)
+        else:
+            start()
+
+    async def _outputs(self, out: dict):
+        """The model's outputs (_model_tick) to Home Assistant and the live view."""
+        self.census = out.get("census") or {}
+        try:
+            await self.discovery.states(out["states"], t=out["t"])
+            if not self.down and not self.behind:
+                await self._set_available(True)  # after the first fresh states of this connection
+        except Exception:  # noqa: BLE001 - the loop must go on (it is all of the app's output)
+            self.throttled("states", logging.ERROR, "states not published", exc_info=True)
+        if out.get("live") is not None and self.ws_clients:
+            try:
+                self._broadcast(self._live_text(out["live"]))
+            except Exception:  # noqa: BLE001 - the live view must not stop the outputs
+                self.throttled("live", logging.ERROR, "live view not sent", exc_info=True)
+
+    def backlog(self) -> float:
+        """How long the oldest message the model has not done yet waits (s; 0 without its thread)."""
+        return self.worker.backlog() if self.worker is not None else 0.0
+
+    def _watch_backlog(self):
+        """The backlog against offline_backlog (the option, `behind`: every entity unavailable, back below half
+        of it), logged above BEHIND s; a model thread busy with one message for BLOCKED_DUMP s: its stack to the
+        log (the loop's watchdog no longer sees it)."""
+        backlog = self.backlog()
+        if backlog > BEHIND:
+            self.throttled("behind", logging.WARNING, "the model is %.1f s behind the frames", backlog)
+        if self.offline_backlog > 0:
+            if not self.behind and backlog > self.offline_backlog:
+                self.behind = True
+                log.warning("the model is %.1f s behind (option offline_backlog %.0f s): Home Assistant gets "
+                            "'unavailable'", backlog, self.offline_backlog)
+            elif self.behind and backlog <= self.offline_backlog / 2:
+                self.behind = False
+                log.info("the model caught up (%.1f s behind): available again with its next states", backlog)
+        busy = self.worker.busy if self.worker is not None else None
+        if busy is not None and time.monotonic() - busy[0] > BLOCKED_DUMP and self._dumped != busy[0]:
+            self._dumped = busy[0]
+            log.warning("the model's thread has been busy with one %s for %.0f s; the threads' stacks:", busy[1],
+                        time.monotonic() - busy[0])
+            faulthandler.dump_traceback(all_threads=True)
+
+    async def _diagnose(self):
+        """The diagnostics (ha.DIAGNOSTICS) to Home Assistant and the live view: the backlog (the highest since
+        the last time, and now), the model thread's CPU (% of one core), its size, frames/s processed."""
+        w = self.load.window()
+        worker = self.worker
+        self.diagnostics = {
+            "backlog": round(max(w["backlog_max"], self.backlog()), 1),
+            "cpu": round(w["cpu"], 1),
+            "hypotheses": self.census.get("hypotheses"),
+            "untracked": self.census.get("untracked"),
+            "fps": round(w["fps"], 1),
+            "fps_in": round(w["fps_in"], 1),
+            "waiting": worker.inbox.frames if worker is not None else 0,
+            "dropped": w["dropped"],
+            "compactions": w["compactions"],
+            "thread": worker is not None,
+        }
+        if self.client is not None and self.publish_enabled:
+            try:
+                await self.discovery.diagnostics(self.diagnostics)
+            except Exception:  # noqa: BLE001
+                self.throttled("diagnostics", logging.ERROR, "diagnostics not published", exc_info=True)
 
     def tick(self, now: float) -> bool:
         """The model goes on to now; its outputs, and once a second what they show for an error
@@ -524,11 +716,11 @@ class App:
         """Save now (at the exit), in the loop."""
         self._write_files(self._learned_files())
 
-    async def _save_in_background(self):
-        """Every 10 min: taken in the loop, packed (calibration.npz: seconds for a day) and written in a
-        thread, so that the ticks and Home Assistant's states go on meanwhile."""
+    async def _save_in_background(self, files: list | None = None):
+        """Every 10 min: taken where the model is (files; None: here), packed (calibration.npz: seconds for a
+        day) and written in a thread, so that the ticks and Home Assistant's states go on meanwhile."""
         try:
-            await asyncio.to_thread(self._write_files, self._learned_files())
+            await asyncio.to_thread(self._write_files, self._learned_files() if files is None else files)
         except Exception:  # noqa: BLE001
             log.exception("saving failed")
 
@@ -553,18 +745,28 @@ class App:
         return {"zones": zones, "persons": persons}
 
     def live_message(self) -> str:
+        """The live view's message, all of it here (a replay, the tests; with the model's thread: _live_model
+        there, _live_text in the loop)."""
+        return self._live_text(self._live_model())
+
+    def _live_model(self) -> dict:
+        """The live view's part of the model (where the model is)."""
         snap = self.tracker.snapshot()
         snap["zones"] = {k: v.to_dict() for k, v in self.zone_states.items()}
         # rooms whose own sensors went silent: unavailable in Home Assistant (the core's silent.rs)
         snap["unavailable"] = sorted(k for k, v in self.zone_states.items() if not v.available)
+        snap["learning_paused"] = {"on": self.pauses.on, "since": self.pauses.since}
+        return snap
+
+    def _live_text(self, snap: dict) -> str:
+        """The live view's message of the model's part (in the loop): with the sensors' status, the calibration
+        data's count and the load (the diagnostics: the model's CPU, frames/s, backlog)."""
+        snap = dict(snap)
         snap["status"] = self.sensor_status
         snap["calibration"] = self._calibration_status()
-        snap["learning_paused"] = {"on": self.pauses.on, "since": self.pauses.since}
-        elapsed = time.monotonic() - self.stats["since"]
-        snap["load"] = {"cpu": round(100 * self.stats["cpu"] / max(elapsed, 1e-3), 2),
-                        "fps": round(self.stats["frames"] / max(elapsed, 1e-3), 1)}
-        if elapsed > 30:
-            self.stats = {"frames": 0, "cpu": 0.0, "since": time.monotonic()}
+        d = self.diagnostics
+        snap["load"] = {"cpu": d.get("cpu"), "fps": d.get("fps"), "backlog": d.get("backlog"),
+                        "hypotheses": d.get("hypotheses"), "untracked": d.get("untracked")}
         return json.dumps({"type": "live", **snap})
 
     def _calibration_status(self) -> dict | None:
@@ -578,7 +780,7 @@ class App:
     async def _count_calibration(self):
         cal = self.calibrator
         try:
-            cal.use_status(await asyncio.to_thread(cal.status_job()))
+            cal.use_status(await asyncio.to_thread(await self.in_model(cal.status_job)))
         except Exception:  # noqa: BLE001 - the live view goes on with the last count
             self.throttled("calibration", logging.ERROR, "calibration data not counted", exc_info=True)
 
@@ -592,12 +794,16 @@ class App:
         await runner.setup()
         await web.TCPSite(runner, host, port).start()
         log.info("web UI on http://%s:%d", host, port)
+        self.loop = asyncio.get_running_loop()
         tasks = [self.housekeeping()]
-        if self.replay:
+        if self.replay:  # in the loop, every frame: the replay waits for the model (sources.ReplayClock)
             tasks.append(replay_source(self.replay, self.clock, self.on_message))
         elif self.mqtt_settings:
+            # live: the model in its own thread (realtime.py), the loop receives and publishes
+            self.worker = ModelThread(self._process, self._thread_tick, self._data_lost, self.load_inbox())
+            self.worker.start()
             tasks.append(mqtt_source(self.mqtt_settings, self.prefix, self.on_message, self._on_client,
-                                     publish=self.publish_enabled))
+                                     publish=self.publish_enabled, on_lost=self._frames_lost))
         else:
             log.warning("no MQTT broker and no replay: nothing to track")
         main = asyncio.gather(*tasks)
@@ -610,12 +816,24 @@ class App:
             log.info("stopping")
         finally:
             # "offline" went out before the MQTT connection closed (mqtt_source): here it is closed
+            stopped = True
+            if self.worker is not None:  # its frame first (the core can't be stopped in one)
+                self.worker.stop()
+                stopped = await asyncio.to_thread(self.worker.join, STOP_WAIT)
             if not self.replay:
                 if self._saving is not None:
                     await asyncio.gather(self._saving, return_exceptions=True)
-                self._save_learned()
+                if stopped:
+                    self._save_learned()
+                else:
+                    log.error("the model's thread is still busy after %.0f s: what was learned since the last save "
+                              "is not saved", STOP_WAIT)
                 await self.recorder.flush(close=True)
             await runner.cleanup()
+
+    def load_inbox(self) -> realtime.Inbox:
+        """The model thread's queue (realtime.Inbox), counting into the app's load."""
+        return realtime.Inbox(self.load)
 
     # ------------------------------------------------------------------- web
 
@@ -687,8 +905,8 @@ class App:
             "Content-Security-Policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox"})
 
     async def h_get_config(self, request):
-        known = sorted(set(self.tracker.runtime) | set(self.config.sensor_ids))
-        config = self.config.to_dict()
+        known, config = await self.in_model(lambda: (sorted(set(self.tracker.runtime) | set(self.config.sensor_ids)),
+                                                      self.config.to_dict()))
         return web.json_response({"config": config, "derived": model.derive(config), "sensors_seen": known,
                                   "admin": self.is_admin(request), "status": self.sensor_status, "replay": bool(self.replay),
                                   "ha": bool(self.ha_url), "limits": model.limits(), "defaults": model.defaults()})
@@ -697,7 +915,7 @@ class App:
         """The coverage of the saved configuration and each sensor's sight per tile, of the world the model runs in
         (the core's)."""
         try:
-            return web.json_response(self.tracker.coverage())
+            return web.json_response(await self.in_model(lambda: self.tracker.coverage()))
         except Exception as e:  # noqa: BLE001 - the model is down (restarting after an error)
             return web.json_response({"error": "model_down", "detail": repr(e)}, status=503)
 
@@ -723,9 +941,10 @@ class App:
             config = Config.from_dict(data)
         except presence_core.ConfigError as e:
             return web.json_response({"problem": model.problem(e)}, status=400)
-        if config.model_json() == self.config.model_json():
-            # the model's part is the same: it goes on as it is (with this configuration, the same to it)
-            self.config = self.tracker.config = self.calibrator.config = config
+        took = await self.in_model(self._take_config, config)
+        if "error" in took:
+            return web.json_response({"error": "model_refused", "detail": took["error"]}, status=400)
+        if took["same"]:
             try:
                 config.save(self.config_path)
             except OSError as e:
@@ -734,6 +953,25 @@ class App:
             self.recorder.config(self._config_line())
             return web.json_response({"ok": True, "restarted": False, "derived": None, "config": config.to_dict(),
                                       "discarded": None})
+        if self.client is not None:
+            await self.discovery.sync(*took["zones"])
+        try:
+            config.save(self.config_path)
+        except OSError as e:
+            log.exception("tracker.json not saved")
+            return web.json_response({"error": "in_use_not_saved", "detail": str(e)}, status=500)
+        self.recorder.config(self._config_line())
+        return web.json_response({"ok": True, "restarted": took["restarted"], "derived": model.derive(config.to_dict()),
+                                  "config": config.to_dict(), "discarded": took["discarded"]})
+
+    def _take_config(self, config: Config) -> dict:
+        """The model takes a new configuration (where it is, h_put_config): {"same": True} if its part is the
+        same (it goes on as it is); else whether it started over, what was discarded and its zones for Home
+        Assistant; {"error"} if it can't run with it (the old one holds)."""
+        if config.model_json() == self.config.model_json():
+            # the model's part is the same: it goes on as it is (with this configuration, the same to it)
+            self.config = self.tracker.config = self.calibrator.config = config
+            return {"same": True}
         moved = presence_core.geometry_key(config.model_json()) != self.geometry
         # only sensors recalibrated: the people stay; else the model starts over as after a restart (MODEL.md 5.3)
         try:
@@ -744,7 +982,7 @@ class App:
             # it, people.json had their fingerprint, and the old model restored nothing until 0.28)
             self._model_failed("a new configuration", count=False,
                                people=getattr(self.tracker, "reconfigured_from", None))
-            return web.json_response({"error": "model_refused", "detail": repr(e)}, status=400)
+            return {"error": repr(e)}
         self.config = config
         discarded = self._forget() if moved else None
         if restarted:
@@ -752,22 +990,13 @@ class App:
         else:
             self._config_changed()
         self.calibrator.config = config
-        if self.client is not None:
-            await self.discovery.sync(self.tracker.plan["home"], self.tracker.heard.watched())
-        try:
-            config.save(self.config_path)
-        except OSError as e:
-            log.exception("tracker.json not saved")
-            return web.json_response({"error": "in_use_not_saved", "detail": str(e)}, status=500)
-        self.recorder.config(self._config_line())
-        return web.json_response({"ok": True, "restarted": restarted, "derived": model.derive(config.to_dict()),
-                                  "config": config.to_dict(), "discarded": discarded})
+        return {"same": False, "restarted": restarted, "discarded": discarded, "zones": self._zones()}
 
     async def h_live(self, request):
         ws = web.WebSocketResponse(heartbeat=30)
         await ws.prepare(request)
         client = LiveClient(ws, request.transport)
-        client.offer(self.live_message())
+        client.offer(self._live_text(await self.in_model(self._live_model)))
         self.ws_clients.add(client)
         sender = asyncio.create_task(client.run())
         try:
@@ -806,33 +1035,33 @@ class App:
 
     async def h_calibration(self, request):
         action = request.match_info["action"]
+        cal = self.calibrator
         if action == "reset":  # a sensor turned or moved for real, its drawing not: its old measurements are wrong
-            self.calibrator.reset()
+            await self.in_model(cal.reset)
         elif action == "solve":
             # seconds of numpy: in a thread, the frames keep coming (the data is copied first)
             body = await request.json() if request.can_read_body else {}
-            data = self.calibrator.data()
+            config, data = await self.in_model(lambda: (self.config, cal.data()))
             return web.json_response(await asyncio.to_thread(
-                calibration.solve, self.config, data, bool(body.get("mirror"))))
+                calibration.solve, config, data, bool(body.get("mirror"))))
         elif action != "status":
             raise web.HTTPNotFound()
-        cal = self.calibrator
         if cal.status_due():
-            cal.use_status(await asyncio.to_thread(cal.status_job()))
+            cal.use_status(await asyncio.to_thread(await self.in_model(cal.status_job)))
         return web.json_response(cal.last_status())
 
     async def h_learned(self, request):
         """What the running model learned (the core's, computed only when asked; the model is only read): per sensor
         in use its LD2410C's background, the destination map."""
         try:
-            return web.json_response(self.tracker.learned_view())
+            return web.json_response(await self.in_model(lambda: self.tracker.learned_view()))
         except Exception as e:  # noqa: BLE001 - the model is down (restarting after an error)
             return web.json_response({"error": "model_down", "detail": repr(e)}, status=503)
 
     async def h_tiles(self, request):
         """The tiles (MODEL.md 5.3), for drawing where unseen people may be: per tile its square
         (lower left corner) and its room, which cuts the square."""
-        tiles = self.tracker.tiles()
+        tiles = await self.in_model(lambda: self.tracker.tiles())
         return web.json_response({"id": tiles["id"], "size": tiles["size"],
                                   "tiles": [[round(x, 2), round(y, 2), r] for (x, y), r in zip(tiles["squares"], tiles["room"])]})
 
@@ -860,12 +1089,42 @@ class App:
         if not math.isfinite(ago):  # (NaN passed min and max: comparisons with it are false)
             return web.json_response({"error": "minutes"}, status=400)
         ago = min(max(ago, 0.0), REPORT_WINDOW / 60)
+        recent = list(self.recent)  # copies of the buffers the frames go on into (here and in the model's place)
+        now, head, shown = await self.in_model(self._report_head, body, room, kind, ago,
+                                               recent[0][0] if recent else None)
+        self.reports.mkdir(parents=True, exist_ok=True)
+        name = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{re.sub(r'[^a-z0-9_]', '', room.lower()) or 'haus'}-{kind}"
+        # the header was made where the model is (the learned parts may be the model's own, still changing);
+        # lines and gzip in a thread (15 min of frames: 0.2 s and 0.6 s here, many times that on Home Assistant,
+        # MODEL.md 10)
+        # one of the same second, room and kind: a file of its own. The name is taken now (an empty file,
+        # O_EXCL; the list skips it), not when the thread writes: a second report sent meanwhile (a double
+        # click) took the same name and overwrote the first until 0.28
+        k = 1
+        while True:
+            path = self.reports / (f"{name}.jsonl.gz" if k == 1 else f"{name}-{k}.jsonl.gz")
+            try:
+                os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                break
+            except FileExistsError:
+                k += 1
+        try:
+            n = await asyncio.to_thread(self._write_report, path, head, recent, shown)
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        log.info("error report %s: %d messages", path.name, n)
+        return web.json_response({"name": path.name, "messages": n})
+
+    def _report_head(self, body: dict, room: str, kind: str, ago: float, first: float | None) -> tuple:
+        """An error report's header (where the model is: h_report), its time and what the app showed:
+        (now, the header's JSON, [(model time, shown)]). first: the time of the report's first message."""
         now = self.clock()  # the wall clock, or the recording's time in a replay
         start = self.model_start or self.tracker.start
         # what was learned and known when the model started, if that is in the report (the replay starts there,
         # as the app did); else now: started from nothing known 15 min back, the replay forgets the
         # difference (6.10. 22:40 and 22:42, 20 min after the start: |dP| < 0.01; MODEL.md 8)
-        first = self.recent[0][0] if self.recent else now
+        first = now if first is None else first
         covered = start is not None and start >= first - 1
         # the configuration at the replay's start (the model's, else the report's first frame), and the
         # ones taken over after it without a restart, with their model times
@@ -879,30 +1138,7 @@ class App:
                 "pauses": self.pauses.between(begin),
                 **(self.start_learned if covered else self.tracker.learned()),
                 "people": self.start_state if covered else None}
-        self.reports.mkdir(parents=True, exist_ok=True)
-        name = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{re.sub(r'[^a-z0-9_]', '', room.lower()) or 'haus'}-{kind}"
-        # in the loop: the header (the learned parts may be the model's own, still changing) and copies of
-        # the buffers the frames go on into; lines and gzip in a thread (15 min of frames: 0.2 s and
-        # 0.6 s here, many times that on Home Assistant, MODEL.md 10)
-        head = json.dumps(meta)
-        # one of the same second, room and kind: a file of its own. The name is taken now (an empty file,
-        # O_EXCL; the list skips it), not when the thread writes: a second report sent meanwhile (a double
-        # click) took the same name and overwrote the first until 0.28
-        k = 1
-        while True:
-            path = self.reports / (f"{name}.jsonl.gz" if k == 1 else f"{name}-{k}.jsonl.gz")
-            try:
-                os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-                break
-            except FileExistsError:
-                k += 1
-        try:
-            n = await asyncio.to_thread(self._write_report, path, head, list(self.recent), list(self.shown))
-        except BaseException:
-            path.unlink(missing_ok=True)
-            raise
-        log.info("error report %s: %d messages", path.name, n)
-        return web.json_response({"name": path.name, "messages": n})
+        return now, json.dumps(meta), list(self.shown)
 
     @staticmethod
     def _write_report(path, head: str, recent: list, shown: list) -> int:
@@ -990,11 +1226,13 @@ class App:
         so whoever a sensor is tracking now counts. Until 0.18 their running tracks stayed and fed
         measurements to tracks the model no longer had: somebody sitting was gone for good, and the
         LD2410C learned them as background. That learns nothing for RESET_HOLD s now either."""
-        tr = self.tracker
-        tr.reset_people()
-        tr.reset_tracks()
-        tr.hold_background(RESET_HOLD)
-        self._model_started(tr.now)
+        def reset():
+            tr = self.tracker
+            tr.reset_people()
+            tr.reset_tracks()
+            tr.hold_background(RESET_HOLD)
+            self._model_started(tr.now)
+        await self.in_model(reset)
         return web.json_response({"ok": True})
 
     # -------------------------------------------------- Home Assistant (Dobby)

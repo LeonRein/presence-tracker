@@ -5,3 +5,6 @@ configuration:
   topic_prefix:
     name: MQTT-Präfix
     description: Die Sensoren senden an <Präfix>/<Name>/frame. Muss zu mqtt_prefix in der ESPHome-Konfiguration passen.
+  offline_backlog:
+    name: Nicht verfügbar ab Rückstand (s)
+    description: Hängt das Modell mehr als so viele Sekunden hinter den Sensoren zurück, sind alle Entitäten nicht verfügbar, bis der Rückstand wieder unter der Hälfte liegt. Was dann geschieht, entscheidet der Flow in Node-RED (bisher behält er den letzten Zustand). 0 schaltet das aus (Standard).

@@ -208,7 +208,21 @@ Gerät **Presence Tracker**, für jeden Raum und Bereich:
 | `binary_sensor.presence_<zone>_ziel` | *Ziel*: Jemand, der gerade geht, geht als Nächstes in diesen Raum oder Bereich; aus einer gelernten Karte (siehe unten) |
 
 Einmal für das Gerät: `switch.presence_lernen_pausieren`, *Lernen pausieren* bei Hintergrundaktivität
-(Saugroboter, Besuch, Putzen, Feier; siehe unten).
+(Saugroboter, Besuch, Putzen, Feier; siehe unten), und fünf Diagnose-Entitäten, wie gut das Modell mit den Sensoren
+Schritt hält (siehe *Echtzeit*):
+
+| Entität | Bedeutung |
+|---|---|
+| `sensor.presence_diagnose_backlog` | *Rückstand* (s): wie lange der älteste noch nicht verarbeitete Frame schon wartet, der höchste Wert der letzten 10 s. Normal unter 0,1 s. Attribute `waiting` (wartende Frames), `dropped` (verworfene Frames seit dem Start), `compactions` (Verdichtungen seit dem Start) |
+| `sensor.presence_diagnose_cpu` | *Modell CPU* (%): Rechenzeit des Modells in % eines Prozessorkerns, über die letzten 10 s |
+| `sensor.presence_diagnose_hypotheses` | *Hypothesen*: wie viele Hypothesen das Modell gerade führt |
+| `sensor.presence_diagnose_untracked` | *Personen ohne Spur*: die meisten bekannten Personen ohne Spur in einer Hypothese (davon hängt die Rechenzeit ab) |
+| `sensor.presence_diagnose_fps` | *Frames pro Sekunde*, die das Modell verarbeitet hat; Attribut `fps_in`: die angekommen sind |
+
+Sie gehören zur Kategorie *Diagnose* (auf der Geräteseite unter *Diagnose*), kommen alle 10 s und werden nicht im
+Broker behalten. Sie haben keine Verfügbarkeit der App: Sie bleiben lesbar, wenn die Räume wegen eines Rückstands
+oder eines Modellfehlers *nicht verfügbar* sind, und werden *nicht verfügbar*, wenn 60 s nichts kam (die App läuft
+nicht).
 
 Dazu `presence_haus_*` für das ganze Haus (ohne *außer Haus*). Ein Raum mit *Außer Haus* (Treppenhaus)
 bekommt keine Entitäten; hatte er von einer früheren Version welche, entfernt die App sie beim nächsten
@@ -219,7 +233,9 @@ Verbinden mit dem Broker. Eine gelöschte Zone nimmt ihren Zustand im Broker mit
 vom letzten Lauf als aktuell). Scheitert das Modell dreimal, ohne dazwischen eine Minute zu laufen (etwa
 an einer Konfiguration, mit der es nicht rechnen kann), sind sie ebenfalls *nicht verfügbar*, bis es
 wieder eine Minute ohne Fehler läuft; im Protokoll steht dann ein Fehler in Großbuchstaben, und das Modell
-wird nur noch einmal je Minute neu versucht. Die Entitäten eines Raums mit eigenem Sensor (der Sensor,
+wird nur noch einmal je Minute neu versucht. Mit der Option `offline_backlog` (Standard aus) sind sie auch
+*nicht verfügbar*, solange das Modell mehr als so viele Sekunden hinter den Sensoren zurückliegt (siehe *Echtzeit*).
+Die Entitäten eines Raums mit eigenem Sensor (der Sensor,
 der im Raum hängt: sein Name ist die ID des Raums, etwa `kueche`; eingeschaltet und platziert) sind außerdem *nicht verfügbar*, solange
 dieser Sensor seit mehr als 30 s keinen Frame gesendet hat (Board ohne Strom, abgestürzt, WLAN weg): alle
 vier, *besetzt*, *Personen*, *Bewegung* und *Ziel*. Mit seinem nächsten Frame sind sie
@@ -338,6 +354,55 @@ Mit Node-RED: `server-state-changed` auf den Saugroboter (`vacuum.<name>`); jede
 `switch.presence_lernen_pausieren`; wieder angedockt (`docked`) und 2 min dort geblieben (*for*: 2 min) →
 `switch.turn_off`. `unavailable` und `unknown` (die Integration verbindet sich neu) ändern nichts.
 
+## Echtzeit
+
+Am 17.11. (0.65.0) rechnete das Modell langsamer, als die Frames kamen. Sie stauten sich in der App, von 17:51 bis
+18:30 gleichmäßig auf 42 min; Home Assistant bekam 42 min alte Zustände als aktuell, das Licht kam entsprechend
+spät, und der Neustart verwarf 80 386 wartende Frames. Seither gilt:
+
+- **Ankunftszeit:** Jede MQTT-Nachricht bekommt ihre Empfangszeit, wenn sie ankommt, nicht erst, wenn das Modell
+  sie verarbeitet. Der *Rückstand* einer Nachricht ist die Zeit von ihrer Ankunft bis zum Beginn ihrer Verarbeitung.
+  Bisher wuchs er unbemerkt, und *Lernen pausieren* begann um ihn zu spät: Die Frames tragen die Zeit ihres Boards
+  (seine Laufzeit), der Schalter die Zeit, zu der die App ihn verarbeitete. Bei 30 s Rückstand lernte das Modell
+  so 30 s Saugroboter. Jetzt beginnt die Pause zu der Zeit, zu der der Befehl ankam, und Frames und Schalter
+  stehen in der Reihenfolge ihrer Ankunft an.
+- **Modell im eigenen Thread:** Das Modell rechnet in einem eigenen Thread mit einer eigenen, begrenzten
+  Warteschlange. Die Ereignisschleife nimmt nur noch Nachrichten an, veröffentlicht die Zustände und bedient die
+  Weboberfläche; sie wartet weder auf das Modell noch auf den Broker. Statusmeldungen an Home Assistant gehen ohne
+  Warten auf die Bestätigung des Brokers hinaus (bisher bis 10 s je Meldung). Zustände, Verfügbarkeit und
+  Discovery bleiben *retained* mit QoS 1: Der Broker behält, was Home Assistant nach einem Neustart liest, und der
+  Client schickt eine Meldung nach, bis der Broker sie hat.
+- **Verdichten statt stauen:** Wartet der älteste Frame länger als 10 s (oder warten mehr als 5000 Frames),
+  bleibt von jedem Sensor nur sein neuester Frame; die übrigen werden verworfen, der Schalter *Lernen pausieren*
+  und Anfragen der Weboberfläche nie. Dem Modell wird das als Datenlücke aller Sensoren gemeldet, wie nach einem
+  Neustart der App (MODEL.md 4.4): Die Spuren aller Sensoren enden „Daten verloren“, die nächsten Frames sind ein
+  Neubeginn, und die Personen werden über die Lücke nur vorgerückt, nicht gewichtet. Warum so:
+  - Der neueste Frame holt das Modell sofort in die Gegenwart; das Licht folgt wieder dem Haus, nicht dem Stau.
+    Einen Stau, den das Modell nicht abarbeiten kann, verliert die App ohnehin (der Neustart am 17.11.), und spät
+    abgearbeitet nützt er dem Licht nichts.
+  - Stillschweigend verworfene Frames würden das Modell verfälschen: Eine Lücke bis 6 s zählt für das Modell als
+    beobachtet und leer („niemand Neues aufgetaucht“, der LD2410C mit den Energien davor). Als gemeldete
+    Datenlücke sagt sie nichts.
+  - Alle Sensoren, nicht nur einzelne: Der Stau ist einer der App, alle Frames haben gleich lange gewartet.
+  - 10 s liegen über der Lücke von 6 s, ab der auch der LD2410C eine Lücke als verloren nimmt, und weit über dem
+    Normalbetrieb (0.64 auf Inge: unter 1,2 s; der längste Frame von 0.65 in seinen schlimmsten Minuten 1,1 s).
+  - Beim Nachspielen (`--replay`) wird nie verdichtet: Dort wartet die Uhr auf die Frames, und das Modell rechnet in
+    der Ereignisschleife wie bisher, jeden Frame.
+
+  Im Protokoll steht bei jeder Verdichtung (höchstens einmal je Minute) eine Warnung „the model is … s behind: …
+  waiting frames dropped“, ab 5 s Rückstand „the model is … s behind the frames“. Rechnet das Modell länger als
+  15 s an einer einzelnen Nachricht, kommen die Stacks aller Threads ins Protokoll. Eine Fehlermeldung und die
+  Aufzeichnung enthalten alle Frames, auch verworfene: Ein Nachspielen rechnet sie und kann dort vom Live-Stand
+  abweichen.
+- **Diagnose in Home Assistant:** Rückstand, CPU des Modells, Hypothesen, Personen ohne Spur und Frames/s
+  (siehe *Entitäten*); dieselben Zahlen zeigt die Live-Ansicht oben (*Modell … % CPU*).
+- **Option `offline_backlog`** (Sekunden, Standard 0 = aus): Liegt das Modell mehr als so viele Sekunden zurück,
+  sind alle Entitäten der Räume, Bereiche und des Hauses *nicht verfügbar*, bis der Rückstand wieder unter der Hälfte
+  liegt und frische Zustände draußen sind. Sinnvoll sind Werte unter der Verdichtungsgrenze von 10 s, etwa 3–5 s;
+  darüber wirkt sie nur, wenn das Modell an einem einzelnen Frame länger rechnet. Der Node-RED-Flow behält bei
+  *nicht verfügbar* bisher den letzten Zustand; soll er dann auf eine einfache Regel zurückfallen, muss das dort
+  eingerichtet werden.
+
 ## Aufzeichnung
 
 Für ein paar Tage Testbetrieb, ohne einen Rechner nebenher: Im Tab *Einstellungen*, Abschnitt *Aufzeichnung*, schreibt
@@ -388,6 +453,7 @@ Löschen von Meldungen bleiben Administratoren vorbehalten, auch auf dem Server 
 |---|---|
 | `log_level` | Ausführlichkeit des Protokolls |
 | `topic_prefix` | MQTT-Präfix der Sensoren (`mqtt_prefix` in ESPHome), Standard `presence` |
+| `offline_backlog` | Sekunden Rückstand des Modells, ab denen alle Entitäten *nicht verfügbar* sind (siehe *Echtzeit*); Standard 0 = aus |
 
 ## Entwicklung
 

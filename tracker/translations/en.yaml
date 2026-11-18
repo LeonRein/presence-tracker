@@ -5,3 +5,6 @@ configuration:
   topic_prefix:
     name: MQTT prefix
     description: The sensors publish to <prefix>/<name>/frame. Must match mqtt_prefix in the ESPHome configuration.
+  offline_backlog:
+    name: Unavailable above backlog (s)
+    description: If the model falls more than this many seconds behind the sensors, every entity is unavailable until the backlog is below half of it again. What happens then is up to the Node-RED flow (so far it keeps the last state). 0 turns this off (default).

@@ -156,7 +156,7 @@ def test_the_mqtt_loop_survives_whatever_a_message_does(monkeypatch):
     monkeypatch.setattr(aiomqtt, "Client", Client)
     seen, clients = [], []
 
-    def on_message(topic, payload, recv):
+    def on_message(topic, payload, recv, queued=None):
         seen.append(payload)
         raise RuntimeError("bad")
 

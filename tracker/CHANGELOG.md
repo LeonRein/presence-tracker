@@ -1,5 +1,24 @@
 # Changelog
 
+## Entwurf (ohne Version): Echtzeit-Schutz - ein überlastetes Modell staut nicht mehr
+
+Am 17.11. (0.65.0) stauten sich die Frames bis 42 min, Home Assistant bekam so alte Zustände als aktuell, und der
+Neustart verwarf 80 386 wartende Frames. Das Modell bleibt dasselbe (0.64.0); geändert ist die App darum herum (DOCS.md
+*Echtzeit*):
+- **Ankunftszeit beim Empfang:** Der Rückstand jeder Nachricht wird gemessen; *Lernen pausieren* beginnt, wenn der
+  Befehl ankam, nicht um den Rückstand später.
+- **Modell im eigenen Thread** mit begrenzter Warteschlange; die Ereignisschleife empfängt, veröffentlicht und bedient
+  die Weboberfläche, ohne auf das Modell oder auf Bestätigungen des Brokers zu warten (Zustände bleiben retained, QoS 1).
+- **Verdichten statt stauen:** Wartet der älteste Frame über 10 s, bleibt je Sensor der neueste; das Modell nimmt das
+  als Datenlücke aller Sensoren (wie ein Neustart der App), verworfene Frames zählen nicht als „nichts gesehen“.
+- **Diagnose-Entitäten:** Rückstand, CPU des Modells, Hypothesen, Personen ohne Spur, Frames/s.
+- **Option `offline_backlog`** (Standard aus): ab so vielen Sekunden Rückstand sind alle Entitäten *nicht verfügbar*.
+Belastungstest (tests/test_realtime.py, Grenze im Test 1 s statt 10 s): Kern 2,2-fach zu langsam bzw. Frames 10-fach
+schneller als Echtzeit; Rückstand höchstens 1,1 s, Warteschlange höchstens 24 bzw. 222 Frames, Ereignisschleife höchstens
+10 ms spät, Weboberfläche ≤ 1 ms (über das Modell ≤ 107 ms). Normale Last: 6 h Aufnahmen (11.11. 07-10 Uhr, 17.11.
+13-16 Uhr, 568 935 Frames, 216 000 Takte) über die App-Hülle nachgespielt: Zustände und Meldungen an Home Assistant
+bytegleich mit 0.65.1, mit und ohne Modell-Thread, keine Verdichtung.
+
 ## 0.65.1 (Rücknahme von 0.65.0: wieder der Stand von 0.64.0)
 
 0.65.0 ist zurückgenommen, das Modell ist wieder genau das von 0.64.0. Unter 0.65.0 sammelten sich an Stellen, an denen ein

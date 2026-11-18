@@ -21,6 +21,8 @@ services:
 options:
   log_level: info
   topic_prefix: presence
+  offline_backlog: 0
 schema:
   log_level: list(debug|info|warning|error)
   topic_prefix: str
+  offline_backlog: int(0,3600)?
