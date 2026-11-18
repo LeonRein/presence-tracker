@@ -643,6 +643,9 @@ pub fn bench(job_path: &str) -> Result<(), String> {
     let mut next_progress = f64::NEG_INFINITY;
     let (mut t_first, mut t_last) = (None::<f64>, 0.0);
     let mut prog_cpu = 0.0;
+    // branches of the hypotheses in the scored window [m0, m1]: a track found again, a track born; their
+    // children
+    let (mut branch_again, mut branch_born, mut branch_children) = (0u64, 0u64, 0u64);
     let out = std::io::stdout();
 
     while let Some((recv, board, payload)) = lines.next()? {
@@ -679,9 +682,20 @@ pub fn bench(job_path: &str) -> Result<(), String> {
                 *o = t - rule_seen[k] <= 1.0;
             }
         } else {
-            tracker
+            let events = tracker
                 .frame(&board, t, &frame)
                 .map_err(|e| format!("the frame at {t}: {e:?}"))?;
+            if (m0..=m1).contains(&t) {
+                for e in &events {
+                    if let presence_core::tracker::Event::Branch { how, children, .. } = e {
+                        match how {
+                            presence_core::tracker::Branched::FoundAgain => branch_again += 1,
+                            presence_core::tracker::Branched::Born => branch_born += 1,
+                        }
+                        branch_children += children.len() as u64;
+                    }
+                }
+            }
             if t >= next_step && tracker.start().is_some() {
                 tracker.step(t).map_err(|e| format!("the step at {t}: {e}"))?;
                 let states = tracker.zone_states(tracker.now());
@@ -950,6 +964,9 @@ pub fn bench(job_path: &str) -> Result<(), String> {
         let n = acc.s.max(1.0);
         let o = r.as_object_mut().expect("an object");
         o.insert("zuviel".into(), json!(min(acc.zuviel)));
+        o.insert("verzweigt_wiedergefunden".into(), json!(branch_again));
+        o.insert("verzweigt_neu".into(), json!(branch_born));
+        o.insert("verzweigt_kinder".into(), json!(branch_children));
         o.insert("schlaf_e".into(), json!(acc.schlaf_e / n));
         o.insert("max_e_raum".into(), json!(acc.max_e_room));
         o.insert("zwei_p".into(), json!(if acc.zwei_s > 0.0 { Some(acc.zwei_p / acc.zwei_s) } else { None }));
