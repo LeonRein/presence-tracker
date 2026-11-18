@@ -173,6 +173,21 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 - Die drei Plätze rücken auf; Ziele werden über die Nähe verknüpft (≤ 0,6 m je Frame).
 - Gehaltene Frames sind keine Messung: ≥ 3 Frames mit derselben Geschwindigkeit ≠ 0 (der Sensor lässt
   ein verlorenes Ziel weiterlaufen) oder bitgleiche Koordinaten (eingefroren).
+- **Kurzes Halten eines ruhenden Ziels ist eine Messlücke, kein Verlust** (`settle` = 2 s / 0,3 m, `ld2450/tracks.rs`).
+  Gemessen 17.11. (alle Fenster, Spuren ≥ 20 s, ≥ 80 % der Frames mit Geschwindigkeit 0, Spannweite ≤ 1 m, 501 Spurminuten):
+  Ruhende Ziele werden 14-mal je Minute gehalten, 56 % ihrer Frames sind gehalten; 57 % der Haltephasen dauern höchstens
+  0,3 s, 80 % höchstens 2 s, 96,6 % enden mit Wiederfinden, der Sprung dabei ist im Median 0,01 m, p99 0,19 m, nie über 0,3 m.
+  Das ist das Format des Sensors, kein Ereignis. Ein Ziel, das bei seiner letzten Messung ruhte (Geschwindigkeit entlang
+  des Strahls unter 0,3 m/s, wie bei der Auflösung unten), gilt deshalb erst als verloren, wenn das Halten länger als 2 s
+  dauert, die Spur dabei endet oder es mehr als 0,3 m vom gehaltenen Ort wiedergefunden wird; **dann rückwirkend ab dem
+  ersten gehaltenen Frame** (Verlieren und Wiederfinden unten). Sonst sind die gehaltenen Frames Lücken in den Messungen
+  derselben Spur: kein Verlieren, kein Halten, kein Wiederfinden, keine Verzweigung. Das gilt für Person, Geist und
+  Störquelle gleich, weil es eine Eigenschaft des Formats ist. Gehende Ziele (zuletzt ≥ 0,3 m/s) gelten weiter sofort als
+  verloren; das Weiterlaufen lassen bleibt ihre eigene Logik. Es bleiben 3 statt 14 Ereignisse je Minute ruhender Spur
+  (−79 %, `analyse-sensoren/entprellen.py` 17.11.). Bis 0.65 war jede Haltephase ein Verlust mit Wiederfinden, über das
+  jede Hypothese über alle Personen in der Nähe verzweigte, und das Wiederfinden zählte seit 0.62 einseitig (unten); das
+  ließ an Stellen, an denen ein Sensor ein ruhendes Ziel flackern lässt, kleine Reste „dort sitzt vielleicht noch jemand“
+  wuchern (17.11., 0.65).
 - Mehr als 6 s ohne Frame: Datenverlust, alle Spuren enden, 6 s nach dem letzten Frame, ohne auf den
   nächsten zu warten (bis 0.18 erst mit ihm: Ein ausgefallenes Board hielt seine Spuren stundenlang).
 
@@ -248,7 +263,30 @@ der Ebene seiner Spuren: wann er eine beginnt, verliert, wiederfindet, und wo si
 **Verlieren und Wiederfinden:**
 - Verlieren ist bei Personen und Geistern gleich häufig: keine Information.
 - Zeit bis zum Wiederfinden (gemessen): log-normal, Median 0,13 s / Streuung 1,0 (weiterlaufend) bzw.
-  0,2 s / 2,0 (eingefroren); 3 % bzw. 2 % nie.
+  0,2 s / 2,0 (eingefroren); 3 % bzw. 2 % nie. Das ist die Verteilung über **alle** Haltephasen, ab ihrem ersten
+  gehaltenen Frame. Seit der Messlücke oben wird ein ruhendes Ziel erst nach 2 s als verloren gemeldet, aber mit dem
+  Beginn der Haltephase als Zeitpunkt des Verlusts: Das Nicht-Wiederfinden zählt dann auf einmal `S(u)` für die ganze Zeit
+  [Beginn, jetzt] (`Revealed`, `Tracker::reveal`), danach wie bisher je Frame `S(u₁)/S(u₀)`, und ein Wiederfinden zählt
+  das Intervall seit dem letzten gehaltenen Frame. Über diese Zeit geht keine Evidenz verloren, und die Parameter behalten
+  ihre Bedeutung: Bedingt auf u > 2 s gilt `S(u)/S(2)`, das folgt von selbst; eine neue Anpassung ist nicht nötig.
+  Geprüft 17.11. an den Haltephasen eingefrorener Ziele (alle Fenster, 60 000 Phasen): `S` gemessen / Modell bei 1 s
+  0,23 / 0,23, 2 s 0,15 / 0,14, 5 s 0,075 / 0,073, 10 s 0,039 / 0,045, 30 s 0,010 / 0,026 (der Anteil „nie“ ist eher
+  1 % als 2 %: über 20 s spricht das Nicht-Wiederfinden etwas zu schwach, also nach beiden Seiten gleich vorsichtig).
+  Ruhende Ziele, die der Sensor *weiterlaufen* lässt (3 der 14 Phasen je Minute), haben die Parameter der Gehenden; nach
+  2 s fällt ihr `S` gemessen schneller (`S(10)/S(2)` 0,22 gegen 0,91), ihr Nicht-Wiederfinden zählt also zu schwach
+  (offen, 9).
+- **Warum das Weglassen kurzer Haltephasen keine einseitige Evidenz ist:** Eine Haltephase bis 2 s, die mit einem
+  Wiederfinden ≤ 0,3 m endet, ist als Ganzes eine Beobachtung, und sie wird als Ganzes weggelassen: ihr Nicht-Wiederfinden
+  (gegen alle möglichen Finder) und ihr Wiederfinden (für alle möglichen Finder). Ihre Likelihood ist für jede Quelle, die
+  dort bleibt, dieselbe Eigenschaft des Formats (Person, Geist, Störquelle), kürzt sich also heraus. Die einzige
+  Alternative, die sie unterscheiden könnte, ist „die Quelle ging, und binnen 2 s fand der Sensor an derselben Stelle auf
+  3 cm genau eine andere“; die ist unter jeder Hypothese verschwindend selten und liegt unter der Auflösung (1,4 / 2,1 m),
+  das Wiederfinden auf einer anderen Person in der Nähe sagte also ohnehin nichts über *wen*. Einseitig wäre es, nur eine
+  der beiden Hälften zu streichen, wie 0.62 das Nicht-Wiederfinden gegen Unaufgelöste strich, das Wiederfinden aber zählte.
+  Eine längere Phase zählt dagegen ganz, ab ihrem Beginn. Gemeldet wird erst nach 2 s; bis dahin sieht die Erfassung neben
+  dem Ziel die Auflösung eines gemessenen statt des Findekerns eines gehaltenen (`q(x)` oben), das ist der einzige
+  Unterschied zur sofortigen Meldung (Test `a_still_target_lost_longer_than_settle_counts_as_not_found_again_from_its_first_held_frame`:
+  4 s gehalten, Log-Evidenz 0,012 neben der sofortigen Meldung, Nicht-Wiederfinden −2,38 gegen ln S(u) = −2,44).
 - Wiedergefunden wird auf dem Eigentümer, auf einer anderen Person nahe der gehaltenen Stelle
   (Gauß-Kern 0,7 m × Sicht, `k(x)`), auf dem Geist, der sie war, auf der Störquelle, die sie war (4.5), oder auf
   einer Reflexion dort (wie 0,05 Personen). Nicht-Wiederfinden spricht gegen alle diese, ohne Frist; gegen eine andere

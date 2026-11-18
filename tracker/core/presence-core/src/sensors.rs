@@ -63,7 +63,7 @@ impl SensorState {
         Self {
             active,
             ld: LdSensor::new(p),
-            tracks: Ld2450Tracks::default(),
+            tracks: Ld2450Tracks::new(p.settle),
             frame: SensorFrame::default(),
             ld_shown: LdShown::default(),
         }

@@ -109,6 +109,9 @@ pub struct Params {
     pub track_life: [f64; 2],
     /// time to finding a lost target again, per kind of loss (4.1)
     pub refind: Refind,
+    /// [s, m]: a still target's hold is a loss only when longer than this, or when it is found again
+    /// farther than this from where it was held (4.1; a time of 0: every hold, as up to 0.65)
+    pub settle: [f64; 2],
     // 4.2 ghosts: the kinds (rate per m^2 and s, mean life s)
     pub ghost_types: Vec<[f64; 2]>,
     /// 4.2 ghosts that come with somebody walking: per s, sensor and walking person, of the first kind
@@ -276,6 +279,7 @@ impl Default for Params {
                 coast: [0.13, 1.0, 0.03],
                 frozen: [0.2, 2.0, 0.02],
             },
+            settle: [crate::ld2450::tracks::SETTLE, crate::ld2450::tracks::SETTLE_JUMP],
             ghost_types: vec![[0.4 * 5.4e-7, 3.0], [0.6 * 5.4e-7, 39.0]],
             walker_ghosts: 0.0057,
             ghost_near: [5e-4, 0.5],
@@ -409,6 +413,7 @@ impl Params {
             ("white", positive(self.white)),
             ("pos_every", positive(self.pos_every)),
             ("find_clutter", at_least_0(self.find_clutter)),
+            ("settle", self.settle.iter().all(|&x| at_least_0(x))),
             ("track_life", self.track_life.iter().all(|&t| time(t))),
             (
                 "refind",
@@ -699,6 +704,7 @@ mod tests {
             ),
             (r#"{"acquire": [[0.034, 0], [0.51, 4.55]]}"#, "acquire"),
             (r#"{"track_life": [0, 30]}"#, "track_life"),
+            (r#"{"settle": [2.0, -0.3]}"#, "settle"),
             (r#"{"still_noise": 0}"#, "still_noise"),
             (r#"{"silent_after": -1}"#, "silent_after"),
         ] {

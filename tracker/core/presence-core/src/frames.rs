@@ -418,24 +418,24 @@ pub struct Detection {
 
 /// The targets of a frame of sensor si in front of it as detections (frames.detections with the mount).
 pub fn detections(world: &World, si: usize, frame: &Frame) -> Vec<Detection> {
+    frame.in_front().map(|&target| detection(world, si, target)).collect()
+}
+
+/// A target of sensor si in front of it as a detection.
+pub fn detection(world: &World, si: usize, target: Target) -> Detection {
     let (mount, reading) = (&world.mounts[si], world.reading);
     let origin = world.sights[si].origin;
-    frame
-        .in_front()
-        .map(|&target| {
-            let on = mount.to_world(target.local(), reading.target_height);
-            // on.ground >= 0.1 x scale > 0 (Mount::to_world, the configuration's scale is positive)
-            let (dx, dy) = (on.pos[0] - mount.at[0], on.pos[1] - mount.at[1]);
-            let u = [dx / on.ground, dy / on.ground];
-            let hidden = world.plan.hidden(origin, on.pos, u, reading.wall_margin) || py_hypot(dx, dy) < MOUNT_RADIUS;
-            Detection {
-                target,
-                pos: on.pos,
-                speed: target.radial_speed() * (on.slant / on.ground),
-                hidden,
-            }
-        })
-        .collect()
+    let on = mount.to_world(target.local(), reading.target_height);
+    // on.ground >= 0.1 x scale > 0 (Mount::to_world, the configuration's scale is positive)
+    let (dx, dy) = (on.pos[0] - mount.at[0], on.pos[1] - mount.at[1]);
+    let u = [dx / on.ground, dy / on.ground];
+    let hidden = world.plan.hidden(origin, on.pos, u, reading.wall_margin) || py_hypot(dx, dy) < MOUNT_RADIUS;
+    Detection {
+        target,
+        pos: on.pos,
+        speed: target.radial_speed() * (on.slant / on.ground),
+        hidden,
+    }
 }
 
 #[cfg(test)]

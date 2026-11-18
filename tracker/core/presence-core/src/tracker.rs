@@ -10,12 +10,13 @@ use serde_json::Value;
 
 use crate::filter::branch::{Category, Frame};
 use crate::filter::mixture::{NewTrack, SegId};
+use crate::filter::tracks::MOVING;
 use crate::filter::{Filter, NotFinite, PeopleState, Start};
 use crate::frames::{self, CallError, LdGates};
 use crate::geometry::Point;
 use crate::ld2410::background::{Background, Weighed};
 use crate::ld2410::sensor::LdCollect;
-use crate::ld2450::tracks::{LOST, SegIds, Sighting};
+use crate::ld2450::tracks::{LOST, Revealed, SegIds, Sighting};
 use crate::learn::destination::Target;
 use crate::learn::pauses::Pauses;
 use crate::learn::{Learned, LearnedError};
@@ -167,6 +168,8 @@ struct DataLost {
     si: usize,
     since: f64,
     live: Vec<SegId>,
+    /// the holds of still targets not yet reported
+    revealed: Vec<Revealed>,
 }
 
 #[derive(Debug)]
@@ -434,6 +437,7 @@ impl Tracker {
             .map(|d| Sighting {
                 target: d.target,
                 visible: !d.hidden,
+                moving: d.speed.abs() >= MOVING,
             })
             .collect();
         let sensor = &mut self.sensors[si];
@@ -545,17 +549,28 @@ impl Tracker {
         for (si, s) in self.sensors.iter_mut().enumerate() {
             let live = self.filter.tracks().of(si);
             if s.tracks.silent(t) && !live.is_empty() {
+                let since = s.tracks.last() + LOST;
+                let revealed = s.tracks.drop_raw();
                 lost.push(DataLost {
                     si,
-                    since: s.tracks.last() + LOST,
+                    since,
                     live: live.to_vec(),
+                    revealed,
                 });
-                s.tracks.drop_raw();
             }
         }
-        for DataLost { si, since, live } in lost {
+        for DataLost {
+            si,
+            since,
+            live,
+            revealed,
+        } in lost
+        {
             let t_end = since.max(self.clock.now);
             self.flush_to(t_end, true)?; // the end weighs and releases everybody: all at its time
+            for r in &revealed {
+                self.reveal(si, r);
+            }
             for seg in live {
                 self.end(si, seg, t_end, true, events);
             }
@@ -643,22 +658,37 @@ impl Tracker {
     }
 
     /// Whether the last frame of sensor si concerns everybody: a track was born or ended, or one the
-    /// filter holds lost was measured (found again: a branch).
+    /// filter holds lost (or that is revealed lost now) was measured (found again: a branch).
     fn concerns_all(&self, si: usize) -> bool {
         let ev = &self.sensors[si].frame.events;
         let tracks = self.filter.tracks();
         !ev.born.is_empty()
             || !ev.ended.is_empty()
-            || ev
-                .measured
-                .iter()
-                .any(|m| tracks.get(m.seg).is_some_and(|i| i.lost.is_some()))
+            || ev.measured.iter().any(|m| {
+                tracks.get(m.seg).is_some_and(|i| i.lost.is_some()) || ev.revealed.iter().any(|r| r.seg == m.seg)
+            })
+    }
+
+    /// A still target's hold of sensor si revealed as a loss (MODEL.md 4.1): lost since its first held
+    /// frame, not found again until its last one; what this frame says follows.
+    fn reveal(&mut self, si: usize, r: &Revealed) {
+        if self.filter.tracks().get(r.seg).is_none() {
+            return;
+        }
+        let z = frames::detection(&self.world, si, r.target).pos;
+        self.filter.lost(r.seg, r.kind, z, r.since);
+        if r.last > r.since {
+            self.filter.held(&self.world, si, r.seg, z, r.last);
+        }
     }
 
     /// Step 2: a measured track updates its owners; one that was lost and is measured again is found
     /// again, returned to be branched on. Tracks the filter does not know (begun before a start, or of
     /// a sensor that changed) say nothing. The events are taken out.
     fn track_events(&mut self, si: usize) -> (Vec<(SegId, Point)>, Vec<Fused>) {
+        for r in std::mem::take(&mut self.sensors[si].frame.events.revealed) {
+            self.reveal(si, &r);
+        }
         let frame = &mut self.sensors[si].frame;
         let (t, events) = (frame.t, &mut frame.events);
         let (measured, lost, held) = (
@@ -1086,7 +1116,9 @@ mod tests {
 mod frame_tests {
     use super::*;
     use crate::frames::{Ld2410, Target};
+    use crate::ld2450::tracks::{SETTLE, SETTLE_JUMP};
     use crate::learn::pauses::Pause;
+    use crate::params::LostKind;
     use crate::testing;
 
     /// A frame with targets at (x, y) mm in the sensor's frame.
@@ -1163,10 +1195,15 @@ mod frame_tests {
             delta: 1.1 - 1.0
         }));
         assert_eq!(tr.filter().tracks().get(born).and_then(|i| i.gt), Some(1.1), "measured");
-        // frozen (the same raw numbers): lost; measured again: found again
+        // frozen (the same raw numbers): a still target's hold, not yet a loss; longer than SETTLE: lost
+        // since its first held frame; measured again: found again
         tr.frame("wohn", 1.2, &one(50.0, 2500.0)).expect("a frame");
-        assert!(tr.filter().tracks().get(born).is_some_and(|i| i.lost.is_some()));
-        let events = tr.frame("wohn", 1.3, &one(60.0, 2500.0)).expect("a frame");
+        assert!(tr.filter().tracks().get(born).is_some_and(|i| i.lost.is_none()));
+        let t = 1.2 + SETTLE + 0.05;
+        tr.frame("wohn", t, &one(50.0, 2500.0)).expect("a frame");
+        let lost = tr.filter().tracks().get(born).and_then(|i| i.lost).expect("lost");
+        assert_eq!((lost.t, lost.u, lost.seen), (1.2, t - 1.2, t));
+        let events = tr.frame("wohn", t + 0.1, &one(60.0, 2500.0)).expect("a frame");
         assert_eq!(branches(&events), vec![(born, Branched::FoundAgain)]);
         // the LD2410C part is gathered once
         let gates = frames::LdGates {
@@ -1183,6 +1220,108 @@ mod frame_tests {
         tr.frame("wohn", 1.4, &with_ld).expect("a frame");
         assert!(tr.ld_sensor(0).stats().time > 0.0 && tr.ld_collect(0).t == 1.4);
         assert!(tr.sensor_frame(0).ld2410.is_none());
+    }
+
+    /// A tracker started at 0 with one person anywhere, a still target's holds settled after this [s, m].
+    fn settling(settle: [f64; 2]) -> Tracker {
+        let mut world = testing::flat();
+        world.params.settle = settle;
+        let mut tr = Tracker::new(world);
+        tr.start_at(0.0);
+        tr.reset_people(Some(&[Start::Anywhere])).expect("a start");
+        tr
+    }
+
+    /// A still target at (x, 2500) mm every FRAME s from t0 on, frozen in the frames `frozen` says: the
+    /// branches, and whether the filter held its track lost after any frame.
+    fn flicker(tr: &mut Tracker, t0: f64, frames: usize, frozen: impl Fn(usize) -> bool) -> (Vec<Branched>, bool) {
+        let (mut x, mut how, mut lost) = (0.0, Vec::new(), false);
+        for k in 0..frames {
+            if !frozen(k) {
+                x = if x == 0.0 { 10.0 } else { 0.0 }; // found again 1 cm away (frozen: the same numbers)
+            }
+            let events = tr
+                .frame("wohn", t0 + k as f64 * FRAME, &one(x, 2500.0))
+                .expect("a frame");
+            how.extend(branches(&events).into_iter().map(|(_, h)| h));
+            lost |= tr.filter().tracks().iter().any(|(_, i)| i.lost.is_some());
+        }
+        (how, lost)
+    }
+
+    #[test]
+    fn a_flickering_still_target_branches_nothing() {
+        // a sitting person's target frozen 14 times a minute for 1-6 frames (0.09-0.5 s), each time found
+        // again a cm away, for 3 minutes
+        let frozen = |k: usize| k % 43 >= 1 && k % 43 <= 1 + k % 6;
+        let frames = (180.0 / FRAME) as usize;
+        let mut tr = settling([SETTLE, SETTLE_JUMP]);
+        let (how, lost) = flicker(&mut tr, 1.0, frames, frozen);
+        assert_eq!(how, vec![Branched::Born], "born, then one track with gaps");
+        assert!(!lost, "never held lost");
+        let hyps = tr.filter().hyps().len();
+        // the same without settling (as up to 0.65): every hold a loss, every finding again a branch
+        let mut old = settling([0.0, 0.0]);
+        let (how, lost) = flicker(&mut old, 1.0, frames, frozen);
+        assert!(lost);
+        let again = how.iter().filter(|&&h| h == Branched::FoundAgain).count();
+        assert!(again >= 3 * 14 - 2, "found again {again} times");
+        assert!(old.filter().hyps().len() >= hyps);
+    }
+
+    #[test]
+    fn a_still_target_lost_longer_than_settle_counts_as_not_found_again_from_its_first_held_frame() {
+        // measured for 2 s, then frozen for 4 s (longer than SETTLE), then found again: the filter holds it
+        // lost exactly as without settling, and not finding it again weighed the same
+        let frames = ((6.0 / FRAME) as usize, (2.0 / FRAME) as usize);
+        let frozen = |k: usize| k >= frames.1;
+        let mut tr = settling([SETTLE, SETTLE_JUMP]);
+        let mut old = settling([0.0, 0.0]);
+        let (how, _) = flicker(&mut tr, 1.0, frames.0, frozen);
+        let (how_old, _) = flicker(&mut old, 1.0, frames.0, frozen);
+        assert_eq!((how.clone(), how_old), (vec![Branched::Born], vec![Branched::Born]));
+        let held = |tr: &Tracker| {
+            tr.filter()
+                .tracks()
+                .iter()
+                .find_map(|(_, i)| i.lost)
+                .expect("held lost")
+        };
+        let (lost, lost_old) = (held(&tr), held(&old));
+        assert_eq!(
+            lost, lost_old,
+            "lost since its first held frame, not found again until now"
+        );
+        assert_eq!(lost.t, 1.0 + frames.1 as f64 * FRAME);
+        assert!(lost.u > SETTLE);
+        // not finding it again was weighed as without settling (all but what the rates of new tracks
+        // saw near it meanwhile: there its sensor measured it, not held it): S(u) since its first held
+        // frame; had its hold been a gap (settled after more than 4 s), nothing
+        let mut never = settling([100.0, SETTLE_JUMP]);
+        let (how, held_lost) = flicker(&mut never, 1.0, frames.0, frozen);
+        assert_eq!((how, held_lost), (vec![Branched::Born], false));
+        let loglik = |tr: &Tracker| tr.filter().loglik().0;
+        let s_u = crate::filter::evidence::no_find(&tr.world.params, LostKind::Frozen, lost.u).ln();
+        let (vs_old, vs_never) = (loglik(&tr) - loglik(&old), loglik(&tr) - loglik(&never));
+        assert!(vs_old.abs() < 0.02 * s_u.abs(), "{vs_old} apart from without settling");
+        assert!(
+            (vs_never - s_u).abs() < 0.1 * s_u.abs(),
+            "not finding it again weighed {vs_never}, ln S(u) = {s_u}"
+        );
+        let apart = tr
+            .hyp_weights()
+            .iter()
+            .zip(old.hyp_weights())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f64::max);
+        assert!(apart < 0.01);
+        // and it is found again: a branch in both
+        let t = 1.0 + frames.0 as f64 * FRAME;
+        for tr in [&mut tr, &mut old] {
+            let events = tr.frame("wohn", t, &one(30.0, 2500.0)).expect("a frame");
+            assert_eq!(branches(&events).len(), 1);
+            assert_eq!(branches(&events)[0].1, Branched::FoundAgain);
+        }
     }
 
     #[test]
