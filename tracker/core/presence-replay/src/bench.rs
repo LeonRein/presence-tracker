@@ -433,6 +433,45 @@ impl Queue {
     }
 }
 
+/// Diagnose (nicht für den Prüfstand): PT_DUMP="von,bis,alle" (Epoche, s) schreibt die stärksten Hypothesen.
+fn dump_people(tracker: &Tracker, t: f64, tz: f64) {
+    let f = tracker.filter();
+    let world = tracker.world();
+    let objs = f.objects();
+    let dens = objs.densities();
+    let shape = dens.shape();
+    let xs: Vec<f64> = world.tiles.centers.iter().map(|c| c[0]).collect();
+    let ys: Vec<f64> = world.tiles.centers.iter().map(|c| c[1]).collect();
+    let ones = vec![1.0; xs.len()];
+    let w = f.hyp_weights();
+    let mut order: Vec<usize> = (0..w.len()).collect();
+    order.sort_by(|&a, &b| w[b].total_cmp(&w[a]));
+    let mut line = format!("#D {}", hms(t, tz));
+    for &h in order.iter().take(3) {
+        let hy = &f.hyps()[h];
+        line += &format!(" | w{:.2}", w[h]);
+        for (_, &m) in hy.people.iter() {
+            let mix = objs.mixtures().get(m);
+            let p = mix.modes[0].pos();
+            let segs: Vec<String> = mix.slots.keys().map(|s| format!("{}", s.0)).collect();
+            line += &format!(" P[{}]({:.2},{:.2})", segs.join(","), p[0], p[1]);
+        }
+        for &u in &hy.hidden {
+            let d = dens.get(u);
+            let tot = d.integrate(&ones, &shape).max(1e-12);
+            let walk: f64 = d.walk.iter().sum::<f64>() * d.r;
+            line += &format!(
+                " H{:.3}({:.2},{:.2} g{:.2})",
+                d.r,
+                d.integrate(&xs, &shape) / tot,
+                d.integrate(&ys, &shape) / tot,
+                walk / tot
+            );
+        }
+    }
+    println!("{line}");
+}
+
 fn load_of(tracker: &Tracker) -> Load {
     let f = tracker.filter();
     let dens = f.objects().densities();
@@ -641,6 +680,11 @@ pub fn bench(job_path: &str) -> Result<(), String> {
         (Load::default(), Load::default(), Load::default(), Load::default());
     let mut failed: Option<String> = None;
     let mut next_progress = f64::NEG_INFINITY;
+    let dump_at: Option<(f64, f64, f64)> = std::env::var("PT_DUMP").ok().and_then(|v| {
+        let x: Vec<f64> = v.split(',').filter_map(|s| s.parse().ok()).collect();
+        (x.len() == 3).then(|| (x[0], x[1], x[2]))
+    });
+    let mut next_dump = f64::NEG_INFINITY;
     let (mut t_first, mut t_last) = (None::<f64>, 0.0);
     let mut prog_cpu = 0.0;
     // branches of the hypotheses in the scored window [m0, m1]: a track found again, a track born; their
@@ -757,6 +801,12 @@ pub fn bench(job_path: &str) -> Result<(), String> {
         t_prev = Some(t);
         if raw.sensors.contains_key(&board) {
             sitters.frame(&board, t, &dets);
+        }
+        if let Some((a, b, every)) = dump_at {
+            if rule.is_none() && t >= a && t <= b && t >= next_dump {
+                dump_people(&tracker, t, tz);
+                next_dump = t + every;
+            }
         }
         if rule.is_none() && (frames % 16 == 0 || t >= next_progress) {
             let l = load_of(&tracker);
