@@ -1282,7 +1282,7 @@ Raumminuten, nachts 0,1, höchstens 6 statt 35 / 9 Personen ohne Spur, 143 statt
 Datenminute (0.64 656, Entprellen 513), Echtzeit wie 0.64; aber Pflichtraum dunkel 27,8 min (7,1 / 13,5), längste Lücke
 832 s, Licht zu viel bei einer Person 939 Raumminuten (901 / 944). Das Tor ist nicht bestanden. Verloren wird die Zweite
 in neun Ereignissen, die alle schon auf der Kippe standen (25 Pflichtfenster, dunkle Minuten je Variante: Entprellen 13,5;
-Gruppe 27,8; nur LD2410C additiv, m(2) = 2: 18,3; m(2) = 1,4: 13,1; mit dem einseitigen Wiederfinden: 13,4; ein anderer
+Gruppe 27,8; nur LD2410C additiv, m(2) = 2: 18,3; m(2) = 1,4: 13,1; Gruppe, aber mit dem einseitigen Wiederfinden: 13,4; ein anderer
 Takt, 0,12 statt 0,1 s, ändert nichts). Jede Variante trifft eine andere Teilmenge derselben Ereignisse (Bad 31.10.,
 Arbeitszimmer 11.11. 14:19, Schlafzimmer 5./7./9.11. morgens, Wohnzimmer 5.11. 20:00 und 11.11. 20:19, Meldungen Bad);
 eine einzelne Summe misst hier vor allem, welche kippen. Nachverfolgt (`PT_DUMP`, Bad 31.10., Arbeitszimmer 11.11.,
@@ -1293,7 +1293,8 @@ Wohnzimmer 11.11., Schlafzimmer 7.11.):
   wandern nicht, und die Stelle der Gruppe kennt sie nicht. Das fehlende Stück des Entwurfs ist der Punkt-Cluster (Ort der
   Gruppe, Zahl je Zelle), nicht ein Term der Evidenz.
 - Danach nimmt eine fremde Spur die Erste mit dem breiten Versatz durch die Wand mit (Bad 31.10. 19:19:35 ins
-  Arbeitszimmer, Schlafzimmer 7.11. 07:12 ins Bad; oben „Offen nach 0.63“).
+  Arbeitszimmer; Schlafzimmer 7.11. 07:09–07:14: die neue Spur am Bett gilt als Geist oder als zweite Spur der Person im
+  Bad; oben „Offen nach 0.63“).
 - Zwei Spuren zweier Sensoren auf dem Sofa werden zu einer Person, sobald das LD2410C nicht mehr zählt (Wohnzimmer 11.11.
   20:14: Entprellen zwei Personen mit Spur, Gruppe eine mit beiden Spuren).
 - Schlafzimmer 7.11.: Alle Versionen führen ab 22:09 nur eine Schlafende; 0.64 findet die Zweite um 07:09 über eine neue
