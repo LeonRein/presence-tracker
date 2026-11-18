@@ -1238,6 +1238,19 @@ gelöschten Aufnahmen vom 6./7.10., etwa die Zahl der Arten des Aufenthalts (3.1
 Zahlen aus den Aufnahmen 6.–14.10. und den Wahrheitstabellen sind mit diesen am 31.10. gelöscht. Wo sie unten
 stehen, sind sie alte Messungen: neu messen, an Meldungen und Aufnahmen der App.
 
+**Offen mit der Messlücke (4.1): Die zweite Person hing am einseitigen Wiederfinden** (Prüfstand 18.11., Bad 31.10.).
+Ohne die kurzen Haltephasen verzweigt der Filter im Schnelltest 2 644- statt 16 256-mal beim Wiederfinden (−84 %), höchstens 6
+statt 15 Personen ohne Spur, 25 % weniger Rechenzeit; leeres Haus, Nacht und Echtzeit wie 0.64. Im Volltest (53 Fenster)
+Licht im leeren Haus 38,4 → 2,2 Raumminuten (das ruhende Nahziel vor dem Wohnzimmer-Sensor, 7.11.), höchstens 9 statt 35
+Personen ohne Spur, 481 → 212 Dichten, CPU −22 %; aber Pflichtraum dunkel 7,1 → 13,5 min (Bad 31.10. zweimal je 1,0,
+Schlafzimmer 7.11. 07:08 0 → 4,2 min) und Licht zu viel bei einer Person 901 → 944 Raumminuten (2.11. a 61 → 113). Im Bad 31.10. ist der
+Pflichtraum 19:21:29–19:22:19 dunkel (0.64: nie): Die zweite Person ohne Spur neben der ersten fällt 19:11:36 unter r = 0,5;
+in 0.64 heben sie danach etwa 40 Wiederfinden der Spur der ersten in 2 min (je „bekannte Person“ als Kind, 0.62) wieder auf
+0,98, ohne jede andere Evidenz. Mit `settle` 0,3 / 0,6 / 1 / 3 s dasselbe. Die Zweite stand also auf dem einseitigen Term,
+den die Messlücke zu 84 % entfernt. Das ehrliche Mittel ist das Gruppen-Messmodell (Ausbleiben und Wiederfinden je
+Auflösungsgruppe, Zahl je Zelle, LD2410C-Amplitude g·m(n)), nicht ein kürzeres `settle`. Ebenfalls offen: ruhende Ziele,
+die der Sensor weiterlaufen lässt, zählen nach 2 s mit den Parametern der Gehenden (4.1).
+
 **Offen nach 0.63: Personen verschwinden noch über fremde Spuren** (10 „Nacht 8./9.11.“). (1) Die Spur eines fernen
 Sensors (Esszimmer auf das Sofa in 6–7,5 m) misst eine Person 1,5 m daneben (Mehrweg, 20 min dieselbe Stelle an der Wand).
 Bekommt eine Person ohne Spur sie, steht sie dort fest (die Gauß-Mischung verschiebt sich durch Nicht-Erfassung nicht, sie
