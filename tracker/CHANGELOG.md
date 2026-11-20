@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.66.0 (Modell: Gruppen-Messmodell und Messlücken-Halten im LD2450; App wie 0.65.2)
+
+Zwei Änderungen am Kern, beide symmetrisch (jede Evidenz zählt in beide Richtungen):
+- **Gruppen-Messmodell:** Wer unaufgelöst bei einem Ziel steht, ist Teil seiner Quelle (LD2450 und LD2410C). Personen
+  neben einer angezeigten Person werden nicht mehr einzeln widerlegt oder einzeln gestützt; die 0.65-Geisterwolke kann
+  sich so nicht bilden.
+- **Messlücken-Halten:** Hält das LD2450 ein ruhendes Ziel kurz fest (bis 2 s, bis 0,3 m), ist das eine Messlücke, kein
+  Verlust (`settle`).
+
+Prüfstand (Neubewertung 20.11.: Licht nur dort als Fehler, wo laut Wahrheit niemand im Raum war; Zeiten mit offenem
+Fenster je Raum ausgenommen; gelernter Hintergrund nur aus der Zeit vor dem Fenster), gegen 0.64:
+- Pflicht gehalten 60/66 (0.64: 59/66), Pflicht dunkel 4,6 min (6,4).
+- Licht ohne Person, Volltest 20 Raummin (31); Schnelltest 19,2 (16,9).
+- Aufstehen (Kaltstart 2 Uhr): Schlafzimmer sofort 49/51 wie 0.64, einmal nie (morgen 3.11. 06:55, knapper Fall nach
+  verlorener Liegender, die beide Modelle verlieren); Morgen-Pflicht 4/5 (3/5).
+- Rechenaufwand -18 %, höchstens 6 Personen ohne Spur (0.64: 23), Dichten höchstens 172 (269), keine wachsenden Einträge.
+Die App-Hülle (Echtzeit-Schutz, Diagnose) ist unverändert wie 0.65.2.
+
 ## 0.65.2 (Echtzeit-Schutz: ein überlastetes Modell staut nicht mehr; Modell unverändert wie 0.64.0)
 
 Am 17.11. (0.65.0) stauten sich die Frames bis 42 min, Home Assistant bekam so alte Zustände als aktuell, und der
