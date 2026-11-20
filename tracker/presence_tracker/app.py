@@ -22,7 +22,7 @@ import presence_core
 from aiohttp import web
 
 from . import __version__, code_hash, ha
-from . import calibration, pause, realtime
+from . import calibration, debug_fenster, pause, realtime  # debug_fenster: DEBUGGING-WERKZEUG, zum späteren Entfernen
 from .calibration import Calibrator
 from . import model
 from .model import Config
@@ -403,6 +403,8 @@ class App:
 
     async def _on_client(self, client):
         self.client = client
+        if client is not None:  # aiomqtt warns from 10 unconfirmed publishes on (at every start: discovery and
+            client.pending_calls_threshold = PENDING  # states at once); the app's own limit and warning: _publish
         self.available = None
         self._pause_sent = None
         self.discovery.reconnected()  # every state and room availability goes out again with the next tick
@@ -804,6 +806,9 @@ class App:
             self.worker.start()
             tasks.append(mqtt_source(self.mqtt_settings, self.prefix, self.on_message, self._on_client,
                                      publish=self.publish_enabled, on_lost=self._frames_lost))
+            if self.ha_url and self.ha_token:  # DEBUGGING-WERKZEUG, zum späteren Entfernen (debug_fenster.py)
+                tasks.append(debug_fenster.Fenster(self.ha_url, self.ha_token, self.recorder.add,
+                                                   lambda: self.recorder.on).run())
         else:
             log.warning("no MQTT broker and no replay: nothing to track")
         main = asyncio.gather(*tasks)

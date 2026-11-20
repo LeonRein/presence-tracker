@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.66.1 (App: Fensterkontakte in der Aufzeichnung als Debugging-Werkzeug; Modell wie 0.66.0)
+
+- **DEBUGGING-WERKZEUG, vorübergehend, zum späteren Entfernen** (`debug_fenster.py`): Solange die Aufzeichnung läuft,
+  schreibt die App den Zustand jedes Fensterkontakts (`binary_sensor.*_fenster_contact`) in die Aufnahme, bei jeder
+  Änderung und zu Beginn jeder Stunde (Thema `debug/fenster`). Nur für den Prüfstand: Zeiten mit offenem Fenster
+  werden je Raum nicht bewertet, und Home Assistant behält seinen Verlauf nur etwa 10 Tage. Das Modell sieht davon
+  nichts. "Lernen pausieren" wurde schon immer aufgezeichnet (die Replays brauchen es) und ist kein Debugging-Werkzeug.
+- Beim Start keine Flut von Warnungen „pending publish calls“ mehr: aiomqtt warnt erst ab der eigenen Grenze der App
+  (2000 unbestätigte Nachrichten), wie die App selbst.
+
 ## 0.66.0 (Modell: Gruppen-Messmodell und Messlücken-Halten im LD2450; App wie 0.65.2)
 
 Zwei Änderungen am Kern, beide symmetrisch (jede Evidenz zählt in beide Richtungen):
