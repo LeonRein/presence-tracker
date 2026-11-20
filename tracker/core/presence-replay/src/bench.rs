@@ -7,11 +7,13 @@
 //! (hourly .jsonl or .jsonl.gz, in order; a cut-off gzip ends its file), the start of the replay, the window
 //! [m0, m1] that is scored, what must be lit / must be dark / must not hold two, the intervals not scored
 //! (skip), the app's tick, the factor from this machine's CPU to Inge's, the backlog at which a run fails and
-//! a CPU limit. With "regel" set, no model runs: a room is occupied while an LD2450 target is in it (the
-//! simple rule, erbe-17-11/werkzeuge/regel_vs_modell.py).
+//! a CPU limit. "modell" names the model scored (modell/mod.rs, docs/pruefstand.md 1: "filter", the core as the
+//! app runs it, or "regel", the simple rule; an old job's "regel" object means "regel" with those parameters),
+//! "set" its parameters (k: v; each one must take effect, the result tells where: "parameter"), "raeume" the
+//! rooms scored (default: those the model observes).
 //!
-//! The model is driven as the app drives it (as `trace`): each frame checked, its time from the board's
-//! uptime, a step and the zones' states every `tick` s of frame time; the light as Node-RED's
+//! The model is driven as the app drives it (as `trace`): each frame checked, its time on the model's clock, a
+//! tick (the filter: a step and the zones' states) every `tick` s of frame time; the light as Node-RED's
 //! Präsenzlicht: on while the room is occupied, off 120 s after. Scored once per second of frame time in
 //! [m0, m1] as evalp.py scores. What the frames and steps cost is the instructions the thread retires
 //! (perf) over `ips_leer`, the CPU seconds of an idle core (not CPU time, which grows when the machine is
@@ -28,15 +30,25 @@
 //! can be trusted (tools/pruefstand.py compares it with 0.64 in the same window). The queue on instructions
 //! also runs with the ends of the factor's valid range (`faktor_spanne`): the factor is fitted, not known.
 //!
+//! Every must interval is scored on its own as well ("muss_ereignisse": its dark seconds, the longest dark gap and
+//! the gaps), so that tools/pruefstand.py can tell an event held or lost.
+//!
 //! Every `progress` s of frame time a line "# ..." goes out at once; at the end one line of JSON.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 
-use presence_core::frames::{Frame, SensorClock};
-use presence_core::tracker::Tracker;
+use presence_core::frames::Frame;
 use serde_json::{Map, Value, json};
+
+use crate::modell::{self, Applied, Context, Input};
+
+/// "Aufstehen erkannt": a moving detection (|speed| in the frame's units, mm/s) after so many s without one in its
+/// room starts an episode; it counts as missed after AUF_MAX s without the room occupied
+const AUF_TEMPO: f64 = 300.0;
+const AUF_RUHE: f64 = 600.0;
+const AUF_MAX: f64 = 300.0;
 
 /// s of light after the room is no longer occupied (Node-RED Präsenzlicht)
 const HOLD: f64 = 120.0;
@@ -74,7 +86,7 @@ fn intervals(v: &Value) -> Vec<(String, f64, f64)> {
 
 /// The sensors' and rooms' geometry as evalp.py reads it from the configuration (world, inside): for the
 /// simple rule and the sitters.
-struct Raw {
+pub(crate) struct Raw {
     sensors: HashMap<String, RawSensor>,
     target_height: f64,
     /// the observed rooms: id, polygon
@@ -91,7 +103,7 @@ struct RawSensor {
 }
 
 impl Raw {
-    fn of(config: &Value, observed: &[String]) -> Self {
+    pub(crate) fn of(config: &Value, observed: &[String]) -> Self {
         let mut sensors = HashMap::new();
         for s in config["sensors"].as_array().into_iter().flatten() {
             let on = |k: &str| s[k].as_bool().unwrap_or(false);
@@ -122,7 +134,11 @@ impl Raw {
                     .iter()
                     .find(|z| z["id"].as_str() == Some(id.as_str()))
                     .and_then(|z| z["points"].as_array())
-                    .map(|a| a.iter().filter_map(|p| Some([p[0].as_f64()?, p[1].as_f64()?])).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|p| Some([p[0].as_f64()?, p[1].as_f64()?]))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 (id.clone(), pts)
             })
@@ -148,13 +164,13 @@ impl Raw {
         [s.x + gy * c + gx * sn, s.y + gy * sn - gx * c]
     }
 
-    fn room_at(&self, p: [f64; 2]) -> Option<usize> {
+    pub(crate) fn room_at(&self, p: [f64; 2]) -> Option<usize> {
         self.rooms.iter().position(|(_, pts)| inside(pts, p))
     }
 
     /// The detections of a frame (at least 0.3 m from the sensor) on the floor plan, with their raw
     /// coordinates and speed.
-    fn detections(&self, board: &str, payload: &Value) -> Vec<([f64; 2], (i64, i64), f64)> {
+    pub(crate) fn detections(&self, board: &str, payload: &Value) -> Vec<([f64; 2], (i64, i64), f64)> {
         let Some(s) = self.sensors.get(board) else {
             return Vec::new();
         };
@@ -167,7 +183,11 @@ impl Raw {
                 if x.hypot(y) < 300.0 {
                     return None;
                 }
-                Some((self.world(s, x, y), (x as i64, y as i64), d["speed"].as_f64().unwrap_or(0.0)))
+                Some((
+                    self.world(s, x, y),
+                    (x as i64, y as i64),
+                    d["speed"].as_f64().unwrap_or(0.0),
+                ))
             })
             .collect()
     }
@@ -359,12 +379,6 @@ impl Lines {
     }
 }
 
-/// The rule's variant (regel_vs_modell.py VARIANTS): only moving targets, only the room's own sensor.
-struct Rule {
-    moving_only: bool,
-    own_only: bool,
-}
-
 #[derive(Default)]
 struct Acc {
     s: f64,
@@ -389,20 +403,49 @@ struct Acc {
     max_e_room: BTreeMap<String, f64>,
 }
 
-#[derive(Default, Clone, Copy)]
-struct Load {
-    hyps: usize,
-    hidden: usize,
-    hidden_r: f64,
-    densities: usize,
-}
+/// The most of each diagnostic number of the model (Model::load) over a time.
+#[derive(Default, Clone)]
+struct Load(BTreeMap<&'static str, f64>);
 
 impl Load {
-    fn widen(&mut self, l: &Load) {
-        self.hyps = self.hyps.max(l.hyps);
-        self.hidden = self.hidden.max(l.hidden);
-        self.hidden_r = self.hidden_r.max(l.hidden_r);
-        self.densities = self.densities.max(l.densities);
+    fn widen(&mut self, l: &[(&'static str, f64)]) {
+        for &(k, v) in l {
+            let e = self.0.entry(k).or_insert(v);
+            *e = e.max(v);
+        }
+    }
+}
+
+/// A number as JSON: an integer where it is one (counts), else the number.
+fn number(v: f64) -> Value {
+    if v.fract() == 0.0 && v.abs() < 1e15 {
+        json!(v as i64)
+    } else {
+        json!(v)
+    }
+}
+
+/// The dark seconds of one must interval: how many, the run going on, the runs (start, s).
+#[derive(Default)]
+struct MustDark {
+    s: f64,
+    /// P(somebody there) in the room by the model: the least, the sum (a margin the light does not show)
+    p_min: f64,
+    p_sum: f64,
+    /// P(somebody there) every 10 s of the interval: (s after its start, P, lit)
+    verlauf: Vec<(f64, f64, bool)>,
+    dark: f64,
+    run: f64,
+    run_from: f64,
+    runs: Vec<(f64, f64)>,
+}
+
+impl MustDark {
+    fn end_run(&mut self) {
+        if self.run > 0.0 {
+            self.runs.push((self.run_from, self.run));
+        }
+        self.run = 0.0;
     }
 }
 
@@ -418,7 +461,10 @@ struct Queue {
 
 impl Queue {
     fn new(factor: f64) -> Self {
-        Self { factor, ..Self::default() }
+        Self {
+            factor,
+            ..Self::default()
+        }
     }
 
     fn go_on(&mut self, dt: f64) {
@@ -431,62 +477,6 @@ impl Queue {
             (self.max, self.at) = (self.backlog, t);
         }
     }
-}
-
-/// Diagnose (nicht für den Prüfstand): PT_DUMP="von,bis,alle" (Epoche, s) schreibt die stärksten Hypothesen.
-fn dump_people(tracker: &Tracker, t: f64, tz: f64) {
-    let f = tracker.filter();
-    let world = tracker.world();
-    let objs = f.objects();
-    let dens = objs.densities();
-    let shape = dens.shape();
-    let xs: Vec<f64> = world.tiles.centers.iter().map(|c| c[0]).collect();
-    let ys: Vec<f64> = world.tiles.centers.iter().map(|c| c[1]).collect();
-    let ones = vec![1.0; xs.len()];
-    let w = f.hyp_weights();
-    let mut order: Vec<usize> = (0..w.len()).collect();
-    order.sort_by(|&a, &b| w[b].total_cmp(&w[a]));
-    let mut line = format!("#D {}", hms(t, tz));
-    for &h in order.iter().take(3) {
-        let hy = &f.hyps()[h];
-        line += &format!(" | w{:.2}", w[h]);
-        for (_, &m) in hy.people.iter() {
-            let mix = objs.mixtures().get(m);
-            let p = mix.modes[0].pos();
-            let segs: Vec<String> = mix.slots.keys().map(|s| format!("{}", s.0)).collect();
-            line += &format!(" P[{}]({:.2},{:.2})", segs.join(","), p[0], p[1]);
-        }
-        for &u in &hy.hidden {
-            let d = dens.get(u);
-            let tot = d.integrate(&ones, &shape).max(1e-12);
-            let walk: f64 = d.walk.iter().sum::<f64>() * d.r;
-            line += &format!(
-                " H{:.3}({:.2},{:.2} g{:.2})",
-                d.r,
-                d.integrate(&xs, &shape) / tot,
-                d.integrate(&ys, &shape) / tot,
-                walk / tot
-            );
-        }
-    }
-    println!("{line}");
-}
-
-fn load_of(tracker: &Tracker) -> Load {
-    let f = tracker.filter();
-    let dens = f.objects().densities();
-    let mut l = Load {
-        hyps: f.hyps().len(),
-        hidden: 0,
-        hidden_r: 0.0,
-        densities: dens.len(),
-    };
-    for h in f.hyps() {
-        l.hidden = l.hidden.max(h.hidden.len());
-        let r: f64 = h.hidden.iter().map(|&u| dens.get(u).r).sum();
-        l.hidden_r = l.hidden_r.max(r);
-    }
-    l
 }
 
 /// The instructions this thread retired in user space (perf_event_open, PERF_COUNT_HW_INSTRUCTIONS): a measure of
@@ -515,16 +505,14 @@ struct PerfAttr {
 impl Instructions {
     fn open() -> Option<Self> {
         let attr = PerfAttr {
-            kind: 0,                     // PERF_TYPE_HARDWARE
-            size: 64,                    // PERF_ATTR_SIZE_VER0
-            config: 1,                   // PERF_COUNT_HW_INSTRUCTIONS
+            kind: 0,                    // PERF_TYPE_HARDWARE
+            size: 64,                   // PERF_ATTR_SIZE_VER0
+            config: 1,                  // PERF_COUNT_HW_INSTRUCTIONS
             flags: (1 << 5) | (1 << 6), // exclude_kernel, exclude_hv
             ..PerfAttr::default()
         };
         // SAFETY: the attribute lives for the call; pid 0, cpu -1: this thread on any CPU
-        let fd = unsafe {
-            libc::syscall(libc::SYS_perf_event_open, &raw const attr, 0, -1, -1, 0)
-        };
+        let fd = unsafe { libc::syscall(libc::SYS_perf_event_open, &raw const attr, 0, -1, -1, 0) };
         (fd >= 0).then(|| Self { fd: fd as libc::c_int })
     }
 
@@ -543,7 +531,7 @@ impl Drop for Instructions {
     }
 }
 
-fn hms(t: f64, tz: f64) -> String {
+pub(crate) fn hms(t: f64, tz: f64) -> String {
     let s = (t + tz).rem_euclid(86400.0) as i64;
     format!("{:02}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
 }
@@ -581,11 +569,17 @@ pub fn bench(job_path: &str) -> Result<(), String> {
     // the model's work as instructions (perf), turned into CPU seconds of the idle machine with `ips_leer` (its
     // instructions per CPU second there, the same workload): the queue and the CPU numbers then do not depend on how
     // busy the machine is. Without the counter (or ips_leer): the thread's CPU time as measured.
-    let instructions = job["ips_leer"].as_f64().and_then(|ips| Instructions::open().map(|c| (c, ips)));
+    let instructions = job["ips_leer"]
+        .as_f64()
+        .and_then(|ips| Instructions::open().map(|c| (c, ips)));
     let mut instr_total = 0_u64;
     // optional: the model's CPU per second of frame time, "t cpu" per line (to calibrate the factor)
     let mut cpu_trace = match job["cpu_spur"].as_str() {
-        Some(p) => Some((std::io::BufWriter::new(File::create(p).map_err(|e| format!("{p}: {e}"))?), 0.0_f64, 0.0_f64)),
+        Some(p) => Some((
+            std::io::BufWriter::new(File::create(p).map_err(|e| format!("{p}: {e}"))?),
+            0.0_f64,
+            0.0_f64,
+        )),
         None => None,
     };
     let tz = job["tz"].as_f64().unwrap_or(3600.0);
@@ -600,44 +594,81 @@ pub fn bench(job_path: &str) -> Result<(), String> {
         .collect();
     let truth = if kind == "zwei" { 2 } else { 1 };
     let truth_people = if kind == "zwei" || kind == "nacht" { 2.0 } else { 1.0 };
-    let rule = job["regel"].as_object().map(|r| Rule {
-        moving_only: r.get("bewegt").and_then(Value::as_bool).unwrap_or(false),
-        own_only: r.get("eigener").and_then(Value::as_bool).unwrap_or(false),
-    });
-
+    // the model and its parameters; an old job's "regel" object is the rule with those parameters
+    let (model_name, mut set) = match job["regel"].as_object() {
+        Some(r) => ("regel".to_string(), r.clone()),
+        None => (job["modell"].as_str().unwrap_or("filter").to_string(), Map::new()),
+    };
+    if let Some(s) = job["set"].as_object() {
+        set.extend(s.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
     let config_text = std::fs::read_to_string(config_path).map_err(|e| format!("{config_path}: {e}"))?;
     let config_value: Value = serde_json::from_str(&config_text).map_err(|e| format!("{config_path}: {e}"))?;
-    let mut tracker = crate::tracker(config_path)?;
-    let mut learned_info = Map::new();
-    if let Some(path) = job["learned"].as_str() {
-        let t = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-        let v: Value = serde_json::from_str(&t).map_err(|e| format!("{path}: {e}"))?;
-        if !v["ld_background"].is_null() {
-            let dropped = tracker
-                .use_background(Some(&v["ld_background"]))
-                .map_err(|e| format!("{path}: ld_background: {e:?}"))?;
-            learned_info.insert("ld_teile_verworfen".into(), json!(dropped.len()));
-            learned_info.insert("ld".into(), json!(true));
+    let learned = match job["learned"].as_str() {
+        Some(path) => {
+            let t = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+            Some(serde_json::from_str::<Value>(&t).map_err(|e| format!("{path}: {e}"))?)
         }
-        if !v["dest_map"].is_null() {
-            let used = tracker
-                .use_dest_map(Some(&v["dest_map"]))
-                .map_err(|e| format!("{path}: dest_map: {e:?}"))?;
-            learned_info.insert("zielkarte".into(), json!(used));
-        }
-    }
-    let observed: Vec<String> = tracker.world().plan.observed().map(|z| z.id.clone()).collect();
-    let rule_rooms: Vec<String> = job["regel_raeume"]
+        None => None,
+    };
+    let rooms: Vec<String> = job["raeume"]
         .as_array()
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
-        .unwrap_or_else(|| observed.clone());
-    let rooms = if rule.is_some() { rule_rooms } else { observed.clone() };
+        .or_else(|| job["regel_raeume"].as_array())
+        .ok_or("job: raeume missing (the rooms scored)")?
+        .iter()
+        .filter_map(|x| x.as_str().map(String::from))
+        .collect();
+    let ctx = Context {
+        config: &config_value,
+        config_path,
+        learned: learned.as_ref(),
+        rooms: &rooms,
+        scored: (m0, m1),
+        tz,
+    };
+    let (mut model, applied) = modell::build(&model_name, &ctx, &set)?;
     let raw = Raw::of(&config_value, &rooms);
-    let outputs = &tracker.world().outputs;
-    let thresholds = json!({"an": outputs.occupied_above(), "aus": outputs.occupied_below(),
-                            "light_cost": outputs.light_cost, "occupied_off": outputs.occupied_off});
     let room_k = |id: &str| rooms.iter().position(|r| r == id);
     let schlaf = room_k("schlafzimmer");
+    // Fenster offen (Leon, 20.11.): je Raum Intervalle, in denen er nicht bewertet wird (job "fenster_offen": {raum:
+    // [[a, b], ...]}); und je Schließen in [m0, m1] die Zeit, bis der Raum dunkel ist, wenn laut Wahrheit niemand drin
+    // ist (leeres Haus oder ein Verbot über dem Raum)
+    let offen: Vec<Vec<(f64, f64)>> = rooms
+        .iter()
+        .map(|r| {
+            job["fenster_offen"][r.as_str()]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|x| Some((x[0].as_f64()?, x[1].as_f64()?)))
+                .collect()
+        })
+        .collect();
+    let ist_offen = |k: usize, t: f64| offen[k].iter().any(|&(a, b)| a <= t && t <= b);
+    let leer_wahr = |k: usize, t: f64| {
+        kind == "leer" || verbot.iter().any(|(r, a, b)| room_k(r) == Some(k) && *a <= t && t <= *b)
+    };
+    // (Raum, Schließen, gemessen: None solange noch hell; Some(s))
+    let mut nachlauf: Vec<(usize, f64, Option<f64>)> = Vec::new();
+    let mut offen_s = 0.0_f64;
+    let out = std::io::stdout();
+    {
+        let mut o = out.lock();
+        let _ = writeln!(
+            o,
+            "# {name} Modell {model_name}, Parameter: {}",
+            if applied.is_empty() {
+                "Vorgaben".to_string()
+            } else {
+                applied
+                    .iter()
+                    .map(|a| format!("{}={} ({}, vorher {})", a.key, a.new, a.place, a.old))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        );
+        let _ = o.flush();
+    }
 
     let mut lines = Lines {
         files: job["files"]
@@ -655,13 +686,22 @@ pub fn bench(job_path: &str) -> Result<(), String> {
         done: false,
     };
 
-    let mut clocks: HashMap<String, SensorClock> = HashMap::new();
     let mut sitters = Sitters::default();
+    // "Aufstehen erkannt": per room the last moving detection; after >= AUF_RUHE s without one, the first moving
+    // detection in [m0, m1] starts an episode, which ends when the room is occupied (latency) or after AUF_MAX s
+    let mut zuletzt_bewegt = vec![start; rooms.len()];
+    let mut aufstehen: Vec<(usize, f64, Option<f64>)> = Vec::new();
     let mut acc = Acc::default();
     let mut occ = vec![false; rooms.len()];
     let mut lit_until = vec![f64::NEG_INFINITY; rooms.len()];
-    let mut rule_seen = vec![f64::NEG_INFINITY; rooms.len()];
     let mut dark_run: Vec<f64> = vec![0.0; must.len()];
+    let mut must_dark: Vec<MustDark> = must
+        .iter()
+        .map(|_| MustDark {
+            p_min: 1.0,
+            ..MustDark::default()
+        })
+        .collect();
     let (mut next_step, mut last_sample, mut t_prev) = (f64::NEG_INFINITY, f64::NEG_INFINITY, None::<f64>);
     let (mut frames, mut dropped) = (0usize, 0usize);
     let mut queue = Queue::new(factor);
@@ -674,23 +714,14 @@ pub fn bench(job_path: &str) -> Result<(), String> {
     // per minute of frame time from the queue's start: the instructions and the thread's CPU (to compare the
     // instructions per CPU second minute by minute with 0.64 on the same frames)
     let mut per_min_ic: BTreeMap<i64, (u64, f64)> = BTreeMap::new();
-    // the load at most: in the scored window [m0, m1]; in the lead before it (cold start); in its first and its
-    // last 10 min (growing over time)
+    // the model's diagnostic numbers at most: in the scored window [m0, m1]; in the lead before it (cold start);
+    // in its first and its last 10 min (growing over time)
     let (mut load_max, mut load_lead, mut load_begin, mut load_end) =
         (Load::default(), Load::default(), Load::default(), Load::default());
     let mut failed: Option<String> = None;
     let mut next_progress = f64::NEG_INFINITY;
-    let dump_at: Option<(f64, f64, f64)> = std::env::var("PT_DUMP").ok().and_then(|v| {
-        let x: Vec<f64> = v.split(',').filter_map(|s| s.parse().ok()).collect();
-        (x.len() == 3).then(|| (x[0], x[1], x[2]))
-    });
-    let mut next_dump = f64::NEG_INFINITY;
     let (mut t_first, mut t_last) = (None::<f64>, 0.0);
     let mut prog_cpu = 0.0;
-    // branches of the hypotheses in the scored window [m0, m1]: a track found again, a track born; their
-    // children
-    let (mut branch_again, mut branch_born, mut branch_children) = (0u64, 0u64, 0u64);
-    let out = std::io::stdout();
 
     while let Some((recv, board, payload)) = lines.next()? {
         let c0 = thread_cpu();
@@ -699,60 +730,43 @@ pub fn bench(job_path: &str) -> Result<(), String> {
             dropped += 1;
             continue;
         };
-        let t = if rule.is_some() {
-            recv
-        } else {
-            clocks
-                .entry(board.clone())
-                .or_default()
-                .at(recv, frame.uptime_ms, tracker.now())
-        };
+        let t = model.frame(&Input {
+            received: recv,
+            board: &board,
+            frame: &frame,
+            payload: &payload,
+        })?;
         t_first.get_or_insert(t);
         t_last = t;
-        let dets = raw_dets(&raw, &board, &payload);
-        if let Some(rule) = &rule {
+        let dets = raw.detections(&board, &payload);
+        if raw.sensors.contains_key(&board) {
             for (p, _, speed) in &dets {
-                if rule.moving_only && *speed == 0.0 {
+                if speed.abs() < AUF_TEMPO {
                     continue;
                 }
-                if let Some(k) = raw.room_at(*p)
-                    && (!rule.own_only || board == format!("presence-{}", rooms[k]))
-                {
-                    rule_seen[k] = t;
+                if let Some(k) = raw.room_at(*p).filter(|&k| k < rooms.len()) {
+                    if t - zuletzt_bewegt[k] >= AUF_RUHE && (m0..=m1).contains(&t) {
+                        aufstehen.push((k, t, if occ[k] { Some(0.0) } else { None }));
+                    }
+                    zuletzt_bewegt[k] = t;
+                }
+            }
+        }
+        if t >= next_step
+            && let Some(states) = model.tick(t)?
+        {
+            for (k, &on) in states.iter().enumerate().take(rooms.len()) {
+                occ[k] = on;
+                if on {
                     lit_until[k] = t + HOLD;
                 }
             }
-            for (k, o) in occ.iter_mut().enumerate() {
-                *o = t - rule_seen[k] <= 1.0;
-            }
-        } else {
-            let events = tracker
-                .frame(&board, t, &frame)
-                .map_err(|e| format!("the frame at {t}: {e:?}"))?;
-            if (m0..=m1).contains(&t) {
-                for e in &events {
-                    if let presence_core::tracker::Event::Branch { how, children, .. } = e {
-                        match how {
-                            presence_core::tracker::Branched::FoundAgain => branch_again += 1,
-                            presence_core::tracker::Branched::Born => branch_born += 1,
-                        }
-                        branch_children += children.len() as u64;
-                    }
+            for e in aufstehen.iter_mut().filter(|e| e.2.is_none()) {
+                if occ[e.0] && t - e.1 <= AUF_MAX {
+                    e.2 = Some(t - e.1);
                 }
             }
-            if t >= next_step && tracker.start().is_some() {
-                tracker.step(t).map_err(|e| format!("the step at {t}: {e}"))?;
-                let states = tracker.zone_states(tracker.now());
-                for st in &states {
-                    if let Some(k) = room_k(&st.id) {
-                        occ[k] = st.occupied;
-                        if st.occupied {
-                            lit_until[k] = t + HOLD;
-                        }
-                    }
-                }
-                next_step = t + tick;
-            }
+            next_step = t + tick;
         }
         frames += 1;
         let raw_cost = thread_cpu() - c0;
@@ -784,7 +798,14 @@ pub fn bench(job_path: &str) -> Result<(), String> {
             *acc_s += cost;
         }
         if let Some(tp) = t_prev {
-            for q in [&mut queue, &mut queue_lo, &mut queue_hi, &mut queue_cpu, &mut queue_cpu_lb, &mut queue_lead] {
+            for q in [
+                &mut queue,
+                &mut queue_lo,
+                &mut queue_hi,
+                &mut queue_cpu,
+                &mut queue_cpu_lb,
+                &mut queue_lead,
+            ] {
                 q.go_on(t - tp);
             }
         }
@@ -802,14 +823,12 @@ pub fn bench(job_path: &str) -> Result<(), String> {
         if raw.sensors.contains_key(&board) {
             sitters.frame(&board, t, &dets);
         }
-        if let Some((a, b, every)) = dump_at {
-            if rule.is_none() && t >= a && t <= b && t >= next_dump {
-                dump_people(&tracker, t, tz);
-                next_dump = t + every;
-            }
+        if let Some(line) = model.dump(t) {
+            println!("{line}");
         }
-        if rule.is_none() && (frames % 16 == 0 || t >= next_progress) {
-            let l = load_of(&tracker);
+        let mut load_now = None;
+        if frames % 16 == 0 || t >= next_progress {
+            let l = model.load();
             if t < m0 {
                 load_lead.widen(&l);
             } else {
@@ -821,18 +840,18 @@ pub fn bench(job_path: &str) -> Result<(), String> {
                     load_end.widen(&l);
                 }
             }
+            load_now = Some(l);
         }
         if t >= next_progress {
             let lit: Vec<&str> = (0..rooms.len())
                 .filter(|&k| lit_until[k] >= t)
                 .map(|k| rooms[k].as_str())
                 .collect();
-            let l = if rule.is_none() {
-                let l = load_of(&tracker);
-                format!(" hyps {} ohne_spur {} ({:.2}) dichten {}", l.hyps, l.hidden, l.hidden_r, l.densities)
-            } else {
-                String::new()
-            };
+            let l: String = load_now
+                .unwrap_or_default()
+                .iter()
+                .map(|(k, v)| format!(" {k} {}", number(*v)))
+                .collect();
             let span = if next_progress.is_finite() { progress } else { 0.0 };
             let mut o = out.lock();
             let _ = writeln!(
@@ -840,14 +859,22 @@ pub fn bench(job_path: &str) -> Result<(), String> {
                 "# {} {} cpu {:.0} ms/min rueckstand {:.1} s{} licht [{}]",
                 name,
                 hms(t, tz),
-                if span > 0.0 { 1000.0 * prog_cpu * 60.0 / span } else { 0.0 },
+                if span > 0.0 {
+                    1000.0 * prog_cpu * 60.0 / span
+                } else {
+                    0.0
+                },
                 queue.backlog,
                 l,
                 lit.join(",")
             );
             let _ = o.flush();
             prog_cpu = 0.0;
-            next_progress = if next_progress.is_finite() { next_progress + progress } else { t + progress };
+            next_progress = if next_progress.is_finite() {
+                next_progress + progress
+            } else {
+                t + progress
+            };
         }
         if queue.backlog > max_backlog {
             failed = Some(format!(
@@ -887,6 +914,23 @@ pub fn bench(job_path: &str) -> Result<(), String> {
         last_sample = t;
         acc.s += 1.0;
         let lit: Vec<bool> = lit_until.iter().map(|&u| u >= t).collect();
+        // Nachlauf nach Lüften: Schließen, die jetzt vorbei sind, bei leerem Raum laut Wahrheit
+        for (k, iv) in offen.iter().enumerate() {
+            for &(_, b) in iv {
+                if b >= m0 && b <= t && b > t - 1.0 && leer_wahr(k, b) && !nachlauf.iter().any(|x| x.0 == k && x.1 == b) {
+                    nachlauf.push((k, b, None));
+                }
+            }
+        }
+        for x in nachlauf.iter_mut().filter(|x| x.2.is_none()) {
+            if !lit[x.0] {
+                x.2 = Some(t - x.1);
+            }
+        }
+        // ein Raum mit offenem Fenster wird nicht bewertet: er zählt weder als hell noch als dunkel
+        let offen_jetzt: Vec<bool> = (0..rooms.len()).map(|k| ist_offen(k, t)).collect();
+        offen_s += offen_jetzt.iter().filter(|&&x| x).count() as f64;
+        let lit: Vec<bool> = lit.iter().zip(&offen_jetzt).map(|(&l, &o)| l && !o).collect();
         let n_lit = lit.iter().filter(|&&x| x).count();
         acc.licht += n_lit as f64;
         acc.licht_zuviel += n_lit.saturating_sub(truth) as f64;
@@ -896,10 +940,19 @@ pub fn bench(job_path: &str) -> Result<(), String> {
             }
         }
         for (i, (r, a, b)) in must.iter().enumerate() {
+            if *a <= t && t <= *b && room_k(r).is_some_and(|k| offen_jetzt[k]) {
+                // offenes Fenster: diese Sekunde nicht bewertet, eine dunkle Lücke endet hier
+                dark_run[i] = 0.0;
+                must_dark[i].end_run();
+                continue;
+            }
             if *a <= t && t <= *b {
                 acc.muss_s += 1.0;
+                let md = &mut must_dark[i];
+                md.s += 1.0;
                 if room_k(r).is_some_and(|k| lit[k]) {
                     dark_run[i] = 0.0;
+                    md.end_run();
                 } else {
                     acc.muss_dunkel += 1.0;
                     dark_run[i] += 1.0;
@@ -907,48 +960,67 @@ pub fn bench(job_path: &str) -> Result<(), String> {
                     if acc.muss_dunkel_wann.len() < 50 {
                         acc.muss_dunkel_wann.push(t);
                     }
+                    md.dark += 1.0;
+                    if md.run == 0.0 {
+                        md.run_from = t;
+                    }
+                    md.run += 1.0;
                 }
             }
         }
         for (r, a, b) in &verbot {
-            if *a <= t && t <= *b {
+            if *a <= t && t <= *b && !room_k(r).is_some_and(|k| offen_jetzt[k]) {
                 acc.verbot_s += 1.0;
                 if room_k(r).is_some_and(|k| lit[k]) {
                     acc.verbot_licht += 1.0;
                 }
             }
         }
-        if let Some(k) = schlaf {
+        if let Some(k) = schlaf.filter(|&k| !offen_jetzt[k]) {
             acc.schlaf_dunkel += f64::from(!lit[k]);
             acc.schlaf_unbelegt += f64::from(!occ[k]);
         }
         acc.mehrraum += f64::from(occ.iter().filter(|&&x| x).count() >= 2);
         let sit = sitters.rooms_now(t, &raw);
-        acc.dunkel_sitzer += f64::from(sit.iter().any(|&k| !lit[k]));
+        acc.dunkel_sitzer += f64::from(sit.iter().any(|&k| !lit[k] && !offen_jetzt[k]));
         acc.sitzer += f64::from(sit.iter().any(|&k| !occ[k]));
-        if rule.is_none() {
-            let dist = tracker.count_distribution();
-            let e = |row: &[f64]| row.iter().enumerate().map(|(k, q)| k as f64 * q).sum::<f64>();
-            if let Some(total) = dist.last() {
-                acc.zuviel += (e(total) - truth_people).max(0.0);
-            }
-            for (k, row) in dist.iter().take(observed.len()).enumerate() {
-                let m = acc.max_e_room.entry(observed[k].clone()).or_default();
-                *m = m.max(e(row));
-            }
-            if let Some(row) = schlaf.and_then(|k| dist.get(k)) {
-                acc.schlaf_e += e(row);
-            }
-            for (r, a, b) in &zwei {
-                if *a <= t
-                    && t <= *b
-                    && let Some(row) = room_k(r).and_then(|k| dist.get(k))
-                {
-                    acc.zwei_s += 1.0;
-                    acc.zwei_p += 1.0 - row.first().copied().unwrap_or(1.0) - row.get(1).copied().unwrap_or(0.0);
+        let values = model.values();
+        let e_house = values
+            .e_house
+            .unwrap_or_else(|| values.rooms.iter().map(|v| v.e_count).sum::<f64>());
+        acc.zuviel += (e_house - truth_people).max(0.0);
+        for (k, v) in values.rooms.iter().enumerate().take(rooms.len()) {
+            let m = acc.max_e_room.entry(rooms[k].clone()).or_default();
+            *m = m.max(v.e_count);
+        }
+        if let Some(v) = schlaf.and_then(|k| values.rooms.get(k)) {
+            acc.schlaf_e += v.e_count;
+        }
+        for (i, (r, a, b)) in must.iter().enumerate() {
+            if *a <= t
+                && t <= *b
+                && let Some(v) = room_k(r).and_then(|k| values.rooms.get(k))
+            {
+                let md = &mut must_dark[i];
+                md.p_min = md.p_min.min(v.p_any);
+                md.p_sum += v.p_any;
+                if md.verlauf.last().is_none_or(|x| t - a - x.0 >= 10.0) {
+                    md.verlauf.push((t - a, v.p_any, room_k(r).is_some_and(|k| lit[k])));
                 }
             }
         }
+        for (r, a, b) in &zwei {
+            if *a <= t
+                && t <= *b
+                && let Some(p) = room_k(r).and_then(|k| values.rooms.get(k)).and_then(|v| v.p_two)
+            {
+                acc.zwei_s += 1.0;
+                acc.zwei_p += p;
+            }
+        }
+    }
+    for md in &mut must_dark {
+        md.end_run();
     }
 
     let span = t_first.map_or(0.0, |t0| t_last - t0);
@@ -956,15 +1028,31 @@ pub fn bench(job_path: &str) -> Result<(), String> {
     let per_min_ms: Vec<f64> = per_min.values().map(|c| c * 1000.0).collect();
     let min = |x: f64| x / 60.0;
     let status = if failed.is_some() { "durchgefallen" } else { "ok" };
+    let must_events: Vec<Value> = must
+        .iter()
+        .zip(&must_dark)
+        .map(|((r, a, b), md)| {
+            json!({
+                "raum": r, "von": a, "bis": b, "von_text": hms(*a, tz),
+                "bewertet_s": md.s, "dunkel_s": md.dark,
+                "p_min": if md.s > 0.0 { Some(md.p_min) } else { None },
+                "p_mittel": if md.s > 0.0 { Some(md.p_sum / md.s) } else { None },
+                "verlauf": md.verlauf.iter().map(|(dt, p, l)| json!([dt.round(), (p * 1000.0).round() / 1000.0, l])).collect::<Vec<_>>(),
+                "luecke_max_s": md.runs.iter().map(|x| x.1).fold(0.0, f64::max),
+                "luecken": md.runs.iter().map(|(f, l)| json!([hms(*f, tz), l])).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
     let mut r = json!({
         "fenster": name,
         "art": kind,
         "status": status,
         "grund": failed,
-        "modus": if rule.is_some() { "regel" } else { "modell" },
-        "schwellen": thresholds,
-        "gelernt": learned_info,
+        "modus": "modell",
+        "modell": model_name,
+        "parameter": Applied::json(&applied),
         "raeume": rooms,
+        "start": start,
         "daten_min": min(span),
         "bewertet_min": min(acc.s),
         "vollstaendig": failed.is_none() && t_last >= m1 - 60.0,
@@ -978,8 +1066,14 @@ pub fn bench(job_path: &str) -> Result<(), String> {
         "muss_dunkel": min(acc.muss_dunkel),
         "muss_luecke_max_s": acc.muss_luecke_max,
         "muss_dunkel_wann": acc.muss_dunkel_wann.iter().map(|&t| hms(t, tz)).collect::<Vec<_>>(),
+        "muss_ereignisse": must_events,
         "verbot_min": min(acc.verbot_s),
         "verbot_licht": min(acc.verbot_licht),
+        "fenster_offen_raumsekunden": offen_s,
+        "nachlauf_lueften": nachlauf
+            .iter()
+            .map(|(k, c, d)| json!({"raum": rooms[*k], "geschlossen": hms(*c, tz), "bis_dunkel_s": d}))
+            .collect::<Vec<_>>(),
         "schlaf_dunkel": min(acc.schlaf_dunkel),
         "schlaf_unbelegt": min(acc.schlaf_unbelegt),
         "mehrraum": min(acc.mehrraum),
@@ -1009,34 +1103,45 @@ pub fn bench(job_path: &str) -> Result<(), String> {
         "ips_ist": if raw_cpu > 0.0 && instr_total > 0 { Some(instr_total as f64 / raw_cpu) } else { None },
         "bewertet_bis": hms(t_last.min(m1), tz),
         "bewertet_spanne_min": min(scored_span),
+        "aufstehen": aufstehen
+            .iter()
+            .map(|(k, t0, l)| json!({"raum": rooms[*k], "um": hms(*t0, tz), "latenz_s": l.map(|x| (x * 10.0).round() / 10.0)}))
+            .collect::<Vec<_>>(),
     });
-    if rule.is_none() {
+    {
         let n = acc.s.max(1.0);
         let o = r.as_object_mut().expect("an object");
         o.insert("zuviel".into(), json!(min(acc.zuviel)));
-        o.insert("verzweigt_wiedergefunden".into(), json!(branch_again));
-        o.insert("verzweigt_neu".into(), json!(branch_born));
-        o.insert("verzweigt_kinder".into(), json!(branch_children));
         o.insert("schlaf_e".into(), json!(acc.schlaf_e / n));
         o.insert("max_e_raum".into(), json!(acc.max_e_room));
-        o.insert("zwei_p".into(), json!(if acc.zwei_s > 0.0 { Some(acc.zwei_p / acc.zwei_s) } else { None }));
-        // max_*: the scored window only (not the cold start before it, anlauf_*); anfang_*/ende_*: its first and
-        // last 10 min
-        for (pre, l) in [("max", load_max), ("anlauf_max", load_lead), ("anfang", load_begin), ("ende", load_end)] {
-            o.insert(format!("{pre}_hyps"), json!(l.hyps));
-            o.insert(format!("{pre}_ohne_spur"), json!(l.hidden));
-            o.insert(format!("{pre}_ohne_spur_r"), json!(l.hidden_r));
-            o.insert(format!("{pre}_dichten"), json!(l.densities));
+        o.insert(
+            "zwei_p".into(),
+            json!(if acc.zwei_s > 0.0 {
+                Some(acc.zwei_p / acc.zwei_s)
+            } else {
+                None
+            }),
+        );
+        // max_*: the scored window only (not the cold start before it, anlauf_max_*); anfang_*/ende_*: its first
+        // and last 10 min
+        for (pre, l) in [
+            ("max", &load_max),
+            ("anlauf_max", &load_lead),
+            ("anfang", &load_begin),
+            ("ende", &load_end),
+        ] {
+            for (k, v) in &l.0 {
+                o.insert(format!("{pre}_{k}"), number(*v));
+            }
+        }
+        for (k, v) in model.summary() {
+            o.insert(k, v);
         }
     }
     let mut o = out.lock();
     writeln!(o, "{r}").map_err(|e| e.to_string())?;
     o.flush().map_err(|e| e.to_string())?;
     Ok(())
-}
-
-fn raw_dets(raw: &Raw, board: &str, payload: &Value) -> Vec<([f64; 2], (i64, i64), f64)> {
-    raw.detections(board, payload)
 }
 
 #[cfg(test)]
@@ -1102,7 +1207,10 @@ mod tests {
 
     #[test]
     fn the_time_of_a_line_is_read_without_parsing_it() {
-        assert_eq!(Lines::quick_t(r#"{"t":1794927600.02,"topic":"x"}"#), Some(1_794_927_600.02));
+        assert_eq!(
+            Lines::quick_t(r#"{"t":1794927600.02,"topic":"x"}"#),
+            Some(1_794_927_600.02)
+        );
         assert_eq!(Lines::quick_t(r#"{"topic":"x","t":1}"#), None);
     }
 }

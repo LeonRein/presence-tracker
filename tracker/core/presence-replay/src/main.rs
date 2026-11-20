@@ -5,7 +5,8 @@
 //!
 //!   presence-replay trace CONFIG RECORDING SECONDS OUT [EVERY]
 //!   presence-replay prof CONFIG RECORDING SECONDS
-//!   presence-replay bench JOB.json   (the test bench, bench.rs; tools/pruefstand.py)
+//!   presence-replay bench JOB.json   (the test bench, bench.rs; tools/pruefstand.py; docs/pruefstand.md)
+//!   presence-replay parameter [k=v ...]   (which parameters --set may change and where: model or configuration)
 //!
 //! CONFIG is the app's tracker.json; the model the core's defaults.
 //! trace writes every EVERY s (1) of frame time the line trace.py writes through the Python shell, byte for
@@ -17,6 +18,7 @@
 #![recursion_limit = "256"]
 
 mod bench;
+mod modell;
 mod pyjson;
 
 use std::collections::HashMap;
@@ -34,7 +36,7 @@ use serde_json::Value;
 
 use pyjson::{Dict, Fields, PyJson};
 
-const USAGE: &str = "usage: presence-replay trace CONFIG RECORDING SECONDS OUT [EVERY]\n       presence-replay prof CONFIG RECORDING SECONDS\n       presence-replay bench JOB.json";
+const USAGE: &str = "usage: presence-replay trace CONFIG RECORDING SECONDS OUT [EVERY]\n       presence-replay prof CONFIG RECORDING SECONDS\n       presence-replay bench JOB.json\n       presence-replay parameter [k=v ...]";
 
 /// s of frame time between the steps (the app's tick)
 const TICK: f64 = 0.1;
@@ -47,6 +49,7 @@ fn main() -> ExitCode {
         ["trace", config, recording, seconds, out, every] => trace(config, recording, seconds, out, every),
         ["prof", config, recording, seconds] => prof(config, recording, seconds),
         ["bench", job] => bench::bench(job),
+        ["parameter", ref sets @ ..] => modell::filter::list_parameters(sets),
         _ => Err(USAGE.to_string()),
     };
     match done {
@@ -98,10 +101,15 @@ fn messages(path: &str) -> Result<Vec<Message>, String> {
 /// The tracker of a configuration with the core's model.
 fn tracker(config: &str) -> Result<Tracker, String> {
     let text = fs::read_to_string(config).map_err(|e| format!("{config}: {e}"))?;
+    tracker_of(&text, config, Params::default())
+}
+
+/// The tracker of a configuration (its text; `label` names it in errors) with this model.
+fn tracker_of(text: &str, label: &str, params: Params) -> Result<Tracker, String> {
     // as the app reads a saved configuration: old settings go, missing ones are the defaults
-    let canonical = canonical(&text).map_err(|e| format!("{config}: {e}"))?;
-    let config = Config::from_json(&canonical.to_string()).map_err(|e| format!("{config}: {e}"))?;
-    let mut tracker = Tracker::new(World::build(&config, Params::default())?);
+    let canonical = canonical(text).map_err(|e| format!("{label}: {e}"))?;
+    let config = Config::from_json(&canonical.to_string()).map_err(|e| format!("{label}: {e}"))?;
+    let mut tracker = Tracker::new(World::build(&config, params)?);
     tracker.reset_people(None)?; // nothing known about the people (the shell's Tracker() starts so)
     Ok(tracker)
 }
