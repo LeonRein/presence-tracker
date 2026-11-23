@@ -611,7 +611,14 @@ Das Modell, je Sensor:
   40 s). Das ersetzt die Regel von 0.65 (`together`, `ld_exist` mit der Anzeigeschwelle r ≥ 0,5) durch ein Messmodell
   ohne Schwelle; die Zahl einer Gruppe bewegt das LD2410C nur schwach, in beide Richtungen (mehr als eine Person:
   etwas dafür; weniger als eine: etwas dagegen). Was die Personen danach hineingeben, wofür der Hintergrund lernt und
-  was eine Echoquelle erklären muss, rechnet mit derselben Gruppe. **Die unbekannten Personen: höchstens eine von ihnen im
+  was eine Echoquelle erklären muss, rechnet mit derselben Gruppe. **Neben Personen mit Spur** (Kandidat `nacht/m2211`, `ld_beside` = 0,5):
+  Stehen Personen mit Spur mit zusammen mindestens 0,5 im Blick eines LD2410C, hält er eine bekannte Person ohne Spur
+  nur noch in seinem Blick und schiebt sie nicht hinaus (ihr Verhältnis je Punkt wenigstens das ihres Draußen). Die
+  Energien belegen dann, dass jemand da ist, nicht ob ein Zweiter (oben). Gemessen an den Meldungen 21./22.11.: Die
+  Zweite ohne Spur verlor im Bad (21.11. 22:46) in 4 s r 0,99 → 0,27 und im Arbeitszimmer (22.11. 18:53) in 30 s 0,999
+  → 0,5, ihre Masse wanderte ungesehen in den Flur; ohne LD2410C blieb sie, mit `ld_beside` bleibt sie (Arbeitszimmer
+  P ≥ 0,94, Bad Licht durchgehend). Personen ohne Spur zählen dabei nicht als „neben“: Zwei Erfundene im leeren Raum
+  schützen sich nicht gegenseitig (Test `people_without_tracks_do_not_shield_each_other_with_ld_beside`). **Die unbekannten Personen: höchstens eine von ihnen im
   Blick**, gerechnet wie eine Person ohne Spur (ein Bernoulli mit r = ihrer Masse M im Blick; `M' = M L̄ /
   (1 − M + M L̄)` ≤ 1, wobei L̄ das mittlere Verhältnis über diese Masse ist, per Momentenabgleich zurück in
   die Intensität); wer hinter einer Tür oder außer Haus ist, gibt nichts hinein. Das ist, was Energie allein

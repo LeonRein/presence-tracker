@@ -330,6 +330,9 @@ struct LdContext<'a> {
     echo: Points,
     scratch: Scratch,
     group: Group,
+    /// a known person without a track is not weighed down where people with tracks of the hypothesis stand in view
+    /// with at least this mass (`Params::ld_beside`; 0: always weighed)
+    beside: f64,
 }
 
 /// People standing together for an LD2410C (MODEL.md 4.3 "Gruppen"): what two at one place give in the profile of
@@ -574,9 +577,27 @@ fn marginal(ctx: &mut LdContext, chains: &mut Chains, holders: &Holders, e: usiz
         return None;
     }
     let intensity = ctx.unknown[e];
+    // a known person without a track beside people with tracks in view: the energies say that somebody is there,
+    // not how many (MODEL.md 4.3): they may hold the person in view but not push it out (ld_beside). Only people
+    // with tracks count as the others: people without one would shield each other where nobody is
+    let hidden = !intensity && matches!(ctx.objs[e], Obj::Density(_)) && ctx.beside > 0.0;
+    let beside: Vec<bool> = hs
+        .iter()
+        .map(|&h| {
+            hidden && {
+                let others: f64 = chains.paths[h]
+                    .iter()
+                    .map(|&n| chains.nodes[n].entry)
+                    .filter(|&x| x != e && matches!(ctx.objs[x], Obj::Mixture(_)))
+                    .map(|x| pairwise_sum(&ctx.points[x].mass))
+                    .sum();
+                others >= ctx.beside
+            }
+        })
+        .collect();
     let mut parts: Vec<Vec<f64>> = Vec::with_capacity(hs.len());
     let mut outs = Vec::new();
-    for (&h, qh) in hs.iter().zip(&q) {
+    for ((&h, qh), &floor) in hs.iter().zip(&q).zip(&beside) {
         let (lr, norm, ze) = chains.given_others(ctx, h, e);
         // an unseen person and an echo source are alternatives (both rare), as target and clutter: where
         // the person is not, a source may explain the energies, not worse than nothing does (a source
@@ -585,6 +606,9 @@ fn marginal(ctx: &mut LdContext, chains: &mut Chains, holders: &Holders, e: usiz
         let lq = at_least(qh / qs, 1e-300).ln() - norm;
         if intensity {
             parts.push(lr.iter().map(|l| lq + l - ze).collect()); // outside stays
+        } else if floor {
+            parts.push(lr.iter().map(|l| lq + l.max(ze)).collect());
+            outs.push(lq + ze);
         } else {
             parts.push(lr.iter().map(|l| lq + l).collect());
             outs.push(lq + ze);
@@ -834,6 +858,7 @@ impl Filter {
                 at: ld.at,
                 res: p.resolution[STILL],
             },
+            beside: p.ld_beside,
         };
         // per hypothesis the people one after the other, the echo sources last
         let mut chains = Chains::build(&mut ctx, &self.hyps, &self.holders);
@@ -1076,6 +1101,25 @@ mod tests {
         g.set_hyps(vec![Hyp::new(0.0, vec![a], unknown)]);
         weigh_for(&added, &mut g, &nothing, 20);
         assert!((g.objects().densities().get(a).r - r_alone).abs() < 1e-9 * r_alone.max(1e-300));
+        let (mut f, both) = two_at(&world, c, [0.9, 0.9]);
+        weigh_for(&world, &mut f, &nothing, 40);
+        for d in both {
+            let r = f.objects().densities().get(d).r;
+            assert!(r < 0.05, "together {r}");
+        }
+    }
+
+    #[test]
+    fn people_without_tracks_do_not_shield_each_other_with_ld_beside() {
+        // ld_beside holds a person without a track only beside people with tracks: two without one reading nothing
+        // go as without it (else two made-up people would keep each other where nobody is)
+        let mut world = testing::flat();
+        world.params.ld_echo_amps = vec![1e-9];
+        world.params.ld_beside = 0.5;
+        let ld = &world.ld[0];
+        let j = ld.tiles.idx.len() / 2;
+        let c = ld.tiles.idx[j];
+        let nothing: Cells = std::array::from_fn(|k| B[k].round());
         let (mut f, both) = two_at(&world, c, [0.9, 0.9]);
         weigh_for(&world, &mut f, &nothing, 40);
         for d in both {
