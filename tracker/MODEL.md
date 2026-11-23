@@ -618,7 +618,12 @@ Das Modell, je Sensor:
   Zweite ohne Spur verlor im Bad (21.11. 22:46) in 4 s r 0,99 → 0,27 und im Arbeitszimmer (22.11. 18:53) in 30 s 0,999
   → 0,5, ihre Masse wanderte ungesehen in den Flur; ohne LD2410C blieb sie, mit `ld_beside` bleibt sie (Arbeitszimmer
   P ≥ 0,94, Bad Licht durchgehend). Personen ohne Spur zählen dabei nicht als „neben“: Zwei Erfundene im leeren Raum
-  schützen sich nicht gegenseitig (Test `people_without_tracks_do_not_shield_each_other_with_ld_beside`). **Die unbekannten Personen: höchstens eine von ihnen im
+  schützen sich nicht gegenseitig (Test `people_without_tracks_do_not_shield_each_other_with_ld_beside`). Wo die
+  Energien die Person besser erklären als ihr Draußen, bleibt von dieser Stütze nur `ld_beside_lift` = 0,25: Mit der
+  vollen Stütze wuchsen neben einer Gemessenen Erfundene ohne Ende (r 0,03 → 0,6, dort widerlegt sie nichts; im
+  Prüfstand 3× so viele überzählige Personen-Minuten wie 0.66.1), ohne Stütze (0) verlor das Modell Sitzende (Bad 6.11.,
+  Bad 21.11. 20:09). Nur neben der Gemessenen zu halten (LD2450-Stelle oder gleiches LD2410C-Tor) verlor die
+  Bad-Meldungen vom 21.11. wieder. **Die unbekannten Personen: höchstens eine von ihnen im
   Blick**, gerechnet wie eine Person ohne Spur (ein Bernoulli mit r = ihrer Masse M im Blick; `M' = M L̄ /
   (1 − M + M L̄)` ≤ 1, wobei L̄ das mittlere Verhältnis über diese Masse ist, per Momentenabgleich zurück in
   die Intensität); wer hinter einer Tür oder außer Haus ist, gibt nichts hinein. Das ist, was Energie allein
