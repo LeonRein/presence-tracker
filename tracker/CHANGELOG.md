@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.67.0 (Modell: zwei rein, eine raus – die Bleibende bleibt; App wie 0.66.1)
+
+- **Neben einer gemessenen Person schiebt das LD2410C eine zweite ohne eigenes Ziel nicht mehr aus dem Raum**
+  (`ld_beside` 0,5). Seine Energien belegen dann, dass jemand da ist, nicht wie viele. Bisher galt eine Person, die
+  neben einer anderen saß und vom LD2450 kein eigenes Ziel bekam, schnell als gegangen; das Licht ging nach dem
+  Nachlauf aus, obwohl sie noch im Raum war (Meldungen Bad 21.11., Arbeitszimmer und Esszimmer 22.11.).
+- Stützen darf das LD2410C sie dort nur noch zu einem Viertel (`ld_beside_lift` 0,25): Mit der vollen Stütze wuchsen
+  neben einer gemessenen Person erfundene, ohne Stütze gingen Sitzende verloren.
+
+Prüfstand, alle 81 Fenster, gegen 0.66.1: dunkel mit Person 623 s in 4 Fenstern (7 081 s in 16), kein Fenster
+schlechter; Licht im leeren Haus gleich (2,2 Raummin); Licht zu viel +1,2 %; überzählige Personen-Minuten 1 463
+(1 020); Rechenaufwand +10 %. App mit den Aufnahmen vom 22.11.: beide Meldungen halten; Personen im Haus im Mittel
+2,16 statt 1,94 (wahr: 2), Rechenzeit +16–20 %, kein Wachstum.
+
 ## 0.66.1 (App: Fensterkontakte in der Aufzeichnung als Debugging-Werkzeug; Modell wie 0.66.0)
 
 - **DEBUGGING-WERKZEUG, vorübergehend, zum späteren Entfernen** (`debug_fenster.py`): Solange die Aufzeichnung läuft,

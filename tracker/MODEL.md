@@ -611,7 +611,7 @@ Das Modell, je Sensor:
   40 s). Das ersetzt die Regel von 0.65 (`together`, `ld_exist` mit der Anzeigeschwelle r ≥ 0,5) durch ein Messmodell
   ohne Schwelle; die Zahl einer Gruppe bewegt das LD2410C nur schwach, in beide Richtungen (mehr als eine Person:
   etwas dafür; weniger als eine: etwas dagegen). Was die Personen danach hineingeben, wofür der Hintergrund lernt und
-  was eine Echoquelle erklären muss, rechnet mit derselben Gruppe. **Neben Personen mit Spur** (Kandidat `nacht/m2211`, `ld_beside` = 0,5):
+  was eine Echoquelle erklären muss, rechnet mit derselben Gruppe. **Neben Personen mit Spur** (seit 0.67, `ld_beside` = 0,5):
   Stehen Personen mit Spur mit zusammen mindestens 0,5 im Blick eines LD2410C, hält er eine bekannte Person ohne Spur
   nur noch in seinem Blick und schiebt sie nicht hinaus (ihr Verhältnis je Punkt wenigstens das ihres Draußen). Die
   Energien belegen dann, dass jemand da ist, nicht ob ein Zweiter (oben). Gemessen an den Meldungen 21./22.11.: Die
