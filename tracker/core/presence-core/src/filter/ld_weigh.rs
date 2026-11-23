@@ -333,6 +333,9 @@ struct LdContext<'a> {
     /// a known person without a track is not weighed down where people with tracks of the hypothesis stand in view
     /// with at least this mass (`Params::ld_beside`; 0: always weighed)
     beside: f64,
+    /// per entry: its existence r (people with tracks 1); `beside` holds only those with at least `beside_r`
+    exists: Vec<f64>,
+    beside_r: f64,
 }
 
 /// People standing together for an LD2410C (MODEL.md 4.3 "Gruppen"): what two at one place give in the profile of
@@ -580,7 +583,7 @@ fn marginal(ctx: &mut LdContext, chains: &mut Chains, holders: &Holders, e: usiz
     // a known person without a track beside people with tracks in view: the energies say that somebody is there,
     // not how many (MODEL.md 4.3): they may hold the person in view but not push it out (ld_beside). Only people
     // with tracks count as the others: people without one would shield each other where nobody is
-    let hidden = !intensity && matches!(ctx.objs[e], Obj::Density(_)) && ctx.beside > 0.0;
+    let hidden = !intensity && matches!(ctx.objs[e], Obj::Density(_)) && ctx.beside > 0.0 && ctx.exists[e] >= ctx.beside_r;
     let beside: Vec<bool> = hs
         .iter()
         .map(|&h| {
@@ -833,6 +836,13 @@ impl Filter {
             };
             pts.scale(&now);
         }
+        let exists: Vec<f64> = objs
+            .iter()
+            .map(|&obj| match obj {
+                Obj::Density(d) => densities.get(d).r,
+                Obj::Mixture(_) => 1.0,
+            })
+            .collect();
         let unknown = objs
             .iter()
             .map(|&obj| matches!(obj, Obj::Density(d) if densities.get(d).kind == Kind::Intensity))
@@ -859,6 +869,8 @@ impl Filter {
                 res: p.resolution[STILL],
             },
             beside: p.ld_beside,
+            exists,
+            beside_r: p.ld_beside_r,
         };
         // per hypothesis the people one after the other, the echo sources last
         let mut chains = Chains::build(&mut ctx, &self.hyps, &self.holders);

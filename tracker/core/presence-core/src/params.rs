@@ -196,6 +196,9 @@ pub struct Params {
     /// a track and never push it out of view (MODEL.md 4.3 "Neben Personen mit Spur"); 0: off, as up to 0.66
     #[serde(deserialize_with = "real")]
     pub ld_beside: f64,
+    /// ld_beside holds only a person without a track that exists with at least this probability r
+    #[serde(deserialize_with = "real")]
+    pub ld_beside_r: f64,
     /// the background before anything is learned: moving gates 0, 1, the other moving gates, the still
     /// gates; its weight (s), forgotten with ld_forget s towards the sensor's own level, which is learned
     /// forgotten with ld_anchor_forget s from frames after ld_anchor_quiet s with nothing in sight (after
@@ -336,6 +339,7 @@ impl Default for Params {
             ld_tile_mass: 1e-4,
             ld_group: 1.1,
             ld_beside: 0.5,
+            ld_beside_r: 0.0,
             ld_background: [13.0, 9.0, 4.5, 5.0],
             ld_prior_time: 600.0,
             ld_forget: 0.7 * 3600.0,
@@ -491,6 +495,7 @@ impl Params {
             ("ld_tile_mass", at_least_0(self.ld_tile_mass)),
             ("ld_group", (1.0..=2.0).contains(&self.ld_group)),
             ("ld_beside", at_least_0(self.ld_beside)),
+            ("ld_beside_r", (0.0..=1.0).contains(&self.ld_beside_r)),
             ("ld_other_reach", self.ld_other_reach >= 0.0),
             ("ld_background", self.ld_background.iter().all(|&b| positive(b))),
             ("ld_prior_time", positive(self.ld_prior_time)),
